@@ -2,10 +2,10 @@
 # requires-python = ">=3.10"
 # dependencies = ["pandas>=2.0", "openpyxl>=3.1"]
 # ///
-# One time diagnostic over the client sample files.
+# Diagnostico puntual de los archivos de muestra del cliente.
 # Run: uv run --script src/scripts/sample.py
-# uv resolves the dependencies above into a throwaway cached environment,
-# so nothing is installed into the project stack.
+# uv resuelve las dependencias de arriba en un entorno efimero cacheado,
+# asi que no se instala nada en el stack del proyecto.
 
 import difflib
 import re

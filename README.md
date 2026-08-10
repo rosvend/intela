@@ -1,1 +1,4 @@
-# Paymedia
+# Intela
+
+## Architecture
+
