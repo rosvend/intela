@@ -13,3 +13,15 @@ proposito.
 | Decision | Estado |
 | -------- | ------ |
 | [0001 Base de conocimiento en el repositorio](0001-base-de-conocimiento-en-el-repo.md) | Vigente |
+| [0002 Arquitectura hexagonal con frontera Clean](0002-arquitectura-hexagonal.md) | Vigente |
+| [0003 Monolito modular, no microservicios](0003-monolito-modular.md) | Vigente |
+| [0004 Los parametros normativos son dato versionado](0004-parametros-normativos-como-dato.md) | Vigente |
+| [0005 El calculo del reparto es una funcion pura y reproducible](0005-reparto-determinista-y-reproducible.md) | Vigente |
+| [0006 La trazabilidad es un asiento append-only](0006-trazabilidad-como-asiento-append-only.md) | Vigente |
+| [0007 Identificacion de obras en cascada, con cola manual](0007-identificacion-en-cascada-con-cola-manual.md) | Vigente |
+| [0008 El reparto es un flujo con compuertas humanas](0008-reparto-como-flujo-con-aprobaciones.md) | Vigente |
+| [0009 Stack de aplicacion: TypeScript y NestJS](0009-stack-typescript-nestjs.md) | Vigente |
+
+El diagrama que materializa `0002`, `0003`, `0008` y `0009` es `docs/PATIC2 - Arquitectura.drawio`.
+Que el diagrama cumpla lo que `0002` y `0003` prometen se comprueba con
+`uv run --script src/scripts/check_arquitectura.py`.

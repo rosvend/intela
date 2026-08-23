@@ -66,6 +66,22 @@ indice.
 
 ## Versiones
 
-Los reglamentos se versionan y se sustituyen. Distribucion va en IX (27-05-2026) y Tarifas en
-VI (30-06-2026). Un reparto historico se calculo con la version vigente en su momento, asi que
-al revisar calculos pasados hay que confirmar contra que version se hicieron.
+Los reglamentos se versionan y se sustituyen:
+
+| Documento | Version | Aprobado |
+| --------- | ------- | -------- |
+| Distribucion | IX | 2026-05-27 |
+| Tarifas | VI | 2026-06-30 |
+| Socios | V5 | sin fecha en el documento |
+| Anticipos a Afiliados | V7 | sin fecha en el documento |
+
+Un reparto historico se calculo con la version vigente en su momento, asi que al revisar calculos
+pasados hay que confirmar contra que version se hicieron. Cuando llegue una version nueva se
+**conserva la anterior**; el procedimiento esta en `docs/reglamentos/README.md`.
+
+## Por que el sistema quedo asi
+
+El reglamento dice **que** hay que hacer. Para **por que Intela lo modela como lo modela** — y que
+alternativas se descartaron y con que argumento — el registro esta en `docs/decisiones/`. Consultar
+ahi antes de proponer un cambio que parezca una mejora obvia: es probable que ya se haya
+considerado y rechazado por una razon que no se deduce del codigo.

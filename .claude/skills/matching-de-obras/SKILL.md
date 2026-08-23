@@ -1,6 +1,6 @@
 ---
 name: matching-de-obras
-description: Usar al trabajar en identificacion y resolucion de obras - cruzar reportes de uso (parrillas de TV, reportes OTT) contra el catalogo maestro, manejar IDs de fuente, alias, matching difuso de titulos, normalizacion, cola de resolucion manual u obras no identificadas (ONI).
+description: Usar al trabajar en identificacion y resolucion de obras - cruzar reportes de uso (parrillas de TV, reportes OTT) contra el catalogo maestro, manejar IDs de fuente, alias, matching difuso de titulos, normalizacion, umbrales de similitud, cola de resolucion manual u obras no identificadas (ONI). Tambien al elegir o calibrar un algoritmo de similitud, al decidir que hacer con una coincidencia dudosa, y al filtrar repertorio antes de matchear.
 ---
 
 # Matching e identificacion de obras
@@ -86,7 +86,40 @@ programa: noticieros y magazines de la parrilla casi con seguridad no son repert
 porque no tienen guionista en el sentido de `RD 7.1`. Sin ese filtro se generan ONI falsas y
 se diluye el valor punto.
 
+## El umbral es un parametro, y arranca conservador a proposito
+
+El umbral del escalon difuso es un **parametro normativo con vigencia y responsable**, igual que
+el resto (`0004-parametros-normativos-como-dato.md`). No es una constante que se ajusta en el
+codigo hasta que "se ve bien".
+
+Arranca **deliberadamente conservador**: con la muestra actual no hay forma de calibrarlo, asi que
+el sesgo por defecto es **mandar a la cola manual antes que decidir mal**. Un falso positivo paga a
+quien no corresponde, y `R-05` deja a REDES SGC fuera de las disputas entre coautores: el error no
+se corrige solo.
+
+Riesgo a vigilar: la tentacion de bajar el umbral para vaciar la cola. Reduce trabajo visible hoy y
+produce pagos incorrectos que aparecen como reclamaciones meses despues, cuando el dinero ya salio.
+Por eso cada resolucion automatica guarda **su puntaje**, y la tasa de reclamaciones por obra mal
+asignada se vigila contra el umbral que estaba vigente cuando se decidio.
+
+## El modulo no toca dinero
+
+`Identificacion` escribe alias y emite ONI. **No escribe titulares, no escribe porcentajes y no
+toca importes.** Los campos `Autor*`, `Guionista*` y `Director*` entran tipados como *evidencia de
+identificacion*; no existe camino desde una parrilla hasta un porcentaje de pago (`R-03`, `R-02`,
+`RD 7.3.3`).
+
+Cuando el volumen real llegue, un modelo de resolucion de entidades entra exactamente en el
+escalon 3, detras de `PuertoMotorDeSimilitud`, sin tocar el resto de la cascada. Hoy no hay con que
+entrenarlo: 59 y 49 filas sin solape temporal ni de catalogo no son un conjunto de entrenamiento, y
+una metrica calculada sobre eso seria falsa.
+Fuente: `0007-identificacion-en-cascada-con-cola-manual.md`
+
 ## Obras no identificadas
 
 Lo que no resuelva termina en ONI, con reglas propias: listado publico sin montos,
 prescripcion a 3 anos, reserva del dinero. Ver `R-18` a `R-21`.
+
+**Lo no identificado es un estado, no un fallo.** `RD 13.8` prevee explicitamente que haya obras no
+identificadas y define su tratamiento: son parte del funcionamiento normal. Bloquear el reparto
+hasta que todo este identificado contradice el reglamento.
