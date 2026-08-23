@@ -167,7 +167,12 @@ def split_sections(lines, expected_titles):
             if matches_expected_title(match.group(2), expected_titles[index]):
                 index += 1
                 sections.append(
-                    {"number": index, "title": expected_titles[index - 1], "lines": [], "pages": set()}
+                    {
+                        "number": index,
+                        "title": expected_titles[index - 1],
+                        "lines": [],
+                        "pages": set(),
+                    }
                 )
                 continue
         sections[-1]["lines"].append(content)
@@ -234,7 +239,9 @@ def write_index(target_dir, meta, sections, source_name):
         "| --- | --- | --- |",
     ]
     for section, filename in sections:
-        heading = f"{section['number']}. {section['title']}" if section["number"] else section["title"]
+        heading = (
+            f"{section['number']}. {section['title']}" if section["number"] else section["title"]
+        )
         rows.append(f"| {heading} | [{filename}]({filename}) | {page_range(section['pages'])} |")
 
     notas = meta.get("notas_extraccion", [])
@@ -258,13 +265,17 @@ def convert(source_name, meta):
         if not collapse_blanks(section["lines"]):
             continue
         filename = f"{section['number']:02d}-{slugify(section['title'])}.md"
-        (target_dir / filename).write_text(render_section(meta, section, source_name), encoding="utf-8")
+        (target_dir / filename).write_text(
+            render_section(meta, section, source_name), encoding="utf-8"
+        )
         written.append((section, filename))
 
     write_index(target_dir, meta, written, source_name)
     print(f"{meta['slug']}: {len(written)} sections")
     for section, filename in written:
-        heading = f"{section['number']}. {section['title']}" if section["number"] else section["title"]
+        heading = (
+            f"{section['number']}. {section['title']}" if section["number"] else section["title"]
+        )
         print(f"  {filename:<45} {heading}")
 
 

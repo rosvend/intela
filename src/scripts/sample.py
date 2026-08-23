@@ -16,9 +16,30 @@ import pandas as pd
 
 FILES_DIR = Path(__file__).resolve().parents[2] / "data" / "files"
 
-MONEY_HINTS = ("monto", "valor", "ingreso", "revenue", "amount", "royalt", "pago", "usd", "cop", "eur")
+MONEY_HINTS = (
+    "monto",
+    "valor",
+    "ingreso",
+    "revenue",
+    "amount",
+    "royalt",
+    "pago",
+    "usd",
+    "cop",
+    "eur",
+)
 USAGE_HINTS = ("stream", "duracion", "runtime", "reproduc", "playback", "visualiz")
-RIGHTS_HINTS = ("autor", "guionista", "director", "compositor", "editor", "titular", "distributor", "share", "split")
+RIGHTS_HINTS = (
+    "autor",
+    "guionista",
+    "director",
+    "compositor",
+    "editor",
+    "titular",
+    "distributor",
+    "share",
+    "split",
+)
 STANDARD_ID_HINTS = ("isrc", "iswc", "eidr", "ipi", "isan", "imdb")
 DATE_HINTS = ("fecha", "date", "year", "ano", "periodo", "period")
 TITLE_HINTS = ("titulo", "title", "name", "nombre")
@@ -73,7 +94,11 @@ def key_candidates(frame, profile):
 
 
 def id_columns(frame):
-    return [col for col in frame.columns if any(token.startswith("id") for token in normalize_text(col).split())]
+    return [
+        col
+        for col in frame.columns
+        if any(token.startswith("id") for token in normalize_text(col).split())
+    ]
 
 
 def grain_report(frame):

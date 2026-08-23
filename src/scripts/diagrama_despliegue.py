@@ -67,7 +67,9 @@ with Diagram(
             pg = PostgreSQL("postgres 16\nrepertorio, splits,\nparametros con vigencia")
             cola = PostgreSQL("cola\nRiver, mismo postgres\nuna transaccion por etapa")
             objetos = Storage("almacen-objetos\nMinIO / S3\nreportes crudos inmutables")
-            bitacora = Storage("bitacora append-only\ntabla en postgres sin UPDATE\nni DELETE, retencion 10 anos")
+            bitacora = Storage(
+                "bitacora append-only\ntabla en postgres sin UPDATE\nni DELETE, retencion 10 anos"
+            )
 
         observabilidad = Grafana("observabilidad\ndistinta de la bitacora")
 
