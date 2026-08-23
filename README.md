@@ -90,44 +90,51 @@ rompa algo que se decidio a proposito.
 | [0006](docs/decisiones/0006-trazabilidad-como-asiento-append-only.md) | La trazabilidad es un libro de asientos del dominio, no un log de aplicacion |
 | [0007](docs/decisiones/0007-identificacion-en-cascada-con-cola-manual.md) | Cascada de cuatro escalones contra el catalogo maestro, con cola manual al final |
 | [0008](docs/decisiones/0008-reparto-como-flujo-con-aprobaciones.md) | Dos maquinas de estado con compuertas de doble firma, no una con un `if` |
-| [0009](docs/decisiones/0009-stack-typescript-nestjs.md) | TypeScript y NestJS, con el nucleo libre de framework |
+| [0009](docs/decisiones/0009-stack-typescript-nestjs.md) | ~~TypeScript y NestJS~~ — **sustituida por 0010** |
+| [0010](docs/decisiones/0010-stack-go.md) | Go en el backend; la regla de dependencia pasa a ser cosa del compilador |
 
 ---
 
 ## Stack
 
-Decidido en [ADR 0009](docs/decisiones/0009-stack-typescript-nestjs.md). Un solo desplegable con
-tres puntos de entrada (`api`, `scheduler`, `worker`) desde el mismo build.
+Decidido en [ADR 0010](docs/decisiones/0010-stack-go.md), que sustituye a
+[0009](docs/decisiones/0009-stack-typescript-nestjs.md). Go en el backend, React en el frontend.
+Un solo binario por punto de entrada (`api`, `scheduler`, `worker`), como fija `0003`.
 
 | Capa | Tecnologia | Por que |
 | ---- | ---------- | ------- |
-| `domain/` | TypeScript + `decimal.js`, **sin framework** | La regla de dependencia de `0002` |
-| `application/` | Casos de uso, puertos como `interface` | Declara contratos; no sabe quien los implementa |
-| `infrastructure/` | NestJS 11, Drizzle ORM, PostgreSQL 16 | Los decoradores y el SQL viven aqui, no mas adentro |
-| Cola | `pg-boss` sobre el mismo postgres | `0003` quiere una transaccion local por etapa |
-| Planificador | `@nestjs/schedule` sobre `CalendarioDeDistribucion` | `0004`: no es dueno de las fechas |
+| `internal/dominio/` | Go + `shopspring/decimal` | El compilador prohibe importar `internal/` desde fuera |
+| `internal/aplicacion/` | Casos de uso; puertos como `interface` | El adaptador satisface la interfaz **sin importarla** |
+| `internal/infraestructura/` | `chi` o `net/http` estandar | Sin framework que quiera ser dueno de los handlers |
+| `cmd/{api,scheduler,worker}/` | Un `main` por punto de entrada | Es literalmente lo que pide `0003` |
+| Persistencia | `pgx` v5 + `sqlc`, PostgreSQL 16 | SQL primero; `NUMERIC` escanea directo a `decimal.Decimal` |
+| Cola | `River` sobre el mismo postgres | Encolado transaccional: una transaccion local por etapa |
+| Migraciones | `goose` | — |
+| Planificador | Temporizador sobre `CalendarioDeDistribucion` | `0004`: no es dueno de las fechas |
 | Similitud | `pg_trgm` + `unaccent` tras `PuertoMotorDeSimilitud` | `0007`: sustituible sin tocar la cascada |
 | Objetos | MinIO local con object-lock, S3 en produccion | `0005`: reportes crudos inmutables |
 | Frontend | React + TypeScript + Vite | Tres portales con RBAC por roles del reglamento |
-| Exportables | `exceljs`, `@react-pdf/renderer` | OE-6 pide PDF y Excel |
-| Pruebas | Vitest, `fast-check`, Testcontainers | El motor se prueba sin infraestructura |
-| Arquitectura | **`dependency-cruiser`** en CI | La mitigacion que `0002` y `0003` exigian |
-| Observabilidad | `pino` + OpenTelemetry | Separada de la bitacora, que es dominio |
-| Despliegue | `docker compose` | Lo exige `docs/context.md` |
+| Contratos | OpenAPI → `openapi-typescript` | El precio del cambio; ver abajo |
+| Exportables | `excelize`, `maroto` | OE-6 pide Excel y PDF |
+| Pruebas | `testing`, `testcontainers-go`, `rapid` | El motor se prueba sin infraestructura |
+| Frontera | El compilador, mas `depguard` en `golangci-lint` | Los ciclos de importacion **no compilan** |
+| Observabilidad | `log/slog` + OpenTelemetry | Separada de la bitacora, que es dominio |
+| Despliegue | Binario estatico, imagen distroless, `docker compose` | Lo exige `docs/context.md` |
 
-### Las tres consecuencias de elegir TypeScript
+### Que gana y que pierde este stack
 
-Estan razonadas en la ADR; en corto:
+Gana en la frontera, que es donde esta el riesgo del proyecto. Los ciclos de importacion son error
+de compilacion, `internal/` es una frontera del compilador, y un adaptador implementa un puerto sin
+nombrarlo. Las reglas de `0002` y `0003` dejan de depender de un fichero de configuracion que
+alguien puede debilitar con prisa.
 
-1. **No hay decimal nativo.** `decimal.js` y `NUMERIC(18,6)`, y el driver devuelve `numeric` como
-   **cadena, nunca `number`**. Un `parseFloat` en el camino no rompe nada visible: solo hace que
-   la cifra deje de ser reproducible.
-2. **No hay `rapidfuzz`.** El matching arranca con `pg_trgm`. El escalon difuso esta detras de un
-   puerto, asi que un servicio Python puede sustituirlo mas adelante.
-3. **NestJS empuja hacia dentro.** Sus decoradores no pueden alcanzar `domain/` ni `application/`,
-   y `dependency-cruiser` lo verifica en cada commit.
+Pierde los tipos compartidos entre la API y los portales, que era el argumento principal de `0009`.
+Ahora hace falta una especificacion OpenAPI y un paso de generacion, que corre en CI para que un
+contrato desactualizado rompa la construccion y no la ejecucion.
 
----
+No cambia nada en dos frentes: `shopspring/decimal` sigue siendo una dependencia, igual que lo era
+`decimal.js`, asi que el decimal exacto de `0005` no es una propiedad del lenguaje; y el matching
+difuso sigue siendo `pg_trgm` detras del puerto.
 
 ## Skills
 

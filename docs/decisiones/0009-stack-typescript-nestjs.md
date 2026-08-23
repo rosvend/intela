@@ -1,7 +1,14 @@
 # 0009 Stack de aplicacion: TypeScript y NestJS
 
 Fecha: 2026-08-22
-Estado: Vigente
+Estado: **Sustituida** por [0010 Stack de aplicacion: Go](0010-stack-go.md) el 2026-08-23
+
+> **Sustituida.** Un dia despues de escribirse aparecieron dos hechos que la invalidan: uno de
+> los desarrolladores ya trabaja en Go y es dueno de los adaptadores, las pruebas y el despliegue;
+> y `0003` pide tres puntos de entrada sobre un mismo binario, que en Go es el idioma nativo. El
+> razonamiento de abajo se conserva porque las alternativas que descarto —Python y Java— siguen
+> descartadas por las mismas razones, y porque el precio del cambio, perder los tipos compartidos
+> con el frontend, solo se entiende leyendo por que se habian elegido. Ver [0010](0010-stack-go.md).
 
 ## Contexto
 

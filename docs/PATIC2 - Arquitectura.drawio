@@ -561,7 +561,7 @@
         <mxCell id="p3-title" value="Intela &#183; Despliegue" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#232f3e;" vertex="1" parent="1">
           <mxGeometry x="60" y="22" width="1580" height="36" as="geometry" />
         </mxCell>
-        <mxCell id="p3-sub" value="Unica pagina con tecnologia concreta (ADR 0009). El nucleo de la pagina 1 no sabe nada de lo que hay aqui: cambiar cualquiera de estas cajas es cambiar un adaptador." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#666666;" vertex="1" parent="1">
+        <mxCell id="p3-sub" value="Unica pagina con tecnologia concreta (ADR 0010). El nucleo de la pagina 1 no sabe nada de lo que hay aqui: cambiar cualquiera de estas cajas es cambiar un adaptador." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#666666;" vertex="1" parent="1">
           <mxGeometry x="60" y="62" width="1580" height="22" as="geometry" />
         </mxCell>
 
@@ -572,23 +572,23 @@
         <mxCell id="p3-proxy" value="&lt;b&gt;reverse-proxy&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;TLS &#183; enrutado &#183; limites de tasa&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;align=center;verticalAlign=middle;fontColor=#1f3350;" vertex="1" parent="1">
           <mxGeometry x="100" y="170" width="250" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p3-dash" value="&lt;b&gt;dashboard (React + Vite)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;portal del titular, consola administrativa y portal de auditoria&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;align=center;verticalAlign=middle;fontColor=#1f3350;" vertex="1" parent="1">
+        <mxCell id="p3-dash" value="&lt;b&gt;dashboard (React + TS + Vite)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;portal del titular, consola administrativa y portal de auditoria&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;align=center;verticalAlign=middle;fontColor=#1f3350;" vertex="1" parent="1">
           <mxGeometry x="100" y="280" width="250" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p3-api" value="&lt;b&gt;api (NestJS)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;adaptadores HTTP + nucleo&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
+        <mxCell id="p3-api" value="&lt;b&gt;api (Go · chi)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;adaptadores HTTP + nucleo&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
           <mxGeometry x="100" y="390" width="250" height="80" as="geometry" />
         </mxCell>
         <mxCell id="p3-seed" value="&lt;b&gt;seed&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;datos de ejemplo: obras, titulares y reportes simulados (context.md)&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;fontSize=12;align=center;verticalAlign=middle;fontColor=#1f3350;" vertex="1" parent="1">
           <mxGeometry x="100" y="500" width="250" height="80" as="geometry" />
         </mxCell>
 
-        <mxCell id="p3-sched" value="&lt;b&gt;scheduler&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;lee el CalendarioDeDistribucion &#183; reserva semestral &#183; cortes 20-oct y 30-sep &#183; padron en marzo&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
+        <mxCell id="p3-sched" value="&lt;b&gt;scheduler&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;cmd/scheduler&lt;/font&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;lee el CalendarioDeDistribucion &#183; reserva semestral &#183; cortes 20-oct y 30-sep &#183; padron en marzo&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
           <mxGeometry x="400" y="170" width="250" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p3-wm" value="&lt;b&gt;worker-matching&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;cascada de identificacion de obras&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
+        <mxCell id="p3-wm" value="&lt;b&gt;worker-matching&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;cmd/worker&lt;/font&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;cascada de identificacion de obras&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
           <mxGeometry x="400" y="280" width="250" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p3-wr" value="&lt;b&gt;worker-reparto&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;valorizacion y liquidacion por lotes&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
+        <mxCell id="p3-wr" value="&lt;b&gt;worker-reparto&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;cmd/worker&lt;/font&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;valorizacion y liquidacion por lotes&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;fontColor=#3a5a37;" vertex="1" parent="1">
           <mxGeometry x="400" y="390" width="250" height="80" as="geometry" />
         </mxCell>
         <mxCell id="p3-obs" value="&lt;b&gt;observabilidad&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;logs, metricas y trazas &#183; distinta de la bitacora de auditoria&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;fontSize=12;align=center;verticalAlign=middle;fontColor=#555555;" vertex="1" parent="1">
@@ -598,7 +598,7 @@
         <mxCell id="p3-pg" value="&lt;b&gt;PostgreSQL 16&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;repertorio, titulares, splits, liquidaciones &#183; parametros normativos versionados con vigencia y organo aprobador&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=12;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center;verticalAlign=middle;fontColor=#432d57;" vertex="1" parent="1">
           <mxGeometry x="730" y="170" width="250" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="p3-cola" value="&lt;b&gt;cola (pg-boss sobre PostgreSQL)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;trabajos de matching y de reparto&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center;verticalAlign=middle;fontColor=#432d57;" vertex="1" parent="1">
+        <mxCell id="p3-cola" value="&lt;b&gt;cola (River sobre PostgreSQL)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;trabajos de matching y de reparto&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center;verticalAlign=middle;fontColor=#432d57;" vertex="1" parent="1">
           <mxGeometry x="730" y="310" width="250" height="80" as="geometry" />
         </mxCell>
         <mxCell id="p3-obj" value="&lt;b&gt;almacen-objetos (MinIO / S3)&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:9px'&gt;reportes crudos inmutables y versionados &#183; RUT y certificacion bancaria&lt;/font&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center;verticalAlign=middle;fontColor=#432d57;" vertex="1" parent="1">
@@ -608,7 +608,7 @@
           <mxGeometry x="730" y="530" width="250" height="110" as="geometry" />
         </mxCell>
 
-        <mxCell id="p3-note" value="&lt;b&gt;api, scheduler y los workers son el mismo binario con distinto punto de entrada.&lt;/b&gt; El nucleo se compila una vez; lo que cambia es que adaptador de entrada se activa. Escalar el reparto es levantar mas replicas de worker-reparto, no partir el dominio en servicios (ADR 0003)." style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;fontSize=12;align=left;verticalAlign=middle;spacingLeft=12;fontColor=#3a5a37;" vertex="1" parent="1">
+        <mxCell id="p3-note" value="&lt;b&gt;api, scheduler y los workers salen del mismo nucleo compilado, un binario por paquete de cmd/.&lt;/b&gt; El nucleo se compila una vez; lo que cambia es que adaptador de entrada se activa. Escalar el reparto es levantar mas replicas de worker-reparto, no partir el dominio en servicios (ADR 0003)." style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;fontSize=12;align=left;verticalAlign=middle;spacingLeft=12;fontColor=#3a5a37;" vertex="1" parent="1">
           <mxGeometry x="100" y="690" width="880" height="90" as="geometry" />
         </mxCell>
 
