@@ -42,7 +42,7 @@ ATTRS = {
 NODE_ATTRS = {"fontsize": "11"}
 
 with Diagram(
-    "Intela - topologia de despliegue (ADR 0003, ADR 0009)",
+    "Intela - topologia de despliegue (ADR 0003, ADR 0010)",
     filename=str(SALIDA),
     outformat="png",
     show=False,
@@ -55,17 +55,17 @@ with Diagram(
     with Cluster("docker compose"):
         proxy = Nginx("reverse-proxy\nTLS, limites de tasa")
 
-        with Cluster("mismo binario, tres puntos de entrada"):
-            api = Server("api\nNestJS + nucleo")
-            scheduler = Server("scheduler\nCalendarioDeDistribucion")
-            worker_m = Server("worker-matching\ncascada de identificacion")
-            worker_r = Server("worker-reparto\nvalorizacion y liquidacion")
+        with Cluster("mismo nucleo, un binario por paquete de cmd/"):
+            api = Server("api\ncmd/api - Go + chi\nadaptadores HTTP + nucleo")
+            scheduler = Server("scheduler\ncmd/scheduler\nlee CalendarioDeDistribucion")
+            worker_m = Server("worker-matching\ncmd/worker\ncascada de identificacion")
+            worker_r = Server("worker-reparto\ncmd/worker\nvalorizacion y liquidacion")
 
-        dashboard = Server("dashboard\nReact + Vite")
+        dashboard = Server("dashboard\nReact + TS + Vite\ntipos desde OpenAPI")
 
         with Cluster("estado"):
             pg = PostgreSQL("postgres 16\nrepertorio, splits,\nparametros con vigencia")
-            cola = PostgreSQL("cola\npg-boss, mismo postgres\nuna transaccion por etapa")
+            cola = PostgreSQL("cola\nRiver, mismo postgres\nuna transaccion por etapa")
             objetos = Storage("almacen-objetos\nMinIO / S3\nreportes crudos inmutables")
             bitacora = Storage("bitacora append-only\ntabla en postgres sin UPDATE\nni DELETE, retencion 10 anos")
 

@@ -20,8 +20,9 @@ proposito.
 | [0006 La trazabilidad es un asiento append-only](0006-trazabilidad-como-asiento-append-only.md) | Vigente |
 | [0007 Identificacion de obras en cascada, con cola manual](0007-identificacion-en-cascada-con-cola-manual.md) | Vigente |
 | [0008 El reparto es un flujo con compuertas humanas](0008-reparto-como-flujo-con-aprobaciones.md) | Vigente |
-| [0009 Stack de aplicacion: TypeScript y NestJS](0009-stack-typescript-nestjs.md) | Vigente |
+| [0009 Stack de aplicacion: TypeScript y NestJS](0009-stack-typescript-nestjs.md) | Sustituida por 0010 |
+| [0010 Stack de aplicacion: Go](0010-stack-go.md) | Vigente |
 
-El diagrama que materializa `0002`, `0003`, `0008` y `0009` es `docs/PATIC2 - Arquitectura.drawio`.
+El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/PATIC2 - Arquitectura.drawio`.
 Que el diagrama cumpla lo que `0002` y `0003` prometen se comprueba con
 `uv run --script src/scripts/check_arquitectura.py`.

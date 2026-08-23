@@ -22,6 +22,13 @@ Nunca sumar una columna de dinero por obra. Ningun reporte de uso trae importes.
 
 De donde sale la bolsa es otro modulo: ver `recaudo-y-tarifas`.
 
+**Con una excepcion, y es importante: lo anterior vale para el recaudo NACIONAL.** En el
+internacional el reporte de la sociedad hermana **si discrimina montos por titular**, y de hecho
+*es* la liquidacion: `RD 7.4` obliga a repartir exactamente en esa proporcion, sin que los montos
+puedan modificarse, asignarse a otra persona ni alterarse. Ahi no hay bolsa que ponderar ni
+valorizacion que calcular. Confundir los dos casos lleva a aplicar una ponderacion por tipo de obra
+a un reparto internacional, que es justo lo que el reglamento prohibe. Ver `proceso-y-aprobaciones`.
+
 ## Antes de escribir el calculo
 
 Leer `docs/dominio/formulas.md` completo. Tiene las cuatro formulas (TV, cine y teatro,
