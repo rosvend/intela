@@ -1,11 +1,17 @@
-# Etapa reutilizable: calidad y formato del codigo Python y del propio pipeline.
+# Etapa reutilizable: calidad y formato del codigo Python.
+#
+# Solo corre cuando el PR toca `*.py` o `ruff.toml` (ver `detect` en ci.yml).
+# El lint de los propios workflows vive en `quality-workflows.yml`, porque se
+# dispara por otra cosa.
 #
 # Los scripts de `src/scripts/` declaran sus dependencias en linea (PEP 723) y
 # se ejecutan con `uv`, segun CLAUDE.md. Aqui no se instala nada del proyecto:
 # `ruff` es una herramienta, no una dependencia, y corre via `uvx`.
 #
-# Solo se invoca desde `ci.yml`. Para probarla suelta: `gh workflow run` no
-# aplica a un workflow_call; usar `workflow_dispatch` en el orquestador.
+# ADR 0010 mantiene estos scripts en Python de forma permanente, aunque el
+# backend sea Go. Y uno de ellos, `check_arquitectura.py`, ES la comprobacion
+# de frontera que exigen los ADR 0002 y 0003: si se rompe en silencio, la
+# compuerta sigue en verde sin comprobar nada.
 
 name: Calidad Python
 
@@ -16,10 +22,6 @@ on:
         description: Version fijada de ruff, para que CI sea reproducible.
         type: string
         default: "0.16.4"
-      actionlint-version:
-        description: Tag de la imagen oficial de actionlint.
-        type: string
-        default: "1.7.12"
 
 permissions:
   contents: read
@@ -31,8 +33,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # `enable-cache` cachea ~/.cache/uv, que incluye las herramientas de `uvx`:
-      # a partir de la segunda corrida ruff no se vuelve a descargar.
       # setup-uv se fija a semver completo a proposito: a partir de v8 astral-sh
       # dejo de publicar el tag flotante de major, asi que `@v10` no resuelve.
       - uses: astral-sh/setup-uv@v10.0.1
@@ -50,23 +50,3 @@ jobs:
         env:
           RUFF: ${{ inputs.ruff-version }}
         run: uvx "ruff@${RUFF}" format --check --diff src/
-
-  actionlint:
-    name: actionlint (workflows)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # El pipeline tambien es codigo. actionlint valida sintaxis, expresiones,
-      # `needs` inexistentes y, con shellcheck integrado, los bloques `run`.
-      # Imagen oficial fijada por tag: sin `curl | bash`.
-      - name: Validar .github/workflows
-        env:
-          VERSION: ${{ inputs.actionlint-version }}
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/repo" \
-            -w /repo \
-            "rhysd/actionlint:${VERSION}" \
-            -color
