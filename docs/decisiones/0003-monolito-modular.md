@@ -2,6 +2,8 @@
 
 Fecha: 2026-08-10
 Estado: Vigente
+Modificada por: [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) — la mitigacion en CI sigue existiendo,
+pero la capa que recorre el diagrama avisa sin bloquear el merge.
 
 ## Contexto
 
@@ -31,7 +33,7 @@ cada llamada de red es una fuente de no determinismo y de fallo parcial que hay 
 
 Los contextos delimitados existen como modulos con frontera real: cada uno tiene su propio paquete,
 su modelo y su interfaz publica, y las dependencias permitidas entre ellos son las que dibuja la
-pagina 2 de `docs/PATIC2 - Arquitectura.drawio`. Lo que no existe es un limite de proceso entre
+pagina 2 de `docs/diagrams/PATIC2 - Arquitectura.drawio`. Lo que no existe es un limite de proceso entre
 ellos.
 
 Las reglas de dependencia son parte de la decision, no un detalle:

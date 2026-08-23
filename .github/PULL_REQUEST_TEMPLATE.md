@@ -53,7 +53,7 @@
 
 **Fronteras de modulo** — ADR [0003](../docs/decisiones/0003-monolito-modular.md)
 
-- [ ] Ninguna dependencia entre modulos que no este en la pagina 2 de `docs/PATIC2 - Arquitectura.drawio`
+- [ ] Ninguna dependencia entre modulos que no este en la pagina 2 de `docs/diagrams/PATIC2 - Arquitectura.drawio`
 - [ ] Si la dependencia entre modulos cambio, **el diagrama se actualizo en este mismo PR**
 - [ ] Ningun modulo escribe en la trazabilidad de otro (ADR [0006](../docs/decisiones/0006-trazabilidad-como-asiento-append-only.md))
 

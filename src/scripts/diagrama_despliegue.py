@@ -8,10 +8,10 @@
 #
 # Reparto de responsabilidades con el .drawio, para que no se contradigan:
 #
-#   docs/PATIC2 - Arquitectura.drawio, pagina 3  -> vista ANOTADA. Manda.
+#   docs/diagrams/PATIC2 - Arquitectura.drawio, pagina 3  -> vista ANOTADA. Manda.
 #       Lleva las citas al reglamento y las notas de decision que esta
 #       libreria no sabe renderizar.
-#   docs/despliegue.png (este script)            -> TOPOLOGIA de infraestructura.
+#   docs/diagrams/despliegue.png (este script)            -> TOPOLOGIA de infraestructura.
 #       Se regenera desde codigo y sigue al docker-compose.
 #
 # Si las dos discrepan, la pagina 3 es la correcta y este script esta viejo.
@@ -28,7 +28,7 @@ from diagrams.onprem.monitoring import Grafana
 from diagrams.onprem.network import Nginx
 
 ROOT = Path(__file__).resolve().parents[2]
-SALIDA = ROOT / "docs" / "despliegue"
+SALIDA = ROOT / "docs" / "diagrams" / "despliegue"
 
 ATTRS = {
     "fontsize": "12",

@@ -22,7 +22,9 @@ proposito.
 | [0008 El reparto es un flujo con compuertas humanas](0008-reparto-como-flujo-con-aprobaciones.md) | Vigente |
 | [0009 Stack de aplicacion: TypeScript y NestJS](0009-stack-typescript-nestjs.md) | Sustituida por 0010 |
 | [0010 Stack de aplicacion: Go](0010-stack-go.md) | Vigente |
+| [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) | Vigente |
 
-El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/PATIC2 - Arquitectura.drawio`.
+El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.
 Que el diagrama cumpla lo que `0002` y `0003` prometen se comprueba con
-`uv run --script src/scripts/check_arquitectura.py`.
+`uv run --script src/scripts/check_arquitectura.py`. Desde `0011` esa comprobacion **avisa pero no
+bloquea** el merge, y se retira cuando `depguard` corra sobre codigo Go.

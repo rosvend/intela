@@ -128,7 +128,7 @@ jobs:
             echo "| quality-workflows | \`$workflows\` | el PR toca \`.github/\` |"
             echo "| quality-go | \`$go\` | hay \`go.mod\` y el PR toca Go |"
             echo "| container | \`$docker\` | hay \`Dockerfile\` y el PR toca el contenedor |"
-            echo "| arquitectura | \`true\` | **siempre**: es la compuerta que exigen los ADR 0002 y 0003 |"
+            echo "| arquitectura | \`true\` | **siempre**. El diagrama avisa sin bloquear (ADR 0011); depguard si bloquea |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   nombre-de-rama:
@@ -201,8 +201,11 @@ jobs:
   # nada- que es exactamente el modo de fallo contra el que se puso. Cuesta 9
   # segundos; el ahorro no compensa el riesgo.
   #
-  # La capa de codigo (depguard) si sigue a los cambios de Go: solo tiene
-  # sentido cuando hay Go que mirar.
+  # Ojo con lo que esta etapa garantiza hoy: por el ADR 0011 la capa del
+  # diagrama AVISA pero no bloquea, asi que un `arquitectura` en verde no
+  # significa que el diagrama cumpla. Hay que leer el aviso. Lo que si bloquea
+  # es la capa de codigo (depguard), y esa sigue a los cambios de Go: solo
+  # tiene sentido cuando hay Go que mirar.
   arquitectura:
     name: Frontera Clean Architecture
     needs: detect

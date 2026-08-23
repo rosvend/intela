@@ -2,6 +2,8 @@
 
 Fecha: 2026-08-10
 Estado: Vigente
+Modificada por: [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) — la mitigacion en CI sigue existiendo,
+pero la capa que recorre el diagrama avisa sin bloquear el merge.
 
 ## Contexto
 
@@ -89,7 +91,7 @@ Positivas: se puede construir y probar todo el reparto sin base de datos, sin ba
 usando implementaciones en memoria de los puertos, lo cual importa porque **hoy faltan casi todos
 esos insumos**. La pregunta abierta de si Intela reemplaza a REDES-SYS y AVSYS o se integra con
 ellos deja de bloquear: es la eleccion de un adaptador. Y el diagrama de la pagina 1 de
-`docs/PATIC2 - Arquitectura.drawio` es verificable: se puede recorrer y comprobar que ninguna arista
+`docs/diagrams/PATIC2 - Arquitectura.drawio` es verificable: se puede recorrer y comprobar que ninguna arista
 sale del nucleo sin pasar por un puerto.
 
 A cambio: mas indireccion. Guardar una obra pasa por una interfaz en vez de llamar al ORM, y hay que
