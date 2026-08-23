@@ -87,6 +87,15 @@ Cubre `V`. **No cubre `DU`**: `episode_runtime` es la duracion del episodio, no 
 efectivamente visto, que es lo que pide `RD 9.7`. Multiplicar runtime por starts da una cota
 superior, no la magnitud pedida.
 
+## Padron IPI: data/IPI - form to report members to IPI 01-03-24.xls
+
+Fuera de `data/files/` y por tanto **fuera del alcance de `sample.py`**. Formato de reporte de
+miembros al sistema IPI de SUISA, citado en `identificadores.md` como la explicacion de por que IPI
+es el identificador de los autores. Sin perfilar: se desconoce su cobertura, si trae los IPI ya
+asignados o si es una plantilla en blanco.
+
+Accion: extender `sample.py` para que lo recorra, y solo entonces decidir que pedir al cliente.
+
 ## Cruce entre las dos fuentes
 
 Nombres de columna compartidos: **ninguno**.
@@ -113,4 +122,8 @@ Ordenado por impacto sobre el alcance.
 7. **Campos de episodio** en la parrilla de Caracol, para poder identificar capitulos de
    series.
 8. **Extractos del mismo periodo** en ambas fuentes, y de mayor volumen.
-9. Padron de socios y titulares administrados con numero **IPI**.
+9. Padron de socios y titulares administrados con numero **IPI**, poblado y al dia.
+   Matiz: `data/IPI - form to report members to IPI 01-03-24.xls` ya esta en el repositorio — es
+   el formato con el que se reportan miembros al sistema IPI de SUISA. **No esta perfilado**:
+   `src/scripts/sample.py` solo recorre `data/files/`. Antes de pedirlo al cliente hay que
+   perfilarlo y determinar que le falta.
