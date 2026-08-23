@@ -3,14 +3,6 @@
 Sistema de reconocimiento de obras y distribucion de ingresos por propiedad intelectual para
 **REDES SGC**, la sociedad de gestion colectiva de los escritores audiovisuales de Colombia
 (guionistas y libretistas).
-
-Proyecto Aplicado en TIC II, Universidad Pontificia Bolivariana, Ingenieria en Ciencia de Datos.
-Grupo 2: Emanuel Acevedo, Roy Sandoval, Miguel Legarda, Santiago Mendoza.
-
-**Estado: fase de analisis.** El stack esta decidido ([ADR 0009](docs/decisiones/0009-stack-typescript-nestjs.md))
-pero no implementado. Faltan datos del cliente sin los cuales el motor de reparto no puede
-construirse; ver [Bloqueos](#bloqueos).
-
 ---
 
 ## Lo que hay que entender antes de escribir codigo
