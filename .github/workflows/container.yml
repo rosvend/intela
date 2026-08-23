@@ -1,0 +1,53 @@
+# Etapa reutilizable: verificar que la imagen compila. No publica nada.
+#
+# Inerte hasta que exista un `Dockerfile`: `ci.yml` la invoca solo si `detect`
+# lo encuentra. El commit que traiga el Dockerfile la activa sola.
+#
+# Cuando llegue el Dockerfile multi-etapa de ADR 0010 (builder Go -> distroless
+# estatico, un target por cmd/{api,scheduler,worker}), esto se parametriza con
+# una `matrix` sobre `target` sin tocar el orquestador.
+
+name: Contenedor
+
+on:
+  workflow_call:
+    inputs:
+      contexto:
+        description: Contexto de build.
+        type: string
+        default: "."
+      dockerfile:
+        description: Ruta al Dockerfile.
+        type: string
+        default: "Dockerfile"
+      target:
+        description: Etapa de destino del build multi-etapa. Vacio = ultima etapa.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: docker build (sin publicar)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # `push: false` es el punto de esta etapa: se verifica que compila, no se
+      # publica. `load: true` deja la imagen en el daemon local, que es lo que
+      # permitira encadenar un smoke test aqui mismo mas adelante.
+      # El cache de GitHub Actions evita reconstruir capas entre corridas.
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.contexto }}
+          file: ${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          push: false
+          load: true
+          tags: intela:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,26 @@
+# Configuracion de ruff para los scripts de `src/scripts/`.
+#
+# No es configuracion de un paquete: los scripts declaran sus dependencias en
+# linea (PEP 723) y corren con `uv run --script`. Esto solo fija el criterio de
+# lint y formato que CI hace cumplir.
+
+# 100 columnas, el mismo ancho al que esta envuelta la prosa del repo
+# (README.md, docs/, ADR). Que el codigo y la documentacion respiren igual.
+line-length = 100
+
+# Los PEP 723 de src/scripts/ declaran `requires-python = ">=3.10"`.
+target-version = "py310"
+
+[lint]
+select = [
+    "E", # pycodestyle
+    "F", # pyflakes
+    "I", # isort: orden de imports
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+]
+
+[format]
+# Comillas dobles y sangria con espacios, que es lo que ya usan los scripts.
+quote-style = "double"
+indent-style = "space"

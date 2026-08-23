@@ -1,0 +1,176 @@
+# Orquestador de CI. Es el unico workflow con disparadores: las etapas viven en
+# workflows reutilizables (`workflow_call`) y se invocan desde aqui.
+#
+# El diseno resuelve dos problemas a la vez:
+#
+#   1. Hoy no existe codigo Go ni Dockerfile. Si sus checks se declararan
+#      obligatorios, GitHub los dejaria en "Expected - waiting for status to be
+#      reported" y ningun PR podria mergearse nunca. Por eso `detect` decide que
+#      etapas aplican y las que no aplican quedan en `skipped`.
+#
+#   2. El unico check obligatorio en la proteccion de `main` es el job `ci` del
+#      final, que agrega el resultado de todos los demas. Anadir una etapa es
+#      anadir un job y meterlo en su `needs`: la proteccion de rama no se toca.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Ningun job publica nada. Solo lectura del repositorio.
+permissions:
+  contents: read
+
+# Una corrida por referencia: un push nuevo al PR cancela la anterior.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detectar capas presentes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.capas.outputs.go }}
+      python: ${{ steps.capas.outputs.python }}
+      docker: ${{ steps.capas.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Existencia de fichero, no path-filter sobre los cambios: la pregunta es
+      # "¿existe esta capa?", no "¿se toco en este PR?". Un PR que solo cambia
+      # documentacion tambien tiene que verificar la frontera.
+      - name: Decidir que etapas aplican
+        id: capas
+        run: |
+          set -euo pipefail
+          existe() { [ -e "$1" ] && echo true || echo false; }
+
+          go=$(existe go.mod)
+          docker=$(existe Dockerfile)
+          python=false
+          if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q .; then
+            python=true
+          fi
+
+          {
+            echo "go=$go"
+            echo "python=$python"
+            echo "docker=$docker"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "| Capa | Presente | Etapa |"
+            echo "| ---- | -------- | ----- |"
+            echo "| Go (\`go.mod\`) | \`$go\` | quality-go, frontera en codigo |"
+            echo "| Python (\`*.py\`) | \`$python\` | quality-python |"
+            echo "| Contenedor (\`Dockerfile\`) | \`$docker\` | container |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  nombre-de-rama:
+    name: Convencion de nombre de rama
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # `github.head_ref` lo controla quien abre el PR, asi que entra por `env`
+      # y nunca interpolado dentro del script.
+      - name: Validar el prefijo
+        env:
+          RAMA: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          PATRON='^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$'
+
+          if printf '%s' "$RAMA" | grep -Eq "$PATRON"; then
+            echo "OK: '$RAMA' cumple la convencion."
+            exit 0
+          fi
+
+          cat >&2 <<EOF
+          La rama '$RAMA' no cumple la convencion de nombres.
+
+          Patron esperado:  $PATRON
+
+            feature/<descripcion-o-issue>   trabajo nuevo
+            fix/<descripcion>               correccion
+            hotfix/<descripcion>            correccion urgente sobre main
+            docs/<descripcion>              documentacion, ADR, reglamentos
+            chore/<descripcion>             tooling, CI, dependencias
+            refactor/<descripcion>          cambio interno sin cambio de comportamiento
+
+          Solo minusculas, digitos, punto, guion, guion bajo y barra.
+
+          Para renombrar sin perder el PR:
+
+            git branch -m feature/mi-cambio
+            git push origin -u feature/mi-cambio
+            git push origin --delete "$RAMA"
+
+          y vuelve a abrir el PR desde la rama renombrada.
+          EOF
+          exit 1
+
+  quality-python:
+    name: Calidad y formato (Python)
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    uses: ./.github/workflows/quality-python.yml
+
+  quality-go:
+    name: Calidad y formato (Go)
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    uses: ./.github/workflows/quality-go.yml
+
+  arquitectura:
+    name: Frontera Clean Architecture
+    needs: detect
+    uses: ./.github/workflows/arquitectura.yml
+    with:
+      verificar-codigo: ${{ needs.detect.outputs.go == 'true' }}
+
+  container:
+    name: Contenedor
+    needs: detect
+    if: needs.detect.outputs.docker == 'true'
+    uses: ./.github/workflows/container.yml
+
+  # Compuerta. Este es el UNICO check obligatorio en la proteccion de `main`.
+  # `if: always()` para que corra aunque una etapa falle o quede en `skipped`.
+  # Ojo: `skipped` NO bloquea; solo `failure` y `cancelled`.
+  ci:
+    name: ci
+    needs:
+      - detect
+      - nombre-de-rama
+      - quality-python
+      - quality-go
+      - arquitectura
+      - container
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resumen de etapas
+        env:
+          RESULTADOS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Resultado por etapa"
+            echo
+            echo "| Etapa | Resultado |"
+            echo "| ----- | --------- |"
+            printf '%s' "$RESULTADOS" \
+              | jq -r 'to_entries[] | "| `\(.key)` | \(.value.result) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verificar que ninguna etapa fallo
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::Al menos una etapa de CI fallo o fue cancelada. Ver el resumen." >&2
+          exit 1

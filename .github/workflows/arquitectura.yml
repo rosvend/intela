@@ -1,0 +1,77 @@
+# Etapa reutilizable: verificacion de la frontera Clean Architecture.
+#
+# Esta etapa no es opcional ni decorativa. Los ADR 0002 y 0003 declaran el mismo
+# riesgo asumido -que la frontera se erosione sola y nadie lo note hasta la
+# auditoria- y nombran la misma mitigacion: "un test de arquitectura en CI".
+# 0003 es explicito en lo que pasa si no existe: "si esa prueba no existe, esta
+# decision se degrada sola a monolito sin modulos".
+#
+# Dos capas, porque la frontera esta escrita en dos sitios:
+#
+#   Capa 1  el diagrama  -> siempre. `check_arquitectura.py` recorre las tres
+#           paginas de `docs/PATIC2 - Arquitectura.drawio`.
+#   Capa 2  el codigo    -> cuando exista `go.mod`. `depguard` traduce los ADR
+#           a reglas de importacion.
+#
+# La capa 2 corre AISLADA del lint de estilo (`--default=none --enable=depguard`)
+# a proposito: cuando algo se pone en rojo, el nombre del check tiene que decir
+# si se rompio una frontera o si sobra un espacio.
+
+name: Frontera Clean Architecture
+
+on:
+  workflow_call:
+    inputs:
+      verificar-codigo:
+        description: Ejecutar depguard sobre el codigo Go. Falso mientras no exista go.mod.
+        type: boolean
+        default: false
+      golangci-version:
+        description: Version fijada de golangci-lint.
+        type: string
+        default: "v2.13.1"
+
+permissions:
+  contents: read
+
+jobs:
+  diagrama:
+    name: Regla de dependencia y modulos (diagrama)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-suffix: arquitectura
+
+      # Exactamente el comando documentado en el README. No se reimplementa la
+      # comprobacion aqui: si se duplicara, las dos copias divergirian.
+      #
+      # Verifica: que ninguna arista salga del nucleo hacia un adaptador (0002),
+      # que el borde de salida sea adaptador -> puerto dibujado como realizacion,
+      # que todo puerto de entrada sea alcanzable, que los modulos de la pagina 2
+      # sean aciclicos (0003), y que ningun sistema externo quede sin consumir.
+      - name: check_arquitectura.py
+        run: uv run --script src/scripts/check_arquitectura.py
+
+  codigo:
+    name: Reglas de importacion (depguard)
+    if: inputs.verificar-codigo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Los ciclos de importacion ya son error de compilacion en Go (ADR 0010),
+      # asi que depguard cubre justo lo que el compilador no ve: quien puede
+      # nombrar a quien. Las reglas viven en .golangci.yml.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ inputs.golangci-version }}
+          args: --default=none --enable=depguard ./...
