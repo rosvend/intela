@@ -1,16 +1,25 @@
 # Orquestador de CI. Es el unico workflow con disparadores: las etapas viven en
 # workflows reutilizables (`workflow_call`) y se invocan desde aqui.
 #
-# El diseno resuelve dos problemas a la vez:
+# El diseno resuelve tres problemas:
 #
 #   1. Hoy no existe codigo Go ni Dockerfile. Si sus checks se declararan
 #      obligatorios, GitHub los dejaria en "Expected - waiting for status to be
-#      reported" y ningun PR podria mergearse nunca. Por eso `detect` decide que
-#      etapas aplican y las que no aplican quedan en `skipped`.
+#      reported" y ningun PR podria mergearse nunca.
 #
-#   2. El unico check obligatorio en la proteccion de `main` es el job `ci` del
+#   2. Un PR que solo toca Go no tiene por que lintar Python, ni al reves.
+#
+#   3. El unico check obligatorio en la proteccion de `main` es el job `ci` del
 #      final, que agrega el resultado de todos los demas. Anadir una etapa es
 #      anadir un job y meterlo en su `needs`: la proteccion de rama no se toca.
+#
+# Los tres los resuelve `detect` + la compuerta `ci`.
+#
+# IMPORTANTE: el filtrado por ruta va a nivel de JOB (`if:`), nunca a nivel de
+# disparador (`on.pull_request.paths`). Un workflow saltado por un filtro de
+# disparador no reporta NINGUN estado, asi que el check obligatorio `ci` se
+# quedaria esperando para siempre y `main` quedaria bloqueada. Aqui el workflow
+# siempre corre y siempre reporta; lo que se salta son los jobs de dentro.
 
 name: CI
 
@@ -22,54 +31,104 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Ningun job publica nada. Solo lectura del repositorio.
 permissions:
   contents: read
 
-# Una corrida por referencia: un push nuevo al PR cancela la anterior.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   detect:
-    name: Detectar capas presentes
+    name: Detectar que aplica
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # para listar los ficheros del PR
     outputs:
-      go: ${{ steps.capas.outputs.go }}
       python: ${{ steps.capas.outputs.python }}
+      workflows: ${{ steps.capas.outputs.workflows }}
+      go: ${{ steps.capas.outputs.go }}
       docker: ${{ steps.capas.outputs.docker }}
     steps:
       - uses: actions/checkout@v7
 
-      # Existencia de fichero, no path-filter sobre los cambios: la pregunta es
-      # "¿existe esta capa?", no "¿se toco en este PR?". Un PR que solo cambia
-      # documentacion tambien tiene que verificar la frontera.
+      # Una etapa aplica si se cumplen DOS cosas:
+      #
+      #   existe   la capa esta en el repo            (¿hay go.mod? ¿hay Dockerfile?)
+      #   toca     el PR modifica algo que la afecta  (solo en pull_request)
+      #
+      # En `push` a main y en `workflow_dispatch` no se filtra por ruta: corre
+      # todo lo que exista. Son eventos raros -merges y relanzamientos manuales-
+      # y ahi interesa la red completa, no el ahorro.
       - name: Decidir que etapas aplican
         id: capas
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          existe() { [ -e "$1" ] && echo true || echo false; }
 
-          go=$(existe go.mod)
-          docker=$(existe Dockerfile)
+          existe() { [ -e "$1" ]; }
+
+          # Los ficheros del PR salen de la API, no de un `git diff`: no depende
+          # de la profundidad del clon ni de que la base este fetcheada.
+          FILTRAR=false
+          CAMBIOS=""
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            FILTRAR=true
+            CAMBIOS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" \
+                        --paginate --jq '.[].filename')
+            echo "Ficheros modificados en el PR:"
+            printf '%s\n' "$CAMBIOS" | sed 's/^/  /'
+          else
+            echo "Evento '$GITHUB_EVENT_NAME': sin filtro por ruta, corre todo lo que exista."
+          fi
+
+          toca() {
+            [ "$FILTRAR" = "true" ] || return 0
+            printf '%s\n' "$CAMBIOS" | grep -Eq "$1"
+          }
+
+          # Cada patron incluye la configuracion de su propia etapa y el
+          # orquestador: aflojar una regla en ruff.toml o tocar ci.yml tiene que
+          # volver a disparar la etapa que gobierna, no colarse sin verificar.
+          P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|quality-python)\.yml$)'
+          P_WORKFLOWS='^\.github/'
+          P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|quality-go|arquitectura)\.yml$)'
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|^\.github/workflows/(ci|container)\.yml$)'
+
           python=false
-          if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q .; then
+          if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && toca "$P_PYTHON"; then
             python=true
           fi
 
+          workflows=false
+          if toca "$P_WORKFLOWS"; then workflows=true; fi
+
+          go=false
+          if existe go.mod && toca "$P_GO"; then go=true; fi
+
+          docker=false
+          if existe Dockerfile && toca "$P_DOCKER"; then docker=true; fi
+
           {
-            echo "go=$go"
             echo "python=$python"
+            echo "workflows=$workflows"
+            echo "go=$go"
             echo "docker=$docker"
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "| Capa | Presente | Etapa |"
-            echo "| ---- | -------- | ----- |"
-            echo "| Go (\`go.mod\`) | \`$go\` | quality-go, frontera en codigo |"
-            echo "| Python (\`*.py\`) | \`$python\` | quality-python |"
-            echo "| Contenedor (\`Dockerfile\`) | \`$docker\` | container |"
+            echo "### Etapas que aplican"
+            echo
+            echo "| Etapa | Aplica | Por que |"
+            echo "| ----- | ------ | ------- |"
+            echo "| quality-python | \`$python\` | hay \`*.py\` y el PR toca Python o \`ruff.toml\` |"
+            echo "| quality-workflows | \`$workflows\` | el PR toca \`.github/\` |"
+            echo "| quality-go | \`$go\` | hay \`go.mod\` y el PR toca Go |"
+            echo "| container | \`$docker\` | hay \`Dockerfile\` y el PR toca el contenedor |"
+            echo "| arquitectura | \`true\` | **siempre**: es la compuerta que exigen los ADR 0002 y 0003 |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   nombre-de-rama:
@@ -121,12 +180,29 @@ jobs:
     if: needs.detect.outputs.python == 'true'
     uses: ./.github/workflows/quality-python.yml
 
+  quality-workflows:
+    name: Calidad (workflows)
+    needs: detect
+    if: needs.detect.outputs.workflows == 'true'
+    uses: ./.github/workflows/quality-workflows.yml
+
   quality-go:
     name: Calidad y formato (Go)
     needs: detect
     if: needs.detect.outputs.go == 'true'
     uses: ./.github/workflows/quality-go.yml
 
+  # Sin `if`: corre SIEMPRE, tambien en un PR de solo documentacion.
+  #
+  # Es la unica etapa que no se filtra, y es deliberado. Los ADR 0002 y 0003
+  # declaran esta comprobacion como su mitigacion, y 0003 dice que pasa si no
+  # existe: "esta decision se degrada sola a monolito sin modulos". Un filtro
+  # mal escrito la apagaria en silencio -seguiria saliendo verde sin comprobar
+  # nada- que es exactamente el modo de fallo contra el que se puso. Cuesta 9
+  # segundos; el ahorro no compensa el riesgo.
+  #
+  # La capa de codigo (depguard) si sigue a los cambios de Go: solo tiene
+  # sentido cuando hay Go que mirar.
   arquitectura:
     name: Frontera Clean Architecture
     needs: detect
@@ -149,6 +225,7 @@ jobs:
       - detect
       - nombre-de-rama
       - quality-python
+      - quality-workflows
       - quality-go
       - arquitectura
       - container
