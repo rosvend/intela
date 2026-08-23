@@ -106,6 +106,7 @@ si hay que decidir a mano:
 - La solucion mas simple que cumpla el requisito (YAGNI, KISS). El sistema mueve dinero de
   terceros: la indireccion que no se justifica es deuda, no diseno.
 - Inyectar dependencias siempre que haya E/S, para que el nucleo se pruebe sin infraestructura.
+- Todo el código y arquitectura debe ser modular con componentes débilmente acoplados.
 
 ## Estado
 
