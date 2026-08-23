@@ -1,0 +1,11 @@
+---
+description: Motor de valorizacion y splits: funcion pura, decimal, snapshot congelado.
+globs: "{internal/dominio/reparto/**,internal/dominio/liquidacion/**,internal/aplicacion/**}"
+alwaysApply: false
+---
+
+# Reparto
+
+Funcion pura: bolsa + reportes ponderadores + snapshot de parametros + declaraciones → asignaciones. Sin E/S, sin reloj, sin azar. Internacional no se valoriza (RD 7.4). Sin 100% se retiene el total. Decimal exacto.
+
+Skill: `.cursor/skills/reparto-y-distribucion/SKILL.md`. Formulas en `docs/dominio/formulas.md`. ADR 0005.

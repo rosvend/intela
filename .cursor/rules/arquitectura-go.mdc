@@ -1,0 +1,18 @@
+---
+description: Frontera hexagonal Go de Intela (ADR 0002, 0003, 0010) y reglas de importacion.
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# Arquitectura Go
+
+- `internal/dominio/` anillo interior: entidades, invariantes, funciones puras. Sin E/S, sin `time.Now`, sin `rand`, sin `net/http`, sin `pgx`, sin River.
+- `internal/aplicacion/` casos de uso y `interface` de puertos. No importa `internal/infraestructura`.
+- `internal/infraestructura/` adaptadores. Satisfacen puertos sin importarlos.
+- `cmd/{api,scheduler,worker}/` cablea las dos orillas.
+
+Modulo: `github.com/rosvend/intela`. Dependencias entre contextos: Reparto lee Repertorio y Recaudo; esos no conocen a Reparto. Identificacion no toca dinero.
+
+Dinero: `shopspring/decimal`, nunca `float64`. Tiempo de dominio entra por `PuertoReloj`.
+
+Frontera vigilada por el compilador y `depguard` en `.golangci.yml`.

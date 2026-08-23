@@ -30,7 +30,7 @@ aplicada. El reglamento lo exige y la auditoria lo revisa.
 
 ## Donde esta el contexto
 
-Cargar solo lo que haga falta para la tarea.
+Cargar solo lo que haga falta para la tarea. Skills en `.cursor/skills/` (espejo de `.claude/skills/`).
 
 | Archivo | Para que |
 | ------- | -------- |
@@ -52,28 +52,40 @@ El dominio se nombra en **espanol**, igual que los reglamentos: `obra`, `titular
 `recaudo`, `declaracion`. No traducir estos terminos en modelos, tablas ni variables. El
 codigo de infraestructura puede ir en ingles.
 
+## Stack (ADR 0010)
+
+Go en el backend; React + TypeScript + Vite en el frontend. Un binario por `cmd/{api,scheduler,worker}`.
+
+- Nucleo: `internal/dominio/` (puro) y `internal/aplicacion/` (casos de uso y puertos).
+- Adaptadores: `internal/infraestructura/`.
+- Persistencia: PostgreSQL 16, `pgx` + `sqlc`, migraciones `goose`.
+- Cola: River sobre el mismo Postgres.
+- Objetos: MinIO local / S3, reportes crudos inmutables.
+- Contratos: `api/openapi.yaml` → tipos TS en el frontend.
+- Frontera: el compilador + `depguard` en `.golangci.yml`.
+
+Los scripts de `src/scripts/` siguen en Python (PEP 723).
+
 ## Estructura
 
 ```
-data/files/      muestras del cliente
-docs/dominio/    conocimiento destilado, con citas
-docs/reglamentos/ texto verbatim + PDF originales en fuente/
-src/scripts/     scripts sueltos, cada uno con su entorno PEP 723
+cmd/                 puntos de entrada
+internal/dominio/    entidades e invariantes, sin E/S
+internal/aplicacion/ casos de uso y puertos
+internal/infraestructura/
+web/                 portales React
+api/openapi.yaml     contrato HTTP
+docs/dominio/        conocimiento destilado, con citas
+docs/reglamentos/    texto verbatim + PDF originales en fuente/
+src/scripts/         scripts sueltos, cada uno con su entorno PEP 723
+.cursor/skills/      contexto de dominio cargado bajo demanda
 ```
 
-## Scripts
+## Arranque local
 
-Los scripts de `src/scripts/` declaran sus dependencias en linea (PEP 723) y se ejecutan con
-`uv run --script <archivo>`. Cada uno resuelve su propio entorno efimero, para no interferir
-con el stack de la aplicacion.
+```
+docker compose up --build
+```
 
-- `sample.py` diagnostico de los archivos de muestra
-- `convert_reglamentos.py` regenera `docs/reglamentos/` desde los PDF
-
-## Estado
-
-Stack vigente: [ADR 0010](docs/decisiones/0010-stack-go.md) (Go + React). El codigo vive en
-`cmd/`, `internal/` y `web/`. Antes de tratar las cifras seed como datos reales del cliente,
-leer los bloqueos al final de `docs/dominio/reglas-negocio.md` y `docs/dominio/fuentes-datos.md`.
-
-El equivalente para Cursor esta en `AGENTS.md` y `.cursor/skills/`.
+Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`. Usuarios seed:
+`admin@intela.local`, `titular@intela.local`, `auditor@intela.local` / `intela`.

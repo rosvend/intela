@@ -1,5 +1,8 @@
 # Intela
 
+Aplicacion (Go + React) y arranque con Compose: ver [`docs/ARRANQUE.md`](docs/ARRANQUE.md).
+`docker compose up --build` levanta API, worker, scheduler, Postgres, MinIO y el tablero.
+
 Sistema de reconocimiento de obras y distribucion de ingresos por propiedad intelectual para
 **REDES SGC**, la sociedad de gestion colectiva de los escritores audiovisuales de Colombia
 (guionistas y libretistas).

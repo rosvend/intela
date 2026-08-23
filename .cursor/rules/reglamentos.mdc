@@ -1,0 +1,11 @@
+---
+description: Como consultar reglamentos de REDES SGC por numeral exacto, sin RAG.
+globs: "{docs/**,internal/dominio/**}"
+alwaysApply: false
+---
+
+# Reglamentos
+
+Buscar por numeral en `docs/reglamentos/` (`grep`). No usar busqueda semantica. Jerarquia: PDF en `fuente/` > markdown verbatim > `docs/dominio/`.
+
+Skill: `.cursor/skills/consultar-reglamentos/SKILL.md`.

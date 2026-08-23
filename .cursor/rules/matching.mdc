@@ -1,0 +1,13 @@
+---
+description: Cascada de identificacion de obras contra el catalogo maestro y cola ONI.
+globs: "{internal/dominio/identificacion/**,internal/dominio/oni/**,internal/aplicacion/**}"
+alwaysApply: false
+---
+
+# Matching
+
+Cada fuente se cruza contra el catalogo maestro, nunca fuente contra fuente. Cascada: alias exacto → ID global (IDA/EIDR/IMDB) → difuso de titulo → cola manual (ONI).
+
+Creditos de parrilla = evidencia. Este modulo no escribe titulares, porcentajes ni dinero. Umbral difuso es parametro normativo, sesgo conservador.
+
+Skill: `.cursor/skills/matching-de-obras/SKILL.md`. ADR 0007.

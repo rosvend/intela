@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Intela app
+web/node_modules/
+web/dist/
+/bin/
+*.exe
+.DS_Store

@@ -1,0 +1,53 @@
+openapi: 3.0.3
+info:
+  title: Intela API
+  version: "0.1.0"
+paths:
+  /health:
+    get:
+      responses:
+        "200": { description: ok }
+  /api/sesiones:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                clave: { type: string }
+      responses:
+        "200": { description: token y usuario }
+  /api/me:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: usuario } }
+  /api/obras:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: catalogo } }
+  /api/reportes:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: carga } }
+  /api/oni:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: bandeja } }
+  /api/procesos:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: fsm } }
+    post:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: abrir } }
+  /api/asientos/{id}/explicar:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { "200": { description: linaje } }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

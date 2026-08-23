@@ -1,0 +1,43 @@
+:root {
+  --ink: #1c1915;
+  --paper: #f4efe6;
+  --panel: #fffdf8;
+  --line: #d9d0c3;
+  --accent: #6b3f2a;
+  --ok: #2f5d39;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100%; }
+body {
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  background: var(--paper);
+  color: var(--ink);
+}
+h1, h2 { font-weight: 600; letter-spacing: -0.02em; }
+a { color: var(--accent); }
+.layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+nav {
+  border-right: 1px solid var(--line);
+  padding: 1.5rem 1rem;
+  background: #efe8dc;
+}
+nav a { display: block; padding: 0.35rem 0; text-decoration: none; }
+main { padding: 1.5rem 2rem; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+th, td { text-align: left; padding: 0.4rem 0.3rem; border-bottom: 1px solid var(--line); }
+button, input, select {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  background: white;
+}
+button { cursor: pointer; background: var(--ink); color: var(--paper); }
+.muted { color: #6b645b; font-size: 0.9rem; }
+.login { max-width: 420px; margin: 12vh auto; }
+.badge { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }

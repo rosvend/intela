@@ -1,0 +1,13 @@
+---
+description: Ingesta y esquema canonico de reportes de uso (sin importes ni porcentajes).
+globs: "{internal/dominio/**,internal/aplicacion/**,internal/infraestructura/**,web/**}"
+alwaysApply: false
+---
+
+# Ingesta
+
+Ningun reporte de uso trae importes ni porcentajes de autor. Esquema canonico: fuente, version del crudo (SHA-256), IDs de origen sin normalizar, titulos, metrica de uso (duracion/emisiones, visualizaciones, taquilla), periodo.
+
+Originales inmutables en MinIO. Duplicados por huella de archivo y por registro. Rechazos con motivo, nunca silenciosos.
+
+Skill: `.cursor/skills/ingesta-y-normalizacion/SKILL.md`.

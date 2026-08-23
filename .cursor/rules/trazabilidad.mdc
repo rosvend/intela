@@ -1,0 +1,11 @@
+---
+description: Bitacora append-only de dominio vs logs de aplicacion. ExplicarCifra.
+globs: "{internal/dominio/bitacora/**,internal/aplicacion/**,web/**}"
+alwaysApply: false
+---
+
+# Trazabilidad
+
+Asientos append-only (sin UPDATE/DELETE). No son logs. Notificar devuelve acuse persistible (arranca prescripcion). Listado publico de ONI sin montos. `ExplicarCifra` recorre asientos.
+
+Skill: `.cursor/skills/trazabilidad-y-auditoria/SKILL.md`. ADR 0006.
