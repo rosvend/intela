@@ -41,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv se fija a semver completo a proposito: a partir de v8 astral-sh
+      # dejo de publicar el tag flotante de major, asi que `@v10` no resuelve.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-suffix: arquitectura

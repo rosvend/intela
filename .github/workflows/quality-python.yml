@@ -33,7 +33,9 @@ jobs:
 
       # `enable-cache` cachea ~/.cache/uv, que incluye las herramientas de `uvx`:
       # a partir de la segunda corrida ruff no se vuelve a descargar.
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv se fija a semver completo a proposito: a partir de v8 astral-sh
+      # dejo de publicar el tag flotante de major, asi que `@v10` no resuelve.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-suffix: quality-python
