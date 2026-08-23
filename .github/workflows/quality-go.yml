@@ -1,0 +1,72 @@
+# Etapa reutilizable: calidad y formato del backend Go.
+#
+# Inerte hasta que exista `go.mod`: `ci.yml` la invoca solo si `detect` la
+# encuentra. El primer commit que traiga el modulo la activa sin tocar ni el
+# pipeline ni la proteccion de rama.
+#
+# Aqui NO va depguard. Las reglas de frontera son de `arquitectura.yml`, para
+# que un check en rojo distinga romper la arquitectura de romper el estilo.
+
+name: Calidad Go
+
+on:
+  workflow_call:
+    inputs:
+      golangci-version:
+        description: Version fijada de golangci-lint.
+        type: string
+        default: "v2.13.1"
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: gofmt, vet, build, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # La version sale de `go.mod`: una sola fuente de verdad. `cache: true`
+      # cachea modulos y build cache indexados por el hash de `go.sum`.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Descargar modulos
+        run: go mod download
+
+      # `go mod tidy` no debe producir cambios: un go.sum desalineado rompe
+      # builds reproducibles.
+      - name: go mod tidy sin cambios
+        run: |
+          set -euo pipefail
+          go mod tidy
+          if ! git diff --exit-code --quiet go.mod go.sum; then
+            echo "::error::go.mod/go.sum desactualizados. Corre 'go mod tidy' y commitea." >&2
+            git diff -- go.mod go.sum
+            exit 1
+          fi
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          sin_formato=$(gofmt -l .)
+          if [ -n "$sin_formato" ]; then
+            echo "::error::Ficheros sin formatear. Corre 'gofmt -w .':" >&2
+            echo "$sin_formato" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Los tres puntos de entrada de ADR 0003 (api, scheduler, worker) tienen
+      # que compilar, no solo el paquete que alguien toco.
+      - name: go build
+        run: go build ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ inputs.golangci-version }}
