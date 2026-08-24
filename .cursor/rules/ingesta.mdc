@@ -10,4 +10,4 @@ Ningun reporte de uso trae importes ni porcentajes de autor. Esquema canonico: f
 
 Originales inmutables en MinIO. Duplicados por huella de archivo y por registro. Rechazos con motivo, nunca silenciosos.
 
-Skill: `.cursor/skills/ingesta-y-normalizacion/SKILL.md`.
+Skill: `.claude/skills/ingesta-y-normalizacion/SKILL.md`.

@@ -223,3 +223,8 @@ web/dist/
 /bin/
 *.exe
 .DS_Store
+
+# Frontend
+node_modules/
+web/dist/
+*.tsbuildinfo

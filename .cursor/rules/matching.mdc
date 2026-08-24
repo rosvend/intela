@@ -10,4 +10,4 @@ Cada fuente se cruza contra el catalogo maestro, nunca fuente contra fuente. Cas
 
 Creditos de parrilla = evidencia. Este modulo no escribe titulares, porcentajes ni dinero. Umbral difuso es parametro normativo, sesgo conservador.
 
-Skill: `.cursor/skills/matching-de-obras/SKILL.md`. ADR 0007.
+Skill: `.claude/skills/matching-de-obras/SKILL.md`. ADR 0007.

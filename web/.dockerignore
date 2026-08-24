@@ -1,0 +1,14 @@
+# Un build con contexto `web/` NO lee el .dockerignore de la raiz: necesita el
+# suyo. Sin este fichero, `COPY . .` arrastra node_modules -con sus enlaces
+# simbolicos rotos, que hacen fallar el build- y pisa lo que instalo `npm ci`
+# dentro de la imagen.
+
+node_modules/
+dist/
+.vite/
+
+Dockerfile          # nginx.conf NO se excluye: la etapa 2 lo copia
+.dockerignore
+
+*.log
+.DS_Store

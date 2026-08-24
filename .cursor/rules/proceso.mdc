@@ -8,4 +8,4 @@ alwaysApply: false
 
 Dos FSM distintas (nacional vs internacional), no un if. El calendario del dominio abre el proceso; el scheduler no es dueno de las fechas. Avanzar de etapa es la unica operacion que mueve el proceso. Doble firma con rol, instante y version.
 
-Skill: `.cursor/skills/proceso-y-aprobaciones/SKILL.md`. ADR 0008.
+Skill: `.claude/skills/proceso-y-aprobaciones/SKILL.md`. ADR 0008.

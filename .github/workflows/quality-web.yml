@@ -1,0 +1,60 @@
+# Etapa reutilizable: calidad del tablero React.
+#
+# No existia. El frontend entraba en el repo sin lint, sin comprobacion de
+# tipos, sin build verificado y sin lockfile: `ci.yml` no lo miraba en
+# absoluto porque no habia ni patron `P_WEB` ni etapa que invocar.
+#
+# Inerte hasta que exista `web/package.json`: `ci.yml` la invoca solo si
+# `detect` lo encuentra, igual que las demas.
+
+name: Calidad Web
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Version de Node.
+        type: string
+        default: "22"
+      directorio:
+        description: Raiz del proyecto de frontend.
+        type: string
+        default: "web"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  web:
+    name: lint, tipos, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.directorio }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.directorio }}/package-lock.json
+
+      # `npm ci` -no `npm install`- porque falla si el lockfile no cuadra con
+      # package.json. Esa comprobacion ES el punto: sin ella, dos builds del
+      # mismo commit pueden traer dependencias distintas.
+      - name: Instalar desde el lockfile
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Comprobacion de tipos
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

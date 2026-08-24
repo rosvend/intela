@@ -30,7 +30,7 @@ aplicada. El reglamento lo exige y la auditoria lo revisa.
 
 ## Donde esta el contexto
 
-Cargar solo lo que haga falta para la tarea. Skills en `.cursor/skills/` (espejo de `.claude/skills/`).
+Cargar solo lo que haga falta para la tarea. Skills en `.claude/skills/`. Cursor las carga desde ahi via `.cursor/rules/*.mdc`; no hay copia aparte.
 
 | Archivo | Para que |
 | ------- | -------- |
@@ -78,7 +78,8 @@ api/openapi.yaml     contrato HTTP
 docs/dominio/        conocimiento destilado, con citas
 docs/reglamentos/    texto verbatim + PDF originales en fuente/
 src/scripts/         scripts sueltos, cada uno con su entorno PEP 723
-.cursor/skills/      contexto de dominio cargado bajo demanda
+.claude/skills/      contexto de dominio cargado bajo demanda
+.cursor/rules/       punteros para Cursor a las skills de arriba
 ```
 
 ## Arranque local
@@ -87,5 +88,8 @@ src/scripts/         scripts sueltos, cada uno con su entorno PEP 723
 docker compose up --build
 ```
 
-Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`. Usuarios seed:
-`admin@intela.local`, `titular@intela.local`, `auditor@intela.local` / `intela`.
+Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`.
+
+El arranque no siembra usuarios ni aplica migraciones: las migraciones son de
+`goose` y el seed es un comando aparte, los dos pendientes del PR de
+persistencia. Detalle y variables de entorno en [`docs/ARRANQUE.md`](docs/ARRANQUE.md).

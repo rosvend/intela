@@ -49,7 +49,9 @@ jobs:
       python: ${{ steps.capas.outputs.python }}
       workflows: ${{ steps.capas.outputs.workflows }}
       go: ${{ steps.capas.outputs.go }}
+      web: ${{ steps.capas.outputs.web }}
       docker: ${{ steps.capas.outputs.docker }}
+      docker_web: ${{ steps.capas.outputs.docker_web }}
     steps:
       - uses: actions/checkout@v7
 
@@ -96,7 +98,14 @@ jobs:
           P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|quality-python)\.yml$)'
           P_WORKFLOWS='^\.github/'
           P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|quality-go|arquitectura)\.yml$)'
-          P_DOCKER='(^Dockerfile|^\.dockerignore$|^\.github/workflows/(ci|container)\.yml$)'
+          P_WEB='(^web/|^\.github/workflows/(ci|quality-web)\.yml$)'
+
+          # Ojo con el anclaje. `^Dockerfile` NO casa `web/Dockerfile`, asi que
+          # la imagen del tablero no se construia nunca: entraba en el repo sin
+          # que nadie comprobara que compila. Van separados porque son dos
+          # contextos de build distintos.
+          P_DOCKER='(^Dockerfile$|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container)\.yml$)'
+          P_DOCKER_WEB='(^web/|^\.github/workflows/(ci|container)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && toca "$P_PYTHON"; then
@@ -109,14 +118,22 @@ jobs:
           go=false
           if existe go.mod && toca "$P_GO"; then go=true; fi
 
+          web=false
+          if existe web/package.json && toca "$P_WEB"; then web=true; fi
+
           docker=false
           if existe Dockerfile && toca "$P_DOCKER"; then docker=true; fi
+
+          docker_web=false
+          if existe web/Dockerfile && toca "$P_DOCKER_WEB"; then docker_web=true; fi
 
           {
             echo "python=$python"
             echo "workflows=$workflows"
             echo "go=$go"
+            echo "web=$web"
             echo "docker=$docker"
+            echo "docker_web=$docker_web"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -127,7 +144,9 @@ jobs:
             echo "| quality-python | \`$python\` | hay \`*.py\` y el PR toca Python o \`ruff.toml\` |"
             echo "| quality-workflows | \`$workflows\` | el PR toca \`.github/\` |"
             echo "| quality-go | \`$go\` | hay \`go.mod\` y el PR toca Go |"
+            echo "| quality-web | \`$web\` | hay \`web/package.json\` y el PR toca el tablero |"
             echo "| container | \`$docker\` | hay \`Dockerfile\` y el PR toca el contenedor |"
+            echo "| container-web | \`$docker_web\` | hay \`web/Dockerfile\` y el PR toca el tablero |"
             echo "| arquitectura | \`true\` | **siempre**. El diagrama avisa sin bloquear (ADR 0011); depguard si bloquea |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -192,6 +211,12 @@ jobs:
     if: needs.detect.outputs.go == 'true'
     uses: ./.github/workflows/quality-go.yml
 
+  quality-web:
+    name: Calidad (tablero React)
+    needs: detect
+    if: needs.detect.outputs.web == 'true'
+    uses: ./.github/workflows/quality-web.yml
+
   # Sin `if`: corre SIEMPRE, tambien en un PR de solo documentacion.
   #
   # Es la unica etapa que no se filtra, y es deliberado. Los ADR 0002 y 0003
@@ -214,10 +239,19 @@ jobs:
       verificar-codigo: ${{ needs.detect.outputs.go == 'true' }}
 
   container:
-    name: Contenedor
+    name: Contenedor (backend)
     needs: detect
     if: needs.detect.outputs.docker == 'true'
     uses: ./.github/workflows/container.yml
+
+  container-web:
+    name: Contenedor (tablero)
+    needs: detect
+    if: needs.detect.outputs.docker_web == 'true'
+    uses: ./.github/workflows/container.yml
+    with:
+      contexto: web
+      dockerfile: web/Dockerfile
 
   # Compuerta. Este es el UNICO check obligatorio en la proteccion de `main`.
   # `if: always()` para que corra aunque una etapa falle o quede en `skipped`.
@@ -230,8 +264,10 @@ jobs:
       - quality-python
       - quality-workflows
       - quality-go
+      - quality-web
       - arquitectura
       - container
+      - container-web
     if: always()
     runs-on: ubuntu-latest
     steps:

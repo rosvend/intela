@@ -1,0 +1,45 @@
+# Contexto de build. Sin esto, `COPY . .` mete .git (~10 MB), los .xlsx del
+# cliente y los PDF de los reglamentos en cada imagen: build mas lento, capas
+# mas gordas, y datos de cliente dentro de un artefacto que se publica.
+
+.git
+.github
+.gitignore
+.gitattributes
+
+# Datos del cliente. No tienen nada que hacer en una imagen.
+data/
+
+# Base de conocimiento: se lee en el repo, no en el contenedor.
+docs/
+*.md
+!README.md
+
+# Contexto para agentes de codigo.
+.claude/
+.cursor/
+.agents/
+AGENTS.md
+skills-lock.json
+
+# Artefactos de otras etapas.
+web/node_modules/
+web/dist/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+src/scripts/
+
+# Configuracion de herramientas que no interviene en el build.
+.golangci.yml
+ruff.toml
+docker-compose.yml
+deploy/
+Makefile
+
+# Salidas locales.
+*.log
+/out/
+/tmp/

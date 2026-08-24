@@ -8,4 +8,4 @@ alwaysApply: false
 
 Asientos append-only (sin UPDATE/DELETE). No son logs. Notificar devuelve acuse persistible (arranca prescripcion). Listado publico de ONI sin montos. `ExplicarCifra` recorre asientos.
 
-Skill: `.cursor/skills/trazabilidad-y-auditoria/SKILL.md`. ADR 0006.
+Skill: `.claude/skills/trazabilidad-y-auditoria/SKILL.md`. ADR 0006.

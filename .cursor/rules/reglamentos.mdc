@@ -8,4 +8,4 @@ alwaysApply: false
 
 Buscar por numeral en `docs/reglamentos/` (`grep`). No usar busqueda semantica. Jerarquia: PDF en `fuente/` > markdown verbatim > `docs/dominio/`.
 
-Skill: `.cursor/skills/consultar-reglamentos/SKILL.md`.
+Skill: `.claude/skills/consultar-reglamentos/SKILL.md`.

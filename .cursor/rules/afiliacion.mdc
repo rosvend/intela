@@ -8,4 +8,4 @@ alwaysApply: false
 
 Preguntar "estaba afiliado entonces", no "es afiliado ahora". Solo Socios piden anticipo. Recoupment en liquidacion, no en valorizacion. IPI identifica personas; IDA identifica obras.
 
-Skill: `.cursor/skills/afiliacion-y-anticipos/SKILL.md`.
+Skill: `.claude/skills/afiliacion-y-anticipos/SKILL.md`.
