@@ -35,11 +35,11 @@ func main() {
 		log.Fatal("seed: ", err)
 	}
 	svc := &aplicacion.Servicio{
-		Repo: store,
+		Repo:  store,
 		Reloj: postgres.RelojReal{},
-		Obj: postgres.Disco{Dir: getenv("OBJECT_DIR", "/tmp/intela-objetos")},
+		Obj:   postgres.Disco{Dir: getenv("OBJECT_DIR", "/tmp/intela-objetos")},
 		Notif: postgres.NotifLog{},
-		Sim: postgres.SimLocal{S: store},
+		Sim:   postgres.SimLocal{S: store},
 	}
 	api := &httpapi.API{Svc: svc, Repo: store}
 	addr := getenv("HTTP_ADDR", ":8080")

@@ -18,11 +18,11 @@ import (
 )
 
 type Servicio struct {
-	Repo   Repositorios
-	Reloj  Reloj
-	Obj    AlmacenObjetos
-	Notif  Notificador
-	Sim    Similitud
+	Repo  Repositorios
+	Reloj Reloj
+	Obj   AlmacenObjetos
+	Notif Notificador
+	Sim   Similitud
 }
 
 func (s *Servicio) Login(ctx context.Context, email, clave string) (token string, u Usuario, err error) {
@@ -67,7 +67,7 @@ func (s *Servicio) CargarReporte(ctx context.Context, actor Usuario, fuente, per
 	_ = s.Repo.Asentar(ctx, Asiento{
 		ID: "as-" + reporteID, Hecho: "ingesta.reporte", RefTipo: "reporte", RefID: reporteID,
 		Payload: fmt.Sprintf(`{"fuente":%q,"sha256":%q,"registros":%d}`, fuente, sha, len(usos)),
-		Cuando: s.Reloj.Ahora(),
+		Cuando:  s.Reloj.Ahora(),
 	})
 	_ = s.Repo.Encolar(ctx, "identificar", reporteID)
 	return reporteID, len(usos), nil
@@ -127,19 +127,19 @@ func parsearCSV(reporteID, fuente string, raw []byte) ([]UsoPersistido, error) {
 			em = 1
 		}
 		out = append(out, UsoPersistido{
-			ID: fmt.Sprintf("%s-%d", reporteID, i+1),
+			ID:        fmt.Sprintf("%s-%d", reporteID, i+1),
 			ReporteID: reporteID, Fuente: fuente, Titulo: titulo,
-			IDsFuente: col(row, "id_ficha", "show_id", "netflix_id", "id"),
-			Modalidad: reparto.Modalidad(mod),
-			TipoObra: col(row, "tipo_obra", "tipo", "content_type"),
-			DuracionMin: dec("duracion", "duracion_min", "duration"),
-			Emisiones: em,
-			Rating: dec("rating"),
-			Taquilla: dec("taquilla"),
-			Vistas: dec("vistas", "stream_starts", "v"),
+			IDsFuente:     col(row, "id_ficha", "show_id", "netflix_id", "id"),
+			Modalidad:     reparto.Modalidad(mod),
+			TipoObra:      col(row, "tipo_obra", "tipo", "content_type"),
+			DuracionMin:   dec("duracion", "duracion_min", "duration"),
+			Emisiones:     em,
+			Rating:        dec("rating"),
+			Taquilla:      dec("taquilla"),
+			Vistas:        dec("vistas", "stream_starts", "v"),
 			MinutosVistos: dec("minutos_vistos", "du"),
-			PB: dec("pb"),
-			ONI: true, Escalon: "pendiente",
+			PB:            dec("pb"),
+			ONI:           true, Escalon: "pendiente",
 		})
 	}
 	return out, nil
@@ -168,7 +168,7 @@ func (s *Servicio) IdentificarPendientes(ctx context.Context) (int, error) {
 		_ = s.Repo.Asentar(ctx, Asiento{
 			ID: "as-id-" + u.ID, Hecho: "identificacion.match", RefTipo: "uso", RefID: u.ID,
 			Payload: fmt.Sprintf(`{"escalon":%q,"obra_id":%q,"oni":%v,"puntaje":%s}`, res.Escalon, res.ObraID, res.ONI, res.Puntaje.String()),
-			Cuando: s.Reloj.Ahora(),
+			Cuando:  s.Reloj.Ahora(),
 		})
 		n++
 	}

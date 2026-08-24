@@ -11,10 +11,10 @@ import (
 type Modalidad string
 
 const (
-	TV     Modalidad = "tv"
-	Cine   Modalidad = "cine"
-	OTT    Modalidad = "ott"
-	Hotel  Modalidad = "hotel"
+	TV    Modalidad = "tv"
+	Cine  Modalidad = "cine"
+	OTT   Modalidad = "ott"
+	Hotel Modalidad = "hotel"
 )
 
 type Snapshot struct {
@@ -33,16 +33,16 @@ type Snapshot struct {
 }
 
 type Uso struct {
-	ObraID     string
-	Modalidad  Modalidad
-	TipoObra   string
-	DuracionMin decimal.Decimal
-	Emisiones  int64
-	Rating     decimal.Decimal
-	Taquilla   decimal.Decimal
-	Vistas     decimal.Decimal
+	ObraID        string
+	Modalidad     Modalidad
+	TipoObra      string
+	DuracionMin   decimal.Decimal
+	Emisiones     int64
+	Rating        decimal.Decimal
+	Taquilla      decimal.Decimal
+	Vistas        decimal.Decimal
 	MinutosVistos decimal.Decimal
-	PB         decimal.Decimal
+	PB            decimal.Decimal
 }
 
 type Bolsa struct {
@@ -53,11 +53,11 @@ type Bolsa struct {
 }
 
 type LineaObra struct {
-	ObraID     string
-	Puntos     decimal.Decimal
-	Importe    decimal.Decimal
-	Retenida   bool
-	Motivo     string
+	ObraID   string
+	Puntos   decimal.Decimal
+	Importe  decimal.Decimal
+	Retenida bool
+	Motivo   string
 }
 
 type LineaTitular struct {

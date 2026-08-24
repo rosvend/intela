@@ -15,7 +15,7 @@ import (
 )
 
 type API struct {
-	Svc *aplicacion.Servicio
+	Svc  *aplicacion.Servicio
 	Repo aplicacion.Repositorios
 }
 
@@ -120,83 +120,128 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) { writeJSON(w, user(r))
 
 func (a *API) obras(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.ListarObras(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) oni(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.ListarONI(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) resolverONI(w http.ResponseWriter, r *http.Request) {
-	var in struct{ ObraID string `json:"obra_id"` }
+	var in struct {
+		ObraID string `json:"obra_id"`
+	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	if err := a.Svc.ResolverONI(r.Context(), user(r), chi.URLParam(r, "id"), in.ObraID); err != nil {
-		writeErr(w, err, 400); return
+		writeErr(w, err, 400)
+		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
 }
 func (a *API) cargar(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(20 << 20); err != nil { writeErr(w, err, 400); return }
+	if err := r.ParseMultipartForm(20 << 20); err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	fuente := r.FormValue("fuente")
 	periodo := r.FormValue("periodo")
 	f, h, err := r.FormFile("archivo")
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	defer f.Close()
 	id, n, err := a.Svc.CargarReporte(r.Context(), user(r), fuente, periodo, h.Filename, f)
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	_, _ = a.Svc.IdentificarPendientes(r.Context())
 	writeJSON(w, map[string]any{"reporte_id": id, "registros": n})
 }
 func (a *API) bolsas(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.ListarBolsas(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) procesos(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.ListarProcesos(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) abrir(w http.ResponseWriter, r *http.Request) {
 	var in struct{ BolsaID, Circuito string }
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	p, err := a.Svc.AbrirProceso(r.Context(), user(r), in.BolsaID, in.Circuito)
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	writeJSON(w, p)
 }
 func (a *API) calcular(w http.ResponseWriter, r *http.Request) {
 	res, err := a.Svc.Calcular(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	writeJSON(w, res)
 }
 func (a *API) firmar(w http.ResponseWriter, r *http.Request) {
 	p, err := a.Svc.Firmar(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	writeJSON(w, p)
 }
 func (a *API) avanzar(w http.ResponseWriter, r *http.Request) {
 	p, err := a.Svc.Avanzar(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	writeJSON(w, p)
 }
 func (a *API) rechazar(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Motivo string }
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	p, err := a.Svc.Rechazar(r.Context(), user(r), chi.URLParam(r, "id"), in.Motivo)
-	if err != nil { writeErr(w, err, 400); return }
+	if err != nil {
+		writeErr(w, err, 400)
+		return
+	}
 	writeJSON(w, p)
 }
 func (a *API) resultado(w http.ResponseWriter, r *http.Request) {
 	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 404); return }
+	if err != nil {
+		writeErr(w, err, 404)
+		return
+	}
 	writeJSON(w, res)
 }
 func (a *API) liquidaciones(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
 	if u.Rol == "titular" && u.TitularID != "" {
 		res, proc, err := a.Repo.LiquidacionesDeTitular(r.Context(), u.TitularID)
-		if err != nil { writeErr(w, err, 500); return }
+		if err != nil {
+			writeErr(w, err, 500)
+			return
+		}
 		writeJSON(w, map[string]any{"proceso_id": proc, "resultado": res})
 		return
 	}
@@ -204,7 +249,10 @@ func (a *API) liquidaciones(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) xlsx(w http.ResponseWriter, r *http.Request) {
 	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 404); return }
+	if err != nil {
+		writeErr(w, err, 404)
+		return
+	}
 	f := excelize.NewFile()
 	_ = f.SetSheetName("Sheet1", "liquidacion")
 	_ = f.SetCellValue("liquidacion", "A1", "obra")
@@ -226,7 +274,10 @@ func (a *API) xlsx(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) pdf(w http.ResponseWriter, r *http.Request) {
 	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 404); return }
+	if err != nil {
+		writeErr(w, err, 404)
+		return
+	}
 	var b strings.Builder
 	b.WriteString("%PDF-1.1\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
 	txt := "Intela liquidacion\n"
@@ -244,32 +295,49 @@ func (a *API) pdf(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) asientos(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.Asientos(r.Context(), r.URL.Query().Get("tipo"), r.URL.Query().Get("id"))
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) explicar(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Svc.ExplicarCifra(r.Context(), chi.URLParam(r, "id"))
-	if err != nil { writeErr(w, err, 404); return }
+	if err != nil {
+		writeErr(w, err, 404)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) parametros(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.FilasParametros(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) alertas(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.Alertas(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) anticipos(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.Anticipos(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
 func (a *API) reclamaciones(w http.ResponseWriter, r *http.Request) {
 	v, err := a.Repo.Reclamaciones(r.Context())
-	if err != nil { writeErr(w, err, 500); return }
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
 	writeJSON(w, v)
 }
-

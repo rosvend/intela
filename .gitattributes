@@ -1,0 +1,31 @@
+# Normalizacion de fin de linea.
+#
+# Sin esto, `core.autocrlf=true` -el valor por defecto de Git for Windows-
+# convierte los .go a CRLF al hacer checkout. `gofmt -l .` los lista todos y
+# `make verificar` falla en un clon recien hecho, sin que nadie haya tocado
+# una linea. El equipo mezcla Windows, macOS y Linux, asi que el arbol de
+# trabajo se fuerza a LF en todas partes.
+
+* text=auto eol=lf
+
+*.go        text eol=lf
+*.mod       text eol=lf
+*.sum       text eol=lf
+*.sql       text eol=lf
+*.py        text eol=lf
+*.sh        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+Makefile    text eol=lf
+Dockerfile  text eol=lf
+
+# Binarios: ninguna conversion, y no aparecen como diff en las revisiones.
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.docx  binary
+*.xlsx  binary

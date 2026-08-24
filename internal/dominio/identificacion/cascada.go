@@ -12,10 +12,10 @@ import (
 
 // Resultado de la cascada ADR 0007. Identificacion no toca dinero.
 type Resultado struct {
-	ObraID   string
-	Escalon  string
-	Puntaje  decimal.Decimal
-	ONI      bool
+	ObraID    string
+	Escalon   string
+	Puntaje   decimal.Decimal
+	ONI       bool
 	Evidencia string
 }
 

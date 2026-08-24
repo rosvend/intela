@@ -12,16 +12,16 @@ const (
 type Etapa string
 
 const (
-	EtapaRecaudo             Etapa = "recaudo"
-	EtapaDeducciones         Etapa = "deducciones"
-	EtapaImporteObra         Etapa = "importe_obra"
-	EtapaImporteTitular      Etapa = "importe_titular"
-	EtapaLiquidacionParcial  Etapa = "liquidacion_parcial"
-	EtapaVerificacion        Etapa = "verificacion"
-	EtapaLiquidacionFinal    Etapa = "liquidacion_final"
-	EtapaPagoRegistro        Etapa = "pago_registro"
-	EtapaFeesInError         Etapa = "fees_in_error"
-	EtapaAuditoria           Etapa = "auditoria"
+	EtapaRecaudo            Etapa = "recaudo"
+	EtapaDeducciones        Etapa = "deducciones"
+	EtapaImporteObra        Etapa = "importe_obra"
+	EtapaImporteTitular     Etapa = "importe_titular"
+	EtapaLiquidacionParcial Etapa = "liquidacion_parcial"
+	EtapaVerificacion       Etapa = "verificacion"
+	EtapaLiquidacionFinal   Etapa = "liquidacion_final"
+	EtapaPagoRegistro       Etapa = "pago_registro"
+	EtapaFeesInError        Etapa = "fees_in_error"
+	EtapaAuditoria          Etapa = "auditoria"
 )
 
 type Firma struct {
@@ -31,12 +31,12 @@ type Firma struct {
 }
 
 type Proceso struct {
-	ID           string
-	Circuito     Circuito
-	Etapa        Etapa
-	Periodo      string
-	Revision     int
-	Firmas       []Firma
+	ID            string
+	Circuito      Circuito
+	Etapa         Etapa
+	Periodo       string
+	Revision      int
+	Firmas        []Firma
 	RechazoMotivo string
 }
 
