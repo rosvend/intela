@@ -4,16 +4,19 @@
 # importacion verificables. Todo lo demas es estilo.
 #
 # Reparto de responsabilidades en CI:
-#   arquitectura.yml  -> `--default=none --enable=depguard`  (la frontera)
-#   quality-go.yml    -> el resto                            (el estilo)
+#   architecture.yml  -> `--enable-only=depguard`  (la frontera)
+#   lint-go.yml       -> el resto                            (el estilo)
 # Separados a proposito: un check en rojo debe decir cual de las dos cosas se
 # rompio.
 #
-# Fichero inerte mientras no exista `go.mod`. Se entrega escrito para que la
-# frontera este vigilada desde el primer commit de codigo y no despues.
+# Fichero inerte mientras no exista `go.mod`: la etapa que lo usa esta guardada
+# por la existencia del modulo. Se entrega escrito para que la frontera este
+# vigilada desde el primer commit de codigo y no despues (ADR 0012).
 #
 # El path del modulo (`github.com/rosvend/intela`) hay que confirmarlo contra el
-# `module` real de `go.mod` cuando se cree.
+# `module` real de `go.mod` cuando aterrice. Si el modulo se renombra, hay que
+# renombrarlo tambien en cada `deny` de aqui: depguard compara cadenas, no
+# resuelve paquetes.
 
 version: "2"
 

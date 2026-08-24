@@ -1,0 +1,70 @@
+# Reusable stage: the Go test suite.
+#
+# Inert until `go.mod` exists, like every other Go stage. Kept separate from
+# `lint-go.yml` on purpose: when the check goes red, its name has to say whether
+# behavior broke or style did.
+#
+# Two flags that are not decoration here:
+#
+#   -race    the scheduler and the worker (ADR 0003) are concurrent. A data race
+#            in a money path does not crash, it produces a different number.
+#   -count=1 disables the test result cache, so a green run means the tests
+#            actually executed against this commit.
+#
+# ADR 0005 demands a reparto run be reproducible bit for bit years later. Unit
+# tests are the floor, not the ceiling: the engine also needs golden-file cases
+# built from the worked examples in the regulations themselves.
+
+name: Test Go
+
+on:
+  workflow_call:
+    inputs:
+      coverage-artifact:
+        description: Upload the coverage profile as a build artifact.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: go test
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      # Total coverage goes into the job summary rather than a required
+      # threshold: a percentage gate rewards tests written to move the number.
+      - name: Coverage summary
+        if: always() && hashFiles('coverage.out') != ''
+        run: |
+          set -euo pipefail
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')
+          {
+            echo "### Test coverage"
+            echo
+            echo "Total: **${total}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage profile
+        if: inputs.coverage-artifact && hashFiles('coverage.out') != ''
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7

@@ -1,0 +1,78 @@
+# Reusable stage: Go backend lint and formatting.
+#
+# Inert until `go.mod` exists: ci.yml invokes it only when `detect` finds one.
+# The first commit that brings the module activates it without touching either
+# the pipeline or branch protection.
+#
+# depguard does NOT run here. Boundary rules belong to `architecture.yml`, so a
+# red check tells you whether the architecture broke or the style did.
+# Behavior is verified in `test-go.yml`, for the same reason.
+
+name: Lint Go
+
+on:
+  workflow_call:
+    inputs:
+      golangci-version:
+        description: Pinned golangci-lint version.
+        type: string
+        default: "v2.13.1"
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: gofmt, vet, build, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The version comes from `go.mod`: a single source of truth. `cache: true`
+      # caches modules and the build cache, keyed by the hash of `go.sum`.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # `go mod tidy` must produce no changes: a drifting go.sum breaks
+      # reproducible builds.
+      - name: go mod tidy produces no diff
+        run: |
+          set -euo pipefail
+          go mod tidy
+          # `git status --porcelain`, not `git diff`: a go.sum that was never
+          # committed is UNTRACKED, and `git diff` does not report untracked
+          # files. Checking the diff alone would let a missing go.sum pass.
+          drift=$(git status --porcelain -- go.mod go.sum)
+          if [ -n "$drift" ]; then
+            echo "::error::go.mod/go.sum are stale or uncommitted. Run 'go mod tidy' and commit both." >&2
+            echo "$drift" >&2
+            git diff -- go.mod go.sum || true
+            exit 1
+          fi
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Unformatted files. Run 'gofmt -w .':" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # The three ADR 0003 entry points (api, scheduler, worker) must all
+      # compile, not just the package someone happened to touch.
+      - name: go build
+        run: go build ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ inputs.golangci-version }}

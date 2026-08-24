@@ -64,6 +64,7 @@ Cargar solo lo que haga falta para la tarea.
 | `docs/dominio/fuentes-datos.md` | Perfil real de los archivos del cliente y que falta pedir |
 | `docs/reglamentos/` | Texto verbatim de los reglamentos, citable por numeral |
 | `docs/decisiones/` | Por que el sistema quedo modelado asi |
+| `docs/ci.md` | Etapas de CI, la compuerta `ci`, filtrado por ruta y hooks locales |
 | `docs/context.md` | Planteamiento academico original. **Anterior al analisis de dominio**: donde diga que los ingresos se acumulan por fila, manda `docs/dominio/formulas.md` |
 
 Convencion de citas: `RD 13.1.3` es la seccion 13.1.3 del Reglamento de Distribucion IX.
@@ -83,13 +84,18 @@ uvx "ruff@0.16.4" format src/                # formato Python
 | Script | Que hace |
 | ------ | -------- |
 | `sample.py` | Diagnostico de los archivos de muestra del cliente |
-| `check_arquitectura.py` | Verifica la frontera sobre el `.drawio`. Avisa, no bloquea (ADR 0011) |
 | `diagrama_arquitectura.py` | Regenera el diagrama del README. Necesita Graphviz |
 | `diagrama_despliegue.py` | Regenera la topologia de despliegue. Necesita Graphviz |
 | `convert_reglamentos.py` | Regenera `docs/reglamentos/` desde los PDF. Necesita `poppler-utils` |
 
 CI: la compuerta obligatoria es el job `ci` de `.github/workflows/ci.yml`; las etapas se filtran
-por ruta. Las ramas siguen `^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$` o el PR falla.
+por ruta y se saltan solas mientras su capa no exista. Las ramas siguen
+`^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$` o el PR falla. Los hooks locales estan en
+`lefthook.yml` (`lefthook install`); todo lo que corre en un hook corre tambien en CI. Detalle en
+`docs/ci.md`.
+
+La frontera de arquitectura se verifica sobre los `import` con `depguard` ([ADR 0012](docs/decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md)),
+no sobre el diagrama.
 
 ## Idioma
 

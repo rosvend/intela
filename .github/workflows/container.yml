@@ -1,27 +1,32 @@
-# Etapa reutilizable: verificar que la imagen compila. No publica nada.
+# Reusable stage: verify the image builds. Publishes nothing.
 #
-# Inerte hasta que exista un `Dockerfile`: `ci.yml` la invoca solo si `detect`
-# lo encuentra. El commit que traiga el Dockerfile la activa sola.
+# Inert until a `Dockerfile` exists: ci.yml invokes it only when `detect` finds
+# one. The commit that brings the Dockerfile activates it by itself.
 #
-# Cuando llegue el Dockerfile multi-etapa de ADR 0010 (builder Go -> distroless
-# estatico, un target por cmd/{api,scheduler,worker}), esto se parametriza con
-# una `matrix` sobre `target` sin tocar el orquestador.
+# Parameterised so ci.yml can call it once per image: the Go backend at
+# `./Dockerfile` (distroless static, ADR 0010) and the React frontend at
+# `web/Dockerfile` (nginx). Separate calls rather than a matrix so each image
+# reports its own check name - when one goes red, you know which.
 
-name: Contenedor
+name: Container
 
 on:
   workflow_call:
     inputs:
-      contexto:
-        description: Contexto de build.
+      image-name:
+        description: Name used to tag the built image, for readable logs.
+        type: string
+        default: "intela"
+      context:
+        description: Build context.
         type: string
         default: "."
       dockerfile:
-        description: Ruta al Dockerfile.
+        description: Path to the Dockerfile.
         type: string
         default: "Dockerfile"
       target:
-        description: Etapa de destino del build multi-etapa. Vacio = ultima etapa.
+        description: Target stage of the multi-stage build. Empty = last stage.
         type: string
         default: ""
 
@@ -30,24 +35,24 @@ permissions:
 
 jobs:
   build:
-    name: docker build (sin publicar)
+    name: docker build (no push)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
-      # `push: false` es el punto de esta etapa: se verifica que compila, no se
-      # publica. `load: true` deja la imagen en el daemon local, que es lo que
-      # permitira encadenar un smoke test aqui mismo mas adelante.
-      # El cache de GitHub Actions evita reconstruir capas entre corridas.
+      # `push: false` is the whole point of this stage: it verifies the image
+      # builds, it does not publish. `load: true` leaves the image in the local
+      # daemon, which is what will let a boot smoke test be chained here later.
+      # The GitHub Actions cache avoids rebuilding layers between runs.
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ inputs.contexto }}
+          context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
           target: ${{ inputs.target }}
           push: false
           load: true
-          tags: intela:ci-${{ github.sha }}
+          tags: ${{ inputs.image-name }}:ci-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

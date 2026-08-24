@@ -76,7 +76,7 @@
 
 ```
 # p. ej.
-uv run --script src/scripts/check_arquitectura.py
+go test -race -count=1 ./...
 ```
 
 - [ ] `ci` en verde en este PR

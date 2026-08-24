@@ -2,8 +2,9 @@
 
 Fecha: 2026-08-10
 Estado: Vigente
-Modificada por: [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) — la mitigacion en CI sigue existiendo,
-pero la capa que recorre el diagrama avisa sin bloquear el merge.
+Modificada por: [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md) — la mitigacion en CI
+sigue existiendo, pero se verifica sobre los `import` con `depguard`, no sobre el diagrama.
+(Via [0011](0011-verificacion-del-diagrama-como-aviso.md), ya sustituida.)
 
 ## Contexto
 

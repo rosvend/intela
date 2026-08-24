@@ -192,20 +192,27 @@ Si un generado y el `.drawio` discrepan, **el `.drawio` es el correcto** y el sc
 
 ### La verificacion
 
+El diagrama **no se verifica**: documenta la intencion. Quien hace cumplir la frontera es el
+codigo, en la etapa `Architecture boundary` de CI:
+
 ```bash
-uv run --script src/scripts/check_arquitectura.py
+golangci-lint run --enable-only=depguard ./...
 ```
 
-Recorre las tres paginas y comprueba que ninguna arista salga del nucleo (`0002`), que el borde de
-salida sea `adaptador → puerto` dibujado como realizacion, que todo puerto de entrada sea
-alcanzable, que los modulos de la pagina 2 sean aciclicos (`0003`) y que ningun sistema externo
-quede dibujado sin que nadie lo consuma.
+Corre aislada del lint de estilo a proposito, para que un check en rojo diga cual de las dos cosas
+se rompio. Las reglas son la tabla de arriba, escritas como `deny` en
+[`.golangci.yml`](../../.golangci.yml) con la cita al ADR de cada una.
 
-> **Avisa, no bloquea** ([ADR 0011](../decisiones/0011-verificacion-del-diagrama-como-aviso.md)).
-> Valida un dibujo, no el sistema, y es fragil por razones ajenas a la arquitectura: draw.io
-> envuelve una celda en `<object>` en cuanto le anades un tooltip, y esa celda desaparece del scan.
-> **Se retira entera** cuando exista `go.mod` y `depguard` corra en verde — a partir de ahi la
-> frontera la vigila el compilador sobre codigo real, no un PNG.
+> Hubo una comprobacion que recorria el `.drawio` y validaba las flechas. Se retiro en el
+> [ADR 0012](../decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md): validaba un dibujo, no
+> el sistema —el diagrama puede estar impecable mientras el codigo viola todas las reglas— y se
+> rompia por ediciones cosmeticas de draw.io. El [ADR 0011](../decisiones/0011-verificacion-del-diagrama-como-aviso.md),
+> que la habia degradado a aviso, queda sustituido.
+
+**Consecuencia que hay que tener presente:** `depguard` solo corre cuando existe `go.mod`. Mientras
+el modulo no aterrice en `main`, ninguna comprobacion de frontera bloquea un merge y la
+mitigacion que `0002` y `0003` nombran depende de la revision humana. Es la ventana que `0012`
+asume por escrito.
 
 ---
 
