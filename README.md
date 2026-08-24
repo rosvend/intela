@@ -2,7 +2,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/intelia-logo-dark.png">
-    <img alt="Intela" src="docs/intelia-logo.png" width="26%" height='20%'>
+    <img alt="Intela" src="docs/intelia-logo.png" width="36%" height='30%'>
   </picture>
 </p>
 
