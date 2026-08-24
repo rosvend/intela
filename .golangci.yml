@@ -9,11 +9,8 @@
 # Separados a proposito: un check en rojo debe decir cual de las dos cosas se
 # rompio.
 #
-# Fichero inerte mientras no exista `go.mod`. Se entrega escrito para que la
-# frontera este vigilada desde el primer commit de codigo y no despues.
-#
-# El path del modulo (`github.com/rosvend/intela`) hay que confirmarlo contra el
-# `module` real de `go.mod` cuando se cree.
+# Ya no es inerte: `go.mod` existe y el path del modulo
+# (`github.com/rosvend/intela`) esta confirmado contra su linea `module`.
 
 version: "2"
 
@@ -83,6 +80,19 @@ linters:
               desc: "ADR 0002: el caso de uso habla con un puerto de repositorio, no con el driver."
             - pkg: github.com/go-chi/chi
               desc: "ADR 0002: el router es un adaptador de entrada."
+            # Estos tres estaban DENTRO de internal/aplicacion y la regla no
+            # los atrapaba: solo denegaba infraestructura, pgx y chi. Los tres
+            # son concerns de adaptador, no de caso de uso.
+            - pkg: golang.org/x/crypto/bcrypt
+              desc: "ADR 0002: el algoritmo de hash es un detalle de adaptador. Entra por el puerto Hasher."
+            - pkg: encoding/csv
+              desc: "ADR 0002: parsear un formato de fichero es trabajo de adaptador de ingesta."
+            - pkg: github.com/xuri/excelize
+              desc: "ADR 0002: leer un .xlsx es trabajo de adaptador de ingesta."
+            - pkg: net/http
+              desc: "ADR 0002: HTTP es un adaptador de entrada."
+            - pkg: database/sql
+              desc: "ADR 0002: la persistencia entra por un puerto de repositorio."
 
         # ADR 0003: "Reparto lee de Repertorio y de Recaudo. Ninguno de los dos
         # conoce a Reparto." Go ya rechaza los ciclos al compilar; esto impide
@@ -110,6 +120,78 @@ linters:
               desc: "ADR 0003: Identificacion no toca dinero."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
               desc: "ADR 0003: Identificacion no toca dinero."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: Identificacion no toca dinero."
+
+        # ONI es la cola manual de lo que identificacion no reconocio. Un uso
+        # en ONI es dinero sin dueno conocido todavia, pero la cola no calcula
+        # cuanto: solo dice que falta resolverlo.
+        modulos-oni:
+          files:
+            - "**/internal/dominio/oni/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: la cola manual no toca dinero."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: la cola manual no toca dinero."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: la cola manual no toca dinero."
+
+        # Afiliacion mantiene el padron: quien es Socio y quien Titular
+        # Administrado. Que alguien exista en el padron es independiente de lo
+        # que haya cobrado.
+        modulos-afiliacion:
+          files:
+            - "**/internal/dominio/afiliacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: el padron no depende de una corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: el padron no depende de lo liquidado."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: el padron no depende de los anticipos; es al reves."
+
+        # Liquidacion CONSUME el resultado de una corrida; no lo recalcula. Si
+        # importara el motor, la tentacion de recalcular "para verificar" haria
+        # que dos numeros distintos pudieran salir del mismo proceso.
+        modulos-liquidacion:
+          files:
+            - "**/internal/dominio/liquidacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: la bolsa ya venia resuelta desde Reparto."
+            - pkg: github.com/rosvend/intela/internal/dominio/identificacion
+              desc: "ADR 0003: a estas alturas las obras ya estan identificadas."
+
+        # Una reclamacion no reescribe una corrida cerrada: se resuelve con un
+        # ajuste trazable en una posterior, o por la reserva de RD 14. Reabrir
+        # una corrida rompe la reproducibilidad del ADR 0005.
+        modulos-reclamaciones:
+          files:
+            - "**/internal/dominio/reclamaciones/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0005: una reclamacion no recalcula una corrida cerrada."
+
+        modulos-anticipos:
+          files:
+            - "**/internal/dominio/anticipos/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: un anticipo se descuenta de una liquidacion, no de una corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: un anticipo no conoce tarifas ni convenios."
+
+        # Prescripcion decide cuando un importe deja de ser exigible (RD 15).
+        # Solo necesita fechas e importes, que le llegan.
+        modulos-prescripcion:
+          files:
+            - "**/internal/dominio/prescripcion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: prescribir no es recalcular."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: prescripcion no conoce tarifas ni convenios."
 
   exclusions:
     rules:

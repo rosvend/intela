@@ -1,343 +1,139 @@
+// Package httpapi es el adaptador de entrada HTTP.
+//
+// # La regla de dependencia
+//
+// La direccion es httpapi -> aplicacion -> puertos <- postgres. NUNCA
+// httpapi -> postgres.
+//
+// Este tipo NO tiene un campo con el puerto de persistencia, y es deliberado.
+// Cuando lo tuvo, trece handlers consultaban la base directamente saltandose
+// la capa de aplicacion: la autenticacion, las liquidaciones de un titular
+// -dinero-, los parametros normativos en crudo y la lectura de la bitacora
+// entre ellos. Cada una de esas aristas se salta la autorizacion, el asiento
+// en bitacora y los limites de transaccion.
+//
+// Cada lectura tiene que tener su caso de uso, aunque al principio muchos
+// sean de una linea. Es lo que hace que la autorizacion y el asiento tengan
+// donde vivir.
+//
+// depguard no puede vigilar esto: internal/infraestructura/ esta excluido de
+// la regla, y con razon, porque los adaptadores importan infraestructura por
+// definicion. Esta frontera se sostiene en revision.
 package httpapi
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
-	"strings"
+	"slices"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/rosvend/intela/internal/aplicacion"
-	"github.com/xuri/excelize/v2"
 )
 
+// Salud responde si las dependencias del proceso estan vivas.
+type Salud interface {
+	Ping(ctx context.Context) error
+}
+
+// Opciones del servidor.
+type Opciones struct {
+	// OrigenesPermitidos para CORS. Vacio deshabilita CORS.
+	//
+	// Nunca "*": esta API autoriza movimientos de dinero. El comodin junto
+	// con Authorization en Allow-Headers permite que cualquier origen la
+	// llame con un token robado.
+	OrigenesPermitidos []string
+	Log                *slog.Logger
+}
+
+// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
+// entren sus PRs; hoy solo hay salud.
 type API struct {
-	Svc  *aplicacion.Servicio
-	Repo aplicacion.Repositorios
+	salud Salud
+	opts  Opciones
+	log   *slog.Logger
+}
+
+func Nueva(salud Salud, opts Opciones) *API {
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	return &API{salud: salud, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(cors)
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"ok":true}`)) })
-	r.Post("/api/sesiones", a.login)
-	r.Group(func(r chi.Router) {
-		r.Use(a.auth)
-		r.Get("/api/me", a.me)
-		r.Get("/api/obras", a.obras)
-		r.Get("/api/oni", a.oni)
-		r.Post("/api/oni/{id}/resolver", a.resolverONI)
-		r.Post("/api/reportes", a.cargar)
-		r.Get("/api/bolsas", a.bolsas)
-		r.Get("/api/procesos", a.procesos)
-		r.Post("/api/procesos", a.abrir)
-		r.Post("/api/procesos/{id}/calcular", a.calcular)
-		r.Post("/api/procesos/{id}/firmar", a.firmar)
-		r.Post("/api/procesos/{id}/avanzar", a.avanzar)
-		r.Post("/api/procesos/{id}/rechazar", a.rechazar)
-		r.Get("/api/procesos/{id}/resultado", a.resultado)
-		r.Get("/api/liquidaciones", a.liquidaciones)
-		r.Get("/api/liquidaciones/{id}/xlsx", a.xlsx)
-		r.Get("/api/liquidaciones/{id}/pdf", a.pdf)
-		r.Get("/api/asientos", a.asientos)
-		r.Get("/api/asientos/{id}/explicar", a.explicar)
-		r.Get("/api/parametros", a.parametros)
-		r.Get("/api/alertas", a.alertas)
-		r.Get("/api/anticipos", a.anticipos)
-		r.Get("/api/reclamaciones", a.reclamaciones)
-	})
+	r.Use(a.cors)
+
+	r.Get("/health", a.health)
+	r.Get("/ready", a.ready)
+
 	return r
 }
 
-func cors(next http.Handler) http.Handler {
+// health dice que el proceso esta vivo. No toca la base: si lo hiciera, una
+// caida de Postgres reiniciaria los contenedores en bucle.
+func (a *API) health(w http.ResponseWriter, r *http.Request) {
+	escribirJSON(w, http.StatusOK, map[string]string{"estado": "ok"})
+}
+
+// ready dice que el proceso puede atender trafico, dependencias incluidas.
+func (a *API) ready(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if a.salud != nil {
+		if err := a.salud.Ping(ctx); err != nil {
+			a.log.WarnContext(ctx, "dependencia no lista", slog.Any("error", err))
+			escribirError(w, http.StatusServiceUnavailable, "base de datos no disponible")
+			return
+		}
+	}
+	escribirJSON(w, http.StatusOK, map[string]string{"estado": "listo"})
+}
+
+// cors responde solo a los origenes de la lista blanca, que viene de entorno
+// y es distinta en desarrollo y en produccion.
+func (a *API) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		origen := r.Header.Get("Origin")
+		if origen != "" && slices.Contains(a.opts.OrigenesPermitidos, origen) {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origen)
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Max-Age", "600")
+			// El origen entra en la respuesta, asi que las caches
+			// intermedias tienen que variar por el.
+			h.Add("Vary", "Origin")
+		}
 		if r.Method == http.MethodOptions {
-			w.WriteHeader(204)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
+// escribirJSON fija el content-type ANTES del codigo de estado. Al reves no
+// tiene efecto.
+func escribirJSON(w http.ResponseWriter, codigo int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(codigo)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeErr(w http.ResponseWriter, err error, code int) {
-	http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), code)
-}
-
-type ctxKey int
-
-const userKey ctxKey = 1
-
-func (a *API) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if h == "" {
-			http.Error(w, `{"error":"no autorizado"}`, 401)
-			return
-		}
-		u, err := a.Repo.UsuarioPorToken(r.Context(), h)
-		if err != nil {
-			http.Error(w, `{"error":"sesion invalida"}`, 401)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(contextWithUser(r, u)))
-	})
-}
-
-func contextWithUser(r *http.Request, u aplicacion.Usuario) context.Context {
-	return context.WithValue(r.Context(), userKey, u)
-}
-
-func user(r *http.Request) aplicacion.Usuario {
-	u, _ := r.Context().Value(userKey).(aplicacion.Usuario)
-	return u
-}
-
-func (a *API) login(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Email, Clave string }
-	_ = json.NewDecoder(r.Body).Decode(&in)
-	tok, u, err := a.Svc.Login(r.Context(), in.Email, in.Clave)
-	if err != nil {
-		writeErr(w, err, 401)
-		return
-	}
-	writeJSON(w, map[string]any{"token": tok, "usuario": u})
-}
-
-func (a *API) me(w http.ResponseWriter, r *http.Request) { writeJSON(w, user(r)) }
-
-func (a *API) obras(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.ListarObras(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) oni(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.ListarONI(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) resolverONI(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ObraID string `json:"obra_id"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&in)
-	if err := a.Svc.ResolverONI(r.Context(), user(r), chi.URLParam(r, "id"), in.ObraID); err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, map[string]string{"ok": "true"})
-}
-func (a *API) cargar(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(20 << 20); err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	fuente := r.FormValue("fuente")
-	periodo := r.FormValue("periodo")
-	f, h, err := r.FormFile("archivo")
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	defer f.Close()
-	id, n, err := a.Svc.CargarReporte(r.Context(), user(r), fuente, periodo, h.Filename, f)
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	_, _ = a.Svc.IdentificarPendientes(r.Context())
-	writeJSON(w, map[string]any{"reporte_id": id, "registros": n})
-}
-func (a *API) bolsas(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.ListarBolsas(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) procesos(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.ListarProcesos(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) abrir(w http.ResponseWriter, r *http.Request) {
-	var in struct{ BolsaID, Circuito string }
-	_ = json.NewDecoder(r.Body).Decode(&in)
-	p, err := a.Svc.AbrirProceso(r.Context(), user(r), in.BolsaID, in.Circuito)
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, p)
-}
-func (a *API) calcular(w http.ResponseWriter, r *http.Request) {
-	res, err := a.Svc.Calcular(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, res)
-}
-func (a *API) firmar(w http.ResponseWriter, r *http.Request) {
-	p, err := a.Svc.Firmar(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, p)
-}
-func (a *API) avanzar(w http.ResponseWriter, r *http.Request) {
-	p, err := a.Svc.Avanzar(r.Context(), user(r), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, p)
-}
-func (a *API) rechazar(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Motivo string }
-	_ = json.NewDecoder(r.Body).Decode(&in)
-	p, err := a.Svc.Rechazar(r.Context(), user(r), chi.URLParam(r, "id"), in.Motivo)
-	if err != nil {
-		writeErr(w, err, 400)
-		return
-	}
-	writeJSON(w, p)
-}
-func (a *API) resultado(w http.ResponseWriter, r *http.Request) {
-	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 404)
-		return
-	}
-	writeJSON(w, res)
-}
-func (a *API) liquidaciones(w http.ResponseWriter, r *http.Request) {
-	u := user(r)
-	if u.Rol == "titular" && u.TitularID != "" {
-		res, proc, err := a.Repo.LiquidacionesDeTitular(r.Context(), u.TitularID)
-		if err != nil {
-			writeErr(w, err, 500)
-			return
-		}
-		writeJSON(w, map[string]any{"proceso_id": proc, "resultado": res})
-		return
-	}
-	a.procesos(w, r)
-}
-func (a *API) xlsx(w http.ResponseWriter, r *http.Request) {
-	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 404)
-		return
-	}
-	f := excelize.NewFile()
-	_ = f.SetSheetName("Sheet1", "liquidacion")
-	_ = f.SetCellValue("liquidacion", "A1", "obra")
-	_ = f.SetCellValue("liquidacion", "B1", "titular")
-	_ = f.SetCellValue("liquidacion", "C1", "ipi")
-	_ = f.SetCellValue("liquidacion", "D1", "porcentaje")
-	_ = f.SetCellValue("liquidacion", "E1", "importe")
-	for i, t := range res.Titulares {
-		row := i + 2
-		_ = f.SetCellValue("liquidacion", fmt.Sprintf("A%d", row), t.ObraID)
-		_ = f.SetCellValue("liquidacion", fmt.Sprintf("B%d", row), t.TitularID)
-		_ = f.SetCellValue("liquidacion", fmt.Sprintf("C%d", row), t.IPI)
-		_ = f.SetCellValue("liquidacion", fmt.Sprintf("D%d", row), t.Porcentaje.String())
-		_ = f.SetCellValue("liquidacion", fmt.Sprintf("E%d", row), t.Importe.String())
-	}
-	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", "attachment; filename=liquidacion.xlsx")
-	_ = f.Write(w)
-}
-func (a *API) pdf(w http.ResponseWriter, r *http.Request) {
-	res, err := a.Repo.ResultadoDe(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 404)
-		return
-	}
-	var b strings.Builder
-	b.WriteString("%PDF-1.1\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
-	txt := "Intela liquidacion\n"
-	for _, t := range res.Titulares {
-		txt += fmt.Sprintf("%s %s %s\n", t.ObraID, t.TitularID, t.Importe)
-	}
-	stream := fmt.Sprintf("BT /F1 12 Tf 50 750 Td (%s) Tj ET", strings.ReplaceAll(txt, "(", " "))
-	b.WriteString("2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n")
-	b.WriteString("3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n")
-	b.WriteString(fmt.Sprintf("4 0 obj<< /Length %d >>stream\n%s\nendstream\nendobj\n", len(stream), stream))
-	b.WriteString("5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
-	b.WriteString("xref\n0 6\ntrailer<< /Root 1 0 R /Size 6 >>\nstartxref\n0\n%%EOF")
-	w.Header().Set("Content-Type", "application/pdf")
-	_, _ = io.WriteString(w, b.String())
-}
-func (a *API) asientos(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.Asientos(r.Context(), r.URL.Query().Get("tipo"), r.URL.Query().Get("id"))
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) explicar(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Svc.ExplicarCifra(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, err, 404)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) parametros(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.FilasParametros(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) alertas(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.Alertas(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) anticipos(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.Anticipos(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
-}
-func (a *API) reclamaciones(w http.ResponseWriter, r *http.Request) {
-	v, err := a.Repo.Reclamaciones(r.Context())
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, v)
+// escribirError devuelve JSON con content-type de JSON.
+//
+// http.Error fuerza text/plain, asi que usarlo para escribir un cuerpo JSON
+// deja todas las respuestas de error con el content-type equivocado.
+func escribirError(w http.ResponseWriter, codigo int, msg string) {
+	escribirJSON(w, codigo, map[string]string{"error": msg})
 }
