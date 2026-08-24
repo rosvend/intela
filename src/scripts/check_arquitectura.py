@@ -7,15 +7,18 @@
 #
 # Los ADR 0002 y 0003 nombran esta comprobacion como su mitigacion y piden que
 # el criterio de aceptacion del diagrama sea el mismo que el del test. Esto es
-# ese test para el diagrama; el equivalente sobre el codigo sera
-# dependency-cruiser cuando exista el stack (ADR 0009).
+# ese test para el diagrama; el equivalente sobre el codigo es depguard, que
+# corre en cuanto exista go.mod (ADR 0010, que sustituye a 0009).
+#
+# Desde el ADR 0011 esta comprobacion AVISA pero no bloquea el merge: valida un
+# dibujo, no el sistema. Se retira entera cuando depguard corra en verde.
 
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DIAGRAM = ROOT / "docs" / "PATIC2 - Arquitectura.drawio"
+DIAGRAM = ROOT / "docs" / "diagrams" / "PATIC2 - Arquitectura.drawio"
 
 # Pagina 1: a que anillo pertenece cada celda. El orden importa: la regla de
 # dependencia dice que nadie de un anillo interior puede nombrar uno exterior.
