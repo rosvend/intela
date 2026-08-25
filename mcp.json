@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "my-local-tool": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://localhost/mydb"
+      ]
+    },
+    "my-remote-service": {
+      "url": "https://example.com"
+    }
+  }
+}

@@ -46,6 +46,10 @@ Cargar solo lo que haga falta para la tarea. Skills en `.claude/skills/`. Cursor
 Convencion de citas: `RD 13.1.3` es la seccion 13.1.3 del Reglamento de Distribucion IX.
 `RT` Tarifas VI, `RS` Socios, `RA` Anticipos.
 
+## Skills
+
+Usa las skills instaladas de golang y clean architecture para seguir las mejores prácticas de código e ingeniería de software. Para revisar documentación, usa el MCP de Context7 antes de cada implementación. 
+
 ## Idioma
 
 El dominio se nombra en **espanol**, igual que los reglamentos: `obra`, `titular`, `reparto`,
@@ -64,7 +68,7 @@ Go en el backend; React + TypeScript + Vite en el frontend. Un binario por `cmd/
 - Contratos: `api/openapi.yaml` → tipos TS en el frontend.
 - Frontera: el compilador + `depguard` en `.golangci.yml`.
 
-Los scripts de `src/scripts/` siguen en Python (PEP 723).
+Los scripts de `src/scripts/` siguen en Python (PEP 723). Todo el proyecto debe seguir Clean Architecture.
 
 ## Estructura
 
