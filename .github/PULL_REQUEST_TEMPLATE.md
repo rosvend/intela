@@ -1,8 +1,9 @@
 <!--
   Antes de abrir:
 
-  1. Nombre de rama. El check `nombre-de-rama` exige
+  1. Nombre de rama. El check `Branch naming convention` exige
      ^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$
+     Ojo: el prefijo es `feature`, no `feat`.
      Si no cumple, el PR no se puede mergear. Renombrar:
        git branch -m feature/mi-cambio
        git push origin -u feature/mi-cambio
@@ -54,7 +55,7 @@
 **Fronteras de modulo** — ADR [0003](../docs/decisiones/0003-monolito-modular.md)
 
 - [ ] Ninguna dependencia entre modulos que no este en la pagina 2 de `docs/diagrams/PATIC2 - Arquitectura.drawio`
-- [ ] Si la dependencia entre modulos cambio, **el diagrama se actualizo en este mismo PR**
+- [ ] Si la dependencia entre modulos cambio, **el diagrama se actualizo en este mismo PR**. Ya nada lo comprueba automaticamente (ADR [0012](../docs/decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md)): si no se actualiza aqui, miente
 - [ ] Ningun modulo escribe en la trazabilidad de otro (ADR [0006](../docs/decisiones/0006-trazabilidad-como-asiento-append-only.md))
 
 **Los cuatro invariantes del dominio** — los cuatro producen codigo plausible y equivocado, y el error no se manifiesta como excepcion: produce un numero, el numero se paga, y aparece en una auditoria de `RD 16` anos despues.
@@ -76,7 +77,7 @@
 
 ```
 # p. ej.
-uv run --script src/scripts/check_arquitectura.py
+go test -race -count=1 ./...
 ```
 
 - [ ] `ci` en verde en este PR

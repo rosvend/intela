@@ -1,0 +1,75 @@
+# Reusable stage: the frontend test suite.
+#
+# Split from lint and from build for the same reason those two are split: the
+# check name has to say whether behaviour broke, style broke, or the thing
+# simply does not compile.
+#
+# Inert until `web/package.json` exists.
+#
+# TOLERANT BY DESIGN, like `lint-frontend.yml`: no test runner has been chosen
+# for `web/` yet, so a missing `test` script emits a notice and passes rather
+# than failing a commit for not yet containing something nobody has written.
+# See the same note there on why this is not a stage that quietly never
+# completes - the notice lands in the job summary every run.
+#
+# NO WATCH MODE. GitHub Actions sets CI=true, which is what makes vitest and
+# jest run once and exit instead of waiting for file changes. If the runner
+# chosen for `web/` does not honour CI, its `test` script has to pass the
+# equivalent flag itself - a hanging job is a 6-hour timeout, not a failure.
+
+name: Test frontend
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version. Matches web/Dockerfile.
+        type: string
+        default: "22"
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: "web"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: npm test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm init` writes a default `test` script that exits 1 with
+      # "no test specified". Treated as absent on purpose: it is a placeholder,
+      # not a suite, and letting it fail the stage teaches people to delete the
+      # stage.
+      - name: npm test
+        run: |
+          set -euo pipefail
+          script=$(node -e 'process.stdout.write(((require("./package.json").scripts||{}).test)||"")')
+
+          case "$script" in
+            "")
+              echo "::notice title=Frontend tests::web/package.json defines no 'test' script. TODO: add a test runner (vitest) and a suite. Skipping."
+              ;;
+            *"no test specified"*)
+              echo "::notice title=Frontend tests::the 'test' script is still the npm placeholder. TODO: replace it with a real runner. Skipping."
+              ;;
+            *)
+              npm test
+              ;;
+          esac

@@ -1,7 +1,7 @@
 # 0011 La verificacion del diagrama avisa, no bloquea
 
 Fecha: 2026-08-23
-Estado: Vigente
+Estado: Sustituida por [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md)
 Modifica a: [0002 Arquitectura hexagonal con frontera Clean](0002-arquitectura-hexagonal.md),
 [0003 Monolito modular, no microservicios](0003-monolito-modular.md)
 

@@ -1,0 +1,40 @@
+# Reusable stage: the pipeline is code too, and it gets linted too.
+#
+# This used to live inside the Python stage - both were "quality" - but they
+# trigger on different things: this one follows `.github/`, that one follows the
+# Python files. Bundled together, path filtering switched actionlint off exactly
+# when the workflows were being edited, which is when it matters most.
+
+name: Lint workflows
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-version:
+        description: Tag of the official actionlint image.
+        type: string
+        default: "1.7.12"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Validates syntax, `${{ }}` expressions, references to non-existent
+      # `needs`, and - through bundled shellcheck - every `run` block. Official
+      # image pinned by tag: no `curl | bash`.
+      - name: Validate .github/workflows
+        env:
+          VERSION: ${{ inputs.actionlint-version }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo" \
+            -w /repo \
+            "rhysd/actionlint:${VERSION}" \
+            -color
