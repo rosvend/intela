@@ -1,53 +1,113 @@
+# Contrato HTTP de Intela.
+#
+# La version anterior cubria 8 de ~18 endpoints, no tenia ni un schema de
+# respuesta, y era INVALIDA: /api/asientos/{id}/explicar declaraba {id} en la
+# ruta sin declararlo en `parameters`, que el estandar exige.
+#
+# Este contrato describe lo que el andamiaje expone DE VERDAD: sondas de
+# salud. Los endpoints de negocio vuelven con los PRs que los implementan, y
+# cada uno trae su schema. Un contrato que promete rutas que devuelven 404 es
+# peor que uno corto: se usa para generar clientes.
+
 openapi: 3.0.3
+
 info:
   title: Intela API
   version: "0.1.0"
+  description: |
+    Reconocimiento de obras y distribucion de ingresos por propiedad
+    intelectual para REDES SGC.
+
+    Toda cifra que el sistema produzca debe ser explicable hasta su origen
+    (fuente, reporte, regla aplicada). El reglamento lo exige y la auditoria
+    lo revisa.
+  license:
+    name: Propietario
+    url: https://redescritores.com
+
+servers:
+  - url: http://localhost/api
+    description: Desarrollo, detras de nginx
+  - url: http://localhost:8080
+    description: Desarrollo, API directa
+
+tags:
+  - name: salud
+    description: Sondas para el orquestador.
+
 paths:
   /health:
     get:
+      tags: [salud]
+      summary: El proceso esta vivo
+      description: |
+        No consulta la base de datos. Si lo hiciera, una caida de PostgreSQL
+        reiniciaria los contenedores en bucle en vez de dejarlos esperando.
+      operationId: salud
+      security: []
       responses:
-        "200": { description: ok }
-  /api/sesiones:
-    post:
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email: { type: string }
-                clave: { type: string }
+        "200":
+          description: El proceso responde.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Estado"
+              example:
+                estado: ok
+
+  /ready:
+    get:
+      tags: [salud]
+      summary: El proceso puede atender trafico
+      description: Comprueba tambien que las dependencias respondan.
+      operationId: listo
+      security: []
       responses:
-        "200": { description: token y usuario }
-  /api/me:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: usuario } }
-  /api/obras:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: catalogo } }
-  /api/reportes:
-    post:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: carga } }
-  /api/oni:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: bandeja } }
-  /api/procesos:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: fsm } }
-    post:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: abrir } }
-  /api/asientos/{id}/explicar:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { "200": { description: linaje } }
+        "200":
+          description: Listo para recibir trafico.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Estado"
+              example:
+                estado: listo
+        "503":
+          description: Alguna dependencia no responde.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: base de datos no disponible
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
+      description: |
+        Token de sesion. Las sesiones expiran: el token no es una credencial
+        permanente.
+
+  schemas:
+    Estado:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          description: Estado del proceso.
+          enum: [ok, listo]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            Que fallo, en lenguaje de quien llama. Las respuestas de error van
+            con `Content-Type: application/json`, no `text/plain`.
+
+security:
+  - bearerAuth: []

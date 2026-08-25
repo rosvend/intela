@@ -1,0 +1,38 @@
+# Etapa reutilizable: validar el contrato OpenAPI.
+#
+# No existia. El ADR 0010 puso la generacion desde el contrato como el precio
+# de cambiar de stack, y el contrato entro sin que nada comprobara siquiera que
+# fuera valido: la version anterior declaraba {id} en una ruta sin declararlo
+# en `parameters`, y nadie se entero.
+#
+# Un contrato roto no se nota hasta que alguien genera un cliente con el.
+
+name: Contrato
+
+on:
+  workflow_call:
+    inputs:
+      spec:
+        description: Ruta al fichero OpenAPI.
+        type: string
+        default: "api/openapi.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  openapi:
+    name: OpenAPI valido
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # redocly lint comprueba la especificacion y ademas avisa de lo que la
+      # hace inservible para generar clientes: operationId ausente, respuestas
+      # sin schema, descripciones vacias.
+      - name: Validar
+        run: npx --yes @redocly/cli@1 lint --config api/redocly.yaml "${{ inputs.spec }}"

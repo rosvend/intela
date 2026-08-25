@@ -72,6 +72,17 @@ func (a *API) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(a.cors)
 
+	// Los handlers por defecto de chi responden en text/plain. Si no se
+	// sustituyen, un 404 o un 405 salen con un content-type distinto al del
+	// resto de la API y cualquier cliente que parsee JSON se atraganta justo
+	// en el caso de error.
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		escribirError(w, http.StatusNotFound, "ruta no encontrada")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		escribirError(w, http.StatusMethodNotAllowed, "metodo no permitido")
+	})
+
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
 

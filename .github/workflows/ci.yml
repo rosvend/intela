@@ -50,6 +50,7 @@ jobs:
       workflows: ${{ steps.capas.outputs.workflows }}
       go: ${{ steps.capas.outputs.go }}
       web: ${{ steps.capas.outputs.web }}
+      contrato: ${{ steps.capas.outputs.contrato }}
       docker: ${{ steps.capas.outputs.docker }}
       docker_web: ${{ steps.capas.outputs.docker_web }}
     steps:
@@ -99,6 +100,7 @@ jobs:
           P_WORKFLOWS='^\.github/'
           P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|quality-go|arquitectura)\.yml$)'
           P_WEB='(^web/|^\.github/workflows/(ci|quality-web)\.yml$)'
+          P_CONTRATO='(^api/|^\.github/workflows/(ci|contrato)\.yml$)'
 
           # Ojo con el anclaje. `^Dockerfile` NO casa `web/Dockerfile`, asi que
           # la imagen del tablero no se construia nunca: entraba en el repo sin
@@ -121,6 +123,9 @@ jobs:
           web=false
           if existe web/package.json && toca "$P_WEB"; then web=true; fi
 
+          contrato=false
+          if existe api/openapi.yaml && toca "$P_CONTRATO"; then contrato=true; fi
+
           docker=false
           if existe Dockerfile && toca "$P_DOCKER"; then docker=true; fi
 
@@ -132,6 +137,7 @@ jobs:
             echo "workflows=$workflows"
             echo "go=$go"
             echo "web=$web"
+            echo "contrato=$contrato"
             echo "docker=$docker"
             echo "docker_web=$docker_web"
           } >> "$GITHUB_OUTPUT"
@@ -145,6 +151,7 @@ jobs:
             echo "| quality-workflows | \`$workflows\` | el PR toca \`.github/\` |"
             echo "| quality-go | \`$go\` | hay \`go.mod\` y el PR toca Go |"
             echo "| quality-web | \`$web\` | hay \`web/package.json\` y el PR toca el tablero |"
+            echo "| contrato | \`$contrato\` | hay \`api/openapi.yaml\` y el PR toca el contrato |"
             echo "| container | \`$docker\` | hay \`Dockerfile\` y el PR toca el contenedor |"
             echo "| container-web | \`$docker_web\` | hay \`web/Dockerfile\` y el PR toca el tablero |"
             echo "| arquitectura | \`true\` | **siempre**. El diagrama avisa sin bloquear (ADR 0011); depguard si bloquea |"
@@ -217,6 +224,12 @@ jobs:
     if: needs.detect.outputs.web == 'true'
     uses: ./.github/workflows/quality-web.yml
 
+  contrato:
+    name: Contrato OpenAPI
+    needs: detect
+    if: needs.detect.outputs.contrato == 'true'
+    uses: ./.github/workflows/contrato.yml
+
   # Sin `if`: corre SIEMPRE, tambien en un PR de solo documentacion.
   #
   # Es la unica etapa que no se filtra, y es deliberado. Los ADR 0002 y 0003
@@ -265,6 +278,7 @@ jobs:
       - quality-workflows
       - quality-go
       - quality-web
+      - contrato
       - arquitectura
       - container
       - container-web
