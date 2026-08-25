@@ -82,6 +82,24 @@ src/scripts/         scripts sueltos, cada uno con su entorno PEP 723
 .cursor/rules/       punteros para Cursor a las skills de arriba
 ```
 
+## Idioma
+
+El dominio se nombra en **español**, igual que los reglamentos: `obra`, `titular`, `reparto`,
+`recaudo`, `declaracion`. No traducir estos terminos en modelos, tablas ni variables. El resto del
+código, infraestructura e implementanciones van en inglés. 
+
+## Estilo
+
+`ruff`, `gofmt` y `golangci-lint` ya corren en CI — no hace falta razonar sobre formato. Lo que
+si hay que decidir a mano:
+
+- Aplicar SOLID en logica de negocio, servicios y features grandes; no en un adaptador de 20 lineas.
+- La solucion mas simple que cumpla el requisito (YAGNI, KISS). El sistema mueve dinero de
+  terceros: la indireccion que no se justifica es deuda, no diseno.
+- Inyectar dependencias siempre que haya E/S, para que el nucleo se pruebe sin infraestructura.
+- Todo el código y arquitectura debe ser modular con componentes débilmente acoplados para fácil mantenimiento, escalabilidad y extensión.
+
+
 ## Arranque local
 
 ```
