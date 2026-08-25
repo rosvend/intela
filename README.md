@@ -89,6 +89,10 @@ lefthook install
 Detalle de cada etapa, el porque del filtrado por ruta y lo que falta para que las etapas de Go y
 frontend pasen: [`docs/ci.md`](docs/ci.md).
 
+Al mergear a `main`, el mismo workflow publica las imagenes en GHCR y llega a un job de despliegue
+que **todavia no despliega**: no hay proveedor decidido, asi que imprime el plan de release y los
+secretos que necesitara. Donde se inyecta cada cosa: [`docs/cd.md`](docs/cd.md).
+
 ### Trabajar con un agente
 
 Este repositorio esta preparado para que el desarrollo lo conduzcan agentes de codigo. Usa uno que

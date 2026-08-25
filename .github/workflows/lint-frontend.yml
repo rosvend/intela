@@ -1,0 +1,94 @@
+# Reusable stage: frontend lint, formatting and type checking.
+#
+# Separate from `build-frontend.yml` for the reason every stage in this pipeline
+# is separate: when a check goes red, its name has to say what broke. A build
+# failure and a lint failure are not the same conversation.
+#
+# Inert until `web/package.json` exists: ci.yml invokes it only when `detect`
+# finds one.
+#
+# TOLERANT BY DESIGN. `web/` has not landed yet, so this stage is written
+# against a directory nobody has created. Each check probes for the script it
+# needs and, when it is missing, emits a notice naming the tool that should be
+# there and passes. The alternative - failing - would mean the commit that
+# brings the frontend cannot go green until it also brings three tool configs,
+# which is how a stage gets deleted instead of fixed.
+#
+# The notices are the TODO list. They are deliberately loud in the job summary:
+# a stage that skips silently is a stage nobody ever completes.
+#
+# Type checking runs here as `tsc --noEmit` even though `npm run build` already
+# runs `tsc -b`. That is not redundant: a type error should be reported by the
+# lint check, in seconds, not discovered at the end of a Vite build.
+
+name: Lint frontend
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version. Matches web/Dockerfile.
+        type: string
+        default: "22"
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: "web"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: eslint, prettier, tsc
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm pkg get` prints `{}` for a missing key, which is awkward to test
+      # against. Node reads package.json directly instead: unambiguous, and
+      # node is guaranteed present by the step above.
+      - name: eslint
+        run: |
+          set -euo pipefail
+          if node -e 'process.exit((require("./package.json").scripts||{}).lint?0:1)'; then
+            npm run lint
+          else
+            echo "::notice title=Frontend lint::web/package.json defines no 'lint' script. TODO: add eslint and a 'lint' script. Skipping."
+          fi
+
+      - name: prettier
+        run: |
+          set -euo pipefail
+          if node -e 'process.exit((require("./package.json").scripts||{})["format:check"]?0:1)'; then
+            npm run format:check
+          elif [ -x node_modules/.bin/prettier ]; then
+            echo "No 'format:check' script; prettier is installed, running it directly."
+            npx --no-install prettier --check .
+          else
+            echo "::notice title=Frontend format::prettier is not installed and no 'format:check' script exists. TODO: add prettier. Skipping."
+          fi
+
+      - name: tsc --noEmit
+        run: |
+          set -euo pipefail
+          if node -e 'process.exit((require("./package.json").scripts||{}).typecheck?0:1)'; then
+            npm run typecheck
+          elif [ -f tsconfig.json ]; then
+            echo "No 'typecheck' script; running tsc against tsconfig.json directly."
+            npx --no-install tsc --noEmit
+          else
+            echo "::notice title=Frontend typecheck::no tsconfig.json and no 'typecheck' script. TODO: this stage assumes TypeScript (ADR 0010). Skipping."
+          fi

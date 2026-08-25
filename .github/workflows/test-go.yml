@@ -43,6 +43,22 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      # `go test ./...` exits 0 when a module contains no test files at all, so
+      # the first Go commit would otherwise report a green TEST stage having
+      # executed nothing. The stage still passes - refusing to merge code for
+      # not yet having tests is how a test stage gets deleted - but it says so
+      # out loud, in the check annotation and in the summary.
+      - name: Check a suite exists
+        id: suite
+        run: |
+          set -euo pipefail
+          if find . -path ./.git -prune -o -name '*_test.go' -print -quit | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Go tests::the module has no *_test.go files. TODO: ADR 0005 requires a reparto run to be reproducible bit for bit, which needs golden-file cases built from the worked examples in the regulations. See docs/ci.md."
+          fi
+
       - name: go test
         run: |
           set -euo pipefail
@@ -52,6 +68,8 @@ jobs:
       # threshold: a percentage gate rewards tests written to move the number.
       - name: Coverage summary
         if: always() && hashFiles('coverage.out') != ''
+        env:
+          SUITE: ${{ steps.suite.outputs.present }}
         run: |
           set -euo pipefail
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')
@@ -59,6 +77,12 @@ jobs:
             echo "### Test coverage"
             echo
             echo "Total: **${total}**"
+            if [ "$SUITE" != "true" ]; then
+              echo
+              echo "> **No test suites yet.** The stage ran and passed against zero"
+              echo "> tests. TODO: golden-file cases from the worked examples in the"
+              echo "> regulations (ADR 0005)."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage profile

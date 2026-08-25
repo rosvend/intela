@@ -3,7 +3,11 @@
 Un solo workflow con disparadores, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 Todo lo demas son etapas reutilizables (`workflow_call`) que ese orquestador invoca. El pipeline
 esta en ingles a proposito: es infraestructura, y el idioma del dominio (`obra`, `titular`,
-`reparto`) se reserva para lo que modela el negocio.
+`reparto`) se reserva para lo que modela el negocio. Por la misma razon `.golangci.yml` esta en
+ingles: sus mensajes de `depguard` acaban en el log de CI.
+
+El **despliegue** vive en el mismo `ci.yml`, al final, y solo corre en `push` a `main`. Se documenta
+aparte, en [`docs/cd.md`](cd.md).
 
 ## La compuerta
 
@@ -34,13 +38,31 @@ if: always()
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
+| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` |
+| `Test (frontend)` | `npm test` | Hay `web/package.json` y el PR toca `web/` |
 | `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` |
-| `Docker build (backend)` | Construye `Dockerfile`, sin publicar | Hay `Dockerfile` y el PR toca el contenedor |
-| `Docker build (frontend)` | Construye `web/Dockerfile`, sin publicar | Hay `web/Dockerfile` y el PR toca `web/` |
+| `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
+| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
+| `Deploy (production)` | Andamio de release. No despliega | Solo en `push` a `main`, tras la compuerta |
 
-**Hoy solo corren las tres primeras.** El resto esta guardado por la existencia de su capa, y
+**Hoy solo corren las tres primeras** (y `Deploy (production)`, en cuanto se mergee, para reportar
+que no habia imagenes que desplegar)**.** El resto esta guardado por la existencia de su capa, y
 `main` todavia no tiene `go.mod`, `Dockerfile` ni `web/`. El commit que introduzca cada capa
 enciende su etapa sin tocar el pipeline.
+
+### Las etapas de frontend son tolerantes
+
+`Lint (frontend)` y `Test (frontend)` estan escritas contra un directorio que todavia no existe.
+Cada comprobacion busca el script que necesita en `web/package.json` y, si no esta, emite un
+`::notice::` nombrando la herramienta que falta y **pasa**.
+
+Fallar seria lo comodo de defender y lo peor en la practica: obligaria a que el commit que trae el
+frontend traiga ademas configuracion de eslint, de prettier y un runner de tests para poder ponerse
+en verde, y asi es como alguien acaba borrando la etapa en vez de completarla. Los `::notice::` son
+la lista de pendientes, y salen en el resumen del job en cada corrida.
+
+`tsc --noEmit` corre aqui aunque `npm run build` ya ejecute `tsc -b`. No es redundante: un error de
+tipos lo tiene que reportar el check de lint, en segundos, no el final de un build de Vite.
 
 ### Por que hay dos etapas de lint de Go
 
@@ -79,7 +101,7 @@ depende de la profundidad del clon ni de que se haya traido la rama base.
 
 ## Nombres de rama
 
-```
+```text
 ^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$
 ```
 
@@ -121,15 +143,18 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
   traga el fallo y construye la imagen con dependencias sin verificar.
 - **El PR que traiga el frontend** tiene que commitear **`web/package-lock.json`**. `Frontend
   build` usa `npm ci`, que lo exige. Si el `web/Dockerfile` usa `npm install`, re-resuelve el arbol
-  en cada build y dos imagenes del mismo commit pueden llevar codigo distinto.
+  en cada build y dos imagenes del mismo commit pueden llevar codigo distinto. Deberia traer ademas
+  eslint, prettier y un runner de tests: sin ellos `Lint (frontend)` y `Test (frontend)` pasan, pero
+  pasan sin comprobar nada y lo dicen en cada corrida.
 
 ## Lo que todavia no cubre
 
-- **Ningun despliegue.** El pipeline es solo CI: construye imagenes pero no publica ninguna.
+- **El despliegue es un andamio.** Las imagenes se publican de verdad en GHCR al mergear, pero
+  `Deploy (production)` no despliega: falta decidir proveedor. Detalle en [`docs/cd.md`](cd.md).
 - **Sin arranque de imagen.** Las etapas de Docker comprueban que la imagen *construye*, no que
   *arranca*.
-- **Frontend sin lint ni test**, porque el `web/` entrante no trae ni configuracion de eslint ni
-  runner de tests.
+- **El lint y el test de frontend no comprueban nada todavia**, porque el `web/` entrante no trae ni
+  configuracion de eslint ni runner de tests. Las etapas existen y avisan; ver arriba.
 - **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
   corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
   ejemplos resueltos de los propios reglamentos.

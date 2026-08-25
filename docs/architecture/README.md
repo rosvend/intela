@@ -155,7 +155,8 @@ que se decidio a proposito.
 | [0008](../decisiones/0008-reparto-como-flujo-con-aprobaciones.md) | Dos maquinas de estado con doble firma, no una con un `if` |
 | [0009](../decisiones/0009-stack-typescript-nestjs.md) | ~~TypeScript y NestJS~~ — **sustituida por 0010** |
 | [0010](../decisiones/0010-stack-go.md) | Go en el backend; la regla de dependencia pasa a ser cosa del compilador |
-| [0011](../decisiones/0011-verificacion-del-diagrama-como-aviso.md) | La verificacion del diagrama avisa, no bloquea |
+| [0011](../decisiones/0011-verificacion-del-diagrama-como-aviso.md) | ~~La verificacion del diagrama avisa, no bloquea~~ — **sustituida por 0012** |
+| [0012](../decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md) | La frontera se verifica sobre los `import` con `depguard`, no sobre el diagrama |
 
 ---
 

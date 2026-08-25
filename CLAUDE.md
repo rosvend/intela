@@ -65,6 +65,7 @@ Cargar solo lo que haga falta para la tarea.
 | `docs/reglamentos/` | Texto verbatim de los reglamentos, citable por numeral |
 | `docs/decisiones/` | Por que el sistema quedo modelado asi |
 | `docs/ci.md` | Etapas de CI, la compuerta `ci`, filtrado por ruta y hooks locales |
+| `docs/cd.md` | Despliegue: imagenes en GHCR, donde se inyecta el proveedor y los secretos |
 | `docs/context.md` | Planteamiento academico original. **Anterior al analisis de dominio**: donde diga que los ingresos se acumulan por fila, manda `docs/dominio/formulas.md` |
 
 Convencion de citas: `RD 13.1.3` es la seccion 13.1.3 del Reglamento de Distribucion IX.
@@ -94,6 +95,10 @@ por ruta y se saltan solas mientras su capa no exista. Las ramas siguen
 `lefthook.yml` (`lefthook install`); todo lo que corre en un hook corre tambien en CI. Detalle en
 `docs/ci.md`.
 
+CD: el despliegue esta al final del mismo `ci.yml` y solo corre en `push` a `main`, tras la
+compuerta. Las imagenes se publican en GHCR; el job de despliegue es un andamio sin proveedor
+todavia. Detalle en `docs/cd.md`.
+
 La frontera de arquitectura se verifica sobre los `import` con `depguard` ([ADR 0012](docs/decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md)),
 no sobre el diagrama.
 
@@ -119,7 +124,7 @@ si hay que decidir a mano:
 Fase de analisis, cerrandose. El stack esta decidido en
 [`docs/decisiones/0010-stack-go.md`](docs/decisiones/0010-stack-go.md) (Go + React) pero **todavia
 no existe `go.mod`**: no hay codigo de aplicacion. Mientras tanto `.golangci.yml` esta escrito pero
-inerte, y el job `codigo` de `arquitectura.yml` no corre.
+inerte, y la etapa `Architecture boundary` que corre `depguard` se salta sola.
 
 Antes de construir el motor de matching o el de distribucion faltan datos del cliente: ver las
 preguntas abiertas al final de `docs/dominio/reglas-negocio.md`.

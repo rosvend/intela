@@ -1,0 +1,146 @@
+# Reusable stage: deployment.
+#
+# THIS IS A SCAFFOLD. It runs, it reports what it would do, and it deploys
+# nothing - the hosting provider is not decided yet (there is no ADR for it).
+# It exists now, empty, for two reasons:
+#
+#   1. The shape of the release path is a decision in itself: what gets
+#      deployed, in what order, behind which gate. Settling that while it costs
+#      nothing is cheaper than settling it during the first release.
+#   2. The images it consumes are already published by `container.yml`. Without
+#      this stage they would pile up in the registry with nothing reading them.
+#
+# It is NOT a no-op that lies: every step prints the command it will eventually
+# run and the secret it will need. A green check here means "the release path
+# was reached", never "the release happened".
+#
+# WHERE THE PROVIDER GOES
+#
+# Each TODO below marks an injection point. Filling them in means replacing the
+# `echo` with the real command and adding the matching secret - the surrounding
+# structure (ordering, environment gate, concurrency) does not change.
+#
+# WHERE THE SECRETS GO
+#
+# Repository or environment secrets, referenced through the `secrets:` block of
+# this workflow's `workflow_call` and passed by the caller. Environment secrets
+# are preferred: they are scoped to `production` and cannot be read by a run
+# that targets anything else.
+#
+# GHCR needs no secret at all - `container.yml` authenticates with the job's own
+# GITHUB_TOKEN. A cloud provider will need one of:
+#
+#   - OIDC (preferred): no stored credential. Requires `id-token: write` on the
+#     calling job. Deliberately NOT granted today - an unused token permission
+#     is a standing liability, so it gets added by the commit that uses it.
+#   - A static credential in an environment secret, for providers without OIDC.
+#
+# THE APPROVAL GATE
+#
+# `environment: production` is what makes this promotable. Adding required
+# reviewers to that environment in repository settings turns this job into a
+# manual approval gate without touching this file. The environment does not
+# exist yet; GitHub creates it the first time this runs.
+
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Target environment. Drives the approval gate and secret scope.
+        type: string
+        default: "production"
+      backend-image:
+        description: Fully qualified backend image the release should roll out.
+        type: string
+        default: ""
+      frontend-image:
+        description: Fully qualified frontend image the release should roll out.
+        type: string
+        default: ""
+    # No secrets are declared yet, on purpose: declaring one before anything
+    # consumes it invites passing a credential this workflow cannot use.
+    #
+    # secrets:
+    #   DEPLOY_TOKEN:
+    #     description: Provider credential. Prefer OIDC where the provider supports it.
+    #     required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Release to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+
+    # The gate. Required reviewers configured here become a manual approval.
+    environment: ${{ inputs.environment }}
+
+    # A deployment is never cancelled by the one behind it. This is the opposite
+    # of the CI policy on purpose: cancelling a build wastes a runner,
+    # cancelling a rollout leaves the environment half-migrated.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Release plan
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND: ${{ inputs.backend-image }}
+          FRONTEND: ${{ inputs.frontend-image }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Release plan"
+            echo
+            echo "| What | Value |"
+            echo "| ---- | ----- |"
+            echo "| Environment | \`${ENVIRONMENT}\` |"
+            echo "| Backend image | \`${BACKEND:-not built}\` |"
+            echo "| Frontend image | \`${FRONTEND:-not built}\` |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo
+            echo "> Scaffold: nothing was deployed. See \`docs/cd.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # TODO(provider): authenticate.
+      #   OIDC:   add `id-token: write` to the calling job in ci.yml, then use
+      #           the provider's official login action.
+      #   Static: reference an environment secret declared in `workflow_call`.
+      - name: Authenticate against the provider
+        run: |
+          echo "TODO: authenticate. No provider decided - see docs/cd.md."
+
+      # TODO(provider): run migrations BEFORE the new image serves traffic, and
+      # keep them backward compatible with the running version. ADR 0008 makes
+      # a reparto a multi-stage approval flow: a run in flight during a deploy
+      # must not observe a schema its code does not know.
+      - name: Apply database migrations
+        run: |
+          echo "TODO: run migrations against ${{ inputs.environment }}."
+
+      # TODO(provider): roll out. The images are already published and
+      # immutable, addressed by digest-length SHA tag - this step selects one,
+      # it never rebuilds.
+      - name: Roll out
+        env:
+          BACKEND: ${{ inputs.backend-image }}
+          FRONTEND: ${{ inputs.frontend-image }}
+        run: |
+          set -euo pipefail
+          echo "TODO: roll out backend  ${BACKEND:-<not built>}"
+          echo "TODO: roll out frontend ${FRONTEND:-<not built>}"
+
+      # TODO(provider): a real health check that fails the job. Until this is
+      # implemented, a green run says the release path executed, NOT that the
+      # service is healthy - and rollback is manual.
+      - name: Verify the release is healthy
+        run: |
+          echo "TODO: poll the health endpoint and fail if it does not recover."
+
+      - name: State plainly that nothing shipped
+        run: |
+          echo "::notice::Deploy scaffold reached. No provider configured, so nothing was deployed. See docs/cd.md."

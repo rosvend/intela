@@ -91,9 +91,10 @@ dificil explicar una cifra, que es justo lo que exige `RD 16`.
 Positivas: se puede construir y probar todo el reparto sin base de datos, sin banco y sin CISAC,
 usando implementaciones en memoria de los puertos, lo cual importa porque **hoy faltan casi todos
 esos insumos**. La pregunta abierta de si Intela reemplaza a REDES-SYS y AVSYS o se integra con
-ellos deja de bloquear: es la eleccion de un adaptador. Y el diagrama de la pagina 1 de
-`docs/diagrams/PATIC2 - Arquitectura.drawio` es verificable: se puede recorrer y comprobar que ninguna arista
-sale del nucleo sin pasar por un puerto.
+ellos deja de bloquear: es la eleccion de un adaptador. Y la frontera es verificable sobre el
+codigo: se puede comprobar que ningun paquete del nucleo importa nada de fuera sin pasar por un
+puerto. El diagrama de la pagina 1 de `docs/diagrams/PATIC2 - Arquitectura.drawio` documenta esa
+misma frontera, pero no la hace cumplir ([ADR 0012](0012-la-frontera-se-verifica-sobre-el-codigo.md)).
 
 A cambio: mas indireccion. Guardar una obra pasa por una interfaz en vez de llamar al ORM, y hay que
 escribir y mantener las implementaciones de cada puerto. Para un CRUD seria un costo injustificado;
@@ -101,5 +102,7 @@ aqui se paga porque el sistema mueve dinero de terceros y responde ante la DNDA.
 
 Riesgo asumido: la frontera se erosiona sola. Basta un `import` del cliente HTTP dentro de un caso de
 uso, hecho con prisa, para que deje de valer. La mitigacion es un test de arquitectura en CI que
-falle si el paquete del dominio importa cualquier cosa de infraestructura, y que el criterio de
-aceptacion del diagrama sea el mismo que el del test.
+falle si el paquete del dominio importa cualquier cosa de infraestructura: la etapa
+`Architecture boundary`, que corre `depguard` sobre los `import` reales con las reglas de
+[`.golangci.yml`](../../.golangci.yml). El diagrama no participa en ese criterio
+([ADR 0012](0012-la-frontera-se-verifica-sobre-el-codigo.md)).

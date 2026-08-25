@@ -1,4 +1,4 @@
-# CI orchestrator. The only workflow with triggers: every stage lives in a
+# CI/CD orchestrator. The only workflow with triggers: every stage lives in a
 # reusable workflow (`workflow_call`) and is invoked from here.
 #
 # The design solves three problems:
@@ -16,6 +16,13 @@
 #      touched.
 #
 # `detect` plus the `ci` gate solve all three.
+#
+# DEPLOYMENT LIVES HERE TOO, at the bottom, gated on `needs: [ci]` and on the
+# event being a push to `main`. It is in this file rather than a workflow of its
+# own so that the release path cannot start before the gate is green. The
+# alternative, `workflow_run`, resolves against the DEFAULT BRANCH's copy of the
+# workflow and never appears on the pull request - you would be reviewing a
+# release path that is not the one that runs.
 #
 # IMPORTANT: path filtering happens at the JOB level (`if:`), never at the
 # trigger level (`on.pull_request.paths`). A workflow skipped by a trigger
@@ -36,9 +43,12 @@ on:
 permissions:
   contents: read
 
+# Only pull requests are cancellable. Once a push to `main` reaches the deploy
+# job, cancelling it would abort a rollout midway; a superseded PR build only
+# costs a runner.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
@@ -100,8 +110,8 @@ jobs:
           P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|lint-python)\.yml$)'
           P_WORKFLOWS='^\.github/'
           P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture)\.yml$)'
-          P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|container)\.yml$)'
-          P_DOCKER='(^Dockerfile|^\.dockerignore$|^\.github/workflows/(ci|container)\.yml$)'
+          P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|^\.github/workflows/(ci|container|deploy)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
@@ -142,9 +152,12 @@ jobs:
             echo "| lint-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
             echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
             echo "| architecture | \`$go\` | depguard needs Go code to inspect |"
+            echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
             echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
             echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
+            echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   branch-name:
@@ -222,31 +235,54 @@ jobs:
     if: needs.detect.outputs.go == 'true'
     uses: ./.github/workflows/architecture.yml
 
+  lint-frontend:
+    name: Lint (frontend)
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/lint-frontend.yml
+
+  test-frontend:
+    name: Test (frontend)
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/test-frontend.yml
+
   build-frontend:
     name: Frontend build
     needs: detect
     if: needs.detect.outputs.frontend == 'true'
     uses: ./.github/workflows/build-frontend.yml
 
+  # `push` is the only difference between verifying and releasing an image, so
+  # both go through the same stage. A pull request builds and discards; a merge
+  # to `main` publishes the very same build to GHCR.
   container-backend:
     name: Docker build (backend)
     needs: detect
     if: needs.detect.outputs.docker-backend == 'true'
     uses: ./.github/workflows/container.yml
+    permissions:
+      contents: read
+      packages: write
     with:
       image-name: intela-api
       context: .
       dockerfile: Dockerfile
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
   container-frontend:
     name: Docker build (frontend)
     needs: detect
     if: needs.detect.outputs.docker-frontend == 'true'
     uses: ./.github/workflows/container.yml
+    permissions:
+      contents: read
+      packages: write
     with:
       image-name: intela-web
       context: web
       dockerfile: web/Dockerfile
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
   # The gate. This is the ONLY required check in `main`'s branch protection,
   # so its name must stay `ci` - renaming it locks the branch.
@@ -262,6 +298,8 @@ jobs:
       - lint-go
       - test-go
       - architecture
+      - lint-frontend
+      - test-frontend
       - build-frontend
       - container-backend
       - container-frontend
@@ -287,3 +325,43 @@ jobs:
         run: |
           echo "::error::At least one CI stage failed or was cancelled. See the summary." >&2
           exit 1
+
+  # --------------------------------------------------------------------------
+  # Continuous delivery. Everything below runs ONLY on a push to `main`, and
+  # only once the `ci` gate above is green.
+  # --------------------------------------------------------------------------
+
+  # The release itself. `container-*` has already published the images by this
+  # point - publishing is a `push: true` on the same stage that verified them,
+  # not a separate build.
+  #
+  # `always()` is what lets this run while the container stages are still
+  # skipped: there is no Dockerfile in the repository yet, and a job whose
+  # `needs` were skipped is itself skipped unless it says otherwise. Today the
+  # deploy scaffold therefore runs on every merge with empty image inputs and
+  # reports that there was nothing to roll out - which is the honest answer, and
+  # keeps the release path exercised instead of theoretical.
+  #
+  # The gate stays authoritative: `needs.ci.result == 'success'` means no stage
+  # failed, and the container stages are checked separately because a FAILED
+  # image build must stop the release even though a SKIPPED one must not.
+  deploy:
+    name: Deploy (production)
+    needs:
+      - ci
+      - container-backend
+      - container-frontend
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.ci.result == 'success'
+      && needs.container-backend.result != 'failure'
+      && needs.container-frontend.result != 'failure'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+    with:
+      environment: production
+      backend-image: ${{ needs.container-backend.outputs.image }}
+      frontend-image: ${{ needs.container-frontend.outputs.image }}
