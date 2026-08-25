@@ -8,9 +8,9 @@
 #   lint-go.yml       -> everything else            (the style)
 # Deliberately separate: a red check has to say which of the two broke.
 #
-# Inert while there is no `go.mod`: the stage that uses this file is guarded on
-# the module existing. It ships written so the boundary is watched from the
-# first commit of code rather than after it (ADR 0012).
+# No longer inert. `go.mod` exists, so `architecture.yml` runs and these rules
+# block: the boundary is watched from the first commit of code, which is what
+# ADR 0012 asked for.
 #
 # Written in English because it is infrastructure, and because these `desc`
 # strings are printed into the CI log when a rule fires. The domain nouns
@@ -19,10 +19,9 @@
 # ubiquitous language of the regulations, and CLAUDE.md forbids translating
 # them anywhere, including here.
 #
-# The module path (`github.com/rosvend/intela`) has to be confirmed against the
-# real `module` line of `go.mod` when it lands. If the module is renamed, every
-# `deny` here has to be renamed too: depguard compares strings, it does not
-# resolve packages.
+# The module path (`github.com/rosvend/intela`) is confirmed against the `module`
+# line of `go.mod`. If the module is ever renamed, every `deny` here has to be
+# renamed too: depguard compares strings, it does not resolve packages.
 
 version: "2"
 
@@ -73,8 +72,15 @@ linters:
             - pkg: os
               desc: "ADR 0005: the engine is a pure function. No environment, no files."
 
-        # ADR 0002 declares PuertoReloj a domain port, not an infrastructure
-        # one: "el tiempo entra inyectado". The 3- and 10-year prescriptions and
+        # ADR 0002 requires that "el tiempo entra inyectado", and ADR 0005 says
+        # where the port lives: "entra por `PuertoReloj` en la capa de
+        # aplicacion". It is declared in `internal/aplicacion/puertos.go` -
+        # still core, never infrastructure - because this very rule denies the
+        # `time` package inside `internal/dominio`, and `Ahora() time.Time`
+        # cannot be declared without importing it. The dominio RECEIVES the
+        # instant; it never asks for it.
+        #
+        # The 3- and 10-year prescriptions and
         # the 15-day windows have to be testable without waiting a decade, and
         # ADR 0005 requires a reparto run to be reproducible bit for bit years
         # later. A loose `time.Now()` or `rand` in the core breaks both
@@ -108,6 +114,19 @@ linters:
               desc: "ADR 0002: a use case talks to a repository puerto, not to the driver."
             - pkg: github.com/go-chi/chi
               desc: "ADR 0002: the router is an inbound adapter."
+            # These five were sitting INSIDE internal/aplicacion and the rule did
+            # not catch them: it denied infraestructura, pgx and chi only. All
+            # five are adapter concerns, not use-case concerns.
+            - pkg: golang.org/x/crypto/bcrypt
+              desc: "ADR 0002: the hashing algorithm is an adapter detail. It enters through the Hasher puerto."
+            - pkg: encoding/csv
+              desc: "ADR 0002: parsing a file format is the job of an ingesta adapter."
+            - pkg: github.com/xuri/excelize
+              desc: "ADR 0002: reading an .xlsx is the job of an ingesta adapter."
+            - pkg: net/http
+              desc: "ADR 0002: HTTP is an inbound adapter."
+            - pkg: database/sql
+              desc: "ADR 0002: persistence enters through a repository puerto."
 
         # ADR 0003: "Reparto lee de Repertorio y de Recaudo. Ninguno de los dos
         # conoce a Reparto." Go already rejects cycles at compile time; this
@@ -138,6 +157,84 @@ linters:
               desc: "ADR 0003: identificacion does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
               desc: "ADR 0003: identificacion does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: identificacion does not touch money."
+
+        # ONI is the manual queue of what identificacion could not recognise. A
+        # uso sitting in ONI is money with no known owner yet, but the queue does
+        # not compute how much: it only says the thing is unresolved.
+        modulos-oni:
+          files:
+            - "**/internal/dominio/oni/*.go"
+            - "**/internal/dominio/oni/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: the manual queue does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: the manual queue does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: the manual queue does not touch money."
+
+        # Afiliacion keeps the padron: who is a Socio and who a Titular
+        # Administrado. Existing in the padron is independent of anything
+        # collected or paid.
+        modulos-afiliacion:
+          files:
+            - "**/internal/dominio/afiliacion/*.go"
+            - "**/internal/dominio/afiliacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: the padron does not depend on a corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: the padron does not depend on what was liquidated."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: the padron does not depend on anticipos; it is the other way round."
+
+        # Liquidacion CONSUMES the result of a corrida; it does not recompute it.
+        # If it could import the engine, the temptation to recalculate "just to
+        # check" would let two different numbers come out of the same proceso.
+        modulos-liquidacion:
+          files:
+            - "**/internal/dominio/liquidacion/*.go"
+            - "**/internal/dominio/liquidacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: the bolsa was already resolved upstream, in reparto."
+            - pkg: github.com/rosvend/intela/internal/dominio/identificacion
+              desc: "ADR 0003: by this point the obras are already identified."
+
+        # A reclamacion does not rewrite a closed corrida: it is settled with a
+        # traceable adjustment in a later one, or out of the RD 14 reserve.
+        # Reopening a corrida breaks the reproducibility ADR 0005 requires.
+        modulos-reclamaciones:
+          files:
+            - "**/internal/dominio/reclamaciones/*.go"
+            - "**/internal/dominio/reclamaciones/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0005: a reclamacion does not recompute a closed corrida."
+
+        modulos-anticipos:
+          files:
+            - "**/internal/dominio/anticipos/*.go"
+            - "**/internal/dominio/anticipos/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: an anticipo is deducted from a liquidacion, not from a corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: an anticipo knows nothing of tarifas or convenios."
+
+        # Prescripcion decides when an amount stops being claimable (RD 15). All
+        # it needs are dates and amounts, and both are handed to it.
+        modulos-prescripcion:
+          files:
+            - "**/internal/dominio/prescripcion/*.go"
+            - "**/internal/dominio/prescripcion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: prescribing is not recomputing."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: prescripcion knows nothing of tarifas or convenios."
 
   exclusions:
     rules:

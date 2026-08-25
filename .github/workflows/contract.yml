@@ -1,0 +1,56 @@
+# Reusable stage: validate the OpenAPI contract.
+#
+# ADR 0010 priced generation from the contract as the cost of changing stack, and
+# the contract landed with nothing checking that it was even valid: an earlier
+# revision declared `{id}` in a path without declaring it under `parameters`, and
+# nobody noticed. A broken spec does not announce itself - it announces itself
+# later, to whoever first generates a client from it.
+#
+# Inert until `api/openapi.yaml` exists: ci.yml invokes it only when `detect`
+# finds one.
+#
+# This validates the spec; it does not GENERATE from it. Type generation for the
+# frontend arrives with the first endpoints (ADR 0010), and until then the check
+# that the contract is well formed is the half that can exist.
+
+name: Contract
+
+on:
+  workflow_call:
+    inputs:
+      spec:
+        description: Path to the OpenAPI document.
+        type: string
+        default: "api/openapi.yaml"
+      config:
+        description: Redocly configuration, which carries the ruleset.
+        type: string
+        default: "api/redocly.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  openapi:
+    name: OpenAPI is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      # `redocly lint` checks the specification and, beyond that, flags what
+      # makes it useless for generating clients: a missing operationId, a
+      # response with no schema, an empty description.
+      #
+      # The paths arrive through `env` rather than being interpolated into the
+      # script body. They come from a trusted caller today, but `${{ }}` inside
+      # `run:` is string substitution before the shell ever sees it, and that is
+      # a habit worth not having in a repository that publishes images.
+      - name: Validate
+        env:
+          SPEC: ${{ inputs.spec }}
+          CONFIG: ${{ inputs.config }}
+        run: npx --yes @redocly/cli@1 lint --config "$CONFIG" "$SPEC"

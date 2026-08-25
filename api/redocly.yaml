@@ -1,0 +1,27 @@
+# Configuracion de redocly lint.
+#
+# Las reglas que se apagan van con su motivo. Una regla apagada sin explicar
+# es una regla que alguien volvera a encender sin saber por que estaba apagada.
+
+extends:
+  - recommended
+
+rules:
+  # Los servidores SON localhost: el sistema se despliega con docker compose y
+  # todavia no hay entorno publicado. Cuando lo haya, esta regla vuelve.
+  no-server-example.com: off
+
+  # /health y /ready no reciben entrada, no llevan autenticacion y no tienen
+  # parametros: no hay 4XX que documentar. El unico fallo posible de /ready es
+  # 503, que si esta declarado.
+  operation-4xx-response: off
+
+  # Lo que si se exige, y con severidad de error:
+  operation-operationId: error
+  operation-summary: error
+  operation-description: error
+  no-invalid-media-type-examples: error
+  # Una respuesta sin schema no sirve para generar un cliente, que es el
+  # proposito del contrato segun el ADR 0010.
+  operation-4xx-problem-details-rfc7807: off
+  no-unresolved-refs: error

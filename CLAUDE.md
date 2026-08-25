@@ -121,10 +121,16 @@ si hay que decidir a mano:
 
 ## Estado
 
-Fase de analisis, cerrandose. El stack esta decidido en
-[`docs/decisiones/0010-stack-go.md`](docs/decisiones/0010-stack-go.md) (Go + React) pero **todavia
-no existe `go.mod`**: no hay codigo de aplicacion. Mientras tanto `.golangci.yml` esta escrito pero
-inerte, y la etapa `Architecture boundary` que corre `depguard` se salta sola.
+Stack vigente: [`docs/decisiones/0010-stack-go.md`](docs/decisiones/0010-stack-go.md) (Go + React).
+Ya existe `go.mod`, asi que `.golangci.yml` deja de ser inerte y la etapa `Architecture boundary`
+si corre: la frontera esta vigilada sobre los `import` con `depguard` (ADR 0012).
+
+El andamiaje vive en `cmd/`, `internal/` y `web/`. Es andamiaje: fronteras y puntos de entrada,
+no el motor. El reparto, la identificacion y la persistencia entran en PRs propios.
 
 Antes de construir el motor de matching o el de distribucion faltan datos del cliente: ver las
-preguntas abiertas al final de `docs/dominio/reglas-negocio.md`.
+preguntas abiertas al final de [`docs/dominio/reglas-negocio.md`](docs/dominio/reglas-negocio.md)
+y [`docs/dominio/fuentes-datos.md`](docs/dominio/fuentes-datos.md). Y no tratar las cifras del
+seed como datos reales.
+
+El equivalente para Cursor esta en `AGENTS.md`.

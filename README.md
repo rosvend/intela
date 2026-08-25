@@ -12,6 +12,7 @@ la sociedad de gestion colectiva de los escritores audiovisuales de Colombia.
 </h3>
 
 <p align="center">
+  <a href="./docs/ARRANQUE.md"><b>Arranque</b></a> ·
   <a href="./docs/architecture/"><b>Arquitectura</b></a> ·
   <a href="./docs/dominio/"><b>Dominio</b></a> ·
   <a href="./docs/decisiones/"><b>Decisiones</b></a> ·
@@ -53,6 +54,17 @@ completo de tres paginas.
 ---
 
 ## Como empezar
+
+### La aplicacion
+
+```bash
+docker compose up --build   # API, worker, scheduler, Postgres y el tablero
+make verificar              # tidy, build, vet, gofmt y test — lo mismo que corre CI
+```
+
+→ [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para variables de entorno y datos de prueba.
+
+### Los scripts de analisis
 
 Los scripts declaran sus dependencias en linea (PEP 723) y se ejecutan con `uv`. Cada uno resuelve
 su propio entorno efimero, sin interferir con el stack de la aplicacion.

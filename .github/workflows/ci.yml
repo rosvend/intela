@@ -62,6 +62,7 @@ jobs:
       workflows: ${{ steps.layers.outputs.workflows }}
       go: ${{ steps.layers.outputs.go }}
       frontend: ${{ steps.layers.outputs.frontend }}
+      contract: ${{ steps.layers.outputs.contract }}
       docker-backend: ${{ steps.layers.outputs.docker_backend }}
       docker-frontend: ${{ steps.layers.outputs.docker_frontend }}
     steps:
@@ -111,7 +112,11 @@ jobs:
           P_WORKFLOWS='^\.github/'
           P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture)\.yml$)'
           P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
-          P_DOCKER='(^Dockerfile|^\.dockerignore$|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          P_CONTRACT='(^api/|^\.github/workflows/(ci|contract)\.yml$)'
+          # The Go sources are in here on purpose: the backend image is built
+          # FROM them, so a change to `internal/` that breaks the build has to
+          # re-run this stage, not wait for the merge to main to find out.
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
@@ -127,6 +132,9 @@ jobs:
           frontend=false
           if exists web/package.json && touched "$P_FRONTEND"; then frontend=true; fi
 
+          contract=false
+          if exists api/openapi.yaml && touched "$P_CONTRACT"; then contract=true; fi
+
           docker_backend=false
           if exists Dockerfile && touched "$P_DOCKER"; then docker_backend=true; fi
 
@@ -138,6 +146,7 @@ jobs:
             echo "workflows=$workflows"
             echo "go=$go"
             echo "frontend=$frontend"
+            echo "contract=$contract"
             echo "docker_backend=$docker_backend"
             echo "docker_frontend=$docker_frontend"
           } >> "$GITHUB_OUTPUT"
@@ -155,6 +164,7 @@ jobs:
             echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
             echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
             echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
             echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
             echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
@@ -253,6 +263,17 @@ jobs:
     if: needs.detect.outputs.frontend == 'true'
     uses: ./.github/workflows/build-frontend.yml
 
+  # The API contract is validated even though nothing generates from it yet.
+  # ADR 0010 priced type generation from OpenAPI as part of the stack change; this
+  # is the half that can exist before there are endpoints to generate. A spec that
+  # is merely broken does not announce itself - it announces itself later, to
+  # whoever first tries to generate a client from it.
+  contract:
+    name: OpenAPI contract
+    needs: detect
+    if: needs.detect.outputs.contract == 'true'
+    uses: ./.github/workflows/contract.yml
+
   # `push` is the only difference between verifying and releasing an image, so
   # both go through the same stage. A pull request builds and discards; a merge
   # to `main` publishes the very same build to GHCR.
@@ -301,6 +322,7 @@ jobs:
       - lint-frontend
       - test-frontend
       - build-frontend
+      - contract
       - container-backend
       - container-frontend
     if: always()

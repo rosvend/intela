@@ -1,0 +1,102 @@
+# Entorno de desarrollo. `docker compose up --build` levanta el sistema entero.
+#
+# MinIO no esta aqui. Estaba, pero sin cablear: la aplicacion escribe en disco
+# local y ningun adaptador habla S3, asi que el servicio solo servia para
+# aparentar que el almacen de objetos ya existia. Vuelve con el adaptador S3,
+# y entonces con tag fijado y volumen -el de antes usaba `latest` y no tenia
+# volumen, asi que los objetos se perdian en cada `down`.
+
+name: intela
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &backend-env
+    DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
+    OBJECT_DIR: /objetos
+    LOG_FORMATO: texto
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_USER: intela
+      POSTGRES_PASSWORD: intela
+      POSTGRES_DB: intela
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intela -d intela"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Paso propio, antes de que arranque nada. Corre una vez y termina; los
+  # demas servicios esperan a que salga con exito.
+  #
+  # Antes esto lo hacia la API al arrancar, lo que significaba que cada
+  # replica intentaba migrar en paralelo y que un fallo de migracion se
+  # confundia con un fallo de arranque.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/migrate", "up"]
+    environment:
+      DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
+      LOG_FORMATO: texto
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    entrypoint: ["/app/api"]
+    environment:
+      <<: *backend-env
+      # El nombre lo lee config.Cadena("ADDR", ...). Antes esto se llamaba
+      # HTTP_ADDR y el binario leia ADDR: la variable no hacia nada.
+      ADDR: ":8080"
+      # Lista blanca, nunca "*". En desarrollo, el origen de Vite y el de nginx.
+      CORS_ORIGENES: "http://localhost,http://localhost:5173"
+    volumes: [objetos:/objetos]
+    ports: ["8080:8080"]
+    # Sin healthcheck: la imagen es distroless y no tiene shell ni curl con
+    # que sondear. La sonda vive en nginx, que si los tiene, contra /ready.
+
+  worker:
+    <<: *backend
+    entrypoint: ["/app/worker"]
+    volumes: [objetos:/objetos]
+
+  scheduler:
+    <<: *backend
+    entrypoint: ["/app/scheduler"]
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    depends_on: [api]
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["80:80"]
+    depends_on: [api, web]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  objetos:
