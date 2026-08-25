@@ -1,0 +1,50 @@
+# Reusable stage: Python lint and formatting.
+#
+# Runs only when the PR touches `*.py` or `ruff.toml` (see `detect` in ci.yml).
+# Linting of the workflows themselves lives in `lint-workflows.yml`, because it
+# triggers on something else.
+#
+# The scripts in `src/scripts/` declare their dependencies inline (PEP 723) and
+# run through `uv`, per CLAUDE.md. Nothing from the project is installed here:
+# `ruff` is a tool, not a dependency, and runs via `uvx`.
+#
+# ADR 0010 keeps these scripts in Python permanently even though the backend is
+# Go, so this stage is not temporary scaffolding.
+
+name: Lint Python
+
+on:
+  workflow_call:
+    inputs:
+      ruff-version:
+        description: Pinned ruff version, so CI is reproducible.
+        type: string
+        default: "0.16.4"
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # setup-uv is pinned to a full semver on purpose: from v8 onward astral-sh
+      # stopped publishing the floating major tag, so `@v10` does not resolve.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          cache-suffix: lint-python
+
+      - name: ruff check
+        env:
+          RUFF: ${{ inputs.ruff-version }}
+        run: uvx "ruff@${RUFF}" check --output-format=github src/
+
+      # `format --check` does not write: it fails and lists the files to reformat.
+      - name: ruff format --check
+        env:
+          RUFF: ${{ inputs.ruff-version }}
+        run: uvx "ruff@${RUFF}" format --check --diff src/

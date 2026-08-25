@@ -9,8 +9,9 @@
 # Reparto de responsabilidades con el .drawio, para que no se contradigan:
 #
 #   docs/diagrams/PATIC2 - Arquitectura.drawio  -> vista COMPLETA. Manda.
-#       Tres paginas, 126 cajas, con citas al reglamento. Es la que verifica
-#       check_arquitectura.py y la que se lee para trabajar.
+#       Tres paginas, 126 cajas, con citas al reglamento. Es la que se lee
+#       para trabajar. Documenta la intencion; la frontera la hace cumplir
+#       depguard sobre los import (ADR 0012), no este dibujo.
 #   docs/diagrams/arquitectura-{light,dark}.png -> vista de PORTADA (este script).
 #       Cinco columnas, cero detalle. Solo responde "que forma tiene esto"
 #       en los treinta segundos que dura un README.

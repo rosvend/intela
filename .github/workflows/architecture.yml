@@ -1,0 +1,61 @@
+# Reusable stage: the Clean Architecture boundary, enforced over real imports.
+#
+# ADRs 0002 and 0003 accept the same risk - that the boundary erodes on its own
+# and nobody notices until the audit - and name the same mitigation: an
+# architecture test in CI. 0003 is explicit about what happens without one:
+# "si esa prueba no existe, esta decision se degrada sola a monolito sin
+# modulos".
+#
+# This replaces an earlier job that parsed the `.drawio` diagram instead of the
+# code (ADR 0012, which supersedes 0011). That check validated a drawing, not the system: the diagram can be
+# immaculate while the code violates every rule, and it was fragile for reasons
+# that had nothing to do with architecture (draw.io wraps a cell in `<object>`
+# the moment you add a tooltip, and the parser stopped seeing it). depguard is
+# the real check - it reads the imports the compiler actually resolves.
+#
+# This runs ISOLATED from the style lint (`--enable-only=depguard`) on
+# purpose: when something goes red, the check name has to say whether a boundary
+# broke or a space is out of place.
+#
+# The flag is `--enable-only`, NOT `--default=none --enable=depguard`. In
+# golangci-lint v2 `formatters` is a separate config section that `--default`
+# does not touch, so the latter still runs gofmt and an unformatted file turns
+# this check red - which is exactly the confusion the isolation exists to
+# prevent. `--enable-only` overrides the whole linters section.
+#
+# Inert until `go.mod` exists - the caller guards this stage on it. Until the Go
+# module lands there is NO blocking boundary check in the repo; ADR 0012 records
+# that window and accepts it.
+
+name: Architecture boundary
+
+on:
+  workflow_call:
+    inputs:
+      golangci-version:
+        description: Pinned golangci-lint version.
+        type: string
+        default: "v2.13.1"
+
+permissions:
+  contents: read
+
+jobs:
+  depguard:
+    name: Import rules (depguard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Import cycles are already a compile error in Go (ADR 0010), so depguard
+      # covers exactly what the compiler cannot see: who is allowed to name whom.
+      # The rules live in .golangci.yml.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ inputs.golangci-version }}
+          args: --enable-only=depguard ./...

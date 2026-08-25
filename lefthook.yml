@@ -1,0 +1,82 @@
+# Git hooks. Fast local feedback in front of CI - never a replacement for it.
+#
+# The rule this file follows: everything here also runs in `.github/workflows/`.
+# Hooks are bypassable (`git commit --no-verify`) and only exist on machines
+# where someone ran `lefthook install`, so moving a check out of CI and into a
+# hook trades a guarantee for a suggestion. The hook exists to stop you pushing
+# a formatting mistake, not to be the thing that enforces it.
+#
+# Install:
+#   go install github.com/evilmartians/lefthook@latest   # or: brew install lefthook
+#   lefthook install
+#
+# Every command is guarded on its tool being present. A missing toolchain skips
+# the check with a note instead of blocking the commit - CI still catches it.
+
+# Nothing here should fire while git is replaying someone else's commits.
+skip:
+  - merge
+  - rebase
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: |
+        command -v gofmt >/dev/null || { echo "gofmt not installed - skipping (CI will check)"; exit 0; }
+        gofmt -l -w {staged_files}
+      stage_fixed: true
+
+    ruff-check:
+      glob: "*.py"
+      run: |
+        command -v uvx >/dev/null || { echo "uv not installed - skipping (CI will check)"; exit 0; }
+        uvx "ruff@0.16.4" check --fix {staged_files}
+      stage_fixed: true
+
+    ruff-format:
+      glob: "*.py"
+      run: |
+        command -v uvx >/dev/null || { echo "uv not installed - skipping (CI will check)"; exit 0; }
+        uvx "ruff@0.16.4" format {staged_files}
+      stage_fixed: true
+
+    actionlint:
+      glob: ".github/workflows/*.yml"
+      run: |
+        command -v docker >/dev/null || { echo "docker not available - skipping (CI will check)"; exit 0; }
+        docker run --rm -v "$(pwd):/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
+# Slower checks move to pre-push: a test suite on every commit trains people to
+# use --no-verify, which switches off the fast checks above too.
+pre-push:
+  parallel: true
+  commands:
+    branch-name:
+      run: |
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        [ "$BRANCH" = "main" ] && exit 0
+        PATTERN='^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$'
+        printf '%s' "$BRANCH" | grep -Eq "$PATTERN" && exit 0
+        echo "Branch '$BRANCH' does not match $PATTERN - CI will reject this PR." >&2
+        exit 1
+
+    go-test:
+      run: |
+        [ -f go.mod ] || exit 0
+        command -v go >/dev/null || { echo "go not installed - skipping (CI will check)"; exit 0; }
+        go test -race -count=1 ./...
+
+    golangci-lint:
+      run: |
+        [ -f go.mod ] || exit 0
+        command -v golangci-lint >/dev/null || { echo "golangci-lint not installed - skipping (CI will check)"; exit 0; }
+        golangci-lint run ./...
+
+    frontend-build:
+      run: |
+        [ -f web/package.json ] || exit 0
+        command -v npm >/dev/null || { echo "npm not installed - skipping (CI will check)"; exit 0; }
+        [ -f web/package-lock.json ] || { echo "web/package-lock.json missing - skipping (see docs/ci.md)"; exit 0; }
+        npm --prefix web ci && npm --prefix web run build

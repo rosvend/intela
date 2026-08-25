@@ -1,0 +1,59 @@
+# Reusable stage: the React frontend builds and typechecks.
+#
+# `npm run build` is `tsc -b && vite build` (web/package.json), so this stage is
+# both the build and the typecheck - Vite alone would transpile TypeScript
+# without ever checking it.
+#
+# Inert until `web/package.json` exists: ci.yml invokes it only when `detect`
+# finds one. The commit that brings the frontend activates this stage.
+#
+# There is no lint job and no test job here because the incoming web/ carries
+# neither an eslint config nor a test runner. When someone adds them, they become
+# steps in this file or stages of their own; they are not silently missing.
+#
+# REQUIRES `web/package-lock.json`. `npm ci` fails without it, on purpose:
+# `npm install` re-resolves the dependency tree on every run, so two builds of
+# the same commit can ship different code. ADR 0005 asks for reproducibility in
+# the reparto engine; the same argument applies to what gets served next to it.
+# Whoever lands web/ has to commit the lockfile with it.
+
+name: Build frontend
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version. Matches web/Dockerfile.
+        type: string
+        default: "22"
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: "web"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: tsc + vite build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      # `npm ci` installs exactly the lockfile, never rewrites it, and fails
+      # loudly when package.json and the lock have drifted apart.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsc -b && vite build)
+        run: npm run build

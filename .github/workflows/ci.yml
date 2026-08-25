@@ -1,25 +1,34 @@
-# Orquestador de CI. Es el unico workflow con disparadores: las etapas viven en
-# workflows reutilizables (`workflow_call`) y se invocan desde aqui.
+# CI/CD orchestrator. The only workflow with triggers: every stage lives in a
+# reusable workflow (`workflow_call`) and is invoked from here.
 #
-# El diseno resuelve tres problemas:
+# The design solves three problems:
 #
-#   1. Hoy no existe codigo Go ni Dockerfile. Si sus checks se declararan
-#      obligatorios, GitHub los dejaria en "Expected - waiting for status to be
-#      reported" y ningun PR podria mergearse nunca.
+#   1. Not every layer exists in every branch, and layers arrive over time. If a
+#      stage's check were declared required directly, GitHub would park it on
+#      "Expected - waiting for status to be reported" whenever it is skipped,
+#      and no PR could ever merge.
 #
-#   2. Un PR que solo toca Go no tiene por que lintar Python, ni al reves.
+#   2. A PR that only touches Go has no reason to lint Python, or the reverse.
 #
-#   3. El unico check obligatorio en la proteccion de `main` es el job `ci` del
-#      final, que agrega el resultado de todos los demas. Anadir una etapa es
-#      anadir un job y meterlo en su `needs`: la proteccion de rama no se toca.
+#   3. The only required check in `main`'s branch protection is the `ci` job at
+#      the bottom, which aggregates every other result. Adding a stage means
+#      adding a job and listing it under `needs`: branch protection is never
+#      touched.
 #
-# Los tres los resuelve `detect` + la compuerta `ci`.
+# `detect` plus the `ci` gate solve all three.
 #
-# IMPORTANTE: el filtrado por ruta va a nivel de JOB (`if:`), nunca a nivel de
-# disparador (`on.pull_request.paths`). Un workflow saltado por un filtro de
-# disparador no reporta NINGUN estado, asi que el check obligatorio `ci` se
-# quedaria esperando para siempre y `main` quedaria bloqueada. Aqui el workflow
-# siempre corre y siempre reporta; lo que se salta son los jobs de dentro.
+# DEPLOYMENT LIVES HERE TOO, at the bottom, gated on `needs: [ci]` and on the
+# event being a push to `main`. It is in this file rather than a workflow of its
+# own so that the release path cannot start before the gate is green. The
+# alternative, `workflow_run`, resolves against the DEFAULT BRANCH's copy of the
+# workflow and never appears on the pull request - you would be reviewing a
+# release path that is not the one that runs.
+#
+# IMPORTANT: path filtering happens at the JOB level (`if:`), never at the
+# trigger level (`on.pull_request.paths`). A workflow skipped by a trigger
+# filter reports NO status at all, so the required `ci` check would wait
+# forever and `main` would be blocked. Here the workflow always runs and always
+# reports; what gets skipped are the jobs inside it.
 
 name: CI
 
@@ -34,273 +43,347 @@ on:
 permissions:
   contents: read
 
+# Only pull requests are cancellable. Once a push to `main` reaches the deploy
+# job, cancelling it would abort a rollout midway; a superseded PR build only
+# costs a runner.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
-    name: Detectar que aplica
+    name: Detect applicable stages
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read # para listar los ficheros del PR
+      pull-requests: read # to list the files in the PR
     outputs:
-      python: ${{ steps.capas.outputs.python }}
-      workflows: ${{ steps.capas.outputs.workflows }}
-      go: ${{ steps.capas.outputs.go }}
-      web: ${{ steps.capas.outputs.web }}
-      contrato: ${{ steps.capas.outputs.contrato }}
-      docker: ${{ steps.capas.outputs.docker }}
-      docker_web: ${{ steps.capas.outputs.docker_web }}
+      python: ${{ steps.layers.outputs.python }}
+      workflows: ${{ steps.layers.outputs.workflows }}
+      go: ${{ steps.layers.outputs.go }}
+      frontend: ${{ steps.layers.outputs.frontend }}
+      contract: ${{ steps.layers.outputs.contract }}
+      docker-backend: ${{ steps.layers.outputs.docker_backend }}
+      docker-frontend: ${{ steps.layers.outputs.docker_frontend }}
     steps:
       - uses: actions/checkout@v7
 
-      # Una etapa aplica si se cumplen DOS cosas:
+      # A stage applies only when BOTH conditions hold:
       #
-      #   existe   la capa esta en el repo            (¿hay go.mod? ¿hay Dockerfile?)
-      #   toca     el PR modifica algo que la afecta  (solo en pull_request)
+      #   exists    the layer is in the repo         (is there a go.mod? a Dockerfile?)
+      #   touched   the PR changes something it owns (pull_request only)
       #
-      # En `push` a main y en `workflow_dispatch` no se filtra por ruta: corre
-      # todo lo que exista. Son eventos raros -merges y relanzamientos manuales-
-      # y ahi interesa la red completa, no el ahorro.
-      - name: Decidir que etapas aplican
-        id: capas
+      # On `push` to main and on `workflow_dispatch` there is no path filter:
+      # everything that exists runs. Those are rare events - merges and manual
+      # reruns - and there the full net matters more than the savings.
+      - name: Decide which stages apply
+        id: layers
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
-          existe() { [ -e "$1" ]; }
+          exists() { [ -e "$1" ]; }
 
-          # Los ficheros del PR salen de la API, no de un `git diff`: no depende
-          # de la profundidad del clon ni de que la base este fetcheada.
-          FILTRAR=false
-          CAMBIOS=""
+          # The PR file list comes from the API, not from `git diff`: it does not
+          # depend on clone depth or on the base ref having been fetched.
+          FILTER=false
+          CHANGES=""
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            FILTRAR=true
-            CAMBIOS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" \
+            FILTER=true
+            CHANGES=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" \
                         --paginate --jq '.[].filename')
-            echo "Ficheros modificados en el PR:"
-            printf '%s\n' "$CAMBIOS" | sed 's/^/  /'
+            echo "Files changed in this PR:"
+            printf '%s\n' "$CHANGES" | sed 's/^/  /'
           else
-            echo "Evento '$GITHUB_EVENT_NAME': sin filtro por ruta, corre todo lo que exista."
+            echo "Event '$GITHUB_EVENT_NAME': no path filter, everything that exists runs."
           fi
 
-          toca() {
-            [ "$FILTRAR" = "true" ] || return 0
-            printf '%s\n' "$CAMBIOS" | grep -Eq "$1"
+          touched() {
+            [ "$FILTER" = "true" ] || return 0
+            printf '%s\n' "$CHANGES" | grep -Eq "$1"
           }
 
-          # Cada patron incluye la configuracion de su propia etapa y el
-          # orquestador: aflojar una regla en ruff.toml o tocar ci.yml tiene que
-          # volver a disparar la etapa que gobierna, no colarse sin verificar.
-          P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|quality-python)\.yml$)'
+          # Every pattern includes its own stage config and the orchestrator:
+          # loosening a rule in ruff.toml or editing ci.yml must re-trigger the
+          # stage that rule governs instead of slipping through unverified.
+          P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|lint-python)\.yml$)'
           P_WORKFLOWS='^\.github/'
-          P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|quality-go|arquitectura)\.yml$)'
-          P_WEB='(^web/|^\.github/workflows/(ci|quality-web)\.yml$)'
-          P_CONTRATO='(^api/|^\.github/workflows/(ci|contrato)\.yml$)'
-
-          # Ojo con el anclaje. `^Dockerfile` NO casa `web/Dockerfile`, asi que
-          # la imagen del tablero no se construia nunca: entraba en el repo sin
-          # que nadie comprobara que compila. Van separados porque son dos
-          # contextos de build distintos.
-          P_DOCKER='(^Dockerfile$|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container)\.yml$)'
-          P_DOCKER_WEB='(^web/|^\.github/workflows/(ci|container)\.yml$)'
+          P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture)\.yml$)'
+          P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
+          P_CONTRACT='(^api/|^\.github/workflows/(ci|contract)\.yml$)'
+          # The Go sources are in here on purpose: the backend image is built
+          # FROM them, so a change to `internal/` that breaks the build has to
+          # re-run this stage, not wait for the merge to main to find out.
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
 
           python=false
-          if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && toca "$P_PYTHON"; then
+          if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
             python=true
           fi
 
           workflows=false
-          if toca "$P_WORKFLOWS"; then workflows=true; fi
+          if touched "$P_WORKFLOWS"; then workflows=true; fi
 
           go=false
-          if existe go.mod && toca "$P_GO"; then go=true; fi
+          if exists go.mod && touched "$P_GO"; then go=true; fi
 
-          web=false
-          if existe web/package.json && toca "$P_WEB"; then web=true; fi
+          frontend=false
+          if exists web/package.json && touched "$P_FRONTEND"; then frontend=true; fi
 
-          contrato=false
-          if existe api/openapi.yaml && toca "$P_CONTRATO"; then contrato=true; fi
+          contract=false
+          if exists api/openapi.yaml && touched "$P_CONTRACT"; then contract=true; fi
 
-          docker=false
-          if existe Dockerfile && toca "$P_DOCKER"; then docker=true; fi
+          docker_backend=false
+          if exists Dockerfile && touched "$P_DOCKER"; then docker_backend=true; fi
 
-          docker_web=false
-          if existe web/Dockerfile && toca "$P_DOCKER_WEB"; then docker_web=true; fi
+          docker_frontend=false
+          if exists web/Dockerfile && touched "$P_FRONTEND"; then docker_frontend=true; fi
 
           {
             echo "python=$python"
             echo "workflows=$workflows"
             echo "go=$go"
-            echo "web=$web"
-            echo "contrato=$contrato"
-            echo "docker=$docker"
-            echo "docker_web=$docker_web"
+            echo "frontend=$frontend"
+            echo "contract=$contract"
+            echo "docker_backend=$docker_backend"
+            echo "docker_frontend=$docker_frontend"
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "### Etapas que aplican"
+            echo "### Applicable stages"
             echo
-            echo "| Etapa | Aplica | Por que |"
-            echo "| ----- | ------ | ------- |"
-            echo "| quality-python | \`$python\` | hay \`*.py\` y el PR toca Python o \`ruff.toml\` |"
-            echo "| quality-workflows | \`$workflows\` | el PR toca \`.github/\` |"
-            echo "| quality-go | \`$go\` | hay \`go.mod\` y el PR toca Go |"
-            echo "| quality-web | \`$web\` | hay \`web/package.json\` y el PR toca el tablero |"
-            echo "| contrato | \`$contrato\` | hay \`api/openapi.yaml\` y el PR toca el contrato |"
-            echo "| container | \`$docker\` | hay \`Dockerfile\` y el PR toca el contenedor |"
-            echo "| container-web | \`$docker_web\` | hay \`web/Dockerfile\` y el PR toca el tablero |"
-            echo "| arquitectura | \`true\` | **siempre**. El diagrama avisa sin bloquear (ADR 0011); depguard si bloquea |"
+            echo "| Stage | Applies | Why |"
+            echo "| ----- | ------- | --- |"
+            echo "| lint-python | \`$python\` | there are \`*.py\` files and the PR touches Python or \`ruff.toml\` |"
+            echo "| lint-workflows | \`$workflows\` | the PR touches \`.github/\` |"
+            echo "| lint-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
+            echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
+            echo "| architecture | \`$go\` | depguard needs Go code to inspect |"
+            echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
+            echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
+            echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
+            echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  nombre-de-rama:
-    name: Convencion de nombre de rama
+  branch-name:
+    name: Branch naming convention
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      # `github.head_ref` lo controla quien abre el PR, asi que entra por `env`
-      # y nunca interpolado dentro del script.
-      - name: Validar el prefijo
+      # `github.head_ref` is controlled by whoever opens the PR, so it arrives
+      # through `env` and is never interpolated inside the script body.
+      - name: Validate the prefix
         env:
-          RAMA: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          PATRON='^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$'
+          PATTERN='^(feature|fix|hotfix|docs|chore|refactor)/[a-z0-9._/-]+$'
 
-          if printf '%s' "$RAMA" | grep -Eq "$PATRON"; then
-            echo "OK: '$RAMA' cumple la convencion."
+          if printf '%s' "$BRANCH" | grep -Eq "$PATTERN"; then
+            echo "OK: '$BRANCH' follows the convention."
             exit 0
           fi
 
           cat >&2 <<EOF
-          La rama '$RAMA' no cumple la convencion de nombres.
+          Branch '$BRANCH' does not follow the naming convention.
 
-          Patron esperado:  $PATRON
+          Expected pattern:  $PATTERN
 
-            feature/<descripcion-o-issue>   trabajo nuevo
-            fix/<descripcion>               correccion
-            hotfix/<descripcion>            correccion urgente sobre main
-            docs/<descripcion>              documentacion, ADR, reglamentos
-            chore/<descripcion>             tooling, CI, dependencias
-            refactor/<descripcion>          cambio interno sin cambio de comportamiento
+            feature/<description-or-issue>  new work
+            fix/<description>               bug fix
+            hotfix/<description>            urgent fix on top of main
+            docs/<description>              documentation, ADRs, regulations
+            chore/<description>             tooling, CI, dependencies
+            refactor/<description>          internal change, no behavior change
 
-          Solo minusculas, digitos, punto, guion, guion bajo y barra.
+          Lowercase letters, digits, dot, dash, underscore and slash only.
 
-          Para renombrar sin perder el PR:
+          To rename without losing the PR:
 
-            git branch -m feature/mi-cambio
-            git push origin -u feature/mi-cambio
-            git push origin --delete "$RAMA"
+            git branch -m feature/my-change
+            git push origin -u feature/my-change
+            git push origin --delete "$BRANCH"
 
-          y vuelve a abrir el PR desde la rama renombrada.
+          then reopen the PR from the renamed branch.
           EOF
           exit 1
 
-  quality-python:
-    name: Calidad y formato (Python)
+  lint-python:
+    name: Lint (Python)
     needs: detect
     if: needs.detect.outputs.python == 'true'
-    uses: ./.github/workflows/quality-python.yml
+    uses: ./.github/workflows/lint-python.yml
 
-  quality-workflows:
-    name: Calidad (workflows)
+  lint-workflows:
+    name: Lint (workflows)
     needs: detect
     if: needs.detect.outputs.workflows == 'true'
-    uses: ./.github/workflows/quality-workflows.yml
+    uses: ./.github/workflows/lint-workflows.yml
 
-  quality-go:
-    name: Calidad y formato (Go)
+  lint-go:
+    name: Lint (Go)
     needs: detect
     if: needs.detect.outputs.go == 'true'
-    uses: ./.github/workflows/quality-go.yml
+    uses: ./.github/workflows/lint-go.yml
 
-  quality-web:
-    name: Calidad (tablero React)
+  test-go:
+    name: Test (Go)
     needs: detect
-    if: needs.detect.outputs.web == 'true'
-    uses: ./.github/workflows/quality-web.yml
+    if: needs.detect.outputs.go == 'true'
+    uses: ./.github/workflows/test-go.yml
 
-  contrato:
-    name: Contrato OpenAPI
+  # The Clean Architecture boundary, enforced by depguard over real imports.
+  # Gated on Go existing because there is nothing to inspect otherwise.
+  architecture:
+    name: Architecture boundary
     needs: detect
-    if: needs.detect.outputs.contrato == 'true'
-    uses: ./.github/workflows/contrato.yml
+    if: needs.detect.outputs.go == 'true'
+    uses: ./.github/workflows/architecture.yml
 
-  # Sin `if`: corre SIEMPRE, tambien en un PR de solo documentacion.
-  #
-  # Es la unica etapa que no se filtra, y es deliberado. Los ADR 0002 y 0003
-  # declaran esta comprobacion como su mitigacion, y 0003 dice que pasa si no
-  # existe: "esta decision se degrada sola a monolito sin modulos". Un filtro
-  # mal escrito la apagaria en silencio -seguiria saliendo verde sin comprobar
-  # nada- que es exactamente el modo de fallo contra el que se puso. Cuesta 9
-  # segundos; el ahorro no compensa el riesgo.
-  #
-  # Ojo con lo que esta etapa garantiza hoy: por el ADR 0011 la capa del
-  # diagrama AVISA pero no bloquea, asi que un `arquitectura` en verde no
-  # significa que el diagrama cumpla. Hay que leer el aviso. Lo que si bloquea
-  # es la capa de codigo (depguard), y esa sigue a los cambios de Go: solo
-  # tiene sentido cuando hay Go que mirar.
-  arquitectura:
-    name: Frontera Clean Architecture
+  lint-frontend:
+    name: Lint (frontend)
     needs: detect
-    uses: ./.github/workflows/arquitectura.yml
-    with:
-      verificar-codigo: ${{ needs.detect.outputs.go == 'true' }}
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/lint-frontend.yml
 
-  container:
-    name: Contenedor (backend)
+  test-frontend:
+    name: Test (frontend)
     needs: detect
-    if: needs.detect.outputs.docker == 'true'
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/test-frontend.yml
+
+  build-frontend:
+    name: Frontend build
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    uses: ./.github/workflows/build-frontend.yml
+
+  # The API contract is validated even though nothing generates from it yet.
+  # ADR 0010 priced type generation from OpenAPI as part of the stack change; this
+  # is the half that can exist before there are endpoints to generate. A spec that
+  # is merely broken does not announce itself - it announces itself later, to
+  # whoever first tries to generate a client from it.
+  contract:
+    name: OpenAPI contract
+    needs: detect
+    if: needs.detect.outputs.contract == 'true'
+    uses: ./.github/workflows/contract.yml
+
+  # `push` is the only difference between verifying and releasing an image, so
+  # both go through the same stage. A pull request builds and discards; a merge
+  # to `main` publishes the very same build to GHCR.
+  container-backend:
+    name: Docker build (backend)
+    needs: detect
+    if: needs.detect.outputs.docker-backend == 'true'
     uses: ./.github/workflows/container.yml
-
-  container-web:
-    name: Contenedor (tablero)
-    needs: detect
-    if: needs.detect.outputs.docker_web == 'true'
-    uses: ./.github/workflows/container.yml
+    permissions:
+      contents: read
+      packages: write
     with:
-      contexto: web
+      image-name: intela-api
+      context: .
+      dockerfile: Dockerfile
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+  container-frontend:
+    name: Docker build (frontend)
+    needs: detect
+    if: needs.detect.outputs.docker-frontend == 'true'
+    uses: ./.github/workflows/container.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-name: intela-web
+      context: web
       dockerfile: web/Dockerfile
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-  # Compuerta. Este es el UNICO check obligatorio en la proteccion de `main`.
-  # `if: always()` para que corra aunque una etapa falle o quede en `skipped`.
-  # Ojo: `skipped` NO bloquea; solo `failure` y `cancelled`.
+  # The gate. This is the ONLY required check in `main`'s branch protection,
+  # so its name must stay `ci` - renaming it locks the branch.
+  # `if: always()` so it runs even when a stage fails or is skipped.
+  # Note: `skipped` does NOT block; only `failure` and `cancelled` do.
   ci:
     name: ci
     needs:
       - detect
-      - nombre-de-rama
-      - quality-python
-      - quality-workflows
-      - quality-go
-      - quality-web
-      - contrato
-      - arquitectura
-      - container
-      - container-web
+      - branch-name
+      - lint-python
+      - lint-workflows
+      - lint-go
+      - test-go
+      - architecture
+      - lint-frontend
+      - test-frontend
+      - build-frontend
+      - contract
+      - container-backend
+      - container-frontend
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Resumen de etapas
+      - name: Stage summary
         env:
-          RESULTADOS: ${{ toJSON(needs) }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
           {
-            echo "### Resultado por etapa"
+            echo "### Result by stage"
             echo
-            echo "| Etapa | Resultado |"
-            echo "| ----- | --------- |"
-            printf '%s' "$RESULTADOS" \
+            echo "| Stage | Result |"
+            echo "| ----- | ------ |"
+            printf '%s' "$RESULTS" \
               | jq -r 'to_entries[] | "| `\(.key)` | \(.value.result) |"'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verificar que ninguna etapa fallo
+      - name: Verify no stage failed
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          echo "::error::Al menos una etapa de CI fallo o fue cancelada. Ver el resumen." >&2
+          echo "::error::At least one CI stage failed or was cancelled. See the summary." >&2
           exit 1
+
+  # --------------------------------------------------------------------------
+  # Continuous delivery. Everything below runs ONLY on a push to `main`, and
+  # only once the `ci` gate above is green.
+  # --------------------------------------------------------------------------
+
+  # The release itself. `container-*` has already published the images by this
+  # point - publishing is a `push: true` on the same stage that verified them,
+  # not a separate build.
+  #
+  # `always()` is what lets this run while the container stages are still
+  # skipped: there is no Dockerfile in the repository yet, and a job whose
+  # `needs` were skipped is itself skipped unless it says otherwise. Today the
+  # deploy scaffold therefore runs on every merge with empty image inputs and
+  # reports that there was nothing to roll out - which is the honest answer, and
+  # keeps the release path exercised instead of theoretical.
+  #
+  # The gate stays authoritative: `needs.ci.result == 'success'` means no stage
+  # failed, and the container stages are checked separately because a FAILED
+  # image build must stop the release even though a SKIPPED one must not.
+  deploy:
+    name: Deploy (production)
+    needs:
+      - ci
+      - container-backend
+      - container-frontend
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.ci.result == 'success'
+      && needs.container-backend.result != 'failure'
+      && needs.container-frontend.result != 'failure'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+    with:
+      environment: production
+      backend-image: ${{ needs.container-backend.outputs.image }}
+      frontend-image: ${{ needs.container-frontend.outputs.image }}

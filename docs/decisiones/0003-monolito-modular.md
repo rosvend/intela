@@ -2,8 +2,9 @@
 
 Fecha: 2026-08-10
 Estado: Vigente
-Modificada por: [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) — la mitigacion en CI sigue existiendo,
-pero la capa que recorre el diagrama avisa sin bloquear el merge.
+Modificada por: [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md) — la mitigacion en CI
+sigue existiendo, pero se verifica sobre los `import` con `depguard`, no sobre el diagrama.
+(Via [0011](0011-verificacion-del-diagrama-como-aviso.md), ya sustituida.)
 
 ## Contexto
 
@@ -32,9 +33,11 @@ cada llamada de red es una fuente de no determinismo y de fallo parcial que hay 
 **Un solo desplegable, con los modulos aislados por dentro.**
 
 Los contextos delimitados existen como modulos con frontera real: cada uno tiene su propio paquete,
-su modelo y su interfaz publica, y las dependencias permitidas entre ellos son las que dibuja la
-pagina 2 de `docs/diagrams/PATIC2 - Arquitectura.drawio`. Lo que no existe es un limite de proceso entre
-ellos.
+su modelo y su interfaz publica, y las dependencias permitidas entre ellos son las que declaran las
+reglas `modulos-*` de [`.golangci.yml`](../../.golangci.yml). La pagina 2 de
+`docs/diagrams/PATIC2 - Arquitectura.drawio` dibuja esas mismas dependencias, pero documenta: quien
+manda es el fichero de reglas ([ADR 0012](0012-la-frontera-se-verifica-sobre-el-codigo.md)). Lo que
+no existe es un limite de proceso entre ellos.
 
 Las reglas de dependencia son parte de la decision, no un detalle:
 
@@ -83,6 +86,8 @@ tolerable es amplia, asi que el intercambio es favorable.
 
 Riesgo asumido: sin limite de proceso, nada impide fisicamente que un modulo importe el modelo
 interno de otro, y la primera vez que pase nadie lo va a notar. La mitigacion es la misma que la de
-`0002`: un test de arquitectura en CI que falle ante cualquier dependencia entre modulos que no este
-en la pagina 2 del diagrama. Si esa prueba no existe, esta decision se degrada sola a monolito
-sin modulos.
+`0002`: la etapa `Architecture boundary` de CI, que corre `depguard` sobre los `import` reales y
+falla ante cualquier dependencia entre modulos que las reglas `modulos-*` de
+[`.golangci.yml`](../../.golangci.yml) no permitan. Si esa prueba no existe —o no llega a
+ejecutarse, que mientras no haya `go.mod` es el caso— esta decision se degrada sola a monolito sin
+modulos.

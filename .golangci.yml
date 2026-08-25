@@ -1,16 +1,27 @@
-# Reglas de lint del backend Go.
+# Go backend lint rules.
 #
-# La seccion que importa es `depguard`: traduce los ADR 0002 y 0003 a reglas de
-# importacion verificables. Todo lo demas es estilo.
+# The section that matters is `depguard`: it turns ADRs 0002 and 0003 into
+# import rules a machine can check. Everything else here is style.
 #
-# Reparto de responsabilidades en CI:
-#   arquitectura.yml  -> `--default=none --enable=depguard`  (la frontera)
-#   quality-go.yml    -> el resto                            (el estilo)
-# Separados a proposito: un check en rojo debe decir cual de las dos cosas se
-# rompio.
+# Split of responsibilities in CI:
+#   architecture.yml  -> `--enable-only=depguard`   (the boundary)
+#   lint-go.yml       -> everything else            (the style)
+# Deliberately separate: a red check has to say which of the two broke.
 #
-# Ya no es inerte: `go.mod` existe y el path del modulo
-# (`github.com/rosvend/intela`) esta confirmado contra su linea `module`.
+# No longer inert. `go.mod` exists, so `architecture.yml` runs and these rules
+# block: the boundary is watched from the first commit of code, which is what
+# ADR 0012 asked for.
+#
+# Written in English because it is infrastructure, and because these `desc`
+# strings are printed into the CI log when a rule fires. The domain nouns
+# (`dominio`, `aplicacion`, `infraestructura`, `reparto`, `recaudo`,
+# `repertorio`, `identificacion`, `PuertoReloj`) stay in Spanish: they are the
+# ubiquitous language of the regulations, and CLAUDE.md forbids translating
+# them anywhere, including here.
+#
+# The module path (`github.com/rosvend/intela`) is confirmed against the `module`
+# line of `go.mod`. If the module is ever renamed, every `deny` here has to be
+# renamed too: depguard compares strings, it does not resolve packages.
 
 version: "2"
 
@@ -21,185 +32,217 @@ linters:
 
   settings:
     depguard:
+      # EVERY rule lists its package directory TWICE, and both lines are load
+      # bearing:
+      #
+      #   **/internal/dominio/*.go      files sitting directly in the package
+      #   **/internal/dominio/**/*.go   files in a subpackage below it
+      #
+      # `**/X/**/*.go` alone does NOT match `X/servicio.go` - the `/**/` has to
+      # consume at least one directory - and a Go package keeps its files
+      # directly in its own directory. With only that pattern, every rule below
+      # silently matched nothing on the layout this codebase actually uses:
+      # verified by planting violations in `internal/aplicacion/servicio.go` and
+      # `internal/dominio/identificacion/probe.go` and watching depguard pass
+      # them. A boundary check that cannot fire is worse than none, because the
+      # green check is read as proof.
       rules:
-        # ADR 0002: "nada del nucleo nombra nada de afuera". El dominio es el
-        # anillo interior: entidades, invariantes y las funciones de calculo,
-        # sin E/S.
+        # ADR 0002: "nada del nucleo nombra nada de afuera". The dominio is the
+        # innermost ring: entities, invariants and the calculation functions,
+        # with no I/O.
         dominio-no-sale:
           files:
+            - "**/internal/dominio/*.go"
             - "**/internal/dominio/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/aplicacion
-              desc: "ADR 0002: el dominio es el anillo interior. La aplicacion lo usa a el, no al reves."
+              desc: "ADR 0002: dominio is the innermost ring. aplicacion depends on it, never the reverse."
             - pkg: github.com/rosvend/intela/internal/infraestructura
-              desc: "ADR 0002: el dominio no nombra infraestructura. Declara un puerto y que el adaptador lo satisfaga."
+              desc: "ADR 0002: dominio does not name infraestructura. Declare a puerto and let the adapter satisfy it."
             - pkg: net/http
-              desc: "ADR 0002: HTTP es un adaptador de entrada. En el dominio no hay transporte."
+              desc: "ADR 0002: HTTP is an inbound adapter. There is no transport in dominio."
             - pkg: database/sql
-              desc: "ADR 0002: la persistencia entra por un puerto de repositorio."
+              desc: "ADR 0002: persistence enters through a repository puerto."
             - pkg: github.com/jackc/pgx
-              desc: "ADR 0002: pgx es el adaptador de PostgreSQL. Vive en infraestructura."
+              desc: "ADR 0002: pgx is the PostgreSQL adapter. It lives in infraestructura."
             - pkg: github.com/go-chi/chi
-              desc: "ADR 0002: el router es un adaptador de entrada."
+              desc: "ADR 0002: the router is an inbound adapter."
             - pkg: github.com/riverqueue/river
-              desc: "ADR 0002: la cola es infraestructura. El dominio no encola."
+              desc: "ADR 0002: the queue is infrastructure. dominio does not enqueue."
             - pkg: os
-              desc: "ADR 0005: el motor es una funcion pura. Sin entorno, sin ficheros."
+              desc: "ADR 0005: the engine is a pure function. No environment, no files."
 
-        # ADR 0002 declara PuertoReloj como puerto de dominio, no de
-        # infraestructura: "el tiempo entra inyectado". Las prescripciones de 3
-        # y 10 anos y las ventanas de 15 dias tienen que probarse sin esperar
-        # una decada, y ADR 0005 exige que una corrida sea reproducible bit a
-        # bit anos despues. Un `time.Now()` o un `rand` sueltos en el nucleo
-        # rompen las dos cosas en silencio: no fallan, devuelven otro numero.
+        # ADR 0002 requires that "el tiempo entra inyectado", and ADR 0005 says
+        # where the port lives: "entra por `PuertoReloj` en la capa de
+        # aplicacion". It is declared in `internal/aplicacion/puertos.go` -
+        # still core, never infrastructure - because this very rule denies the
+        # `time` package inside `internal/dominio`, and `Ahora() time.Time`
+        # cannot be declared without importing it. The dominio RECEIVES the
+        # instant; it never asks for it.
         #
-        # `time` se deniega como paquete; los TIPOS (time.Time, time.Duration)
-        # se reciben como parametro desde el puerto, no se obtienen aqui.
+        # The 3- and 10-year prescriptions and
+        # the 15-day windows have to be testable without waiting a decade, and
+        # ADR 0005 requires a reparto run to be reproducible bit for bit years
+        # later. A loose `time.Now()` or `rand` in the core breaks both
+        # silently: it does not fail, it returns a different number.
+        #
+        # `time` is denied as a PACKAGE; the TYPES (time.Time, time.Duration)
+        # arrive as parameters from the puerto, they are not obtained here.
         dominio-sin-reloj-ni-azar:
           files:
+            - "**/internal/dominio/*.go"
             - "**/internal/dominio/**/*.go"
           deny:
             - pkg: math/rand
-              desc: "ADR 0005: el reparto es determinista. Sin aleatoriedad en el nucleo."
+              desc: "ADR 0005: reparto is deterministic. No randomness in the core."
             - pkg: math/rand/v2
-              desc: "ADR 0005: el reparto es determinista. Sin aleatoriedad en el nucleo."
+              desc: "ADR 0005: reparto is deterministic. No randomness in the core."
             - pkg: time
-              desc: "ADR 0002: el tiempo entra por PuertoReloj. Recibe el instante como parametro."
+              desc: "ADR 0002: time enters through PuertoReloj. Take the instant as a parameter."
 
-        # ADR 0002: la capa de aplicacion orquesta y fija limites de
-        # transaccion, pero sigue siendo nucleo. Un `import` del cliente HTTP
-        # dentro de un caso de uso, hecho con prisa, es exactamente el riesgo
-        # que el ADR da por asumido.
+        # ADR 0002: the aplicacion layer orchestrates and sets transaction
+        # boundaries, but it is still core. An HTTP client imported into a use
+        # case in a hurry is exactly the risk the ADR accepts by name.
         aplicacion-no-sale:
           files:
+            - "**/internal/aplicacion/*.go"
             - "**/internal/aplicacion/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/infraestructura
-              desc: "ADR 0002: los puertos se declaran aqui; los adaptadores los satisfacen sin ser importados."
+              desc: "ADR 0002: puertos are declared here; adapters satisfy them without being imported."
             - pkg: github.com/jackc/pgx
-              desc: "ADR 0002: el caso de uso habla con un puerto de repositorio, no con el driver."
+              desc: "ADR 0002: a use case talks to a repository puerto, not to the driver."
             - pkg: github.com/go-chi/chi
-              desc: "ADR 0002: el router es un adaptador de entrada."
-            # Estos tres estaban DENTRO de internal/aplicacion y la regla no
-            # los atrapaba: solo denegaba infraestructura, pgx y chi. Los tres
-            # son concerns de adaptador, no de caso de uso.
+              desc: "ADR 0002: the router is an inbound adapter."
+            # These five were sitting INSIDE internal/aplicacion and the rule did
+            # not catch them: it denied infraestructura, pgx and chi only. All
+            # five are adapter concerns, not use-case concerns.
             - pkg: golang.org/x/crypto/bcrypt
-              desc: "ADR 0002: el algoritmo de hash es un detalle de adaptador. Entra por el puerto Hasher."
+              desc: "ADR 0002: the hashing algorithm is an adapter detail. It enters through the Hasher puerto."
             - pkg: encoding/csv
-              desc: "ADR 0002: parsear un formato de fichero es trabajo de adaptador de ingesta."
+              desc: "ADR 0002: parsing a file format is the job of an ingesta adapter."
             - pkg: github.com/xuri/excelize
-              desc: "ADR 0002: leer un .xlsx es trabajo de adaptador de ingesta."
+              desc: "ADR 0002: reading an .xlsx is the job of an ingesta adapter."
             - pkg: net/http
-              desc: "ADR 0002: HTTP es un adaptador de entrada."
+              desc: "ADR 0002: HTTP is an inbound adapter."
             - pkg: database/sql
-              desc: "ADR 0002: la persistencia entra por un puerto de repositorio."
+              desc: "ADR 0002: persistence enters through a repository puerto."
 
         # ADR 0003: "Reparto lee de Repertorio y de Recaudo. Ninguno de los dos
-        # conoce a Reparto." Go ya rechaza los ciclos al compilar; esto impide
-        # ademas la arista en un solo sentido, que compila perfectamente.
+        # conoce a Reparto." Go already rejects cycles at compile time; this
+        # additionally forbids the one-way edge, which compiles perfectly.
         modulos-repertorio:
           files:
+            - "**/internal/dominio/repertorio/*.go"
             - "**/internal/dominio/repertorio/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: Reparto lee de Repertorio. Repertorio no conoce a Reparto."
+              desc: "ADR 0003: reparto reads from repertorio. repertorio does not know reparto."
 
         modulos-recaudo:
           files:
+            - "**/internal/dominio/recaudo/*.go"
             - "**/internal/dominio/recaudo/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: Reparto lee de Recaudo. Recaudo no conoce a Reparto."
+              desc: "ADR 0003: reparto reads from recaudo. recaudo does not know reparto."
 
         # ADR 0003: "Identificacion escribe alias y emite ONI, y no toca dinero."
         modulos-identificacion:
           files:
+            - "**/internal/dominio/identificacion/*.go"
             - "**/internal/dominio/identificacion/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: Identificacion no toca dinero."
+              desc: "ADR 0003: identificacion does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
-              desc: "ADR 0003: Identificacion no toca dinero."
+              desc: "ADR 0003: identificacion does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
-              desc: "ADR 0003: Identificacion no toca dinero."
+              desc: "ADR 0003: identificacion does not touch money."
 
-        # ONI es la cola manual de lo que identificacion no reconocio. Un uso
-        # en ONI es dinero sin dueno conocido todavia, pero la cola no calcula
-        # cuanto: solo dice que falta resolverlo.
+        # ONI is the manual queue of what identificacion could not recognise. A
+        # uso sitting in ONI is money with no known owner yet, but the queue does
+        # not compute how much: it only says the thing is unresolved.
         modulos-oni:
           files:
+            - "**/internal/dominio/oni/*.go"
             - "**/internal/dominio/oni/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: la cola manual no toca dinero."
+              desc: "ADR 0003: the manual queue does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
-              desc: "ADR 0003: la cola manual no toca dinero."
+              desc: "ADR 0003: the manual queue does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
-              desc: "ADR 0003: la cola manual no toca dinero."
+              desc: "ADR 0003: the manual queue does not touch money."
 
-        # Afiliacion mantiene el padron: quien es Socio y quien Titular
-        # Administrado. Que alguien exista en el padron es independiente de lo
-        # que haya cobrado.
+        # Afiliacion keeps the padron: who is a Socio and who a Titular
+        # Administrado. Existing in the padron is independent of anything
+        # collected or paid.
         modulos-afiliacion:
           files:
+            - "**/internal/dominio/afiliacion/*.go"
             - "**/internal/dominio/afiliacion/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: el padron no depende de una corrida."
+              desc: "ADR 0003: the padron does not depend on a corrida."
             - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
-              desc: "ADR 0003: el padron no depende de lo liquidado."
+              desc: "ADR 0003: the padron does not depend on what was liquidated."
             - pkg: github.com/rosvend/intela/internal/dominio/anticipos
-              desc: "ADR 0003: el padron no depende de los anticipos; es al reves."
+              desc: "ADR 0003: the padron does not depend on anticipos; it is the other way round."
 
-        # Liquidacion CONSUME el resultado de una corrida; no lo recalcula. Si
-        # importara el motor, la tentacion de recalcular "para verificar" haria
-        # que dos numeros distintos pudieran salir del mismo proceso.
+        # Liquidacion CONSUMES the result of a corrida; it does not recompute it.
+        # If it could import the engine, the temptation to recalculate "just to
+        # check" would let two different numbers come out of the same proceso.
         modulos-liquidacion:
           files:
+            - "**/internal/dominio/liquidacion/*.go"
             - "**/internal/dominio/liquidacion/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
-              desc: "ADR 0003: la bolsa ya venia resuelta desde Reparto."
+              desc: "ADR 0003: the bolsa was already resolved upstream, in reparto."
             - pkg: github.com/rosvend/intela/internal/dominio/identificacion
-              desc: "ADR 0003: a estas alturas las obras ya estan identificadas."
+              desc: "ADR 0003: by this point the obras are already identified."
 
-        # Una reclamacion no reescribe una corrida cerrada: se resuelve con un
-        # ajuste trazable en una posterior, o por la reserva de RD 14. Reabrir
-        # una corrida rompe la reproducibilidad del ADR 0005.
+        # A reclamacion does not rewrite a closed corrida: it is settled with a
+        # traceable adjustment in a later one, or out of the RD 14 reserve.
+        # Reopening a corrida breaks the reproducibility ADR 0005 requires.
         modulos-reclamaciones:
           files:
+            - "**/internal/dominio/reclamaciones/*.go"
             - "**/internal/dominio/reclamaciones/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0005: una reclamacion no recalcula una corrida cerrada."
+              desc: "ADR 0005: a reclamacion does not recompute a closed corrida."
 
         modulos-anticipos:
           files:
+            - "**/internal/dominio/anticipos/*.go"
             - "**/internal/dominio/anticipos/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: un anticipo se descuenta de una liquidacion, no de una corrida."
+              desc: "ADR 0003: an anticipo is deducted from a liquidacion, not from a corrida."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
-              desc: "ADR 0003: un anticipo no conoce tarifas ni convenios."
+              desc: "ADR 0003: an anticipo knows nothing of tarifas or convenios."
 
-        # Prescripcion decide cuando un importe deja de ser exigible (RD 15).
-        # Solo necesita fechas e importes, que le llegan.
+        # Prescripcion decides when an amount stops being claimable (RD 15). All
+        # it needs are dates and amounts, and both are handed to it.
         modulos-prescripcion:
           files:
+            - "**/internal/dominio/prescripcion/*.go"
             - "**/internal/dominio/prescripcion/**/*.go"
           deny:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
-              desc: "ADR 0003: prescribir no es recalcular."
+              desc: "ADR 0003: prescribing is not recomputing."
             - pkg: github.com/rosvend/intela/internal/dominio/recaudo
-              desc: "ADR 0003: prescripcion no conoce tarifas ni convenios."
+              desc: "ADR 0003: prescripcion knows nothing of tarifas or convenios."
 
   exclusions:
     rules:
-      # Los adaptadores existen precisamente para importar infraestructura.
+      # Adapters exist precisely in order to import infrastructure.
       - path: internal/infraestructura/
         linters:
           - depguard
-      # cmd/ es donde se cablea todo: es su trabajo conocer las dos orillas.
+      # cmd/ is where everything is wired: knowing both shores is its job.
       - path: cmd/
         linters:
           - depguard
