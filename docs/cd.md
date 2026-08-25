@@ -34,7 +34,7 @@ camino de release.
 Se publican en **GHCR**, que no necesita ningun secreto propio: `container.yml` se autentica con el
 `GITHUB_TOKEN` del propio job, con permiso `packages: write`.
 
-```
+```text
 ghcr.io/rosvend/intela-api:sha-<sha completo>    inmutable, es lo que despliega el release
 ghcr.io/rosvend/intela-api:main                  puntero movil, comodidad
 ghcr.io/rosvend/intela-web:sha-<sha completo>

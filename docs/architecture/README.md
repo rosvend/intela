@@ -95,7 +95,7 @@ Sumideros del grafo: `Afiliacion`, `Ingesta`, `Recaudo`. Fuentes: `ONI`, `Reclam
 firma ([ADR 0008](../decisiones/0008-reparto-como-flujo-con-aprobaciones.md)). Son dos
 maquinas de estado distintas, no una con un `if`:
 
-```
+```text
 Nacional        Recaudo → Deducciones → Importe de la Obra → Importe por Titular →
                 Liq. Parcial → [Verificacion] → Liq. Final → [Pago y Registro] → Auditoria
 
