@@ -22,6 +22,13 @@ func (d Declaracion) Completa() bool {
 		if p.IPI == "" {
 			return false
 		}
+		// Cada parte tiene que ser positiva por si sola. Sin esto, 150 y -50
+		// suman 100 y una declaracion imposible pasa por "completa", que es
+		// justo la puerta que R-04 (RD 13.1.3) cierra: si lo declarado no
+		// suma 100%, no se reparte nada de esa obra.
+		if p.Porcentaje.LessThanOrEqual(decimal.Zero) {
+			return false
+		}
 		suma = suma.Add(p.Porcentaje)
 	}
 	return suma.Equal(decimal.NewFromInt(100))

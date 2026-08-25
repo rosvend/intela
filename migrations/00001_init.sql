@@ -439,9 +439,12 @@ CREATE INDEX asientos_payload ON asientos USING gin (payload);
 -- +goose StatementBegin
 CREATE FUNCTION bitacora_solo_append() RETURNS TRIGGER AS $fn$
 BEGIN
+  -- TG_TABLE_NAME y no un literal: esta funcion la comparten asientos y
+  -- notificaciones, y un mensaje que nombre la tabla equivocada manda a quien
+  -- lo lea a mirar donde no es.
   RAISE EXCEPTION
-    'ADR 0006: la bitacora es append-only. % sobre asientos no esta permitido. Corregir es escribir otro asiento que referencie al anterior',
-    TG_OP;
+    'ADR 0006: la bitacora es append-only. % sobre % no esta permitido. Corregir es escribir otro asiento que referencie al anterior',
+    TG_OP, TG_TABLE_NAME;
 END;
 $fn$ LANGUAGE plpgsql;
 -- +goose StatementEnd
@@ -456,6 +459,17 @@ $fn$ LANGUAGE plpgsql;
 CREATE TRIGGER asientos_inmutables
   BEFORE UPDATE OR DELETE ON asientos
   FOR EACH ROW EXECUTE FUNCTION bitacora_solo_append();
+-- +goose StatementEnd
+
+-- Y TRUNCATE aparte, porque un trigger FOR EACH ROW no se dispara con el.
+--
+-- TRUNCATE no borra fila por fila, asi que el trigger de arriba no lo ve:
+-- vaciaria la bitacora entera sin que nada protestara. Tiene que ser
+-- FOR EACH STATEMENT; no existe TRUNCATE por fila.
+-- +goose StatementBegin
+CREATE TRIGGER asientos_sin_truncate
+  BEFORE TRUNCATE ON asientos
+  FOR EACH STATEMENT EXECUTE FUNCTION bitacora_solo_append();
 -- +goose StatementEnd
 
 -- Notificaciones: el acuse ARRANCA EL RELOJ DE PRESCRIPCION.
@@ -485,6 +499,12 @@ CREATE INDEX notificaciones_fecha   ON notificaciones (notificado);
 CREATE TRIGGER notificaciones_inmutables
   BEFORE UPDATE OR DELETE ON notificaciones
   FOR EACH ROW EXECUTE FUNCTION bitacora_solo_append();
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER notificaciones_sin_truncate
+  BEFORE TRUNCATE ON notificaciones
+  FOR EACH STATEMENT EXECUTE FUNCTION bitacora_solo_append();
 -- +goose StatementEnd
 
 -- ---------------------------------------------------------------------------
@@ -551,7 +571,9 @@ CREATE INDEX reclamaciones_abiertas ON reclamaciones (abierta)
 -- +goose StatementBegin
 DROP VIEW IF EXISTS oni_publico;
 
+DROP TRIGGER IF EXISTS notificaciones_sin_truncate ON notificaciones;
 DROP TRIGGER IF EXISTS notificaciones_inmutables ON notificaciones;
+DROP TRIGGER IF EXISTS asientos_sin_truncate ON asientos;
 DROP TRIGGER IF EXISTS asientos_inmutables ON asientos;
 DROP TRIGGER IF EXISTS resultados_titular_persona_natural ON resultados_titular;
 DROP FUNCTION IF EXISTS bitacora_solo_append();
