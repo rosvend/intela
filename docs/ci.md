@@ -153,8 +153,6 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
   `Deploy (production)` no despliega: falta decidir proveedor. Detalle en [`docs/cd.md`](cd.md).
 - **Sin arranque de imagen.** Las etapas de Docker comprueban que la imagen *construye*, no que
   *arranca*.
-- **El lint y el test de frontend no comprueban nada todavia**, porque el `web/` entrante no trae ni
-  configuracion de eslint ni runner de tests. Las etapas existen y avisan; ver arriba.
 - **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
   corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
   ejemplos resueltos de los propios reglamentos.
