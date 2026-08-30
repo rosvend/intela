@@ -30,7 +30,7 @@ on:
       node-version:
         description: Node version. Matches web/Dockerfile.
         type: string
-        default: "22"
+        default: "22.22"
       working-directory:
         description: Directory holding package.json.
         type: string
