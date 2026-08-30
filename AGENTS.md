@@ -46,6 +46,10 @@ Cargar solo lo que haga falta para la tarea. Skills en `.claude/skills/`. Cursor
 Convencion de citas: `RD 13.1.3` es la seccion 13.1.3 del Reglamento de Distribucion IX.
 `RT` Tarifas VI, `RS` Socios, `RA` Anticipos.
 
+## Skills
+
+Usa las skills instaladas de golang y clean architecture para seguir las mejores prácticas de código e ingeniería de software. Para revisar documentación, usa el MCP de Context7 antes de cada implementación. 
+
 ## Idioma
 
 El dominio se nombra en **espanol**, igual que los reglamentos: `obra`, `titular`, `reparto`,
@@ -64,7 +68,7 @@ Go en el backend; React + TypeScript + Vite en el frontend. Un binario por `cmd/
 - Contratos: `api/openapi.yaml` → tipos TS en el frontend.
 - Frontera: el compilador + `depguard` en `.golangci.yml`.
 
-Los scripts de `src/scripts/` siguen en Python (PEP 723).
+Los scripts de `src/scripts/` siguen en Python (PEP 723). Todo el proyecto debe seguir Clean Architecture.
 
 ## Estructura
 
@@ -81,6 +85,24 @@ src/scripts/         scripts sueltos, cada uno con su entorno PEP 723
 .claude/skills/      contexto de dominio cargado bajo demanda
 .cursor/rules/       punteros para Cursor a las skills de arriba
 ```
+
+## Idioma
+
+El dominio se nombra en **español**, igual que los reglamentos: `obra`, `titular`, `reparto`,
+`recaudo`, `declaracion`. No traducir estos terminos en modelos, tablas ni variables. El resto del
+código, infraestructura e implementanciones van en inglés. 
+
+## Estilo
+
+`ruff`, `gofmt` y `golangci-lint` ya corren en CI — no hace falta razonar sobre formato. Lo que
+si hay que decidir a mano:
+
+- Aplicar SOLID en logica de negocio, servicios y features grandes; no en un adaptador de 20 lineas.
+- La solucion mas simple que cumpla el requisito (YAGNI, KISS). El sistema mueve dinero de
+  terceros: la indireccion que no se justifica es deuda, no diseno.
+- Inyectar dependencias siempre que haya E/S, para que el nucleo se pruebe sin infraestructura.
+- Todo el código y arquitectura debe ser modular con componentes débilmente acoplados para fácil mantenimiento, escalabilidad y extensión.
+
 
 ## Arranque local
 

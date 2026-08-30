@@ -74,20 +74,11 @@ Convencion de citas: `RD 13.1.3` es la seccion 13.1.3 del Reglamento de Distribu
 Las skills de `.claude/skills/` cargan el dominio bajo demanda. Si la tarea toca reparto, matching,
 recaudo, ingesta, aprobaciones, afiliacion o trazabilidad, **usa la skill antes de escribir codigo**.
 
+## Skills
+
+Usa las skills instaladas de golang y clean architecture para seguir las mejores prácticas de código e ingeniería de software. Para revisar documentación, usa el MCP de Context7 antes de cada implementación. 
+
 ## Comandos
-
-```bash
-uv run --script src/scripts/<archivo>.py     # todos los scripts, entorno efimero (PEP 723)
-uvx "ruff@0.16.4" check src/                 # lint Python, igual que CI
-uvx "ruff@0.16.4" format src/                # formato Python
-```
-
-| Script | Que hace |
-| ------ | -------- |
-| `sample.py` | Diagnostico de los archivos de muestra del cliente |
-| `diagrama_arquitectura.py` | Regenera el diagrama del README. Necesita Graphviz |
-| `diagrama_despliegue.py` | Regenera la topologia de despliegue. Necesita Graphviz |
-| `convert_reglamentos.py` | Regenera `docs/reglamentos/` desde los PDF. Necesita `poppler-utils` |
 
 CI: la compuerta obligatoria es el job `ci` de `.github/workflows/ci.yml`; las etapas se filtran
 por ruta y se saltan solas mientras su capa no exista. Las ramas siguen
@@ -100,7 +91,7 @@ compuerta. Las imagenes se publican en GHCR; el job de despliegue es un andamio 
 todavia. Detalle en `docs/cd.md`.
 
 La frontera de arquitectura se verifica sobre los `import` con `depguard` ([ADR 0012](docs/decisiones/0012-la-frontera-se-verifica-sobre-el-codigo.md)),
-no sobre el diagrama.
+no sobre el diagrama. Todo el proyecto debe seguir Clean Architecture.
 
 ## Idioma
 
@@ -115,9 +106,9 @@ si hay que decidir a mano:
 
 - Aplicar SOLID en logica de negocio, servicios y features grandes; no en un adaptador de 20 lineas.
 - La solucion mas simple que cumpla el requisito (YAGNI, KISS). El sistema mueve dinero de
-  terceros: la indireccion que no se justifica es deuda, no diseno.
+  terceros: la indireccion que no se justifica es deuda, no diseno. No apliques sobreingeniería (overengineering).
 - Inyectar dependencias siempre que haya E/S, para que el nucleo se pruebe sin infraestructura.
-- Todo el código y arquitectura debe ser modular con componentes débilmente acoplados.
+- Todo el código y arquitectura debe ser modular con componentes débilmente acoplados para fácil extensión, mantenimiento y escalabilidad.
 
 ## Estado
 

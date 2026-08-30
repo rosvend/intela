@@ -2,7 +2,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/intelia-logo-dark.png">
-    <img alt="Intela" src="docs/intelia-logo.png" width="36%" height='30%'>
+    <img alt="Intela" src="docs/intelia-logo.png" width="46%" height='40%'>
   </picture>
 </p>
 
@@ -53,7 +53,7 @@ completo de tres paginas.
 
 ---
 
-## Como empezar
+## Cómo empezar
 
 ### La aplicacion
 
@@ -64,32 +64,6 @@ make verificar              # tidy, build, vet, gofmt y test — lo mismo que co
 
 → [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para variables de entorno y datos de prueba.
 
-### Los scripts de analisis
-
-Los scripts declaran sus dependencias en linea (PEP 723) y se ejecutan con `uv`. Cada uno resuelve
-su propio entorno efimero, sin interferir con el stack de la aplicacion.
-
-```bash
-uv run --script src/scripts/sample.py               # perfila los archivos de muestra del cliente
-uv run --script src/scripts/diagrama_arquitectura.py  # regenera el diagrama del README
-```
-
-`diagrama_arquitectura.py` y `diagrama_despliegue.py` necesitan Graphviz
-(`apt install graphviz`). `convert_reglamentos.py` regenera `docs/reglamentos/` desde los PDF y
-necesita `poppler-utils`.
-
-### Integracion continua
-
-Un solo workflow con disparadores, [`.github/workflows/ci.yml`](.github/workflows/ci.yml), orquesta
-etapas reutilizables: lint y test de Go, frontera de arquitectura, build del frontend, imagenes
-Docker, lint de Python y de los propios workflows. El unico check obligatorio en la proteccion de
-`main` es el job agregador **`ci`**, asi que anadir una etapa no obliga a tocar la proteccion de
-rama.
-
-Cada etapa se salta sola mientras su capa no exista. Hoy, sin `go.mod` ni `web/`, solo corren las
-de Python, workflows y nombre de rama; las demas se activan en el mismo commit que introduzca el
-codigo.
-
 Los hooks locales viven en [`lefthook.yml`](lefthook.yml) y corren un subconjunto de lo mismo antes
 del commit y del push:
 
@@ -97,13 +71,6 @@ del commit y del push:
 go install github.com/evilmartians/lefthook@latest   # o: brew install lefthook
 lefthook install
 ```
-
-Detalle de cada etapa, el porque del filtrado por ruta y lo que falta para que las etapas de Go y
-frontend pasen: [`docs/ci.md`](docs/ci.md).
-
-Al mergear a `main`, el mismo workflow publica las imagenes en GHCR y llega a un job de despliegue
-que **todavia no despliega**: no hay proveedor decidido, asi que imprime el plan de release y los
-secretos que necesitara. Donde se inyecta cada cosa: [`docs/cd.md`](docs/cd.md).
 
 ### Trabajar con un agente
 
