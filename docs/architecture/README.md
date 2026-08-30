@@ -135,6 +135,26 @@ Decidido en [ADR 0010](../decisiones/0010-stack-go.md), que sustituye a
 
 `src/scripts/` se queda en Python permanentemente (PEP 723), aunque el backend sea Go.
 
+### Persistencia
+
+El patron de los adaptadores —un fichero por puerto, la asercion de compilacion, el mapeo de
+errores a los centinelas de `aplicacion`, y de quien son los limites de transaccion— esta escrito
+al lado del codigo que describe:
+
+```
+go doc github.com/rosvend/intela/internal/infraestructura/postgres
+```
+
+Lo unico que no cabe en un doc de paquete, porque cruza dos capas: **`Obra.EstadoDecl` es un campo
+derivado.** La tabla `obras` no tiene esa columna y no la va a tener. Sale de
+`repertorio.Declaracion.Estado()`, porque `R-04` (`RD 13.1.3`) tiene tres clausulas —la suma da
+100, cada porcentaje es positivo, ninguna parte va sin IPI— y un `SUM(porcentaje) = 100` en SQL
+solo comprueba la primera.
+
+Las pruebas de los adaptadores corren contra PostgreSQL real con `testcontainers-go`, asi que
+`make verificar` y el hook de `pre-push` necesitan Docker. Para el bucle rapido sin contenedores:
+`make prueba-rapida`.
+
 ---
 
 ## Decisiones
