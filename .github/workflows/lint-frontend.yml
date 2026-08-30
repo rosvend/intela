@@ -4,18 +4,19 @@
 # is separate: when a check goes red, its name has to say what broke. A build
 # failure and a lint failure are not the same conversation.
 #
-# Inert until `web/package.json` exists: ci.yml invokes it only when `detect`
-# finds one.
+# `web/` is live: eslint, prettier and tsc are wired through its scripts. The
+# fallbacks below are defense-in-depth, kept from when the stage was written
+# against a directory that did not exist.
 #
-# TOLERANT BY DESIGN. `web/` has not landed yet, so this stage is written
-# against a directory nobody has created. Each check probes for the script it
-# needs and, when it is missing, emits a notice naming the tool that should be
-# there and passes. The alternative - failing - would mean the commit that
-# brings the frontend cannot go green until it also brings three tool configs,
-# which is how a stage gets deleted instead of fixed.
+# TOLERANT BY DESIGN. Each check probes for the script it needs and, when it is
+# missing, emits a notice naming the tool that should be there and passes. The
+# alternative - failing - would mean the commit that first brought the frontend
+# could not go green until it also shipped three tool configs, which is how a
+# stage gets deleted instead of fixed. Today every probed script exists, so the
+# fallback only fires on regressions.
 #
-# The notices are the TODO list. They are deliberately loud in the job summary:
-# a stage that skips silently is a stage nobody ever completes.
+# The notices are deliberately loud in the job summary: a stage that skips
+# silently is a stage nobody ever completes.
 #
 # Type checking runs here as `tsc --noEmit` even though `npm run build` already
 # runs `tsc -b`. That is not redundant: a type error should be reported by the
@@ -29,7 +30,7 @@ on:
       node-version:
         description: Node version. Matches web/Dockerfile.
         type: string
-        default: "22"
+        default: "22.22"
       working-directory:
         description: Directory holding package.json.
         type: string
@@ -66,7 +67,7 @@ jobs:
           if node -e 'process.exit((require("./package.json").scripts||{}).lint?0:1)'; then
             npm run lint
           else
-            echo "::notice title=Frontend lint::web/package.json defines no 'lint' script. TODO: add eslint and a 'lint' script. Skipping."
+            echo "::notice title=Frontend lint::web/package.json defines no 'lint' script - regression: eslint was wired and the script must not disappear. Skipping."
           fi
 
       - name: prettier
@@ -78,7 +79,7 @@ jobs:
             echo "No 'format:check' script; prettier is installed, running it directly."
             npx --no-install prettier --check .
           else
-            echo "::notice title=Frontend format::prettier is not installed and no 'format:check' script exists. TODO: add prettier. Skipping."
+            echo "::notice title=Frontend format::prettier is not installed and no 'format:check' script exists - regression: prettier was wired and must not disappear. Skipping."
           fi
 
       - name: tsc --noEmit
@@ -90,5 +91,5 @@ jobs:
             echo "No 'typecheck' script; running tsc against tsconfig.json directly."
             npx --no-install tsc --noEmit
           else
-            echo "::notice title=Frontend typecheck::no tsconfig.json and no 'typecheck' script. TODO: this stage assumes TypeScript (ADR 0010). Skipping."
+            echo "::notice title=Frontend typecheck::no tsconfig.json and no 'typecheck' script - regression: this stage assumes TypeScript (ADR 0010). Skipping."
           fi
