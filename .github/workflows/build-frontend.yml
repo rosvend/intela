@@ -4,18 +4,18 @@
 # both the build and the typecheck - Vite alone would transpile TypeScript
 # without ever checking it.
 #
-# Inert until `web/package.json` exists: ci.yml invokes it only when `detect`
-# finds one. The commit that brings the frontend activates this stage.
+# `web/` is live: ci.yml invokes this stage when `detect` finds the layer and
+# the PR touches it.
 #
-# There is no lint job and no test job here because the incoming web/ carries
-# neither an eslint config nor a test runner. When someone adds them, they become
-# steps in this file or stages of their own; they are not silently missing.
+# There is no lint job and no test job here: lint and tests are stages of their
+# own (`lint-frontend.yml`, `test-frontend.yml`), so a failing check says
+# whether behaviour broke, style broke, or the thing does not compile.
 #
 # REQUIRES `web/package-lock.json`. `npm ci` fails without it, on purpose:
 # `npm install` re-resolves the dependency tree on every run, so two builds of
 # the same commit can ship different code. ADR 0005 asks for reproducibility in
 # the reparto engine; the same argument applies to what gets served next to it.
-# Whoever lands web/ has to commit the lockfile with it.
+# Whoever changes web/ has to keep the lockfile committed with it.
 
 name: Build frontend
 

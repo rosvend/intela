@@ -45,21 +45,23 @@ if: always()
 | `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
 | `Deploy (production)` | Andamio de release. No despliega | Solo en `push` a `main`, tras la compuerta |
 
-**Hoy solo corren las tres primeras** (y `Deploy (production)`, en cuanto se mergee, para reportar
-que no habia imagenes que desplegar)**.** El resto esta guardado por la existencia de su capa, y
-`main` todavia no tiene `go.mod`, `Dockerfile` ni `web/`. El commit que introduzca cada capa
-enciende su etapa sin tocar el pipeline.
+**Hoy las tres capas ya estan en `main`** (`go.mod`, `Dockerfile` y `web/`), asi que las etapas de
+Go y de frontend corren cuando el PR toca su capa, y los dos `Docker build` cuando toca los
+contenedores. Cada etapa se enciende sola por la existencia de su capa: el commit que la introdujo
+no toco el pipeline.
 
-### Las etapas de frontend son tolerantes
+### Las etapas de frontend tienen fallback tolerante
 
-`Lint (frontend)` y `Test (frontend)` estan escritas contra un directorio que todavia no existe.
-Cada comprobacion busca el script que necesita en `web/package.json` y, si no esta, emite un
-`::notice::` nombrando la herramienta que falta y **pasa**.
+`Lint (frontend)` y `Test (frontend)` estan escritas contra el `web/` que ya vive en `main`, que
+declara `lint`, `typecheck`, `test` y `format:check`. Cada comprobacion busca el script que
+necesita en `web/package.json` y, si esta, lo corre.
 
-Fallar seria lo comodo de defender y lo peor en la practica: obligaria a que el commit que trae el
-frontend traiga ademas configuracion de eslint, de prettier y un runner de tests para poder ponerse
-en verde, y asi es como alguien acaba borrando la etapa en vez de completarla. Los `::notice::` son
-la lista de pendientes, y salen en el resumen del job en cada corrida.
+El fallback tolerante quedo como defensa: si un script desaparece, la etapa emite un `::notice::`
+nombrando la herramienta que falta y **pasa** en vez de romper en rojo. Fue deliberado cuando
+`web/` no existia — fallar habria obligado a que el commit que trae el frontend traiga ademas
+configuracion de eslint, de prettier y un runner de tests, y asi es como alguien acaba borrando la
+etapa en vez de completarla. Hoy solo deberia dispararse por una regresion, y el `::notice::` sale
+en el resumen del job en cada corrida.
 
 `tsc --noEmit` corre aqui aunque `npm run build` ya ejecute `tsc -b`. No es redundante: un error de
 tipos lo tiene que reportar el check de lint, en segundos, no el final de un build de Vite.
@@ -141,11 +143,10 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 - **El PR que traiga Go** tiene que commitear **`go.sum`**. `Lint (Go)` exige que `go mod tidy` no
   produzca diff. Ojo tambien con `go mod download || true` en un `Dockerfile`: ese `|| true` se
   traga el fallo y construye la imagen con dependencias sin verificar.
-- **El PR que traiga el frontend** tiene que commitear **`web/package-lock.json`**. `Frontend
-  build` usa `npm ci`, que lo exige. Si el `web/Dockerfile` usa `npm install`, re-resuelve el arbol
-  en cada build y dos imagenes del mismo commit pueden llevar codigo distinto. Deberia traer ademas
-  eslint, prettier y un runner de tests: sin ellos `Lint (frontend)` y `Test (frontend)` pasan, pero
-  pasan sin comprobar nada y lo dicen en cada corrida.
+- **El frontend ya vive en `main` con su `web/package-lock.json`**: `Frontend build` usa `npm ci`,
+  que lo exige — un `npm install` en el `web/Dockerfile` re-resolveria el arbol en cada build y dos
+  imagenes del mismo commit podrian llevar codigo distinto. La capa trajo eslint y tsc, y vitest y
+  prettier llegaron despues: hoy `Lint (frontend)` y `Test (frontend)` comprueban de verdad.
 
 ## Lo que todavia no cubre
 
