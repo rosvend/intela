@@ -34,6 +34,10 @@ servers:
 tags:
   - name: salud
     description: Sondas para el orquestador.
+  - name: sesion
+    description: |
+      Autenticacion. La sesion es un token opaco con caducidad, no un JWT: se
+      revoca del lado del servidor borrando su fila (ADR 0013).
 
 paths:
   /health:
@@ -80,6 +84,114 @@ paths:
               example:
                 error: base de datos no disponible
 
+  /auth/session:
+    post:
+      tags: [sesion]
+      summary: Iniciar sesion
+      description: |
+        Cambia unas credenciales por un token de sesion.
+
+        Es la unica operacion que se llama sin token, de ahi el `security: []`.
+
+        Devuelve el mismo 401 tanto si el correo no esta en el padron como si
+        la clave no cuadra, y con el mismo mensaje: distinguirlos convertiria
+        el login en una forma de averiguar que correos estan dados de alta.
+      operationId: iniciarSesion
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credenciales"
+            example:
+              email: ana@redes.co
+              clave: la-clave-de-ana
+      responses:
+        "200":
+          description: Sesion abierta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sesion"
+              example:
+                token: 9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                expira: "2026-08-31T00:00:00Z"
+                usuario:
+                  id: usr-ana
+                  email: ana@redes.co
+                  nombre: Ana Escritora
+                  rol: titular
+                  titular_id: tit-ana
+        "400":
+          description: Falta el correo o la clave, o el cuerpo no es JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: email y clave son obligatorios
+        "401":
+          description: Credenciales invalidas.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: credenciales invalidas
+
+    get:
+      tags: [sesion]
+      summary: Quien soy
+      description: |
+        Devuelve el usuario dueno del token presentado.
+
+        Sirve para que un cliente pinte la sesion sin guardar el usuario en el
+        navegador, donde no se puede confiar en el.
+      operationId: sesionActual
+      responses:
+        "200":
+          description: El usuario de la sesion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usuario"
+              example:
+                id: usr-ana
+                email: ana@redes.co
+                nombre: Ana Escritora
+                rol: titular
+                titular_id: tit-ana
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+
+    delete:
+      tags: [sesion]
+      summary: Cerrar sesion
+      description: |
+        Revoca el token presentado.
+
+        Es idempotente: cerrar una sesion que ya estaba cerrada responde igual.
+        Decir "ese token no existia" contaria algo sobre tokens ajenos.
+      operationId: cerrarSesion
+      responses:
+        "204":
+          description: Sesion cerrada. Sin cuerpo.
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+
 components:
   securitySchemes:
     bearerAuth:
@@ -98,6 +210,67 @@ components:
           type: string
           description: Estado del proceso.
           enum: [ok, listo]
+
+    Credenciales:
+      type: object
+      required: [email, clave]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Correo con el que el usuario esta dado de alta.
+        clave:
+          type: string
+          format: password
+          description: |
+            La contrasena en claro. Solo viaja en esta peticion y nunca se
+            almacena: lo que se guarda es su hash bcrypt.
+
+    Usuario:
+      type: object
+      required: [id, email, nombre, rol, titular_id]
+      properties:
+        id:
+          type: string
+          description: Identificador interno, opaco y estable.
+        email:
+          type: string
+          format: email
+          description: Correo del usuario.
+        nombre:
+          type: string
+          description: Nombre para mostrar.
+        rol:
+          type: string
+          description: |
+            Rol del reglamento con el que se decide que puede hacer.
+          enum: [administrador, distribucion, contabilidad, auditor, titular]
+        titular_id:
+          type: string
+          description: |
+            Titular al que representa, si el rol es `titular`. Cadena vacia en
+            los demas roles: un administrador no cobra reparto (`R-01`).
+
+    Sesion:
+      type: object
+      required: [token, expira, usuario]
+      properties:
+        token:
+          type: string
+          description: |
+            Token de sesion, opaco. Se manda en `Authorization: Bearer`.
+
+            Es el unico momento en que existe en claro: en la base se guarda
+            solo su resumen, asi que no se puede recuperar. Si se pierde, hay
+            que iniciar sesion de nuevo.
+        expira:
+          type: string
+          format: date-time
+          description: |
+            Instante en que el token deja de valer, en RFC 3339. A partir de
+            el, cualquier peticion con este token responde 401.
+        usuario:
+          $ref: "#/components/schemas/Usuario"
 
     Error:
       type: object
