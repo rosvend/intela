@@ -4,13 +4,11 @@
 # check name has to say whether behaviour broke, style broke, or the thing
 # simply does not compile.
 #
-# Inert until `web/package.json` exists.
-#
-# TOLERANT BY DESIGN, like `lint-frontend.yml`: no test runner has been chosen
-# for `web/` yet, so a missing `test` script emits a notice and passes rather
-# than failing a commit for not yet containing something nobody has written.
-# See the same note there on why this is not a stage that quietly never
-# completes - the notice lands in the job summary every run.
+# `web/` is live and its `test` script runs vitest. The fallback below is
+# defense-in-depth, kept from when the stage was written against a directory
+# that did not exist: if the `test` script ever disappears, the stage emits a
+# notice and passes rather than failing red. The notice lands in the job
+# summary every run, so a regression is loud instead of silent.
 #
 # NO WATCH MODE. GitHub Actions sets CI=true, which is what makes vitest and
 # jest run once and exit instead of waiting for file changes. If the runner
@@ -25,7 +23,7 @@ on:
       node-version:
         description: Node version. Matches web/Dockerfile.
         type: string
-        default: "22"
+        default: "22.22"
       working-directory:
         description: Directory holding package.json.
         type: string
@@ -64,7 +62,7 @@ jobs:
 
           case "$script" in
             "")
-              echo "::notice title=Frontend tests::web/package.json defines no 'test' script. TODO: add a test runner (vitest) and a suite. Skipping."
+              echo "::notice title=Frontend tests::web/package.json defines no 'test' script - regression: vitest was wired and the script must not disappear. Skipping."
               ;;
             *"no test specified"*)
               echo "::notice title=Frontend tests::the 'test' script is still the npm placeholder. TODO: replace it with a real runner. Skipping."

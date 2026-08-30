@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22.22-alpine AS build
 WORKDIR /web
 
 # `npm ci` exige lockfile y lo respeta exactamente. `npm install` resolvia
