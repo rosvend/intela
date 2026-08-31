@@ -52,10 +52,11 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud Salud
-	auth  Autenticacion
-	opts  Opciones
-	log   *slog.Logger
+	salud    Salud
+	auth     Autenticacion
+	admision Admision
+	opts     Opciones
+	log      *slog.Logger
 }
 
 // Nueva construye el adaptador.
@@ -63,13 +64,13 @@ type API struct {
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
 // se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+// Casos; con dos todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, admision Admision, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, admision: admision, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -104,7 +105,16 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		if a.admision != nil {
+			protegido.Post("/afiliaciones/{id}/aprobar", a.aprobarAfiliacion)
+		}
 	})
+
+	// El alta la rellena quien todavia no es afiliado, asi que va sin
+	// sesion. La admision (aprobar) si pide la del Consejo.
+	if a.admision != nil {
+		r.Post("/afiliaciones", a.solicitarAfiliacion)
+	}
 
 	return r
 }

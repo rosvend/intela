@@ -84,9 +84,88 @@ button {
   max-width: 420px;
   margin: 12vh auto;
 }
-.badge {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.shell header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--line);
+  background: #efe8dc;
+}
+.shell header nav {
+  display: flex;
+  gap: 1.2rem;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.shell header nav a {
+  display: inline;
+  padding: 0;
+}
+.wizard {
+  max-width: 38rem;
+}
+.wizard fieldset {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1rem 1.2rem;
+  margin: 0 0 1rem;
+}
+.wizard legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+.wizard label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.7rem 0;
+}
+.wizard label.opcion {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.wizard input[type="radio"] {
+  margin-top: 0.25rem;
+}
+.pasos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0;
+  margin: 0 0 1.2rem;
+  list-style: none;
+  font-size: 0.85rem;
+}
+.pasos li {
+  color: #6b645b;
+}
+.pasos li[aria-current="step"] {
   color: var(--accent);
+  font-weight: 600;
+}
+.revision {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+}
+.revision dt {
+  color: #6b645b;
+}
+.revision dd {
+  margin: 0;
+}
+.acciones {
+  display: flex;
+  gap: 0.6rem;
+}
+.alerta {
+  color: #7a2a22;
+  background: #f8ebe6;
+  border: 1px solid #e3c7be;
+  padding: 0.6rem 0.8rem;
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
@@ -35,4 +36,12 @@ func traducirError(err error, formato string, args ...any) error {
 		return fmt.Errorf("%s: %w", contexto, aplicacion.ErrNoEncontrado)
 	}
 	return fmt.Errorf("%s: %w", contexto, err)
+}
+
+// esConflictoUnico reconoce una violacion de UNIQUE (23505). El caso de uso
+// la traduce a ErrConflicto: "ya hay una solicitud con ese correo" no es un
+// 500.
+func esConflictoUnico(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
