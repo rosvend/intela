@@ -80,9 +80,58 @@ button {
   color: #6b645b;
   font-size: 0.9rem;
 }
-.login {
-  max-width: 420px;
-  margin: 12vh auto;
+.shell header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--line);
+  background: #efe8dc;
+}
+.shell header nav {
+  display: flex;
+  gap: 1.2rem;
+  border: 0;
+  padding: 0;
+  background: none;
+}
+.shell header nav a {
+  display: inline;
+}
+.filtros {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.filtros label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.neto {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.explicacion dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+.explicacion dd {
+  margin: 0 0 0.6rem;
+}
+.login form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 .badge {
   font-size: 0.75rem;

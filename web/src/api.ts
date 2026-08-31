@@ -17,7 +17,11 @@ export async function api(path: string, init: RequestInit = {}) {
   const res = await fetch(path, { ...init, headers });
   if (res.status === 401) {
     localStorage.removeItem(tokenKey);
-    if (!path.includes("/sesiones")) window.location.href = "/login";
+    const metodo = (init.method || "GET").toUpperCase();
+    const esPostLogin = path.includes("/auth/session") && metodo === "POST";
+    if (!esPostLogin && !path.includes("/sesiones")) {
+      window.location.href = "/login";
+    }
   }
   if (!res.ok) {
     const t = await res.text();

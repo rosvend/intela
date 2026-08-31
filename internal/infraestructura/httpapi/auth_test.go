@@ -45,7 +45,12 @@ func (a *autenticacionFalsa) CerrarSesion(_ context.Context, token string) error
 
 func servidor(t *testing.T, auth Autenticacion) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, Opciones{}).Router()
+	return Nueva(nil, Casos{Auth: auth}, Opciones{}).Router()
+}
+
+func servidorCon(t *testing.T, auth Autenticacion, ingresos ConsultaIngresos, explicar ExplicarCifra) http.Handler {
+	t.Helper()
+	return Nueva(nil, Casos{Auth: auth, Ingresos: ingresos, Explicar: explicar}, Opciones{}).Router()
 }
 
 func pedir(t *testing.T, h http.Handler, metodo, ruta, cuerpo, token string) *httptest.ResponseRecorder {
@@ -291,7 +296,7 @@ func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 	var visto aplicacion.Usuario
 	var hubo bool
 
-	api := Nueva(nil, auth, Opciones{})
+	api := Nueva(nil, Casos{Auth: auth}, Opciones{})
 	h := api.conSesion(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		visto, hubo = UsuarioDe(r.Context())
 	}))

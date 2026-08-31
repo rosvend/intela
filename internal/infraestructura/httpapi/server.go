@@ -51,27 +51,43 @@ type Opciones struct {
 	Log                *slog.Logger
 }
 
+// Casos de uso que el adaptador invoca. Agrupados porque ya no son uno:
+// autenticacion, el panel del titular y ExplicarCifra.
+type Casos struct {
+	Auth     Autenticacion
+	Ingresos ConsultaIngresos
+	Explicar ExplicarCifra
+}
+
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud Salud
-	auth  Autenticacion
-	opts  Opciones
-	log   *slog.Logger
+	salud         Salud
+	auth          Autenticacion
+	ingresos      ConsultaIngresos
+	explicarCifra ExplicarCifra
+	opts          Opciones
+	log           *slog.Logger
 }
 
 // Nueva construye el adaptador.
 //
-// Los casos de uso van como parametros y no dentro de Opciones porque son
-// dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
-// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+// Los casos de uso van en Casos y no dentro de Opciones porque son
+// dependencias, no configuracion: Opciones se rellena desde el entorno, y
+// esto se cablea en cmd/api.
+func Nueva(salud Salud, casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{
+		salud:         salud,
+		auth:          casos.Auth,
+		ingresos:      casos.Ingresos,
+		explicarCifra: casos.Explicar,
+		opts:          opts,
+		log:           log,
+	}
 }
 
 func (a *API) Router() http.Handler {
@@ -118,6 +134,24 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
+		})
+
+		// Panel del titular (OE-6). El middleware cierra el prefijo al
+		// rol; el caso de uso recorta por TitularID de la sesion.
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-ingresos", a.misIngresos)
+		})
+		// ExplicarCifra: misma consulta, distinto alcance. El titular
+		// solo ve las suyas (SoloPropiasObras); auditor y administrador
+		// ven cualquiera. Una cifra ajena es 403, no 404.
+		protegido.Group(func(exp chi.Router) {
+			exp.Use(requiereRol(
+				aplicacion.RolTitular,
+				aplicacion.RolAuditor,
+				aplicacion.RolAdministrador,
+			))
+			exp.Get("/explicar/{ref}", a.explicar)
 		})
 	})
 
