@@ -31,6 +31,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/rosvend/intela/internal/aplicacion"
 )
 
 // Salud responde si las dependencias del proceso estan vivas.
@@ -109,6 +111,19 @@ func (a *API) Router() http.Handler {
 			protegido.Get("/liquidaciones", a.listarLiquidaciones)
 			protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
 		}
+
+		// Los grupos de rol van DENTRO de conSesion: sin sesion la
+		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
+		// docs/architecture/roles.md; quien anada un endpoint lo mete
+		// en el grupo que le corresponde y no escribe el chequeo a mano.
+		protegido.Route("/admin", func(admin chi.Router) {
+			admin.Use(requiereRol(aplicacion.RolAdministrador))
+			admin.Get("/pipeline", superficieOK)
+		})
+		protegido.Route("/auditoria", func(audit chi.Router) {
+			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
+			audit.Get("/asientos", superficieOK)
+		})
 	})
 
 	return r
