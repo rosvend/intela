@@ -38,6 +38,10 @@ tags:
     description: |
       Autenticacion. La sesion es un token opaco con caducidad, no un JWT: se
       revoca del lado del servidor borrando su fila (ADR 0013).
+  - name: liquidaciones
+    description: |
+      Ordenes de pago. Bruto, cada deduccion y neto viajan por separado
+      (RD 13.2). El admin ve todas; el titular, solo las suyas.
 
 paths:
   /health:
@@ -192,6 +196,112 @@ paths:
               example:
                 error: sesion invalida o expirada
 
+  /liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Listar liquidaciones (admin)
+      description: |
+        Devuelve las ordenes de pago de todos los titulares.
+
+        Cada orden muestra bruto, cada deduccion y neto por separado
+        (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
+        bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
+        silencio (`R-10`).
+
+        Reservada a administrador, distribucion, contabilidad y auditor.
+        Un titular usa `/mis-liquidaciones`.
+      operationId: listarLiquidaciones
+      responses:
+        "200":
+          description: Listado de ordenes de pago.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-prc-nac-2026-tit-ana
+                    proceso_id: prc-nac-2026
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                      - concepto: bienestar_social
+                        monto: "100.00"
+                      - concepto: reserva_errores_tecnicos
+                        monto: "50.00"
+                    neto: "650.00"
+                    estado: aceptada_por_silencio
+                    pagable: true
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no alcanza para ver el listado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Liquidaciones del titular autenticado
+      description: |
+        Devuelve las ordenes de pago del titular de la sesion.
+
+        El identificador no viaja en la URL: sale del token, para que un
+        titular no consulte las de otro. Mismo desglose bruto / deducciones
+        / neto que el listado de administracion (`RD 13.2`).
+      operationId: misLiquidaciones
+      responses:
+        "200":
+          description: Las ordenes del titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-prc-nac-2026-tit-ana
+                    proceso_id: prc-nac-2026
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                    neto: "800.00"
+                    estado: enviada
+                    pagable: false
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: La sesion no es de un titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
 components:
   securitySchemes:
     bearerAuth:
@@ -281,6 +391,95 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    Deduccion:
+      type: object
+      required: [concepto, monto]
+      properties:
+        concepto:
+          type: string
+          description: |
+            Que se desconto. Los de la corrida son `gastos_administrativos`,
+            `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
+            entra con su propio concepto.
+        monto:
+          type: string
+          description: |
+            Importe descontado, decimal exacto con dos decimales. String y
+            no number: un JSON number es IEEE-754 y no puede representar
+            dinero.
+
+    OrdenDePago:
+      type: object
+      required:
+        - id
+        - proceso_id
+        - titular_id
+        - periodo
+        - bruto
+        - deducciones
+        - neto
+        - estado
+        - pagable
+        - enviada
+      properties:
+        id:
+          type: string
+          description: Identificador opaco de la orden.
+        proceso_id:
+          type: string
+          description: Proceso de reparto del que salio la orden.
+        titular_id:
+          type: string
+          description: Titular que cobra.
+        periodo:
+          type: string
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+        bruto:
+          type: string
+          description: Monto bruto, decimal exacto con dos decimales.
+        deducciones:
+          type: array
+          description: |
+            Desglose. No se colapsa en el neto: `RD 13.2` exige ver cada
+            renglon.
+          items:
+            $ref: "#/components/schemas/Deduccion"
+        neto:
+          type: string
+          description: Bruto menos la suma de las deducciones.
+        estado:
+          type: string
+          description: |
+            Maquina de R-10 y R-11. `enviada` espera respuesta;
+            `aceptada_por_silencio` a los 15 dias calendario si el neto
+            supera el 2% SMMLV; `diferida` si no lo supera.
+          enum:
+            - enviada
+            - aceptada
+            - aceptada_por_silencio
+            - diferida
+            - acumulada
+            - objetada
+        pagable:
+          type: boolean
+          description: |
+            Aceptada (por respuesta o por silencio) y con RUT mas
+            certificacion bancaria en expediente (`R-12`). Falso no es
+            un error: se liquido, todavia no se puede girar.
+        enviada:
+          type: string
+          format: date
+          description: Dia civil del envio, sobre el que corre el plazo de 15 dias.
+
+    ListadoLiquidaciones:
+      type: object
+      required: [liquidaciones]
+      properties:
+        liquidaciones:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrdenDePago"
 
 security:
   - bearerAuth: []

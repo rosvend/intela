@@ -4,7 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -196,9 +199,29 @@ type RepositorioResultados interface {
 	PorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+// RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
+// corrida. DeTitular es el camino del panel del titular (#42).
 type RepositorioLiquidacion interface {
-	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+	DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
+	Listar(ctx context.Context) ([]liquidacion.OrdenDePago, error)
+	DeProceso(ctx context.Context, procesoID string) ([]liquidacion.OrdenDePago, error)
+	Guardar(ctx context.Context, ordenes []liquidacion.OrdenDePago) error
+	DocumentosDe(ctx context.Context, titularID string) (liquidacion.Documentos, error)
+	Documentos(ctx context.Context) (map[string]liquidacion.Documentos, error)
+	InsumoDeProceso(ctx context.Context, procesoID string) (InsumoLiquidacion, error)
+	SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error)
+}
+
+// InsumoLiquidacion es lo que la corrida ya cerro: totales de la bolsa y
+// lineas por titular. Liquidacion no recalcula ninguno.
+type InsumoLiquidacion struct {
+	ProcesoID string
+	Periodo   string
+	Bruto     decimal.Decimal
+	Admin     decimal.Decimal
+	Social    decimal.Decimal
+	Reserva   decimal.Decimal
+	Titulares []reparto.LineaTitular
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.
