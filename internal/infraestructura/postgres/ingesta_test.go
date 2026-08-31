@@ -468,7 +468,7 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 	mala := usoPendiente("", "", "Radio Novela")
 	mala.Modalidad = "radio"
 
-	rechazados, err := ingesta.GuardarUsos(ctx, rep.ID, []aplicacion.UsoPersistido{
+	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
 		usoPendiente("", "", "La Casa de las Dos Palmas"),
 		mala,
 		usoPendiente("", "", "Cronica de una Muerte"),
