@@ -25,4 +25,15 @@ var (
 	// ErrParametroAusente: falta un parametro normativo para el calculo.
 	// No se inventa un valor por defecto: se falla (ADR 0004).
 	ErrParametroAusente = errors.New("parametro normativo ausente")
+
+	// ErrPeriodoInvalido: el periodo no tiene la forma YYYY o YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
+
+	// ErrYaPublicado: ese periodo ya tiene listado ONI. Re-publicar
+	// reescribiria el ancla de R-19.
+	ErrYaPublicado = errors.New("el listado ONI de ese periodo ya fue publicado")
+
+	// ErrDireccionPublicacionAusente: no hay direccion fisica o electronica
+	// configurada, y RD 13.8.4.3 las exige en el listado.
+	ErrDireccionPublicacionAusente = errors.New("faltan las direcciones de publicacion ONI")
 )

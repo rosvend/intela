@@ -31,6 +31,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/rosvend/intela/internal/aplicacion"
 )
 
 // Salud responde si las dependencias del proceso estan vivas.
@@ -52,24 +54,40 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud Salud
-	auth  Autenticacion
-	opts  Opciones
-	log   *slog.Logger
+	salud       Salud
+	auth        Autenticacion
+	listadoONI  LecturaONI
+	publicarONI EscrituraONI
+	opts        Opciones
+	log         *slog.Logger
+}
+
+// Casos de uso que el adaptador expone. Van juntos porque Nueva ya no puede
+// seguir creciendo parametro a parametro: el comentario de abajo lo pedia
+// a partir del tercero.
+type Casos struct {
+	ListadoONI  LecturaONI
+	PublicarONI EscrituraONI
 }
 
 // Nueva construye el adaptador.
 //
-// Los casos de uso van como parametros y no dentro de Opciones porque son
-// dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
-// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+// Los casos de uso van en Casos y no dentro de Opciones porque son
+// dependencias, no configuracion: Opciones se rellena desde el entorno, y
+// esto se cablea en cmd/api.
+func Nueva(salud Salud, auth Autenticacion, casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{
+		salud:       salud,
+		auth:        auth,
+		listadoONI:  casos.ListadoONI,
+		publicarONI: casos.PublicarONI,
+		opts:        opts,
+		log:         log,
+	}
 }
 
 func (a *API) Router() http.Handler {
@@ -95,6 +113,11 @@ func (a *API) Router() http.Handler {
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
 
+	// R-18: el listado ONI se publica en la web, sin autenticacion.
+	// security: [] en el contrato. Montarlo detras de conSesion violaría
+	// RD 13.8.1 y no arrancaria el reloj de R-19 para quien no tenga cuenta.
+	r.Get("/publico/oni", a.obtenerListadoONI)
+
 	// El login es la unica ruta de /auth/session que se llama sin token; las
 	// otras dos van detras del middleware. Se agrupan con r.Group para que la
 	// diferencia se vea de un vistazo: quien anada una ruta protegida la mete
@@ -104,6 +127,11 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+
+		protegido.Group(func(roles chi.Router) {
+			roles.Use(a.conRoles(aplicacion.RolAdministrador, aplicacion.RolDistribucion))
+			roles.Post("/oni/publicaciones", a.crearPublicacionONI)
+		})
 	})
 
 	return r

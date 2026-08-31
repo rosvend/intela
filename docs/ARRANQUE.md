@@ -44,6 +44,9 @@ controlaba nada.
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
 | `WORKER_INTERVALO` | `5s` | Cada cuanto el worker mira la cola |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
+| `SESION_TTL` | `12h` | Caducidad de una sesion |
+| `ONI_DIRECCION_FISICA` | *(vacia)* | Direccion fisica del listado ONI (RD 13.8.4.3). Sin ella no se puede publicar |
+| `ONI_DIRECCION_ELECTRONICA` | *(vacia)* | Direccion electronica del listado ONI (RD 13.8.4.3). Sin ella no se puede publicar |
 
 ## Que es real y que es sintetico
 

@@ -68,6 +68,11 @@ services:
       ADDR: ":8080"
       # Lista blanca, nunca "*". En desarrollo, el origen de Vite y el de nginx.
       CORS_ORIGENES: "http://localhost,http://localhost:5173"
+      # R-18 / RD 13.8.4.3: el listado publico tiene que llevar las dos
+      # direcciones a las que se allega documentacion. Sustituir en produccion
+      # por las de REDES SGC.
+      ONI_DIRECCION_FISICA: "REDES SGC, Bogota D.C., Colombia"
+      ONI_DIRECCION_ELECTRONICA: "oni@redescritores.com"
     volumes: [objetos:/objetos]
     ports: ["8080:8080"]
     # Sin healthcheck: la imagen es distroless y no tiene shell ni curl con

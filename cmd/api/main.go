@@ -70,7 +70,19 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	api := httpapi.Nueva(store, autenticacion, httpapi.Opciones{
+	casos := httpapi.Casos{
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
+	}
+
+	api := httpapi.Nueva(store, autenticacion, casos, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})

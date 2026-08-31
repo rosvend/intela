@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/oni"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -26,6 +27,17 @@ import (
 // parametro; no lo obtiene.
 type Reloj interface {
 	Ahora() time.Time
+}
+
+// UnidadDeTrabajo fija el limite de transaccion que el caso de uso decide.
+//
+// El adaptador de PostgreSQL la satisface abriendo una transaccion, pero el
+// nucleo no puede nombrar pgx.Tx: el contexto que recibe fn es el de la
+// transaccion en curso, y los repositorios que lean de el participan. Un caso
+// de uso que escribe el asiento y la fila que el asiento explica las quiere
+// dentro de la misma (ADR 0006).
+type UnidadDeTrabajo interface {
+	Ejecutar(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 // AlmacenObjetos guarda los reportes crudos tal como llegaron.
@@ -128,6 +140,21 @@ type RepositorioIngesta interface {
 // modulos distintos del ADR 0003.
 type RepositorioONI interface {
 	Listar(ctx context.Context) ([]UsoPersistido, error)
+}
+
+// RepositorioPublicacionONI persiste el listado publico (R-18) y el ancla
+// de prescripcion (R-19).
+//
+// PendientesDePeriodo lee la cola viva. GuardarPublicacion toma una
+// instantanea: lo publicado no cambia si despues se resuelve un ONI. El
+// ancla (publicado_en) se escribe una sola vez; reescribirla resetearia
+// los tres anos de RD 13.8.7.
+type RepositorioPublicacionONI interface {
+	PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.DatosIdentificatorios, error)
+	GuardarPublicacion(ctx context.Context, p PublicacionONI) (PublicacionONI, error)
+	AnclarPrescripcion(ctx context.Context, usoIDs []string, cuando time.Time) error
+	PublicacionVigente(ctx context.Context) (PublicacionONI, error)
+	PublicacionDePeriodo(ctx context.Context, periodo string) (PublicacionONI, error)
 }
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce

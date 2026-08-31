@@ -5,9 +5,8 @@
 # ruta sin declararlo en `parameters`, que el estandar exige.
 #
 # Este contrato describe lo que el andamiaje expone DE VERDAD: sondas de
-# salud. Los endpoints de negocio vuelven con los PRs que los implementan, y
-# cada uno trae su schema. Un contrato que promete rutas que devuelven 404 es
-# peor que uno corto: se usa para generar clientes.
+# salud, sesion, y el listado publico de ONI (R-18). Los demas endpoints de
+# negocio vuelven con los PRs que los implementan, y cada uno trae su schema.
 
 openapi: 3.0.3
 
@@ -38,6 +37,14 @@ tags:
     description: |
       Autenticacion. La sesion es un token opaco con caducidad, no un JWT: se
       revoca del lado del servidor borrando su fila (ADR 0013).
+  - name: publico
+    description: |
+      Rutas sin autenticacion. El listado ONI se publica en la web (R-18,
+      RD 13.8.1): titulos e informacion identificatoria, nunca montos.
+  - name: oni
+    description: |
+      Publicacion del listado ONI. La lectura es publica (`/publico/oni`);
+      congelar un periodo exige sesion de administrador o distribucion.
 
 paths:
   /health:
@@ -192,6 +199,130 @@ paths:
               example:
                 error: sesion invalida o expirada
 
+  /publico/oni:
+    get:
+      tags: [publico]
+      summary: Listado publico de ONI
+      description: |
+        Publica el listado de obras no identificadas (R-18, RD 13.8.1 a
+        13.8.4): titulos e informacion identificatoria, **sin montos**, con
+        la fecha del proceso, el periodo y las direcciones fisica y
+        electronica a las que se allega documentacion.
+
+        Esta publicacion arranca el reloj de prescripcion de tres anos
+        (R-19, RD 13.8.7). Por eso la ruta no pide autenticacion: `security: []`.
+
+        Sin `periodo` devuelve la publicacion mas reciente. Con `periodo`
+        (YYYY o YYYY-MM) filtra a esa instantanea.
+      operationId: listadoONIPublico
+      security: []
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          description: Periodo de la publicacion. Vacio = la mas reciente.
+          example: "2026-01"
+      responses:
+        "200":
+          description: Listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoONI"
+              example:
+                periodo: "2026-01"
+                fecha_proceso: "2026-08-31T12:00:00Z"
+                direccion_fisica: "Calle 74 #7-35, Bogota D.C."
+                direccion_electronica: oni@redescritores.com
+                explicacion: >
+                  REDES SGC publica este listado de obras no identificadas
+                  (ONI) para que los titulares documenten su autoria.
+                obras:
+                  - id: uso-1
+                    titulo: Serie Desconocida
+                    fuente: caracol
+                    ids_fuente: ID-99
+                    modalidad: tv
+        "400":
+          description: El periodo no tiene la forma YYYY o YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo invalido
+        "404":
+          description: No hay listado publicado (o no hay uno de ese periodo).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no hay listado ONI publicado
+
+  /oni/publicaciones:
+    post:
+      tags: [oni]
+      summary: Publicar el listado ONI de un periodo
+      description: |
+        Congela la cola viva de ONI del periodo como listado publico, registra
+        la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
+        asiento en la bitacora.
+
+        Solo `administrador` y `distribucion`. Republicar el mismo periodo
+        responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+      operationId: publicarListadoONI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicarONI"
+            example:
+              periodo: "2026-01"
+      responses:
+        "201":
+          description: Listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoONI"
+        "400":
+          description: Falta el periodo o no tiene la forma YYYY o YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo invalido
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol no basta para publicar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: Ese periodo ya tiene listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el listado ONI de ese periodo ya fue publicado
+
 components:
   securitySchemes:
     bearerAuth:
@@ -271,6 +402,78 @@ components:
             el, cualquier peticion con este token responde 401.
         usuario:
           $ref: "#/components/schemas/Usuario"
+
+    PublicarONI:
+      type: object
+      required: [periodo]
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          description: Periodo que se publica, YYYY o YYYY-MM.
+
+    ObraONIPublica:
+      type: object
+      additionalProperties: false
+      required: [id, titulo, fuente, ids_fuente, modalidad]
+      description: |
+        Proyeccion publica de un uso en ONI. Titulo e informacion
+        identificatoria. No hay, y no va a haber, campo de dinero (R-18,
+        RD 13.8.2).
+      properties:
+        id:
+          type: string
+          description: Identificador del uso, opaco.
+        titulo:
+          type: string
+          description: Titulo tal como vino en el reporte.
+        fuente:
+          type: string
+          description: Fuente del reporte (canal, OTT, exhibidor).
+        ids_fuente:
+          type: string
+          description: Identificadores que trajo la fuente, si los hay.
+        modalidad:
+          type: string
+          enum: [tv, cine, ott, hotel]
+          description: Modalidad de comunicacion publica (RD 8).
+
+    ListadoONI:
+      type: object
+      additionalProperties: false
+      required:
+        - periodo
+        - fecha_proceso
+        - direccion_fisica
+        - direccion_electronica
+        - explicacion
+        - obras
+      description: |
+        Instantanea publicada del listado ONI. La fecha_proceso es el ancla
+        de los tres anos de R-19.
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2})?$'
+        fecha_proceso:
+          type: string
+          format: date-time
+          description: Fecha de la publicacion, RFC 3339. No se reescribe.
+        direccion_fisica:
+          type: string
+          description: Direccion fisica a la que se allega documentacion (RD 13.8.4.3).
+        direccion_electronica:
+          type: string
+          description: Direccion electronica a la que se allega documentacion (RD 13.8.4.3).
+        explicacion:
+          type: string
+          description: |
+            Explicacion del proceso de Distribucion en el que se incluyen
+            los derechos de las ONI (RD 13.8.4.4).
+        obras:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObraONIPublica"
 
     Error:
       type: object

@@ -28,6 +28,21 @@ export async function api(path: string, init: RequestInit = {}) {
   return res;
 }
 
+// Lectura sin sesion. El listado ONI es publico (R-18): adjuntar el token
+// y redirigir a /login ante un 401 convertiria la publicacion legal en una
+// pagina interna.
+export async function apiPublica(path: string) {
+  const res = await fetch(path);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || res.statusText);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("json")) return res.json();
+  return res;
+}
+
 export function setToken(t: string) {
   localStorage.setItem(tokenKey, t);
 }
