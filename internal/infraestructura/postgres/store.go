@@ -1,20 +1,10 @@
-// Package postgres adapta los puertos de persistencia contra PostgreSQL.
-//
-// Aqui solo esta la conexion. Las implementaciones de cada puerto entran en
-// PRs propios, junto con los casos de uso que las usan.
-//
-// Cuando entren, cada una declara su asercion de compilacion al lado:
-//
-//	var _ aplicacion.RepositorioRepertorio = (*Store)(nil)
-//
-// Sin esas aserciones un desajuste entre puerto y adaptador no aparece hasta
-// que se compila cmd/api, que es tarde y lejos.
 package postgres
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -51,4 +41,38 @@ func (s *Store) Cerrar() {
 	if s.pool != nil {
 		s.pool.Close()
 	}
+}
+
+// EnTransaccion abre una transaccion, se la pasa a fn y confirma si fn
+// termina bien. Si fn devuelve error o entra en panico, revierte.
+//
+// El limite lo fija quien llama, en aplicacion: el adaptador no decide donde
+// empieza ni donde acaba una transaccion. Un caso de uso que escribe en dos
+// tablas -un asiento y la fila que el asiento explica- las quiere dentro de
+// la misma, y solo el sabe cuales son.
+//
+// La pgx.Tx viaja como PARAMETRO, nunca como campo de Store. *Store es un
+// singleton del proceso, cableado una vez en cmd/api: un campo con la
+// transaccion en curso dejaria que dos casos de uso concurrentes se pisaran
+// el uno al otro, y el fallo no seria un panico sino una cifra distinta.
+//
+// El error de fn sube sin envolver: quien llama distingue sus propios
+// centinelas.
+func (s *Store) EnTransaccion(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transaccion: %w", err)
+	}
+	// Rollback tras un Commit correcto devuelve ErrTxClosed y no hace nada;
+	// por eso el defer puede ser incondicional. Cubre tambien el panico, que
+	// sin esto dejaria la transaccion abierta reteniendo cerrojos.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("confirmar transaccion: %w", err)
+	}
+	return nil
 }

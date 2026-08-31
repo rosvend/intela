@@ -16,9 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
+	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 func main() {
@@ -54,7 +57,20 @@ func ejecutar(log *slog.Logger) error {
 	}
 	defer store.Cerrar()
 
-	api := httpapi.Nueva(store, httpapi.Opciones{
+	// Aqui es donde se juntan las dos orillas: el nucleo declara los puertos y
+	// este es el unico sitio del binario que sabe que adaptador satisface cada
+	// uno. El mismo *Store satisface RepositorioAfiliacion y Sesiones; que sean
+	// el mismo tipo es asunto suyo, el nucleo sigue viendo dos interfaces.
+	autenticacion := aplicacion.Autenticacion{
+		Usuarios: store,
+		Claves:   cripto.Bcrypt{},
+		Sesiones: store,
+		Reloj:    reloj.Sistema{},
+		Tokens:   cripto.TokensAleatorios{},
+		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
+	}
+
+	api := httpapi.Nueva(store, autenticacion, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})

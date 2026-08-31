@@ -30,6 +30,21 @@ type Usuario struct {
 	TitularID string
 }
 
+// Sesion es lo que devuelve un login correcto.
+//
+// Token es el valor EN CLARO, y es la unica vez que existe: lo que se
+// persiste es un resumen suyo, y de ahi no se puede volver. Si quien llama lo
+// pierde, no hay forma de recuperarlo -hay que iniciar sesion otra vez-, que
+// es justo la propiedad que se busca.
+//
+// Sin etiquetas json, como el resto de los modelos del nucleo: la forma que
+// viaja por la red la decide el adaptador HTTP, no esto.
+type Sesion struct {
+	Token   string
+	Expira  time.Time
+	Usuario Usuario
+}
+
 type Obra struct {
 	ID         string
 	Titulo     string

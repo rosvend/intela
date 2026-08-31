@@ -57,6 +57,22 @@ type Hasher interface {
 	Hash(clave string) (string, error)
 }
 
+// GeneradorTokens produce el identificador opaco de una sesion.
+//
+// Es un puerto por la misma razon que Reloj: el nucleo decide que hace falta
+// un token, no de donde sale la aleatoriedad. Con crypto/rand suelto dentro
+// del caso de uso, IniciarSesion no se puede probar -cada corrida daria un
+// token distinto- y la fuente de entropia, que es una decision criptografica,
+// quedaria fijada en el nucleo. Es la misma linea que separa bcrypt detras de
+// Hasher.
+//
+// Devuelve error aunque el adaptador real no vaya a producirlo -crypto/rand
+// llena el buffer o mata el proceso-: es lo que permite que un doble simule el
+// fallo y se compruebe que no se entrega una sesion sin token.
+type GeneradorTokens interface {
+	Generar() (string, error)
+}
+
 // ---------------------------------------------------------------------------
 // Puertos de persistencia, uno por modulo
 // ---------------------------------------------------------------------------

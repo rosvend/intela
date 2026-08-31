@@ -50,19 +50,26 @@ type Opciones struct {
 }
 
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
-// entren sus PRs; hoy solo hay salud.
+// entren sus PRs.
 type API struct {
 	salud Salud
+	auth  Autenticacion
 	opts  Opciones
 	log   *slog.Logger
 }
 
-func Nueva(salud Salud, opts Opciones) *API {
+// Nueva construye el adaptador.
+//
+// Los casos de uso van como parametros y no dentro de Opciones porque son
+// dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
+// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
+// Casos; con uno todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -83,8 +90,21 @@ func (a *API) Router() http.Handler {
 		escribirError(w, http.StatusMethodNotAllowed, "metodo no permitido")
 	})
 
+	// Las sondas van sin sesion: el orquestador no tiene credenciales, y una
+	// sonda que exigiera token reiniciaria el contenedor en bucle.
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
+
+	// El login es la unica ruta de /auth/session que se llama sin token; las
+	// otras dos van detras del middleware. Se agrupan con r.Group para que la
+	// diferencia se vea de un vistazo: quien anada una ruta protegida la mete
+	// en el grupo y no tiene que acordarse de nada.
+	r.Post("/auth/session", a.iniciarSesion)
+	r.Group(func(protegido chi.Router) {
+		protegido.Use(a.conSesion)
+		protegido.Get("/auth/session", a.sesionActual)
+		protegido.Delete("/auth/session", a.cerrarSesion)
+	})
 
 	return r
 }

@@ -7,7 +7,11 @@ export function token() {
 export async function api(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   if (token()) headers.set("Authorization", `Bearer ${token()}`);
-  if (!(init.body instanceof FormData) && !headers.has("Content-Type") && init.body) {
+  if (
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type") &&
+    init.body
+  ) {
     headers.set("Content-Type", "application/json");
   }
   const res = await fetch(path, { ...init, headers });
