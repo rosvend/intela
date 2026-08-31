@@ -283,7 +283,7 @@ func TestElEsquemaBearerNoDistingueMayusculas(t *testing.T) {
 	}
 }
 
-// Lo que #17 va a consumir: el Usuario puesto en el contexto por conSesion.
+// Lo que requiereRol consume: el Usuario puesto en el contexto por conSesion.
 func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 	quiero := aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolDistribucion}
 	auth := &autenticacionFalsa{usuario: quiero}
@@ -309,8 +309,8 @@ func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 }
 
 // Sin sesion no hay usuario, y el segundo valor lo dice. Un cero silencioso
-// seria un Usuario con rol vacio, que #17 podria comparar contra un rol y
-// dejar pasar.
+// seria un Usuario con rol vacio, que requiereRol podria comparar contra un
+// rol y dejar pasar.
 func TestUsuarioDeSinSesionDevuelveFalso(t *testing.T) {
 	if _, hubo := UsuarioDe(context.Background()); hubo {
 		t.Fatal("sin sesion en el contexto, UsuarioDe tiene que devolver false")

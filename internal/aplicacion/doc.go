@@ -21,10 +21,16 @@
 // adaptador de PostgreSQL puede seguir siendo un unico tipo que los satisfaga
 // todos; eso es asunto suyo, no del nucleo.
 //
+// # Autorizacion
+//
+// El middleware de roles vive en el adaptador HTTP. Aqui vive el predicado
+// que no depende del transporte: [SoloPropiasObras] (OE-6). Los casos de
+// uso que aterrizen lo aplican; no es un filtro SQL.
+//
 // # Que falta aqui
 //
-// Los casos de uso. Este PR es andamiaje: declara los contratos, no los
-// implementa. Cada PR de seguimiento trae los suyos, y con ellos la
-// autorizacion por rol y el asiento en bitacora, que el ADR 0006 declara
-// "parte de la definicion de hecho de cada caso de uso".
+// Los casos de uso. Este paquete declara los contratos y el predicado de
+// titularidad. Cada PR de seguimiento trae los suyos, y con ellos el
+// asiento en bitacora, que el ADR 0006 declara "parte de la definicion de
+// hecho de cada caso de uso".
 package aplicacion
