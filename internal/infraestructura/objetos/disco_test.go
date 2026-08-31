@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rosvend/intela/internal/aplicacion"
 )
 
 // Las claves que un atacante controla. El periodo sale de un formulario y el
@@ -73,6 +75,12 @@ func TestPonerYObtener(t *testing.T) {
 
 // ADR 0006: la copia cruda es inmutable. Reescribir una clave ya usada es un
 // error, no una actualizacion.
+//
+// Y el error es ErrObjetoYaExiste, no el os.ErrExist de debajo: quien llama
+// tiene que poder distinguir "ya estaba" de "no se pudo escribir" sin conocer
+// los errores del sistema de ficheros. La ingesta deriva la clave de la huella
+// del contenido y depende de esa distincion para completar una subida que se
+// quedo a medias.
 func TestPonerNoSobrescribe(t *testing.T) {
 	d := Disco{Dir: t.TempDir()}
 	clave := "reportes/2026-01/sha/x.csv"
@@ -83,6 +91,9 @@ func TestPonerNoSobrescribe(t *testing.T) {
 	err := d.Poner(context.Background(), clave, []byte("suplantado"))
 	if err == nil {
 		t.Fatal("se esperaba error al reescribir una clave existente")
+	}
+	if !errors.Is(err, aplicacion.ErrObjetoYaExiste) {
+		t.Fatalf("se esperaba ErrObjetoYaExiste, se obtuvo %v", err)
 	}
 
 	leido, err := d.Obtener(context.Background(), clave)

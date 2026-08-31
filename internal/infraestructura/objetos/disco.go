@@ -68,6 +68,18 @@ func (d Disco) ruta(clave string) (string, error) {
 // Poner escribe un objeto. No sobrescribe: el ADR 0006 pide que la copia
 // cruda sea inmutable, asi que reescribir una clave existente es un error y
 // no una actualizacion silenciosa.
+//
+// Una clave ya ocupada sale como aplicacion.ErrObjetoYaExiste, no como el
+// os.ErrExist del sistema de ficheros. Es la simetrica de la traduccion que ya
+// hace Obtener, y existe por la misma razon: quien llama tiene que poder
+// distinguir "ya estaba" de "no se pudo escribir" sin aprenderse los errores
+// del sistema de ficheros, que en un almacen S3 serian otros.
+//
+// La distincion no es cosmetica. La ingesta deriva la clave de la huella del
+// contenido, asi que "ya estaba" significa "esos mismos bytes ya estan
+// congelados" -sea por una resubida, por otra fuente que entrego lo mismo, o
+// por un intento anterior que murio antes de dejar el acuse-, y ninguna de las
+// tres es un fallo de escritura.
 func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 	destino, err := d.ruta(clave)
 	if err != nil {
@@ -77,6 +89,9 @@ func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 		return err
 	}
 	f, err := os.OpenFile(destino, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%w: %q", aplicacion.ErrObjetoYaExiste, clave)
+	}
 	if err != nil {
 		return err
 	}
