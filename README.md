@@ -1,8 +1,8 @@
 <!-- markdownlint-disable MD001 MD033 MD041 -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/intelia-logo-dark.png">
-    <img alt="Intela" src="docs/intelia-logo.png" width="46%" height='40%'>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/intela-logo-dark.png">
+    <img alt="Intela" src="docs/intela-logo.png" width="46%" height='40%'>
   </picture>
 </p>
 
