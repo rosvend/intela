@@ -178,11 +178,29 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 // mezclados, precisamente para que las dos escrituras sean el mismo hecho: un
 // lote guardado a medias deja una entrega cuyo recuento no cuadra con el
 // archivo, y nadie sabria cual de las dos mitades falta.
-func (i Ingesta) GuardarUsos(ctx context.Context, reporteID string, usos []UsoPersistido) ([]UsoPersistido, error) {
+//
+// # Por que el Reporte entero y no su id
+//
+// La fila hereda de la entrega las DOS cosas que la atan a ella: el reporte y
+// la fuente. `usos.fuente` es TEXT NOT NULL sin DEFAULT, asi que la cadena
+// vacia lo satisface sin ruido, y RepositorioIdentificacion.Alias indexa por
+// fuente: una fila con fuente vacia no casaria con ningun alias NUNCA, y el
+// sintoma no seria un error sino un catalogo que parece incompleto. Quien llama
+// acaba de recibir el Reporte de GuardarReporte, asi que pedirlo entero no le
+// cuesta nada.
+//
+// # Los valores por defecto los pone este metodo
+//
+// Escalon, ONI y Emisiones no son columna de ningun fichero del cliente, asi
+// que un adaptador de formato (#25) que mapee lo que hay en el archivo los deja
+// en el valor cero de Go. Sus DEFAULT del esquema no llegan a aplicarse -el
+// adaptador de persistencia manda el valor siempre-, asi que los que valen son
+// estos.
+func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersistido) ([]UsoPersistido, error) {
 	if len(usos) == 0 {
 		return nil, nil
 	}
-	if strings.TrimSpace(reporteID) == "" {
+	if strings.TrimSpace(rep.ID) == "" {
 		return nil, fmt.Errorf("%w: falta el reporte del que salen las filas", ErrReporteInvalido)
 	}
 
@@ -190,14 +208,15 @@ func (i Ingesta) GuardarUsos(ctx context.Context, reporteID string, usos []UsoPe
 	var rechazados []UsoPersistido
 
 	for n, u := range usos {
-		u.ReporteID = reporteID
+		u.ReporteID = rep.ID
+		u.Fuente = rep.Fuente
 		if u.ID == "" {
 			// Derivado del reporte y de la posicion en el lote: la fila puede
 			// senalar la entrega y la linea exactas de las que salio (ADR
 			// 0006). No se reutiliza ningun contador de la fuente -Id_Ntx y
 			// companeros se renumeran en cada entrega-, pero el reporte si es
 			// estable porque su id sale de la huella.
-			u.ID = reporteID + "-" + strconv.Itoa(n)
+			u.ID = rep.ID + "-" + strconv.Itoa(n)
 		}
 		if u.Escalon == "" {
 			// Lo que trae una fila recien parseada. Exigirle el vocabulario
@@ -205,7 +224,29 @@ func (i Ingesta) GuardarUsos(ctx context.Context, reporteID string, usos []UsoPe
 			// hacia afuera.
 			u.Escalon = "pendiente"
 		}
-		u.RechazoMotivo = validarUso(u)
+		if u.ObraID == "" {
+			// A la salida de ingesta ninguna fila esta identificada: es lo que
+			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
+			// DEFAULT TRUE de la columna no llega a aplicarse porque
+			// insertarUso manda el valor siempre, asi que el que vale es este.
+			u.ONI = true
+		}
+		if u.Emisiones == 0 {
+			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
+			// porque insertarUso manda el valor siempre. Una parrilla real
+			// nunca declara cero emisiones -la granularidad es la emision, no
+			// la obra, y RD 9.1.1 las multiplica-, asi que el cero es el valor
+			// vacio de Go, no un dato.
+			u.Emisiones = 1
+		}
+		if u.RechazoMotivo == "" {
+			// Un motivo que ya viene puesto lo escribio el adaptador de
+			// formato, que vio cosas que aqui ya no se ven -coercion de tipo,
+			// un placeholder como el `--` de episode_nbr-. Pisarlo con el
+			// motivo generico perderia la unica explicacion util del log de
+			// rechazos.
+			u.RechazoMotivo = validarUso(u)
+		}
 
 		lote[n] = u
 		if u.RechazoMotivo != "" {
@@ -214,7 +255,7 @@ func (i Ingesta) GuardarUsos(ctx context.Context, reporteID string, usos []UsoPe
 	}
 
 	if err := i.Reportes.GuardarUsos(ctx, lote); err != nil {
-		return nil, fmt.Errorf("guardar las filas del reporte %q: %w", reporteID, err)
+		return nil, fmt.Errorf("guardar las filas del reporte %q: %w", rep.ID, err)
 	}
 	return rechazados, nil
 }
