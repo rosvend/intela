@@ -1,4 +1,8 @@
-const tokenKey = "intela.token";
+// Exportada porque `sesion.tsx` necesita reconocer esta clave en el evento
+// `storage` para detectar que otra pestana cambio o cerro la sesion. Duplicar
+// la cadena en dos archivos es como se acaba escuchando una clave que ya nadie
+// escribe.
+export const tokenKey = "intela.token";
 
 export function token() {
   return localStorage.getItem(tokenKey) || "";
@@ -75,12 +79,13 @@ export async function api(path: string, init: Opciones = {}) {
     throw new ErrorDeRed(err);
   }
 
-  if (res.status === 401) {
-    // Se limpia siempre: un token que la API ya no reconoce no sirve de nada,
-    // sea porque expiro o porque el login nunca llego a emitir uno.
+  // Solo un 401 de una llamada CON token dice algo sobre la sesion guardada.
+  // Una llamada anonima no envia token, asi que su 401 significa "esas
+  // credenciales no sirven" y nada mas: borrar el token aqui le cerraria la
+  // sesion a quien abriera /login con una sesion vigente y fallara la clave.
+  if (res.status === 401 && !anonima) {
     localStorage.removeItem(tokenKey);
-    if (!anonima)
-      (alExpirarSesion ?? (() => (window.location.href = "/login")))();
+    (alExpirarSesion ?? (() => (window.location.href = "/login")))();
   }
 
   if (!res.ok) {

@@ -63,8 +63,11 @@ describe("api", () => {
     );
   });
 
-  it("limpia el token pero NO llama al handler ante un 401 anonimo (login fallido)", async () => {
-    setToken("token-vencido");
+  it("CONSERVA el token ante un 401 anonimo: un login fallido no cierra la sesion vigente", async () => {
+    // Una llamada anonima no envia token, asi que su 401 no dice nada sobre la
+    // sesion guardada. Quien tenga sesion abierta, entre a /login y escriba mal
+    // la clave, no debe perderla.
+    setToken("token-vigente");
     const handler = vi.fn();
     setUnauthorizedHandler(handler);
     vi.mocked(fetch).mockResolvedValue(
@@ -76,7 +79,7 @@ describe("api", () => {
     await expect(
       api("/api/auth/session", { method: "POST", anonima: true }),
     ).rejects.toThrow("credenciales invalidas");
-    expect(localStorage.getItem("intela.token")).toBeNull();
+    expect(localStorage.getItem("intela.token")).toBe("token-vigente");
     expect(handler).not.toHaveBeenCalled();
   });
 

@@ -96,6 +96,12 @@ export default function Layout() {
             <p className="sidebar-nombre">{usuario.nombre}</p>
             <p className="sidebar-rol">{ETIQUETA_ROL[usuario.rol]}</p>
           </div>
+          {/*
+            El aviso de "el servidor no revoco" NO se pinta aqui: al salir,
+            `usuario` pasa a null y este Layout se desmonta entero, asi que
+            nadie alcanzaria a leerlo. Vive en el contexto y lo muestra Login,
+            que es donde se aterriza.
+          */}
           <button
             type="button"
             className="sidebar-salir"

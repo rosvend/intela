@@ -54,9 +54,60 @@ a {
   font-size: 0.9rem;
 }
 
+/* ---------- indicador de carga (Cargando.tsx) ---------- */
+
 .cargando {
-  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 3rem 2rem;
   color: var(--texto-suave);
+}
+
+.cargando p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/*
+ * La marca se pinta con `--acento` a traves de la mascara: el PNG de origen es
+ * rosa y el tablero es vinotinto, y asi el color lo mandan los tokens.
+ * `mask-image` lo inyecta el componente, que es quien conoce la ruta del
+ * activo tras el empaquetado.
+ */
+.logo-spinner {
+  width: 64px;
+  height: 64px;
+  background-color: var(--acento);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  animation: girar 1s linear infinite;
+}
+
+@keyframes girar {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Una animacion infinita sin esta guarda provoca nausea a personas con
+ * trastornos vestibulares. Con movimiento reducido la marca se queda quieta y
+ * el mensaje es quien informa: se pierde el adorno, no la informacion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .logo-spinner {
+    animation: none;
+  }
 }
 
 /* ---------- shell autenticado (Layout.tsx) ---------- */
@@ -190,6 +241,16 @@ a {
 
 .sidebar-salir:hover {
   color: var(--acento);
+}
+
+.login-aviso {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radio);
+  background: #fdf3e7;
+  color: #7a4a10;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .contenido {

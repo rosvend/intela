@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
+import Cargando from "./Cargando";
 import { token } from "./api";
 import { useSesion } from "./sesion";
 
@@ -19,7 +20,7 @@ export default function RutaProtegida() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   if (cargando) {
-    return <p className="cargando">Cargando…</p>;
+    return <Cargando />;
   }
   if (!usuario) {
     return <Navigate to="/login" state={{ from: location }} replace />;

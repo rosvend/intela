@@ -3,7 +3,12 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, ErrorDeRed, token } from "./api";
 import { useSesion } from "./sesion";
 
-type EstadoDeUbicacion = { from?: { pathname: string } };
+// `RutaProtegida` guarda el `location` entero, no solo la ruta: un filtro de
+// tabla vive en la query y un ancla en el fragmento. Quedarse con `pathname`
+// devolveria /catalogo cuando se pidio /catalogo?pagina=2#resultados.
+type EstadoDeUbicacion = {
+  from?: { pathname: string; search?: string; hash?: string };
+};
 
 /**
  * Copia literal del mockup (issue #19, seccion "Pase visual", version 6).
@@ -16,7 +21,7 @@ type EstadoDeUbicacion = { from?: { pathname: string } };
  *   se muestra pero no hace nada, en vez de simular un flujo que no existe.
  */
 export default function Login() {
-  const { usuario, entrar } = useSesion();
+  const { usuario, entrar, salidaSinRevocar } = useSesion();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState("");
@@ -36,9 +41,17 @@ export default function Login() {
     setEnviando(true);
     try {
       await entrar(email, clave);
-      const destino =
-        (location.state as EstadoDeUbicacion | null)?.from?.pathname ?? "/";
-      navigate(destino, { replace: true });
+      const origen = (location.state as EstadoDeUbicacion | null)?.from;
+      navigate(
+        origen
+          ? {
+              pathname: origen.pathname,
+              search: origen.search ?? "",
+              hash: origen.hash ?? "",
+            }
+          : "/",
+        { replace: true },
+      );
     } catch (err) {
       if (err instanceof ApiError || err instanceof ErrorDeRed) {
         setError(err.message);
@@ -55,6 +68,19 @@ export default function Login() {
       <div className="login-tarjeta">
         <h1>Iniciar sesión</h1>
         <p className="muted">Accede al gestor de propiedad intelectual</p>
+
+        {/*
+          Se llego aqui tras un "Salir" en el que el servidor no confirmo la
+          revocacion: en este equipo la sesion se cerro, pero alla sigue viva.
+          En un equipo compartido eso hay que decirlo, no tragarselo.
+        */}
+        {salidaSinRevocar && (
+          <p role="alert" className="login-aviso">
+            Se cerró la sesión en este equipo, pero el servidor no confirmó la
+            revocación. Si estás en un equipo compartido, avísale a un
+            administrador.
+          </p>
+        )}
 
         <form onSubmit={(e) => void manejarEnvio(e)}>
           <label htmlFor="email">Correo electrónico</label>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Cargando from "./Cargando";
 import { api } from "./api";
 
 type EstadoBackend = { estado: string } | null;
@@ -27,10 +28,19 @@ export default function Estado() {
     );
   }
 
+  if (!salud) {
+    return (
+      <section>
+        <h1>Estado</h1>
+        <Cargando texto="Consultando el backend…" />
+      </section>
+    );
+  }
+
   return (
     <section>
       <h1>Estado</h1>
-      <p>{salud ? `Backend: ${salud.estado}` : "Consultando..."}</p>
+      <p>Backend: {salud.estado}</p>
     </section>
   );
 }
