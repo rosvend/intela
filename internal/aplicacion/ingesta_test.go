@@ -136,6 +136,13 @@ func usoBueno(titulo string) UsoPersistido {
 	}
 }
 
+// repDePrueba es el acuse del que cuelgan las filas. GuardarUsos recibe el
+// Reporte entero y no solo su id porque la fila hereda de el las dos cosas que
+// la atan a la entrega: el reporte y la fuente.
+func repDePrueba() Reporte {
+	return Reporte{ID: "rep-1", Fuente: "caracol"}
+}
+
 // ---------------------------------------------------------------------------
 // Huella y derivacion de clave
 // ---------------------------------------------------------------------------
@@ -360,7 +367,7 @@ func TestGuardarUsosSeparaLoMalformadoSinDescartarlo(t *testing.T) {
 	mala := usoBueno("Radio Novela")
 	mala.Modalidad = "radio"
 
-	rechazados, err := ingesta.GuardarUsos(t.Context(), "rep-1", []UsoPersistido{
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{
 		usoBueno("La Casa de las Dos Palmas"),
 		mala,
 		usoBueno("Cronica de una Muerte"),
@@ -402,7 +409,7 @@ func TestGuardarUsosConTodoMalNoEsUnError(t *testing.T) {
 	sinModalidad := usoBueno("X")
 	sinModalidad.Modalidad = ""
 
-	rechazados, err := ingesta.GuardarUsos(t.Context(), "rep-1",
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
 		[]UsoPersistido{sinTitulo, sinModalidad})
 	if err != nil {
 		t.Fatalf("un lote invalido no es un fallo del caso de uso: %v", err)
@@ -426,7 +433,7 @@ func TestGuardarUsosEstampaReporteEIdentificadorTrazable(t *testing.T) {
 	propio := usoBueno("Con id propio")
 	propio.ID = "uso-elegido-por-quien-llama"
 
-	if _, err := ingesta.GuardarUsos(t.Context(), "rep-1",
+	if _, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
 		[]UsoPersistido{usoBueno("Sin id"), propio}); err != nil {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
@@ -450,7 +457,7 @@ func TestGuardarUsosEstampaReporteEIdentificadorTrazable(t *testing.T) {
 func TestGuardarUsosSinFilasNoTocaElRepositorio(t *testing.T) {
 	ingesta, repo, _ := nuevaIngesta()
 
-	rechazados, err := ingesta.GuardarUsos(t.Context(), "rep-1", nil)
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), nil)
 	if err != nil {
 		t.Fatalf("un lote vacio no es un error: %v", err)
 	}
@@ -517,7 +524,7 @@ func TestGuardarUsosTrataElEscalonVacioComoPendiente(t *testing.T) {
 	recien := usoBueno("Recien parseada")
 	recien.Escalon = ""
 
-	rechazados, err := ingesta.GuardarUsos(t.Context(), "rep-1", []UsoPersistido{recien})
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
 	if err != nil {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
@@ -526,5 +533,90 @@ func TestGuardarUsosTrataElEscalonVacioComoPendiente(t *testing.T) {
 	}
 	if repo.usos[0].Escalon != "pendiente" {
 		t.Fatalf("Escalon = %q, se esperaba \"pendiente\"", repo.usos[0].Escalon)
+	}
+}
+
+// La forma exacta que produce un adaptador de formato (#25): SOLO los campos
+// que existen en el archivo del cliente. Fuente, Escalon, ONI y Emisiones no
+// son columna de ninguna parrilla ni de ningun reporte OTT, asi que llegan en
+// el valor cero de Go y los tiene que rellenar el caso de uso.
+//
+// Los tres sintomas que cubre, y ninguno se ve como un error:
+//
+//   - ONI en false con obra vacia rechaza la fila entera por "identificada y
+//     sin obra_id", un motivo FALSO -no la marco nadie-, y encima el reporte ya
+//     esta escrito: reintentar el mismo archivo choca con ErrReporteDuplicado.
+//   - Emisiones en 0 pasa el CHECK y deja la fila canonica aportando CERO
+//     puntos a su obra, porque las emisiones multiplican (RD 9.1.1).
+//   - Fuente vacia satisface el TEXT NOT NULL y hace que Alias(), que indexa
+//     por fuente, no case NUNCA: parece un catalogo incompleto.
+func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	rep, err := ingesta.GuardarReporte(
+		t.Context(), "caracol", "2026-01", []byte("Titulo,Duracion\nLa Casa,48\n"))
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	recien := UsoPersistido{
+		Titulo:      "La Casa de las Dos Palmas",
+		Modalidad:   reparto.TV,
+		IDsFuente:   "ID_Ficha=1234",
+		TipoObra:    "serie",
+		DuracionMin: decimal.NewFromInt(48),
+	}
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), rep, []UsoPersistido{recien})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 0 {
+		t.Fatalf("una fila recien parseada no puede salir rechazada: %q", rechazados[0].RechazoMotivo)
+	}
+	if len(repo.canonicos()) != 1 {
+		t.Fatalf("se esperaba 1 uso canonico, hay %d", len(repo.canonicos()))
+	}
+
+	guardado := repo.usos[0]
+	if guardado.Escalon != "pendiente" {
+		t.Errorf("Escalon = %q, se esperaba \"pendiente\"", guardado.Escalon)
+	}
+	if !guardado.ONI {
+		t.Error("a la salida de ingesta ninguna fila esta identificada: ONI tiene que ser true")
+	}
+	if guardado.Emisiones != 1 {
+		t.Errorf("Emisiones = %d, se esperaba 1: el DEFAULT de la columna no llega a aplicarse", guardado.Emisiones)
+	}
+	if guardado.Fuente != rep.Fuente {
+		t.Errorf("Fuente = %q, se esperaba %q: Alias() indexa por fuente", guardado.Fuente, rep.Fuente)
+	}
+	if guardado.ReporteID != rep.ID {
+		t.Errorf("ReporteID = %q, se esperaba %q", guardado.ReporteID, rep.ID)
+	}
+}
+
+// El motivo que ya trae una fila lo puso el adaptador de formato, que vio lo
+// que aqui ya no se ve. Pisarlo con el motivo generico dejaria el log de
+// rechazos sin la unica explicacion que sirve para volver a pedirle el dato al
+// cliente.
+func TestGuardarUsosNoPisaElMotivoQueTraeLaFila(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	delAdaptador := usoBueno("Capitulo con placeholder")
+	delAdaptador.RechazoMotivo = "episode_nbr: placeholder \"--\", no se pudo coercionar a entero"
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{delAdaptador})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 1 {
+		t.Fatalf("se esperaba 1 rechazo, llegaron %d", len(rechazados))
+	}
+	if rechazados[0].RechazoMotivo != delAdaptador.RechazoMotivo {
+		t.Fatalf("el motivo se piso: %q", rechazados[0].RechazoMotivo)
+	}
+	if len(repo.canonicos()) != 0 {
+		t.Fatalf("una fila con motivo no es canonica: %+v", repo.canonicos())
 	}
 }
