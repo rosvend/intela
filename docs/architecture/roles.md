@@ -14,7 +14,9 @@ nombra las firmas de las compuertas; OE-6 recorta lo que ve un titular.
 
 Las rutas se agrupan por capacidad, no por caso de uso. Quien anada un
 endpoint lo mete en el grupo que le corresponde; el chequeo no se escribe
-en el handler.
+en el handler. Ese chequeo de grupo es grueso: `requiereRol` no sustituye
+a la autorizacion dentro del caso de uso. El middleware solo cierra la
+puerta del prefijo; la autorizacion fina vive con el caso de uso.
 
 | Prefijo | Roles |
 | ------- | ----- |

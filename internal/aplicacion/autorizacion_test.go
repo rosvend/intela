@@ -42,3 +42,18 @@ func TestSoloPropiasObrasNoRecortaAlPersonal(t *testing.T) {
 		}
 	}
 }
+
+// El Usuario cero tiene Rol vacio. Si el predicado solo denegara RolTitular,
+// una peticion sin sesion —o un handler que ignore el bool de UsuarioDe—
+// veria el catalogo entero. Se falla cerrado, igual que requiereRol.
+func TestSoloPropiasObrasUsuarioCeroNoVeNada(t *testing.T) {
+	if SoloPropiasObras(Usuario{}, []string{"tit-ana"}) {
+		t.Fatal("el Usuario cero no puede ver ninguna obra")
+	}
+}
+
+func TestSoloPropiasObrasRolDesconocidoNoVeNada(t *testing.T) {
+	if SoloPropiasObras(Usuario{ID: "usr-1", Rol: "gerencia"}, []string{"tit-ana"}) {
+		t.Fatal("un rol que no esta en la matriz no puede ver nada")
+	}
+}
