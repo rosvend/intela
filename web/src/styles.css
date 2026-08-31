@@ -1,92 +1,307 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+
+/*
+ * Tokens del mockup de Figma Make (issue #19, seccion "Pase visual",
+ * version 6 - la vigente). Son valores literales leidos del archivo, no
+ * elegidos aqui: si cambian, cambian ahi primero.
+ */
 :root {
-  --ink: #1c1915;
-  --paper: #f4efe6;
-  --panel: #fffdf8;
-  --line: #d9d0c3;
-  --accent: #6b3f2a;
-  --ok: #2f5d39;
+  --fondo: #f5f6f8;
+  --superficie: #ffffff;
+  --borde: #ebebf0;
+  --texto: #1c1d21;
+  --texto-suave: #8a8a9a;
+  --acento: #7d1a35; /* vinotinto Intela: unico color de marca */
+  --acento-activo: #fdf0f3; /* tinte del item activo del sidebar */
+  --ok: #2f7d4f;
+  --alerta: #b45309;
+  --radio: 8px;
+  --radio-boton: 99px; /* todos los botones del mockup son pill */
+  --sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
+
 * {
   box-sizing: border-box;
 }
+
 html,
 body,
 #root {
   margin: 0;
   min-height: 100%;
 }
+
 body {
-  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", serif;
-  background: var(--paper);
-  color: var(--ink);
+  font-family: var(--sans);
+  background: var(--fondo);
+  color: var(--texto);
 }
+
 h1,
 h2 {
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--acento);
 }
+
 a {
-  color: var(--accent);
+  color: var(--acento);
 }
-.layout {
+
+.muted {
+  color: var(--texto-suave);
+  font-size: 0.9rem;
+}
+
+.cargando {
+  padding: 2rem;
+  color: var(--texto-suave);
+}
+
+/* ---------- shell autenticado (Layout.tsx) ---------- */
+
+.shell {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: 240px 1fr;
   min-height: 100vh;
 }
-nav {
-  border-right: 1px solid var(--line);
-  padding: 1.5rem 1rem;
-  background: #efe8dc;
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie);
+  border-right: 1px solid var(--borde);
+  padding: 1.25rem 0.75rem;
 }
-nav a {
-  display: block;
-  padding: 0.35rem 0;
+
+.sidebar-logo {
+  font-weight: 700;
+  color: var(--acento);
+  padding: 0 0.5rem 1rem;
+  font-size: 1.15rem;
+}
+
+.sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.sidebar-seccion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.sidebar-titulo-seccion {
+  margin: 0 0.5rem 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radio);
+  color: var(--texto);
   text-decoration: none;
+  font-size: 0.92rem;
 }
-main {
-  padding: 1.5rem 2rem;
+
+.sidebar-item:hover {
+  background: var(--fondo);
 }
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 1rem 1.2rem;
-  margin-bottom: 1rem;
+
+.sidebar-item-activo,
+.sidebar-item-activo:hover {
+  background: var(--acento-activo);
+  color: var(--acento);
+  font-weight: 600;
 }
+
+.sidebar-badge {
+  background: var(--alerta);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: var(--radio-boton);
+  padding: 0.05rem 0.45rem;
+  line-height: 1.4;
+}
+
+.sidebar-pie {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.5rem 0;
+  border-top: 1px solid var(--borde);
+  margin-top: 1rem;
+}
+
+.avatar {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--acento-activo);
+  color: var(--acento);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.sidebar-usuario {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-nombre {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-rol {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--texto-suave);
+}
+
+.sidebar-salir {
+  background: none;
+  border: none;
+  color: var(--texto-suave);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.25rem;
+}
+
+.sidebar-salir:hover {
+  color: var(--acento);
+}
+
+.contenido {
+  padding: 2rem 2.5rem;
+}
+
+/* ---------- login (Login.tsx) ---------- */
+
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--fondo);
+  padding: 1.5rem;
+}
+
+.login-tarjeta {
+  width: 100%;
+  max-width: 400px;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: 16px;
+  padding: 2rem;
+}
+
+.login-tarjeta h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+}
+
+.login-tarjeta form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 1.5rem;
+}
+
+.login-tarjeta label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.login-tarjeta input {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  margin-bottom: 0.75rem;
+}
+
+.login-fila-clave {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.enlace-tenue {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+  cursor: not-allowed;
+}
+
+.login-error {
+  color: #b91c1c;
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+
+.boton-primario {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 1rem;
+  border: none;
+  border-radius: var(--radio-boton);
+  background: var(--acento);
+  color: white;
+  cursor: pointer;
+}
+
+.boton-primario:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-demo {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.78rem;
+}
+
+/* ---------- tablas (pantallas de Sprint 3-5) ---------- */
+
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
+
 th,
 td {
   text-align: left;
-  padding: 0.4rem 0.3rem;
-  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid var(--borde);
 }
-button,
-input,
-select {
-  font: inherit;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid var(--line);
-  background: white;
-}
-button {
-  cursor: pointer;
-  background: var(--ink);
-  color: var(--paper);
-}
-.muted {
-  color: #6b645b;
-  font-size: 0.9rem;
-}
-.login {
-  max-width: 420px;
-  margin: 12vh auto;
-}
+
 .badge {
   font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
+  letter-spacing: 0.06em;
+  color: var(--acento);
 }
