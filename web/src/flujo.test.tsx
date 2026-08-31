@@ -28,26 +28,40 @@ function montar(initialEntries: string[] = ["/"]) {
   );
 }
 
-function respuestaLogin() {
-  return new Response(
-    JSON.stringify({
-      token: "tok-flujo",
-      expira: "2026-01-01T00:00:00Z",
-      usuario: {
-        id: "usr-1",
-        email: "admin@redes.co",
-        nombre: "Admin Intela",
-        rol: "administrador",
-        titular_id: "",
-      },
-    }),
-    { headers: { "content-type": "application/json" } },
-  );
+function json(cuerpo: unknown, status = 200) {
+  return new Response(JSON.stringify(cuerpo), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function respuestaLogin(rol: "administrador" | "titular" = "administrador") {
+  const titular = rol === "titular";
+  return json({
+    token: "tok-flujo",
+    expira: "2026-01-01T00:00:00Z",
+    usuario: {
+      id: titular ? "usr-ana" : "usr-1",
+      email: titular ? "ana@redes.co" : "admin@redes.co",
+      nombre: titular ? "Ana Escritora" : "Admin Intela",
+      rol,
+      titular_id: titular ? "tit-ana" : "",
+    },
+  });
 }
 
 describe("flujo de autenticacion (integracion)", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
+    // Los widgets del tablero pegan a endpoints que Sprint 3-5 todavia no
+    // exponen: por defecto 404, que useDashboard traduce a estado vacio.
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(json({ error: "ruta no encontrada" }, 404)),
+        ),
+    );
   });
 
   afterEach(() => {
@@ -83,7 +97,39 @@ describe("flujo de autenticacion (integracion)", () => {
       ).toBeTruthy(),
     );
     expect(screen.getByText("Admin Intela")).toBeTruthy();
+    expect(screen.getByText("Cargas pendientes")).toBeTruthy();
     expect(token()).toBe("tok-flujo");
+  });
+
+  it("login como titular aterriza en su liquidacion, no en el panel de administrador", async () => {
+    montar();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Iniciar sesión" }),
+      ).toBeTruthy(),
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce(respuestaLogin("titular"));
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), {
+      target: { value: "ana@redes.co" },
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña"), {
+      target: { value: "intela-dev" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ingresar" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Mi liquidación" }),
+      ).toBeTruthy(),
+    );
+    expect(screen.getAllByText("Ana Escritora").length).toBeGreaterThan(0);
+    expect(screen.getByText("Mis obras")).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "Panel de control" }),
+    ).toBeNull();
+    expect(screen.queryByText("Cargas pendientes")).toBeNull();
   });
 
   it("un token que la API ya no reconoce fuerza el re-login sin pantalla en blanco", async () => {
