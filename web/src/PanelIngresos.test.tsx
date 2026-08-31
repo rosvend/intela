@@ -162,8 +162,10 @@ describe("PanelIngresos", () => {
   it("carga como titular A y solo pinta las obras de A", async () => {
     render(<PanelIngresos />);
 
-    expect(await screen.findByText("La Casa de las Dos Palmas")).toBeTruthy();
-    expect(screen.getByText("El Segundo Guion")).toBeTruthy();
+    expect(
+      await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "El Segundo Guion" })).toBeTruthy();
     expect(screen.queryByText("Solo de Beto")).toBeNull();
     expect(screen.queryByText("tit-beto")).toBeNull();
 
@@ -174,13 +176,15 @@ describe("PanelIngresos", () => {
 
   it("los tres filtros recortan la tabla", async () => {
     render(<PanelIngresos />);
-    await screen.findByText("El Segundo Guion");
+    await screen.findByRole("cell", { name: "El Segundo Guion" });
 
     fireEvent.change(screen.getByLabelText("Filtrar por obra"), {
       target: { value: "obra-completa" },
     });
-    expect(screen.getByText("La Casa de las Dos Palmas")).toBeTruthy();
-    expect(screen.queryByText("El Segundo Guion")).toBeNull();
+    expect(
+      screen.getByRole("cell", { name: "La Casa de las Dos Palmas" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("cell", { name: "El Segundo Guion" })).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Filtrar por obra"), {
       target: { value: "" },
@@ -188,7 +192,7 @@ describe("PanelIngresos", () => {
     fireEvent.change(screen.getByLabelText("Filtrar por fuente"), {
       target: { value: "caracol" },
     });
-    expect(screen.getByText("El Segundo Guion")).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "El Segundo Guion" })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Filtrar por periodo"), {
       target: { value: "2026-01" },
@@ -198,7 +202,7 @@ describe("PanelIngresos", () => {
 
   it("al explicar, pinta el linaje exacto de ExplicarCifra", async () => {
     render(<PanelIngresos />);
-    await screen.findByText("La Casa de las Dos Palmas");
+    await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" });
 
     fireEvent.click(
       screen.getAllByRole("button", { name: "Explicar esta cifra" })[0],
@@ -219,7 +223,7 @@ describe("PanelIngresos", () => {
 
   it("pedir la ref de otro titular muestra 403, no sus datos", async () => {
     render(<PanelIngresos />);
-    await screen.findByText("La Casa de las Dos Palmas");
+    await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" });
 
     vi.mocked(api).mockRejectedValueOnce(
       new Error('{"error":"no autorizado"}'),
