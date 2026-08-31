@@ -58,6 +58,28 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Paso opcional, a mano. No entra en `up`.
+  #   docker compose run --rm seed
+  # SEED_RESET=true recarga. Cada rol tiene su clave (ARRANQUE.md).
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/seed"]
+    environment:
+      DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
+      OBJECT_DIR: /objetos
+      LOG_FORMATO: texto
+      SEED_RESET: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes: [objetos:/objetos]
+    restart: "no"
+
   api:
     <<: *backend
     entrypoint: ["/app/api"]
