@@ -243,6 +243,7 @@ Cargar solo lo que haga falta para la tarea.
 
 | Archivo | Para que |
 | ------- | -------- |
+| [`roles.md`](roles.md) | Matriz `aplicacion.Rol` → rol del reglamento y capacidades. **Leer antes de anadir una ruta** |
 | [`glosario.md`](../dominio/glosario.md) | Lenguaje ubicuo: obra, titular, ONI, recaudo, reparto, IPI, IDA |
 | [`reglas-negocio.md`](../dominio/reglas-negocio.md) | Registro de reglas con cita al reglamento. **Empezar aqui** |
 | [`formulas.md`](../dominio/formulas.md) | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
