@@ -126,11 +126,19 @@ a {
   padding: 1.25rem 0.75rem;
 }
 
+/* Mismo activo y misma tecnica que el logo del login, mas pequeno. */
 .sidebar-logo {
-  font-weight: 700;
-  color: var(--acento);
-  padding: 0 0.5rem 1rem;
-  font-size: 1.15rem;
+  display: block;
+  width: 132px;
+  height: 42px; /* 132 / 3.179 */
+  margin: 0 0.5rem 1.25rem;
+  background-color: var(--acento);
+  mask-repeat: no-repeat;
+  mask-position: left center;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  -webkit-mask-size: contain;
 }
 
 .sidebar-nav {
@@ -259,12 +267,40 @@ a {
 
 /* ---------- login (Login.tsx) ---------- */
 
+/*
+ * Columna centrada: logo, tarjeta y pie. El logo va FUERA de la tarjeta,
+ * sobre el lienzo, como en docs/mockups/figma-login.png.
+ */
 .login {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
   background: var(--fondo);
   padding: 1.5rem;
+}
+
+/* Misma tecnica que el spinner: mascara pintada con el token de marca. */
+.login-logo {
+  display: block;
+  width: 200px;
+  height: 63px; /* 200 / 3.179, el aspecto real del activo */
+  background-color: var(--acento);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+}
+
+.login-pie {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+  text-align: center;
 }
 
 .login-tarjeta {

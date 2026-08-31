@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, ErrorDeRed, token } from "./api";
+import logo from "./logo-intela.png";
 import { useSesion } from "./sesion";
 
 // `RutaProtegida` guarda el `location` entero, no solo la ruta: un filtro de
@@ -65,6 +66,22 @@ export default function Login() {
 
   return (
     <div className="login">
+      {/*
+        El logo va ENCIMA de la tarjeta, sobre el lienzo, como en el mockup
+        (docs/mockups/figma-login.png). Se pinta como mascara y no como <img>
+        por lo mismo que el spinner: el activo de origen es rosa y el color lo
+        mandan los tokens.
+        Lleva `role="img"` con nombre y no `aria-hidden` porque es lo unico que
+        identifica de que sistema es esta pantalla: quien no ve la imagen se
+        quedaria solo con "Iniciar sesion", que no dice de que.
+      */}
+      <span
+        className="login-logo"
+        style={{ maskImage: `url(${logo})`, WebkitMaskImage: `url(${logo})` }}
+        role="img"
+        aria-label="Intela"
+      />
+
       <div className="login-tarjeta">
         <h1>Iniciar sesión</h1>
         <p className="muted">Accede al gestor de propiedad intelectual</p>
@@ -128,6 +145,8 @@ export default function Login() {
           Credenciales de demo — Admin: admin@redes.co · Titular: ana@redes.co
         </p>
       </div>
+
+      <p className="login-pie">Intela · Gestión de Propiedad Intelectual</p>
     </div>
   );
 }

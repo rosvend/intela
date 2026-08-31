@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import logo from "./logo-intela.png";
 import { RUTAS, Seccion, itemsDeNav, puedeVer } from "./navegacion";
 import { Rol, useSesion } from "./sesion";
 
@@ -55,7 +56,12 @@ export default function Layout() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="sidebar-logo">Intela</div>
+        <span
+          className="sidebar-logo"
+          style={{ maskImage: `url(${logo})`, WebkitMaskImage: `url(${logo})` }}
+          role="img"
+          aria-label="Intela"
+        />
         <nav className="sidebar-nav">
           {SECCIONES.map((seccion) => {
             const deLaSeccion = items.filter(

@@ -203,6 +203,21 @@ describe("Login", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("muestra el logo encima de la tarjeta, como el mockup", () => {
+    const { container } = montar();
+
+    // Accesible por nombre: quien no ve la imagen igual sabe de que marca es.
+    expect(screen.getByRole("img", { name: "Intela" })).toBeTruthy();
+
+    // Fuera de la tarjeta y antes de ella: en el mockup va sobre el lienzo.
+    const columna = [...container.querySelectorAll(".login > *")].map(
+      (n) => n.className,
+    );
+    expect(columna.indexOf("login-logo")).toBeLessThan(
+      columna.indexOf("login-tarjeta"),
+    );
+  });
+
   it("el botón de recuperar clave esta deshabilitado: no hay pantalla detrás (M-8)", () => {
     montar();
     const boton = screen.getByRole("button", {

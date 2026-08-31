@@ -71,6 +71,17 @@ describe("Layout", () => {
     expect(screen.getByText("Configuración")).toBeTruthy();
   });
 
+  it("el sidebar abre con el logo de la marca, no con texto plano", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    montar();
+
+    await waitFor(() =>
+      expect(screen.getByRole("img", { name: "Intela" })).toBeTruthy(),
+    );
+  });
+
   it("pinta el nombre y el rol legible en el pie del sidebar", async () => {
     // Rol "auditor" a proposito: "distribucion" choca de nombre con el
     // modulo de nav "Distribución" (M-3) y volveria ambiguo el query.
