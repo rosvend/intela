@@ -20,7 +20,15 @@ export default function RutaProtegida() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   if (cargando) {
-    return <Cargando />;
+    // Este es el unico uso a pantalla completa de <Cargando>: aqui no existe
+    // Layout todavia, asi que sin este envoltorio el spinner queda arriba de
+    // la pagina en vez de centrado. Estado.tsx no lo usa: ahi ya vive dentro
+    // del shell y forzar el viewport completo lo desalinearia.
+    return (
+      <div className="pantalla-carga">
+        <Cargando />
+      </div>
+    );
   }
   if (!usuario) {
     return <Navigate to="/login" state={{ from: location }} replace />;

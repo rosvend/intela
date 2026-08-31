@@ -55,6 +55,15 @@ describe("RutaProtegida", () => {
     expect(screen.queryByText("pantalla de login")).toBeNull();
   });
 
+  it("el estado de carga se centra en toda la pantalla: aqui no existe Layout todavia", () => {
+    setToken("token-valido");
+    vi.mocked(fetch).mockReturnValue(new Promise(() => {}));
+
+    const { container } = montar();
+
+    expect(container.querySelector(".pantalla-carga")).toBeTruthy();
+  });
+
   it("con token y sesion valida, renderiza la ruta protegida", async () => {
     setToken("token-valido");
     vi.mocked(fetch).mockResolvedValue(

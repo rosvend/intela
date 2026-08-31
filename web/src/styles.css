@@ -66,6 +66,21 @@ a {
   color: var(--texto-suave);
 }
 
+/*
+ * Centrado en TODA la pantalla, solo para cuando <Cargando> es lo unico que
+ * hay -RutaProtegida, antes de que exista Layout-. Mismo patron que `.login`.
+ * Estado.tsx usa <Cargando> sin este envoltorio a proposito: ahi ya vive
+ * dentro del shell, y forzar el viewport completo desalinearia el contenido
+ * con el sidebar.
+ */
+.pantalla-carga {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fondo);
+}
+
 .cargando p {
   margin: 0;
   font-size: 0.9rem;
@@ -310,6 +325,16 @@ a {
   border: 1px solid var(--borde);
   border-radius: 16px;
   padding: 2rem;
+}
+
+/*
+ * Solo el titulo y el subtitulo se centran, como en el mockup
+ * (docs/mockups/figma-login.png). Los campos y sus etiquetas se quedan a la
+ * izquierda -el mockup los deja asi- asi que no se centra la tarjeta entera.
+ */
+.login-tarjeta h1,
+.login-tarjeta > p.muted:not(.login-demo) {
+  text-align: center;
 }
 
 .login-tarjeta h1 {
