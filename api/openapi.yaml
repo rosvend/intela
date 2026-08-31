@@ -47,6 +47,11 @@ tags:
       Superficie de lectura de la bitacora. `auditor` (Revisor Fiscal) o
       `administrador`. Requiere Bearer y el rol; sin sesion es 401, con
       otro rol es 403.
+  - name: titular
+    description: |
+      Panel de consulta del titular (OE-6). Solo `titular`. El recorte es
+      el `titular_id` de la sesion: no hay parametro para pedir los de
+      otro. Cada monto es neto; el bruto vive en `/explicar/{ref}`.
 
 paths:
   /health:
@@ -272,6 +277,178 @@ paths:
               example:
                 error: no autorizado
 
+  /mis-ingresos:
+    get:
+      tags: [titular]
+      summary: Ingresos netos del titular de la sesion
+      description: |
+        Lista las cifras netas del titular autenticado, recortadas a las
+        obras donde tiene participacion registrada (OE-6).
+
+        El titular se toma de la sesion. Un `titular_id` en la query no
+        cambia a quien se consulta.
+
+        El unico monto de cada fila es `neto`. El bruto, las deducciones
+        y el linaje (fuente, reporte, regla, split) estan en
+        `/explicar/{ref}`.
+      operationId: misIngresos
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - name: obra
+          in: query
+          required: false
+          description: Identificador de obra. Vacio, todas las del titular.
+          schema:
+            type: string
+          example: obra-completa
+        - name: fuente
+          in: query
+          required: false
+          description: Fuente del reporte que pondero la bolsa (caracol, netflix, ...).
+          schema:
+            type: string
+          example: caracol
+        - name: periodo
+          in: query
+          required: false
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          example: "2026-01"
+      responses:
+        "200":
+          description: Lista de ingresos netos. Vacia si no hay cifras con esos filtros.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListaIngresos"
+              example:
+                ingresos:
+                  - ref: proc-2026-01:obra-completa:tit-ana
+                    obra_id: obra-completa
+                    obra: La Casa de las Dos Palmas
+                    fuente: caracol
+                    periodo: "2026-01"
+                    neto: "3600.00"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /explicar/{ref}:
+    get:
+      tags: [titular]
+      summary: Linaje de una cifra
+      description: |
+        Devuelve el linaje que produce `ExplicarCifra` (ADR 0006): corrida,
+        reporte de origen, obra con escalon y puntaje del match, snapshot
+        normativo, split de la declaracion, y el paso de bruto a neto con
+        cada deduccion.
+
+        Es la unica fuente de la explicacion. El frontend no recomputa el
+        linaje a partir de datos crudos.
+
+        Un titular solo ve cifras suyas: la de otro titular responde 403,
+        no 404. `auditor` y `administrador` ven cualquiera.
+      operationId: explicarCifra
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular, auditor, administrador]
+      parameters:
+        - name: ref
+          in: path
+          required: true
+          description: |
+            Identificador de la linea: `proceso_id:obra_id:titular_id`.
+            Tres segmentos separados por `:` porque la ruta toma `{ref}`
+            como un solo tramo.
+          schema:
+            type: string
+          example: proc-2026-01:obra-completa:tit-ana
+      responses:
+        "200":
+          description: Linaje completo de la cifra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Explicacion"
+              example:
+                ref: proc-2026-01:obra-completa:tit-ana
+                neto: "3600.00"
+                bruto: "4800.00"
+                corrida:
+                  proceso_id: proc-2026-01
+                  periodo: "2026-01"
+                  circuito: nacional
+                reporte:
+                  id: rpt-caracol-2026-01
+                  fuente: caracol
+                  sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                obra:
+                  id: obra-completa
+                  titulo: La Casa de las Dos Palmas
+                  escalon: alias
+                  puntaje: "1.00000"
+                regla:
+                  snapshot_id: snap-2026-01
+                  reglamento: RD-IX
+                split:
+                  titular_id: tit-ana
+                  ipi: IPI-00000001
+                  porcentaje: "60.0000"
+                  version: 1
+                deducciones:
+                  - concepto: gastos administrativos
+                    porcentaje: "10.00"
+                    monto: "480.00"
+                  - concepto: bienestar social
+                    porcentaje: "5.00"
+                    monto: "240.00"
+                  - concepto: reserva
+                    porcentaje: "10.00"
+                    monto: "480.00"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: |
+            Autenticado, pero el rol no basta, o el titular pide una cifra
+            que no es suya.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una linea con esa ref.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no encontrado
+
 components:
   securitySchemes:
     bearerAuth:
@@ -366,6 +543,162 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    ListaIngresos:
+      type: object
+      required: [ingresos]
+      properties:
+        ingresos:
+          type: array
+          description: |
+            Cifras netas del titular de la sesion. El bruto no forma parte
+            de este objeto (OE-6).
+          items:
+            $ref: "#/components/schemas/Ingreso"
+
+    Ingreso:
+      type: object
+      required: [ref, obra_id, obra, fuente, periodo, neto]
+      properties:
+        ref:
+          type: string
+          description: |
+            Identificador de la linea, para `GET /explicar/{ref}`.
+          example: proc-2026-01:obra-completa:tit-ana
+        obra_id:
+          type: string
+          description: Identificador interno de la obra.
+        obra:
+          type: string
+          description: Titulo para mostrar.
+        fuente:
+          type: string
+          description: |
+            Fuentes de los reportes que ponderaron esta cifra en el periodo,
+            separadas por coma si hay mas de una. El detalle del archivo
+            crudo esta en la explicacion.
+        periodo:
+          type: string
+          description: Periodo de la corrida.
+          example: "2026-01"
+        neto:
+          type: string
+          description: Monto neto despues de deducciones. Nunca el bruto.
+          example: "3600.00"
+
+    Explicacion:
+      type: object
+      required: [ref, neto, bruto, corrida, reporte, obra, regla, split, deducciones]
+      properties:
+        ref:
+          type: string
+          description: La misma ref que se pidio.
+        neto:
+          type: string
+          description: Monto neto de la linea. Coincide con el del panel.
+          example: "3600.00"
+        bruto:
+          type: string
+          description: |
+            Bruto proporcional del titular. Solo aparece aqui, nunca como
+            cifra de cabecera del panel (OE-6).
+          example: "4800.00"
+        corrida:
+          $ref: "#/components/schemas/CorridaLinaje"
+        reporte:
+          $ref: "#/components/schemas/ReporteLinaje"
+        obra:
+          $ref: "#/components/schemas/ObraLinaje"
+        regla:
+          $ref: "#/components/schemas/ReglaLinaje"
+        split:
+          $ref: "#/components/schemas/SplitLinaje"
+        deducciones:
+          type: array
+          description: Recortes legales del bruto al neto, en orden.
+          items:
+            $ref: "#/components/schemas/Deduccion"
+
+    CorridaLinaje:
+      type: object
+      required: [proceso_id, periodo, circuito]
+      properties:
+        proceso_id:
+          type: string
+        periodo:
+          type: string
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+
+    ReporteLinaje:
+      type: object
+      required: [id, fuente, sha256]
+      properties:
+        id:
+          type: string
+        fuente:
+          type: string
+        sha256:
+          type: string
+          description: Huella del archivo crudo en el almacen de objetos.
+
+    ObraLinaje:
+      type: object
+      required: [id, titulo, escalon, puntaje]
+      properties:
+        id:
+          type: string
+        titulo:
+          type: string
+        escalon:
+          type: string
+          description: Escalon de la cascada de identificacion.
+          enum: [pendiente, alias, id_global, difuso, manual, oni, ""]
+        puntaje:
+          type: string
+          description: Puntaje del match, de 0 a 1. Cero si no hubo match difuso.
+
+    ReglaLinaje:
+      type: object
+      required: [snapshot_id, reglamento]
+      properties:
+        snapshot_id:
+          type: string
+          description: Snapshot normativo congelado al abrir el proceso.
+        reglamento:
+          type: string
+          description: Version del reglamento de esa corrida.
+
+    SplitLinaje:
+      type: object
+      required: [titular_id, ipi, porcentaje, version]
+      properties:
+        titular_id:
+          type: string
+        ipi:
+          type: string
+        porcentaje:
+          type: string
+          description: Porcentaje de la declaracion de obra, cuatro decimales.
+        version:
+          type: integer
+          minimum: 1
+          description: Version de la declaracion usada en la corrida.
+
+    Deduccion:
+      type: object
+      required: [concepto, porcentaje, monto]
+      properties:
+        concepto:
+          type: string
+        porcentaje:
+          type: string
+          description: Porcentaje sobre el bruto de la bolsa.
+        monto:
+          type: string
+          description: Importe proporcional descontado al titular.
+          example: "480.00"
 
 security:
   - bearerAuth: []

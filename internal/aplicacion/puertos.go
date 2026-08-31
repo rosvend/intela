@@ -196,9 +196,22 @@ type RepositorioResultados interface {
 	PorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+// RepositorioLiquidacion sirve lo que le corresponde a un titular (OE-6).
+//
+// El recorte es por titularID, que el caso de uso toma de la sesion y nunca
+// de un parametro de la peticion. Filtrar por obra, fuente o periodo recorta
+// esa lista; no amplia el alcance.
 type RepositorioLiquidacion interface {
-	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+	IngresosDe(ctx context.Context, titularID string, f FiltroIngresos) ([]Ingreso, error)
+}
+
+// RepositorioExplicacion reconstruye el linaje de una cifra (ADR 0006).
+//
+// ExplicarCifra es el unico productor de esta vista: el portal del titular
+// y el de auditoria la consumen sin recomputar. La autorizacion vive en el
+// caso de uso, no aqui.
+type RepositorioExplicacion interface {
+	PorLinea(ctx context.Context, procesoID, obraID, titularID string) (Explicacion, error)
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.
