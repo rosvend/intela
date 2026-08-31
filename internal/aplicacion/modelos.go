@@ -55,6 +55,24 @@ type Obra struct {
 	EstadoDecl string
 }
 
+// Reporte es el acuse de una entrega recibida.
+//
+// Lleva lo justo para volver a la evidencia exacta que pondero una corrida:
+// de que fuente vino, de que periodo, que bytes fueron -SHA256- y donde estan
+// -ClaveObjeto-. Es la pregunta 2 del ADR 0006, "la version exacta del
+// archivo", y no "el archivo de Caracol".
+//
+// No tiene campo de dinero por la misma razon que UsoPersistido: un reporte de
+// uso no aporta importes.
+type Reporte struct {
+	ID          string
+	Fuente      string
+	Periodo     string
+	SHA256      string
+	ClaveObjeto string
+	NBytes      int
+}
+
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
 // resultado de la identificacion.
 //
@@ -78,6 +96,20 @@ type UsoPersistido struct {
 	Vistas        decimal.Decimal
 	MinutosVistos decimal.Decimal
 	PB            decimal.Decimal
+
+	// RechazoMotivo: por que esta fila no se pudo normalizar.
+	//
+	// Vacio en una fila canonica. Con contenido, la fila NO es un uso: es una
+	// entrada del log de rechazos, y ni pondera ni aparece en las lecturas
+	// canonicas. Guardarla con su motivo en vez de descartarla es criterio de
+	// aceptacion de OE-1 y de KR-1, y es lo que permite volver a pedirle al
+	// cliente exactamente lo que falta.
+	//
+	// Es la misma forma que reparto.LineaObra.Retenida/Motivo y que
+	// ProcesoVista.RechazoMotivo: en este sistema, lo que se aparta se aparta
+	// CON su razon. Donde acaba cada una de las dos clases de fila lo decide
+	// el adaptador (ADR 0014).
+	RechazoMotivo string
 }
 
 type BolsaPersistida struct {
