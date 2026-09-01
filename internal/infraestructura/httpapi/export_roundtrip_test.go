@@ -62,12 +62,9 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 	if !strings.Contains(pdf.Header().Get("Content-Disposition"), "liquidacion-2026-01.pdf") {
 		t.Fatalf("pdf disposition = %q", pdf.Header().Get("Content-Disposition"))
 	}
-	if !strings.Contains(string(pdf.Body.Bytes()), "3900.00") && !strings.Contains(string(pdf.Body.Bytes()), "3900") {
-		// El PDF embebe las cifras; el round-trip no puede divergir del panel.
-		texto := string(pdf.Body.Bytes())
-		if !strings.Contains(texto, cuerpo.Totales.Neto) && !strings.Contains(texto, "3900") {
-			t.Fatalf("el PDF no lleva el neto del panel %s", cuerpo.Totales.Neto)
-		}
+	texto := pdf.Body.String()
+	if !strings.Contains(texto, cuerpo.Totales.Neto) && !strings.Contains(texto, "3900") {
+		t.Fatalf("el PDF no lleva el neto del panel %s", cuerpo.Totales.Neto)
 	}
 
 	xlsx := pedir(t, h, http.MethodGet, "/mis-liquidaciones/export?periodo=2026-01&formato=xlsx", "", "tok")

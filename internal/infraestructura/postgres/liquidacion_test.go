@@ -79,7 +79,7 @@ func TestDeTitularSinCorridasEsListaVacia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeTitular: %v", err)
 	}
-	if filas != nil && len(filas) != 0 {
+	if len(filas) != 0 {
 		t.Fatalf("sin corridas: %+v", filas)
 	}
 }
