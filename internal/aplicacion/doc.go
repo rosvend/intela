@@ -29,8 +29,9 @@
 //
 // # Que falta aqui
 //
-// Los casos de uso. Este paquete declara los contratos y el predicado de
-// titularidad. Cada PR de seguimiento trae los suyos, y con ellos el
-// asiento en bitacora, que el ADR 0006 declara "parte de la definicion de
-// hecho de cada caso de uso".
+// El resto de los casos de uso. Este paquete declara los contratos, el
+// predicado de titularidad y los casos que ya aterrizaron (autenticacion,
+// liquidacion exportable). Cada PR de seguimiento trae los suyos, y con
+// ellos el asiento en bitacora, que el ADR 0006 declara "parte de la
+// definicion de hecho de cada caso de uso".
 package aplicacion

@@ -47,6 +47,10 @@ tags:
       Superficie de lectura de la bitacora. `auditor` (Revisor Fiscal) o
       `administrador`. Requiere Bearer y el rol; sin sesion es 401, con
       otro rol es 403.
+  - name: liquidaciones
+    description: |
+      Liquidacion del titular autenticado: panel y export PDF/Excel (OE-6).
+      Solo `titular`. El identificador sale de la sesion, no de la URL.
 
 paths:
   /health:
@@ -272,6 +276,141 @@ paths:
               example:
                 error: no autorizado
 
+  /mis-liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Panel de liquidacion del titular
+      description: |
+        Devuelve bruto, cada deduccion (admin, bienestar social, reserva) y
+        neto por obra del titular autenticado. El filtro `periodo` es el
+        mismo que usa el export: panel y archivo no pueden divergir.
+
+        El titular sale de la sesion, no de un parametro. Sin sesion es 401.
+        Con otro rol es 403.
+      operationId: consultarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - $ref: "#/components/parameters/Periodo"
+      responses:
+        "200":
+          description: Liquidacion del titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liquidacion"
+              example:
+                titular_id: tit-ana
+                periodo: "2026-01"
+                lineas:
+                  - periodo: "2026-01"
+                    obra_id: obra-completa
+                    titulo: La Casa de las Dos Palmas
+                    bruto: "6000.00"
+                    admin: "1200.00"
+                    social: "600.00"
+                    reserva: "300.00"
+                    neto: "3900.00"
+                totales:
+                  bruto: "6000.00"
+                  admin: "1200.00"
+                  social: "600.00"
+                  reserva: "300.00"
+                  neto: "3900.00"
+        "400":
+          description: El periodo no es YYYY ni YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo tiene que ser YYYY o YYYY-MM
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-liquidaciones/export:
+    get:
+      tags: [liquidaciones]
+      summary: Exportar la liquidacion a PDF o Excel
+      description: |
+        Renderiza la misma liquidacion que `GET /mis-liquidaciones` como
+        archivo. Las cifras van embebidas: el fichero se puede abrir sin
+        conexion al panel (OE-6).
+
+        `formato=pdf` usa maroto; `formato=xlsx` usa excelize. Cualquier
+        otro valor es 400. El filtro `periodo` es el mismo del panel.
+      operationId: exportarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - $ref: "#/components/parameters/Periodo"
+        - name: formato
+          in: query
+          required: true
+          description: pdf o xlsx.
+          schema:
+            type: string
+            enum: [pdf, xlsx]
+          example: pdf
+      responses:
+        "200":
+          description: Archivo con la liquidacion embebida.
+          headers:
+            Content-Disposition:
+              description: Nombre del fichero, p. ej. liquidacion-2026-01.pdf
+              schema:
+                type: string
+                example: attachment; filename="liquidacion-2026-01.pdf"
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Formato o periodo invalidos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: formato tiene que ser pdf o xlsx
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
 components:
   securitySchemes:
     bearerAuth:
@@ -285,6 +424,18 @@ components:
         reglamento (`x-required-roles` en la operacion). Sin sesion la
         respuesta es 401; con sesion de un rol no permitido, 403. La
         matriz Rol -> capacidad esta en docs/architecture/roles.md.
+
+  parameters:
+    Periodo:
+      name: periodo
+      in: query
+      required: false
+      description: |
+        Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+      schema:
+        type: string
+        pattern: '^[0-9]{4}(-[0-9]{2})?$'
+      example: "2026-01"
 
   schemas:
     Estado:
@@ -366,6 +517,72 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    Monto:
+      type: string
+      description: |
+        Importe en COP con dos decimales, sin separador de miles. Es una
+        cadena para no perder centavos en JSON number.
+      pattern: '^-?[0-9]+\.[0-9]{2}$'
+      example: "3900.00"
+
+    TotalesLiquidacion:
+      type: object
+      required: [bruto, admin, social, reserva, neto]
+      properties:
+        bruto:
+          $ref: "#/components/schemas/Monto"
+        admin:
+          $ref: "#/components/schemas/Monto"
+        social:
+          $ref: "#/components/schemas/Monto"
+        reserva:
+          $ref: "#/components/schemas/Monto"
+        neto:
+          $ref: "#/components/schemas/Monto"
+
+    LineaLiquidacion:
+      type: object
+      required: [periodo, obra_id, titulo, bruto, admin, social, reserva, neto]
+      properties:
+        periodo:
+          type: string
+          example: "2026-01"
+        obra_id:
+          type: string
+          example: obra-completa
+        titulo:
+          type: string
+          example: La Casa de las Dos Palmas
+        bruto:
+          $ref: "#/components/schemas/Monto"
+        admin:
+          $ref: "#/components/schemas/Monto"
+        social:
+          $ref: "#/components/schemas/Monto"
+        reserva:
+          $ref: "#/components/schemas/Monto"
+        neto:
+          $ref: "#/components/schemas/Monto"
+
+    Liquidacion:
+      type: object
+      required: [titular_id, periodo, lineas, totales]
+      properties:
+        titular_id:
+          type: string
+          description: Titular de la sesion, no un parametro de la URL.
+          example: tit-ana
+        periodo:
+          type: string
+          description: Filtro aplicado. Cadena vacia si no se filtro.
+          example: "2026-01"
+        lineas:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineaLiquidacion"
+        totales:
+          $ref: "#/components/schemas/TotalesLiquidacion"
 
 security:
   - bearerAuth: []

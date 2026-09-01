@@ -116,3 +116,66 @@ type Anticipo struct {
 	Monto     decimal.Decimal
 	Estado    string
 }
+
+// Formatos de exportacion que entiende [Exportador]. Cualquier otro es
+// ErrFormatoInvalido.
+const (
+	FormatoPDF  = "pdf"
+	FormatoXLSX = "xlsx"
+)
+
+// FilaLiquidacion es lo que el repositorio lee de una corrida: el neto del
+// titular en una obra y los totales del proceso, todavia sin prorratear.
+//
+// El prorrateo vive en dominio/liquidacion, no aqui ni en el SQL: si una
+// cifra se puede calcular mal, se calcula una sola vez (postgres/doc.go).
+type FilaLiquidacion struct {
+	Periodo        string
+	ObraID         string
+	Titulo         string
+	Neto           decimal.Decimal
+	ProcesoBruto   decimal.Decimal
+	ProcesoAdmin   decimal.Decimal
+	ProcesoSocial  decimal.Decimal
+	ProcesoReserva decimal.Decimal
+	ProcesoNeto    decimal.Decimal
+}
+
+// LineaLiquidacion es una obra en el reporte del titular, con bruto,
+// cada deduccion y neto ya prorrateados.
+type LineaLiquidacion struct {
+	Periodo string
+	ObraID  string
+	Titulo  string
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// TotalesLiquidacion suma las lineas. Es lo que el panel y el archivo
+// exportado tienen que coincidir.
+type TotalesLiquidacion struct {
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// Liquidacion es el reporte de un titular, filtrado por periodo si viene.
+type Liquidacion struct {
+	TitularID string
+	Periodo   string
+	Lineas    []LineaLiquidacion
+	Totales   TotalesLiquidacion
+}
+
+// Archivo es un PDF o un Excel ya renderizado. Lleva las cifras embebidas:
+// abrirlo sin red muestra la liquidacion completa (OE-6).
+type Archivo struct {
+	Nombre    string
+	TipoMIME  string
+	Contenido []byte
+}

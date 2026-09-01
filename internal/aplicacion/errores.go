@@ -25,4 +25,10 @@ var (
 	// ErrParametroAusente: falta un parametro normativo para el calculo.
 	// No se inventa un valor por defecto: se falla (ADR 0004).
 	ErrParametroAusente = errors.New("parametro normativo ausente")
+
+	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
+	ErrFormatoInvalido = errors.New("formato invalido")
+
+	// ErrPeriodoInvalido: el filtro de periodo no es YYYY ni YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
 )

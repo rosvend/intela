@@ -31,3 +31,27 @@ export async function api(path: string, init: RequestInit = {}) {
 export function setToken(t: string) {
   localStorage.setItem(tokenKey, t);
 }
+
+export function nombreDeContentDisposition(cabecera: string): string {
+  const m = /filename="([^"]+)"/.exec(cabecera);
+  return m?.[1] ?? "";
+}
+
+export async function descargar(path: string) {
+  const res = await api(path);
+  if (!(res instanceof Response)) {
+    throw new Error("se esperaba un archivo");
+  }
+  const blob = await res.blob();
+  const nombre =
+    nombreDeContentDisposition(res.headers.get("content-disposition") || "") ||
+    "liquidacion";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

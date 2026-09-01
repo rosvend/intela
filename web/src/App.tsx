@@ -1,14 +1,15 @@
 import { Link, Route, Routes } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import Liquidaciones from "./Liquidaciones";
 
 /**
  * Shell del tablero.
  *
  * Es andamiaje: enrutado, cliente de API y una comprobacion de que el backend
  * responde. Las pantallas operativas -obras, carga, bandeja ONI, procesos,
- * parametros, alertas, liquidaciones y asientos- entran con su PR, junto a
- * los endpoints que consumen.
+ * parametros, alertas y asientos- entran con su PR, junto a los endpoints
+ * que consumen. Liquidaciones (OE-6) ya esta: panel y export PDF/Excel.
  *
  * La navegacion usa <Link>, no <a href>. Con <a href> cada clic recarga la
  * pagina entera y pierde el estado; y sin `try_files` en nginx -que hasta
@@ -21,12 +22,14 @@ export default function App() {
         <strong>Intela</strong>
         <nav>
           <Link to="/">Inicio</Link>
+          <Link to="/liquidaciones">Liquidaciones</Link>
           <Link to="/estado">Estado</Link>
         </nav>
       </header>
       <main>
         <Routes>
           <Route path="/" element={<Inicio />} />
+          <Route path="/liquidaciones" element={<Liquidaciones />} />
           <Route path="/estado" element={<Estado />} />
           <Route path="*" element={<NoEncontrado />} />
         </Routes>
