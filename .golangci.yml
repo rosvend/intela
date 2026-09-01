@@ -122,7 +122,9 @@ linters:
             - pkg: encoding/csv
               desc: "ADR 0002: parsing a file format is the job of an ingesta adapter."
             - pkg: github.com/xuri/excelize
-              desc: "ADR 0002: reading an .xlsx is the job of an ingesta adapter."
+              desc: "ADR 0002: reading or writing an .xlsx is the job of an adapter (ingesta or exportacion)."
+            - pkg: github.com/johnfercher/maroto
+              desc: "ADR 0002: generating a PDF is the job of an export adapter. aplicacion talks to Exportador."
             - pkg: net/http
               desc: "ADR 0002: HTTP is an inbound adapter."
             - pkg: database/sql

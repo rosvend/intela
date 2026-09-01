@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setToken } from "./api";
+import { api, nombreDeContentDisposition, setToken } from "./api";
 
 describe("api", () => {
   beforeEach(() => {
@@ -49,5 +49,13 @@ describe("api", () => {
 
     await expect(api("/api/sesiones", { method: "POST" })).rejects.toThrow();
     expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+
+  it("extrae el filename de Content-Disposition", () => {
+    expect(
+      nombreDeContentDisposition(
+        'attachment; filename="liquidacion-2026-01.pdf"',
+      ),
+    ).toBe("liquidacion-2026-01.pdf");
   });
 });

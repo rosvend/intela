@@ -197,8 +197,19 @@ type RepositorioResultados interface {
 }
 
 // RepositorioLiquidacion sirve lo que le corresponde a un titular.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
 type RepositorioLiquidacion interface {
-	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+	DeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.

@@ -22,6 +22,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | ------- | ----- |
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
+| `/mis-liquidaciones` | `titular` |
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
