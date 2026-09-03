@@ -1,4 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+/*
+ * La fuente se carga en main.tsx desde @fontsource/plus-jakarta-sans, no de
+ * fonts.googleapis.com: ver el comentario ahi para el porque.
+ */
 
 /*
  * Tokens del mockup de Figma Make (issue #19, seccion "Pase visual",

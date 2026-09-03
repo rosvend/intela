@@ -25,8 +25,8 @@ export function useApi<T>(path: string): EstadoDeApi<T> {
     let vigente = true;
     setEstado({ datos: null, cargando: true, error: null });
 
-    api(path)
-      .then((datos: T) => {
+    (api(path) as Promise<T>)
+      .then((datos) => {
         if (vigente) setEstado({ datos, cargando: false, error: null });
       })
       .catch((error: unknown) => {

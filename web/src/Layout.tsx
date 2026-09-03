@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import logo from "./logo-intela.png";
-import { RUTAS, Seccion, itemsDeNav, puedeVer } from "./navegacion";
+import { RUTAS, Seccion, itemsDeNav } from "./navegacion";
 import { Rol, useSesion } from "./sesion";
 
 const ETIQUETA_ROL: Record<Rol, string> = {
@@ -47,11 +47,17 @@ export default function Layout() {
   // El guard solo se aplica a rutas que SON un modulo del mockup (RUTAS): una
   // pagina fuera de ese modelo -como /estado, un utilitario de diagnostico
   // que no aparece en la nav de nadie- no es competencia del guard y se deja
-  // pasar. `puedeVer` no puede distinguir "tu rol no ve esto" de "esto no es
-  // un modulo": esa distincion se hace aqui.
-  const esModuloDelMockup = RUTAS.some((r) => r.to === location.pathname);
-  const autorizado =
-    !esModuloDelMockup || puedeVer(usuario.rol, location.pathname);
+  // pasar. La comparacion tambien reconoce pantallas de detalle bajo un
+  // modulo (/catalogo/:id, /distribucion/:corrida): sin esto, en cuanto
+  // Sprint 3-5 agregue la primera, `esModuloDelMockup` daria false, el guard
+  // quedaria en "true" por el `||`, y un titular veria el detalle de una obra
+  // que no le corresponde -la comparacion exacta no la cubre, un prefijo si-.
+  const modulo = RUTAS.find(
+    (r) =>
+      r.to === location.pathname ||
+      (r.to !== "/" && location.pathname.startsWith(r.to + "/")),
+  );
+  const autorizado = !modulo || modulo.roles.includes(usuario.rol);
 
   return (
     <div className="shell">

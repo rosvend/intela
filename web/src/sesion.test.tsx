@@ -225,4 +225,39 @@ describe("salir()", () => {
     expect(resultado?.revocadaEnServidor).toBe(false);
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
+
+  it("un 401 en el DELETE no es una falsa alarma: significa que el servidor SI la considera muerta", async () => {
+    // Reproduce lo que se vio en vivo: DELETE FROM sesiones en el servidor,
+    // luego pulsar Salir. El DELETE devuelve 401 -la sesion ya no existe alla,
+    // que es justo lo que se queria lograr- y eso no puede leerse como "no se
+    // pudo revocar": un aviso de seguridad que salta en falso en cada logout
+    // rutinario (sesion caducada con la pestana abierta) es uno que se
+    // aprende a ignorar.
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "sesion invalida o expirada" }), {
+        status: 401,
+      }),
+    );
+
+    const { resultado } = await montarYSalir();
+
+    expect(resultado?.revocadaEnServidor).toBe(true);
+    expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+
+  it("un 500 en el DELETE SI cuenta como no revocada: ahi la incertidumbre es real", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "error interno" }), {
+        status: 500,
+      }),
+    );
+
+    const { resultado } = await montarYSalir();
+
+    expect(resultado?.revocadaEnServidor).toBe(false);
+  });
 });

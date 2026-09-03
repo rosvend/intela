@@ -141,9 +141,17 @@ export default function Login() {
           </button>
         </form>
 
-        <p className="muted login-demo">
-          Credenciales de demo — Admin: admin@redes.co · Titular: ana@redes.co
-        </p>
+        {/*
+          Solo en dev: son las cinco cuentas sembradas con la misma clave
+          (docs/ARRANQUE.md) y el rate-limiting de auth.go sigue pendiente.
+          `import.meta.env.DEV` es false en `vite build`, asi que esto se cae
+          del bundle de produccion por tree-shaking.
+        */}
+        {import.meta.env.DEV && (
+          <p className="muted login-demo">
+            Credenciales de demo — Admin: admin@redes.co · Titular: ana@redes.co
+          </p>
+        )}
       </div>
 
       <p className="login-pie">Intela · Gestión de Propiedad Intelectual</p>

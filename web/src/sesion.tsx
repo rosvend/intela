@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  ApiError,
   api,
   clearToken,
   setToken,
@@ -32,6 +33,9 @@ export type Sesion = {
   usuario: Usuario;
 };
 
+// Los `as` de aqui para abajo son las fronteras sin validar que menciona el
+// comentario de `api()`: quedan a la vista, en un solo lugar por endpoint, en
+// vez de disueltos en cada sitio que llama a estas funciones.
 export function iniciarSesion(email: string, clave: string): Promise<Sesion> {
   return api("/api/auth/session", {
     method: "POST",
@@ -39,13 +43,14 @@ export function iniciarSesion(email: string, clave: string): Promise<Sesion> {
     // Un 401 aqui es "clave mala", no "sesion vencida": no debe disparar la
     // redireccion de sesion expirada, sino dejar que Login muestre el error.
     anonima: true,
-  });
+  }) as Promise<Sesion>;
 }
 
-export const sesionActual = (): Promise<Usuario> => api("/api/auth/session");
+export const sesionActual = (): Promise<Usuario> =>
+  api("/api/auth/session") as Promise<Usuario>;
 
 export const cerrarSesion = (): Promise<Response> =>
-  api("/api/auth/session", { method: "DELETE" });
+  api("/api/auth/session", { method: "DELETE" }) as Promise<Response>;
 
 /**
  * Resultado de cerrar sesion.
@@ -91,9 +96,17 @@ export function ProveedorDeSesion({ children }: { children: ReactNode }) {
         .finally(() => vigente && setCargando(false));
     }
 
+    // Solo limpia el usuario: NO navega. `alExpirarSesion` corre dentro de
+    // `api()`, en medio de una peticion de una pantalla ya montada bajo
+    // RutaProtegida. Si este handler tambien llamara a `navigate("/login")`,
+    // ganaria la carrera contra el <Navigate state={{from: location}}> de
+    // RutaProtegida -que se dispara solo hasta el siguiente render- y la
+    // ubicacion real (p. ej. /estado) se perderia: siempre se aterrizaria en
+    // "/". Dejar que sea RutaProtegida quien redirija, al volver a evaluar
+    // `!token()` en su propio render, es la unica ruta de redireccion y
+    // conserva `state.from` con la ubicacion correcta.
     setUnauthorizedHandler(() => {
       setUsuario(null);
-      navigate("/login", { replace: true });
     });
 
     // El token vive en localStorage -compartido entre pestanas- pero el
@@ -145,11 +158,18 @@ export function ProveedorDeSesion({ children }: { children: ReactNode }) {
     let revocadaEnServidor = true;
     try {
       await cerrarSesion();
-    } catch {
-      // No se relanza: el logout local tiene que funcionar aunque el servidor
-      // este caido o no haya red. Pero tampoco se traga en silencio, porque la
-      // sesion sigue viva alla y en un equipo compartido eso importa.
-      revocadaEnServidor = false;
+    } catch (err) {
+      // Un 401 no es "no se pudo revocar": es el servidor diciendo que esa
+      // sesion ya no vale, que es exactamente lo que se queria lograr. La
+      // incertidumbre real es de red (ErrorDeRed) o un 5xx -ahi si el
+      // servidor pudo no haberse enterado-. Sin esta distincion, la sesion
+      // que caduca con la pestana abierta dispara el aviso de "el servidor
+      // no confirmo la revocacion" en cada logout normal, y un aviso de
+      // seguridad que salta en falso con frecuencia es uno que se aprende a
+      // ignorar.
+      if (!(err instanceof ApiError && err.status === 401)) {
+        revocadaEnServidor = false;
+      }
     }
     clearToken();
     setUsuario(null);

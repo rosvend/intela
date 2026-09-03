@@ -60,7 +60,12 @@ type Opciones = RequestInit & {
   anonima?: boolean;
 };
 
-export async function api(path: string, init: Opciones = {}) {
+// Sin esta anotacion, TypeScript infiere `Promise<any>` (por `res.json()`), y
+// eso se propaga: cada envoltorio tipado (sesionActual, useApi<T>) pasa a ser
+// en realidad un cast sin comprobar, y si /auth/session cambiara de forma
+// nada avisaria hasta que algo explotara en pantalla. `unknown` obliga a que
+// cada frontera sin validar quede con un cast explicito y a la vista.
+export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   const { anonima, ...resto } = init;
   const headers = new Headers(resto.headers);
   if (!anonima && token()) headers.set("Authorization", `Bearer ${token()}`);
