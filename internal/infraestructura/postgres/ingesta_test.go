@@ -492,6 +492,81 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 	}
 }
 
+// La forma que produce un adaptador de formato (#25): SOLO los campos que
+// EXISTEN en el archivo del cliente.
+//
+// La regresion vive aqui y no solo en `aplicacion` porque el defecto se veia
+// en la COLUMNA, no en la estructura: `emisiones` a cero y `fuente` en blanco,
+// ya escritos en `usos`. Contra un doble en memoria se comprueba lo que el caso
+// de uso devuelve; contra PostgreSQL, lo que queda guardado, que es lo que van
+// a leer #26 y el reparto.
+//
+// Los DEFAULT del esquema (`oni DEFAULT TRUE`, `emisiones DEFAULT 1`) no
+// intervienen: insertarUso manda los tres valores siempre, asi que el unico
+// sitio donde pueden ponerse es el caso de uso.
+func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+	rep, err := ingesta.GuardarReporte(ctx, "caracol-crudo", "2026-01",
+		[]byte("Titulo,ID_Ficha,Duracion\nLa Casa de las Dos Palmas,1234,52\n"))
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	// Ni Fuente, ni Escalon, ni ONI, ni Emisiones: ninguno es columna de una
+	// parrilla, asi que un adaptador que mapee lo que hay los deja en el valor
+	// cero de Go.
+	recien := aplicacion.UsoPersistido{
+		Titulo:      "La Casa de las Dos Palmas",
+		Modalidad:   reparto.TV,
+		IDsFuente:   "ID_Ficha=1234",
+		TipoObra:    "serie",
+		DuracionMin: decimal.NewFromInt(52),
+	}
+
+	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{recien})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 0 {
+		t.Fatalf("una fila recien parseada no puede salir rechazada: %q", rechazados[0].RechazoMotivo)
+	}
+
+	var (
+		fuente, escalon string
+		oni             bool
+		emisiones       int64
+		obraID          *string
+	)
+	err = pool.QueryRow(ctx,
+		`SELECT fuente, escalon, oni, emisiones, obra_id FROM usos WHERE reporte_id = $1`,
+		rep.ID).Scan(&fuente, &escalon, &oni, &emisiones, &obraID)
+	if err != nil {
+		t.Fatalf("leer la fila canonica: %v", err)
+	}
+
+	if fuente != rep.Fuente {
+		t.Errorf("fuente = %q, se esperaba %q: Alias() indexa por fuente y la cadena vacia no casa nunca",
+			fuente, rep.Fuente)
+	}
+	if escalon != "pendiente" {
+		t.Errorf("escalon = %q, se esperaba \"pendiente\"", escalon)
+	}
+	if !oni {
+		t.Error("oni = false en una fila sin obra: a la salida de ingesta nadie ha identificado nada")
+	}
+	if emisiones != 1 {
+		t.Errorf("emisiones = %d, se esperaba 1: las emisiones multiplican (RD 9.1.1), "+
+			"asi que un cero deja la fila aportando cero puntos sin ningun sintoma", emisiones)
+	}
+	if obraID != nil {
+		t.Errorf("obra_id = %q, se esperaba NULL", *obraID)
+	}
+}
+
 // Borrar un reporte se lleva sus filas por delante, las canonicas y las
 // rechazadas: el log de rechazos cuelga de la misma evidencia, no es un
 // almacen paralelo con vida propia.

@@ -620,3 +620,29 @@ func TestGuardarUsosNoPisaElMotivoQueTraeLaFila(t *testing.T) {
 		t.Fatalf("una fila con motivo no es canonica: %+v", repo.canonicos())
 	}
 }
+
+// El acuse tiene que traer las dos cosas que la fila hereda de el. Que la
+// fuente venga vacia no da error en ninguna capa de abajo -`usos.fuente` es
+// TEXT NOT NULL sin DEFAULT, y la cadena vacia lo satisface-, asi que si no se
+// corta aqui el lote entero queda en la base sin procedencia y Alias() deja de
+// casar en silencio. Se corta antes de escribir nada, como en GuardarReporte.
+func TestGuardarUsosExigeUnAcuseCompleto(t *testing.T) {
+	casos := map[string]Reporte{
+		"sin id":     {ID: "", Fuente: "caracol"},
+		"sin fuente": {ID: "rep-1", Fuente: ""},
+		"en blanco":  {ID: "rep-1", Fuente: "   "},
+	}
+	for nombre, rep := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			_, err := ingesta.GuardarUsos(t.Context(), rep, []UsoPersistido{usoBueno("La Casa")})
+			if !errors.Is(err, ErrReporteInvalido) {
+				t.Fatalf("se esperaba ErrReporteInvalido, se obtuvo %v", err)
+			}
+			if len(repo.usos) != 0 {
+				t.Fatalf("no puede quedar fila de un lote rechazado: %+v", repo.usos)
+			}
+		})
+	}
+}
