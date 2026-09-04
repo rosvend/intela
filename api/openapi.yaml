@@ -316,6 +316,38 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: el ipi es obligatorio para admitir a una persona natural
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no es el del Consejo Directivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya estaba resuelta, o el padron ya tiene esa fila.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
 
   /admin/pipeline:
     get:
@@ -387,44 +419,6 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: no autorizado
-        "401":
-          description: Falta el token, o esta caducado o revocado.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: sesion invalida o expirada
-        "403":
-          description: Autenticado, pero el rol no basta.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: no autorizado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: no autorizado
-        "404":
-          description: No hay una solicitud con ese identificador.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: solicitud no encontrada
-        "409":
-          description: La solicitud ya estaba resuelta, o el padron ya tiene esa fila.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: la solicitud no esta pendiente de admision
 
 components:
   securitySchemes:
