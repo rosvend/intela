@@ -160,7 +160,12 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 	if err := i.Reportes.GuardarReporte(
 		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
 	); err != nil {
-		return Reporte{}, err
+		// Envuelto como los demas caminos de este fichero. errors.Is sigue
+		// casando con ErrReporteDuplicado -es lo que comprueban las pruebas-,
+		// pero el mensaje ya dice DE QUE subida se trata: con varias entregas
+		// en vuelo, un centinela pelado no distingue cual choco.
+		return Reporte{}, fmt.Errorf(
+			"registrar la entrega de %q para %q: %w", rep.Fuente, rep.Periodo, err)
 	}
 	return rep, nil
 }
@@ -200,8 +205,19 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 	if len(usos) == 0 {
 		return nil, nil
 	}
-	if strings.TrimSpace(rep.ID) == "" {
+	switch {
+	case strings.TrimSpace(rep.ID) == "":
 		return nil, fmt.Errorf("%w: falta el reporte del que salen las filas", ErrReporteInvalido)
+	case strings.TrimSpace(rep.Fuente) == "":
+		// Estampar la fuente no basta si la que se estampa viene vacia.
+		// `usos.fuente` es TEXT NOT NULL SIN DEFAULT, asi que la cadena vacia
+		// entra sin ruido, y a partir de ahi Alias() -que indexa por fuente- no
+		// casa NUNCA: el sintoma no seria un error sino un catalogo que parece
+		// incompleto. Un Reporte que salga de GuardarReporte siempre la trae
+		// -alli se exige-, pero este metodo es publico y el precio de
+		// comprobarlo es una cadena.
+		return nil, fmt.Errorf(
+			"%w: el reporte %q no dice de que fuente viene", ErrReporteInvalido, rep.ID)
 	}
 
 	lote := make([]UsoPersistido, len(usos))
