@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -412,4 +414,81 @@ func TestLaTablaDeCoautoresNoTieneColumnaDeDinero(t *testing.T) {
 	if !slices.Equal(columnas, permitidas) {
 		t.Fatalf("columnas = %v, se esperaba %v", columnas, permitidas)
 	}
+}
+
+// codigoCheck es el SQLSTATE 23514, check_violation. Mismo motivo que el
+// codigoUnicidad de errores.go: el numero esta en el estandar, el texto del
+// mensaje cambia con la version y el locale del servidor.
+const codigoCheck = "23514"
+
+// El INSERT va en SQL crudo contra el pool, saltandose repertorio.NuevaObra y
+// el adaptador: lo que se prueba aqui es la BASE, no el enum de Go.
+//
+// Los dos guardan el mismo invariante -"solo se paga a escritores personas
+// naturales" (`R-01`, `RD 7.3.3`)- y por eso se prueban por separado. El de Go
+// ya lo cubre TestNuevaObraRechazaLoQueFalta ("coautor con un rol que no
+// genera derecho") en internal/dominio/repertorio, que es una prueba de tipo:
+// esta cubre la ultima linea de defensa, la que sigue en pie si alguien
+// escribe SQL crudo -la ingesta de #18, el seed de #22- o si el enum del
+// dominio se rompe.
+//
+// Sin esta prueba, borrar el CHECK de la migracion 00003 deja la suite entera
+// en verde y un "director" entra al catalogo como coautor sin que nadie lo
+// note, que es literalmente el fallo que el CHECK existe para impedir.
+func TestLaBaseRechazaUnCoautorConRolNoAutoral(t *testing.T) {
+	_, pool := sembrar(t)
+	ctx := t.Context()
+
+	// Los cinco primeros son los que `RD 7.3.3` deja fuera por su nombre. Los
+	// dos ultimos son las formas en que un rol valido deja de serlo: el CHECK
+	// compara literal, asi que no normaliza caja ni acepta el vacio.
+	noAutorales := []string{
+		"director",
+		"productor",
+		"actor",
+		"revisor",
+		"ejecutivo de cadena",
+		"Guionista",
+		"",
+	}
+
+	for _, rol := range noAutorales {
+		t.Run(rol, func(t *testing.T) {
+			_, err := pool.Exec(ctx,
+				`INSERT INTO obra_coautores (obra_id, ipi, nombre, rol)
+				 VALUES ($1, 'IPI-00000099', 'Persona No Autoral', $2)`,
+				obraCompleta, rol)
+			if err == nil {
+				t.Fatalf("la base acepto el rol %q: el CHECK de rol no esta puesto", rol)
+			}
+
+			// Y el rechazo es el del CHECK, no un fallo de conexion ni la clave
+			// primaria: un error cualquiera dejaria pasar esta prueba con el
+			// CHECK ya borrado.
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) {
+				t.Fatalf("se esperaba un *pgconn.PgError, se obtuvo %v", err)
+			}
+			if pgErr.Code != codigoCheck {
+				t.Fatalf("SQLSTATE = %q, se esperaba %q (error: %v)",
+					pgErr.Code, codigoCheck, err)
+			}
+			if pgErr.ConstraintName != "obra_coautores_rol_check" {
+				t.Fatalf("constraint = %q, se esperaba obra_coautores_rol_check",
+					pgErr.ConstraintName)
+			}
+		})
+	}
+
+	// Control positivo: el mismo INSERT con un rol del reglamento SI entra.
+	// Sin esto, romper la conexion o el nombre de la tabla pondria en verde
+	// todos los casos de arriba por el motivo equivocado.
+	t.Run("guionista si entra", func(t *testing.T) {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO obra_coautores (obra_id, ipi, nombre, rol)
+			 VALUES ($1, 'IPI-00000099', 'Ana Escritora', 'guionista')`,
+			obraCompleta); err != nil {
+			t.Fatalf("el CHECK rechaza un rol que el reglamento admite: %v", err)
+		}
+	})
 }
