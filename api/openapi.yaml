@@ -329,6 +329,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              example:
+                error: el listado ONI de ese periodo ya fue publicado
+
+  /admin/pipeline:
+    get:
+      tags: [admin]
+      summary: Superficie del pipeline
+      description: |
+        Reserva el prefijo `/admin/*` al rol `administrador` (Consejo
+        Directivo). Los casos de uso del pipeline aterrizan en PRs
+        posteriores; hoy el grupo existe para que el rol se haga cumplir
+        en un solo sitio.
+
+        Sin sesion responde 401 (el middleware de autenticacion). Con
+        sesion de otro rol responde 403.
+      operationId: adminPipeline
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      responses:
+        "204":
+          description: Autorizado. Sin cuerpo; la superficie aun no tiene payload.
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -345,8 +367,6 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: no autorizado
-        "409":
-          description: Ese periodo ya tiene listado publicado.
 
   /auditoria/asientos:
     get:

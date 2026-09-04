@@ -147,7 +147,6 @@ func (a *API) Router() http.Handler {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
 		})
-		})
 	})
 
 	return r
