@@ -36,8 +36,14 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
-// Cerrar libera el pool. Espera a que terminen las consultas en vuelo.
-func (s *Store) Cerrar() {
+// CerrarPool libera el pool. Espera a que terminen las consultas en vuelo.
+//
+// Se llamaba Cerrar. El nombre lo ocupa ahora aplicacion.ColaTrabajos.Cerrar,
+// que cierra un TRABAJO y que este mismo tipo satisface: dos metodos con el
+// mismo nombre no caben en un tipo, y de los dos el que tenia que ceder era
+// este. "Cerrar" a secas sobre un adaptador que ya no es solo persistencia no
+// dice cual de las dos cosas cierra.
+func (s *Store) CerrarPool() {
 	if s.pool != nil {
 		s.pool.Close()
 	}
