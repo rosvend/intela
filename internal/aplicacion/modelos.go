@@ -116,3 +116,37 @@ type Anticipo struct {
 	Monto     decimal.Decimal
 	Estado    string
 }
+
+// SolicitudAfiliacion es lo que el asistente de alta manda al caso de uso.
+//
+// Los documentos van en bytes, no en claves: quien llama no conoce el
+// almacen. El caso de uso los guarda y deja las claves en el Afiliado.
+type SolicitudAfiliacion struct {
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	PerteneceOtraSGC   bool
+	RUT                []byte
+	CertBancaria       []byte
+	Renuncia           []byte
+}
+
+// AfiliacionVista es la solicitud (o el afiliado ya admitido) tal como
+// sale del nucleo hacia el adaptador. Sin etiquetas json: la forma de
+// red la decide HTTP.
+type AfiliacionVista struct {
+	ID                 string
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	Estado             string
+	ElegibleAnticipo   bool
+	TieneRUT           bool
+	TieneCertBancaria  bool
+	TieneRenuncia      bool
+	TitularID          string
+}

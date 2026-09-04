@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -84,6 +85,18 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// RepositorioAdmision cubre el flujo de alta: la solicitud que deja al
+// titular en pendiente y la admision que lo pasa al padron.
+//
+// Vive aparte de RepositorioAfiliacion para no ensanchar el puerto que usa
+// Autenticacion: si GuardarSolicitud viviera ahi, cada doble del login
+// tendria que fingir un metodo que no le compete.
+type RepositorioAdmision interface {
+	GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado) error
+	SolicitudPorID(ctx context.Context, id string) (afiliacion.Afiliado, error)
+	AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) error
 }
 
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una

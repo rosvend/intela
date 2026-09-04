@@ -38,6 +38,12 @@ tags:
     description: |
       Autenticacion. La sesion es un token opaco con caducidad, no un JWT: se
       revoca del lado del servidor borrando su fila (ADR 0013).
+  - name: afiliacion
+    description: |
+      Alta de un titular. La solicitud la rellena quien todavia no es afiliado
+      y queda pendiente de admision del Consejo Directivo (`RS 5.2`, `RS 5.3`).
+      El RUT y la certificacion bancaria son obligatorios (`R-12`). Pertenecer
+      a otra SGC del mismo genero sin renuncia expresa bloquea el alta (`R-28`).
   - name: admin
     description: |
       Superficie del pipeline. Solo `administrador` (Consejo Directivo).
@@ -200,6 +206,148 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: sesion invalida o expirada
+
+  /afiliaciones:
+    post:
+      tags: [afiliacion]
+      summary: Solicitar afiliacion
+      description: |
+        Recibe el alta de un titular nuevo y la deja en estado `pendiente`.
+
+        Va sin sesion: quien se da de alta todavia no es afiliado.
+
+        El RUT actualizado y la certificacion bancaria son obligatorios
+        (`R-12` / `RD 13.1.6`). El IPI se puede omitir en esta peticion;
+        una persona natural no se admite al padron sin el (`RD 3`).
+
+        Si el aspirante declara pertenecer a otra sociedad de gestion
+        colectiva del mismo genero y no adjunta la renuncia, responde 409
+        con la explicacion de `R-28`.
+      operationId: solicitarAfiliacion
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SolicitudAfiliacion"
+      responses:
+        "201":
+          description: Solicitud creada, pendiente de admision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: pendiente
+                elegible_anticipo: false
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: ""
+        "400":
+          description: Faltan datos o documentos, o el adjunto no es un PDF o una imagen.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "r-12: el rut actualizado y la certificacion bancaria son obligatorios"
+        "409":
+          description: |
+            Conflicto de exclusividad (`R-28`) o ya existe una solicitud
+            activa con el mismo correo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "r-28: no se acepta como afiliado a quien pertenezca a otra sociedad de gestion colectiva del mismo genero sin renuncia previa y expresa"
+
+  /afiliaciones/{id}/aprobar:
+    post:
+      tags: [afiliacion]
+      summary: Aprobar afiliacion
+      description: |
+        Admite una solicitud pendiente y crea la fila del padron.
+
+        Solo el rol `administrador`, que en este andamiaje representa al
+        Consejo Directivo (`RS 5.2`). A partir de la admision el subtipo
+        gobierna el derecho a pedir anticipo: solo un Socio lo tiene (`R-30`).
+      operationId: aprobarAfiliacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Solicitud admitida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: admitido
+                elegible_anticipo: true
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: tit-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+        "400":
+          description: Falta el IPI para admitir a una persona natural.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el ipi es obligatorio para admitir a una persona natural
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no es el del Consejo Directivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya estaba resuelta, o el padron ya tiene esa fila.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
 
   /admin/pipeline:
     get:
@@ -366,6 +514,111 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    SolicitudAfiliacion:
+      type: object
+      required:
+        - nombre
+        - email
+        - documento_identidad
+        - subtipo
+        - rut
+        - certificacion_bancaria
+      properties:
+        nombre:
+          type: string
+          description: Nombre del aspirante.
+        email:
+          type: string
+          format: email
+          description: Correo al que se comunica la decision del Consejo.
+        documento_identidad:
+          type: string
+          description: Cedula o pasaporte (`RS 5.2` / `RS 5.3`).
+        ipi:
+          type: string
+          description: |
+            Identificador IPI de la persona. Opcional en el alta; obligatorio
+            para admitir a una persona natural.
+        subtipo:
+          type: string
+          enum: [socio, administrado]
+          description: |
+            `socio` es vinculo societario (`RS 4.1`). `administrado` es
+            vinculo contractual (`RS 4.2`). Solo el socio admitido puede
+            pedir anticipo (`R-30`).
+        pertenece_otra_sgc:
+          type: string
+          description: |
+            `true` si el aspirante pertenece a otra SGC del mismo genero.
+            En ese caso `renuncia` es obligatorio (`R-28`).
+        rut:
+          type: string
+          format: binary
+          description: RUT actualizado (`R-12`). PDF o imagen.
+        certificacion_bancaria:
+          type: string
+          format: binary
+          description: Certificacion bancaria (`R-12`). PDF o imagen.
+        renuncia:
+          type: string
+          format: binary
+          description: |
+            Documento de renuncia a la otra SGC. Obligatorio si
+            `pertenece_otra_sgc` es verdadero.
+
+    Afiliacion:
+      type: object
+      required:
+        - id
+        - nombre
+        - email
+        - documento_identidad
+        - ipi
+        - subtipo
+        - estado
+        - elegible_anticipo
+        - tiene_rut
+        - tiene_certificacion_bancaria
+        - tiene_renuncia
+        - titular_id
+      properties:
+        id:
+          type: string
+          description: Identificador de la solicitud, opaco.
+        nombre:
+          type: string
+        email:
+          type: string
+          format: email
+        documento_identidad:
+          type: string
+        ipi:
+          type: string
+          description: Vacio si se omitio en el alta.
+        subtipo:
+          type: string
+          enum: [socio, administrado]
+        estado:
+          type: string
+          enum: [pendiente, admitido, rechazado]
+          description: Maquina de admision. El alta deja `pendiente`.
+        elegible_anticipo:
+          type: boolean
+          description: |
+            `true` solo si el subtipo es socio y el estado es admitido
+            (`R-30`).
+        tiene_rut:
+          type: boolean
+        tiene_certificacion_bancaria:
+          type: boolean
+        tiene_renuncia:
+          type: boolean
+        titular_id:
+          type: string
+          description: |
+            Fila del padron, rellenada al admitir. Cadena vacia mientras
+            la solicitud esta pendiente.
 
 security:
   - bearerAuth: []

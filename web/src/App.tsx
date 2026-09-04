@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import WizardAfiliacion from "./afiliacion/Wizard";
 
 /**
  * Shell del tablero.
@@ -21,12 +22,14 @@ export default function App() {
         <strong>Intela</strong>
         <nav>
           <Link to="/">Inicio</Link>
+          <Link to="/afiliacion">Alta de titular</Link>
           <Link to="/estado">Estado</Link>
         </nav>
       </header>
       <main>
         <Routes>
           <Route path="/" element={<Inicio />} />
+          <Route path="/afiliacion" element={<WizardAfiliacion />} />
           <Route path="/estado" element={<Estado />} />
           <Route path="*" element={<NoEncontrado />} />
         </Routes>
@@ -46,6 +49,9 @@ function Inicio() {
       <p>
         Esto es el andamiaje. Las pantallas operativas llegan con los PRs de
         cada modulo.
+      </p>
+      <p>
+        <Link to="/afiliacion">Dar de alta un titular</Link>
       </p>
     </section>
   );
