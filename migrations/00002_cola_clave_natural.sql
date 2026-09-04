@@ -35,15 +35,42 @@ ALTER TABLE cola_trabajos
   ADD COLUMN corrida       INT         NOT NULL DEFAULT 1,
   ADD COLUMN disponible_en TIMESTAMPTZ NOT NULL DEFAULT now();
 
--- El DEFAULT solo existia para poder anadir la columna como NOT NULL sobre
+-- El DEFAULT solo existe para poder anadir la columna como NOT NULL sobre
 -- filas ya escritas. A partir de aqui el periodo lo pone quien encola: una
 -- cadena vacia por descuido compartiria clave con cualquier otro trabajo sin
 -- periodo del mismo tipo.
 ALTER TABLE cola_trabajos ALTER COLUMN periodo DROP DEFAULT;
 
+-- `cola_periodo_valido` entra NOT VALID a proposito.
+--
+-- El DEFAULT de arriba deja `periodo = ''` en las filas que ya existieran, y
+-- '' no casa con el patron. Una constraint normal escanea la tabla entera al
+-- crearse, asi que sobre una base con UNA sola fila en la cola la migracion
+-- muere con 23514 y el despliegue se queda a medias. NOT VALID se salta ese
+-- escaneo retroactivo, que es lo unico que sobra.
+--
+-- Lo que NO se debilita, que es la garantia que el resto del PR necesita:
+-- NOT VALID exime solo a las filas que ya estaban. Desde este ALTER, todo
+-- INSERT y todo UPDATE se comprueba, asi que el periodo de una fila NUEVA
+-- tiene formato AAAA o AAAA-MM o la insercion falla.
+--
+-- Y no hay VALIDATE CONSTRAINT despues, a proposito: volveria a escanear esas
+-- mismas filas y a fallar con el mismo 23514. Las filas anteriores conservan
+-- `periodo = ''` de forma permanente. No se rellenan con un valor inventado
+-- porque no existe ninguno correcto: `cola_trabajos` no tenia de donde
+-- sacarlo, y derivarlo de `creado` fabricaria una instruccion de pago
+-- plausible y falsa -el nucleo lee esta columna para saber que periodo
+-- repartir-. '' no es un periodo y no puede confundirse con uno: significa
+-- "fila anterior a la clave natural".
+--
+-- Aviso operativo sobre `cola_clave_natural`: una UNIQUE no admite NOT VALID.
+-- Si al aplicar esta migracion hubiera DOS filas anteriores del mismo `tipo`,
+-- las dos quedan en (tipo, '', 1) y la creacion del indice falla con 23505.
+-- Eso si exige drenar la cola antes de desplegar. Falla en transaccion y con
+-- un mensaje que nombra la clave duplicada, asi que no deja la base a medias.
 ALTER TABLE cola_trabajos
   ADD CONSTRAINT cola_periodo_valido
-    CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$'),
+    CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$') NOT VALID,
   ADD CONSTRAINT cola_corrida_positiva
     CHECK (corrida >= 1),
   ADD CONSTRAINT cola_clave_natural
