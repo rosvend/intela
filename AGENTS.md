@@ -112,6 +112,6 @@ docker compose up --build
 
 Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`.
 
-El arranque no siembra usuarios ni aplica migraciones: las migraciones son de
-`goose` y el seed es un comando aparte, los dos pendientes del PR de
-persistencia. Detalle y variables de entorno en [`docs/ARRANQUE.md`](docs/ARRANQUE.md).
+El arranque no siembra usuarios ni aplica migraciones: las migraciones son
+`docker compose run --rm migrate` y el seed `docker compose run --rm seed`.
+Detalle y variables de entorno en [`docs/ARRANQUE.md`](docs/ARRANQUE.md).

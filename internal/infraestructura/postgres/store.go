@@ -28,7 +28,20 @@ func Abrir(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return Nuevo(pool), nil
+}
+
+// Nuevo envuelve un pool ya abierto. Lo usan las pruebas y cmd/seed, que
+// llegan con el pool de testhelp o con uno que acabamos de pinguear.
+func Nuevo(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
+}
+
+// Pool expone el pool. cmd/seed escribe el padron con SQL directo porque
+// RepositorioRepertorio, RepositorioRecaudo y ParametrosNormativos todavia
+// son de solo lectura; el Store sigue siendo el dueno de la conexion.
+func (s *Store) Pool() *pgxpool.Pool {
+	return s.pool
 }
 
 // Ping comprueba la conexion. Lo usa el handler de salud.

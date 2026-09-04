@@ -22,14 +22,16 @@ leia el `.sql` entero y lo ejecutaba al levantar, y sembraba usuarios si la
 tabla estaba vacia -tambien en produccion. Las migraciones pasan a `goose`
 como paso propio del despliegue, y el seed a un comando explicito.
 
-Los dos entran con el PR de persistencia. Hasta entonces esto levanta el
-esqueleto: los procesos arrancan, se conectan y responden a `/health`.
+```bash
+docker compose run --rm migrate   # goose, paso propio del despliegue
+docker compose run --rm seed      # dataset sintetico; no corre en `up`
+SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
+go run ./cmd/seed                 # equivalente, con DATABASE_URL
+```
 
-Cuando llegue el seed, cada usuario tendra **su propia clave, desde entorno**.
-La version anterior daba la misma constante conocida a `distribucion` y
-`contabilidad`, que son justo los dos roles que constituyen el control de
-doble firma: una sola persona con esa clave firmaba por ambos, y el control no
-controlaba nada.
+Cada rol tiene **su propia clave**, desde entorno. Una sola constante
+compartida entre `distribucion` y `contabilidad` anula el control de doble
+firma: una persona firmaba por ambos.
 
 ## Variables de entorno
 
@@ -44,6 +46,12 @@ controlaba nada.
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
 | `WORKER_INTERVALO` | `5s` | Cada cuanto el worker mira la cola |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
+| `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos |
+| `SEED_CLAVE_ADMIN` | `admin-local` | Clave del usuario administrador del seed |
+| `SEED_CLAVE_DISTRIBUCION` | `distribucion-local` | Clave del rol distribucion |
+| `SEED_CLAVE_CONTABILIDAD` | `contabilidad-local` | Clave del rol contabilidad |
+| `SEED_CLAVE_AUDITOR` | `auditor-local` | Clave del rol auditor |
+| `SEED_CLAVE_TITULAR` | `ana-local` | Clave de Ana (`ana@redes.co`) |
 
 ## Que es real y que es sintetico
 
