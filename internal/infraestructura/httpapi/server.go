@@ -128,9 +128,25 @@ func (a *API) Router() http.Handler {
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
 
+		// Los grupos de rol van DENTRO de conSesion: sin sesion la
+		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
+		// docs/architecture/roles.md; quien anada un endpoint lo mete
+		// en el grupo que le corresponde y no escribe el chequeo a mano.
+
 		protegido.Group(func(roles chi.Router) {
 			roles.Use(a.conRoles(aplicacion.RolAdministrador, aplicacion.RolDistribucion))
 			roles.Post("/oni/publicaciones", a.crearPublicacionONI)
+		})
+
+		protegido.Route("/admin", func(admin chi.Router) {
+			admin.Use(requiereRol(aplicacion.RolAdministrador))
+			admin.Get("/pipeline", superficieOK)
+		})
+
+		protegido.Route("/auditoria", func(audit chi.Router) {
+			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
+			audit.Get("/asientos", superficieOK)
+		})
 		})
 	})
 

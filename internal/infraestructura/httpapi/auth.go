@@ -40,7 +40,7 @@ const claveUsuario claveContexto = iota
 // se cuela una peticion sin autenticar. Quien llame comprueba el bool.
 //
 // Exportada porque es la unica forma que tiene un handler de saber quien
-// pregunta, y es lo que consume el middleware de roles de #17.
+// pregunta, y es lo que consume [requiereRol].
 func UsuarioDe(ctx context.Context) (aplicacion.Usuario, bool) {
 	u, ok := ctx.Value(claveUsuario).(aplicacion.Usuario)
 	return u, ok
