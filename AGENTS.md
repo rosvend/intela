@@ -63,7 +63,8 @@ Go en el backend; React + TypeScript + Vite en el frontend. Un binario por `cmd/
 - Nucleo: `internal/dominio/` (puro) y `internal/aplicacion/` (casos de uso y puertos).
 - Adaptadores: `internal/infraestructura/`.
 - Persistencia: PostgreSQL 16, `pgx` + `sqlc`, migraciones `goose`.
-- Cola: River sobre el mismo Postgres.
+- Cola: tabla `cola_trabajos` sobre el mismo Postgres, con clave natural y `FOR UPDATE SKIP LOCKED`
+  (ADR 0014, que sustituye a River en la tabla de stack del ADR 0010).
 - Objetos: MinIO local / S3, reportes crudos inmutables.
 - Contratos: `api/openapi.yaml` → tipos TS en el frontend.
 - Frontera: el compilador + `depguard` en `.golangci.yml`.

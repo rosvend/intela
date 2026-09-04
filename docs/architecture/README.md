@@ -120,7 +120,7 @@ Decidido en [ADR 0010](../decisiones/0010-stack-go.md), que sustituye a
 | Infraestructura | `chi` o `net/http` estandar | Sin framework que quiera ser dueno de los handlers |
 | Puntos de entrada | Un `main` por `cmd/` | Es literalmente lo que pide `0003` |
 | Persistencia | `pgx` v5 + `sqlc`, PostgreSQL 16 | SQL primero; `NUMERIC` escanea directo a `decimal.Decimal` |
-| Cola | `River` sobre el mismo postgres | Encolado transaccional: una transaccion local por etapa |
+| Cola | Tabla `cola_trabajos` sobre el mismo postgres ([0014](../decisiones/0014-cola-de-trabajos-en-tabla-propia.md)) | Encolado transaccional con clave natural `(tipo, periodo, corrida)`; reclamo con `FOR UPDATE SKIP LOCKED` |
 | Migraciones | `goose` | — |
 | Planificador | Temporizador sobre `CalendarioDeDistribucion` | `0004`: no es dueno de las fechas |
 | Similitud | `pg_trgm` + `unaccent` tras `PuertoMotorDeSimilitud` | `0007`: sustituible sin tocar la cascada |
