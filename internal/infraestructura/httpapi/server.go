@@ -54,10 +54,11 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud Salud
-	auth  Autenticacion
-	opts  Opciones
-	log   *slog.Logger
+	salud    Salud
+	auth     Autenticacion
+	catalogo Catalogo
+	opts     Opciones
+	log      *slog.Logger
 }
 
 // Nueva construye el adaptador.
@@ -65,13 +66,13 @@ type API struct {
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
 // se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+// Casos; con dos todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, catalogo: catalogo, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -118,6 +119,20 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
+		})
+
+		// El catalogo maestro. Las cuatro rutas piden `administrador`,
+		// lectura incluida: el catalogo es el cubo contra el que resuelve
+		// todo el matching, y quien lo lee entero ve el repertorio completo
+		// de la sociedad. Abrirlo a `auditor` -que tiene lectura de todo- o
+		// recortarlo para `titular` con SoloPropiasObras (OE-6) son
+		// decisiones de los issues que traigan esos paneles, no de este.
+		protegido.Route("/obras", func(cat chi.Router) {
+			cat.Use(requiereRol(aplicacion.RolAdministrador))
+			cat.Get("/", a.buscarObras)
+			cat.Post("/", a.registrarObra)
+			cat.Get("/{id}", a.obraPorID)
+			cat.Patch("/{id}", a.actualizarObra)
 		})
 	})
 

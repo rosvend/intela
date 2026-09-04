@@ -47,6 +47,15 @@ tags:
       Superficie de lectura de la bitacora. `auditor` (Revisor Fiscal) o
       `administrador`. Requiere Bearer y el rol; sin sesion es 401, con
       otro rol es 403.
+  - name: repertorio
+    description: |
+      Catalogo maestro de obras: el cubo contra el que resuelve todo el
+      matching. Solo `administrador`, lectura incluida.
+
+      El catalogo guarda IDENTIDAD y METADATA. No guarda dinero ni
+      porcentajes: el uso vive en los reportes y los porcentajes salen solo
+      de la Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Por eso un
+      coautor de este catalogo no tiene campo de participacion.
 
 paths:
   /health:
@@ -272,6 +281,364 @@ paths:
               example:
                 error: no autorizado
 
+  /obras:
+    get:
+      tags: [repertorio]
+      summary: Buscar en el catalogo maestro
+      description: |
+        Devuelve las obras del catalogo. Sin parametros devuelve el catalogo
+        entero: "sin recorte" es un recorte mas y no merece una ruta aparte.
+
+        Los filtros se combinan con Y. `titulo` es PARCIAL y no distingue
+        mayusculas -es el unico campo por el que se busca sin saber el dato
+        exacto: en la muestra, el titulo localizado y el original difieren en
+        16 de 59 filas-. `genero`, `anio` e `ipi` son exactos.
+
+        `ipi` cruza contra los COAUTORES de la obra: el IPI identifica
+        personas, no obras (`RD 3`).
+      operationId: buscarObras
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: titulo
+          in: query
+          required: false
+          description: Trozo del titulo. Coincidencia parcial, sin distinguir mayusculas.
+          schema:
+            type: string
+          example: dos palmas
+        - name: genero
+          in: query
+          required: false
+          description: Genero exacto, tal como se declaro.
+          schema:
+            type: string
+          example: Drama
+        - name: ipi
+          in: query
+          required: false
+          description: IPI exacto de uno de los coautores de la obra.
+          schema:
+            type: string
+          example: IPI-00000001
+        - name: anio
+          in: query
+          required: false
+          description: |
+            Anio de produccion exacto. Un valor que no sea un entero positivo
+            se rechaza con 400 en vez de ignorarse: ignorado devolveria el
+            catalogo entero y quien pregunta lo leeria como "no hay ninguna
+            de ese anio".
+          schema:
+            type: integer
+            minimum: 1
+          example: 1991
+      responses:
+        "200":
+          description: |
+            Las obras que cuadran, ordenadas por identificador. Sin
+            coincidencias devuelve una lista vacia, no un 404.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Obra"
+              example:
+                - id: obra-1
+                  titulo: La Casa de las Dos Palmas
+                  genero: Drama
+                  anio: 1991
+                  tipo: serie
+                  ida: IDA-1
+                  eidr: ""
+                  imdb: ""
+                  coautores:
+                    - nombre: Ana Escritora
+                      ipi: IPI-00000001
+                      rol: guionista
+        "400":
+          description: Un parametro de busqueda esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: anio tiene que ser un entero positivo
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+    post:
+      tags: [repertorio]
+      summary: Registrar una obra en el catalogo
+      description: |
+        Da de alta una obra. El identificador lo trae el cuerpo y NO lo genera
+        el servidor: es el numero de obra de REDES-SYS, que se asigna fuera de
+        este sistema. Por eso un segundo alta con el mismo identificador es un
+        409 y no un id nuevo inventado en silencio.
+
+        Una vez creada, el identificador es inmutable: no hay operacion que lo
+        cambie. Es lo que referencian las declaraciones, los alias y los usos.
+      operationId: registrarObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Obra"
+            example:
+              id: obra-1
+              titulo: La Casa de las Dos Palmas
+              genero: Drama
+              anio: 1991
+              tipo: serie
+              ida: IDA-1
+              eidr: ""
+              imdb: ""
+              coautores:
+                - nombre: Ana Escritora
+                  ipi: IPI-00000001
+                  rol: guionista
+                - nombre: Beto Libretista
+                  ipi: IPI-00000002
+                  rol: libretista
+      responses:
+        "201":
+          description: Obra registrada.
+          headers:
+            Location:
+              description: Ruta de la obra recien creada.
+              schema:
+                type: string
+              example: /obras/obra-1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Obra"
+              example:
+                id: obra-1
+                titulo: La Casa de las Dos Palmas
+                genero: Drama
+                anio: 1991
+                tipo: serie
+                ida: IDA-1
+                eidr: ""
+                imdb: ""
+                coautores:
+                  - nombre: Ana Escritora
+                    ipi: IPI-00000001
+                    rol: guionista
+                  - nombre: Beto Libretista
+                    ipi: IPI-00000002
+                    rol: libretista
+        "400":
+          description: |
+            El cuerpo no es JSON, o lo que trae no forma una obra: falta el
+            titulo, el genero, el anio, el tipo, o no viene ningun coautor con
+            IPI y un rol autoral valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "obra invalida: falta el genero"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: Ya hay una obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ya existe una obra con ese identificador
+
+  /obras/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Identificador de la obra. Opaco e inmutable.
+        schema:
+          type: string
+        example: obra-1
+
+    get:
+      tags: [repertorio]
+      summary: Leer una obra del catalogo
+      description: Devuelve la obra con sus metadatos y sus coautores.
+      operationId: obraPorID
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      responses:
+        "200":
+          description: La obra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Obra"
+              example:
+                id: obra-1
+                titulo: La Casa de las Dos Palmas
+                genero: Drama
+                anio: 1991
+                tipo: serie
+                ida: IDA-1
+                eidr: ""
+                imdb: ""
+                coautores:
+                  - nombre: Ana Escritora
+                    ipi: IPI-00000001
+                    rol: guionista
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
+    patch:
+      tags: [repertorio]
+      summary: Corregir los metadatos de una obra
+      description: |
+        Reemplaza el bloque de metadatos completo. El identificador NO esta en
+        el cuerpo y no se puede cambiar: viaja por la ruta, que es la unica
+        forma de garantizar que una correccion no reasigne los autores de una
+        obra a otra.
+
+        Es PATCH y no PUT porque lo que se manda no es la obra entera: la
+        identidad no viaja. El bloque de metadatos si va completo, asi que no
+        hay ambiguedad entre "este campo no vino" y "este campo vino vacio".
+
+        No crea la obra si no existe: responde 404. Un PATCH que inserta
+        convierte un identificador mal escrito en una obra fantasma del
+        catalogo contra el que resuelve todo el matching.
+      operationId: actualizarMetadatosObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadatosObra"
+            example:
+              titulo: La Casa de las Dos Palmas
+              genero: Drama
+              anio: 1991
+              tipo: serie
+              ida: IDA-1
+              eidr: ""
+              imdb: ""
+              coautores:
+                - nombre: Ana Escritora
+                  ipi: IPI-00000001
+                  rol: guionista
+      responses:
+        "200":
+          description: La obra ya corregida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Obra"
+              example:
+                id: obra-1
+                titulo: La Casa de las Dos Palmas
+                genero: Drama
+                anio: 1991
+                tipo: serie
+                ida: IDA-1
+                eidr: ""
+                imdb: ""
+                coautores:
+                  - nombre: Ana Escritora
+                    ipi: IPI-00000001
+                    rol: guionista
+        "400":
+          description: El cuerpo no es JSON, o los metadatos no forman una obra valida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "obra invalida: falta el titulo"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
 components:
   securitySchemes:
     bearerAuth:
@@ -356,6 +723,101 @@ components:
             el, cualquier peticion con este token responde 401.
         usuario:
           $ref: "#/components/schemas/Usuario"
+
+    Coautor:
+      type: object
+      required: [nombre, ipi, rol]
+      description: |
+        Quien escribio la obra, tal como lo registra el catalogo.
+
+        **No tiene porcentaje, y no es un olvido.** Este campo dice QUIEN
+        ESCRIBIO la obra; a quien se le paga y cuanto sale solo de la
+        Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Un porcentaje aqui
+        abriria un segundo camino hasta un pago que no firma ninguna
+        Declaracion.
+      properties:
+        nombre:
+          type: string
+          description: Nombre de la persona, para mostrar.
+        ipi:
+          type: string
+          description: |
+            IPI de la persona. Obligatorio: es el identificador de autores de
+            la CISAC (`RD 3`) y por donde busca el catalogo. Un coautor sin
+            IPI es un nombre suelto que no resuelve a nadie.
+        rol:
+          type: string
+          description: |
+            Aporte por el que figura como coautor. El conjunto esta cerrado
+            porque `RD 7.3.3` deja fuera por su nombre a productores
+            ejecutivos, revisores, ejecutivos de cadena, actores y directores
+            de casting: no escriben, no generan derecho de autor, y no pueden
+            entrar al catalogo como coautores.
+          enum: [guionista, libretista, adaptador, argumentista]
+
+    MetadatosObra:
+      type: object
+      required: [titulo, genero, anio, tipo, coautores]
+      description: Todo lo de una obra menos su identificador.
+      properties:
+        titulo:
+          type: string
+          description: Titulo de la obra, tal como se declaro.
+        genero:
+          type: string
+          description: |
+            Genero declarado. Texto libre a proposito, y distinto de `tipo`:
+            `tipo` es la clasificacion del reglamento que usa la metodologia
+            de reparto (`RD 9.1.1`), y `genero` es el de las parrillas
+            (Telenovela, Magazine, Noticiero...). El mapeo entre los dos es
+            una pregunta abierta con el cliente; cerrar este enum seria
+            tomarla de tapadillo.
+        anio:
+          type: integer
+          minimum: 1
+          description: Anio de produccion.
+        tipo:
+          type: string
+          description: Clasificacion del reglamento, la que usa el reparto (`RD 9.1.1`).
+          enum: [cinematografica, unitario, serie, telenovela, sketches]
+        ida:
+          type: string
+          description: |
+            Identificador IDA de la CISAC, si se conoce. Cadena vacia si no.
+        eidr:
+          type: string
+          description: Identificador EIDR de la industria, si se conoce.
+        imdb:
+          type: string
+          description: Identificador IMDB, si se conoce.
+        coautores:
+          type: array
+          minItems: 1
+          description: |
+            Quienes escribieron la obra. Al menos uno: una obra sin ningun
+            coautor con IPI no resuelve a nadie, y contra este catalogo
+            resuelve todo el matching.
+          items:
+            $ref: "#/components/schemas/Coautor"
+
+    Obra:
+      type: object
+      required: [id, titulo, genero, anio, tipo, coautores]
+      description: |
+        Una entrada del catalogo maestro: su identificador mas sus metadatos.
+
+        El identificador es inmutable. Se asigna al crear la obra -lo trae
+        quien la registra, es el numero de obra de REDES-SYS- y ninguna
+        operacion lo cambia: es lo que referencian las declaraciones, los
+        alias de fuente y los usos.
+      allOf:
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              description: Identificador de la obra. Opaco, unico e inmutable.
+        - $ref: "#/components/schemas/MetadatosObra"
 
     Error:
       type: object
