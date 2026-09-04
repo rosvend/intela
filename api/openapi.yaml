@@ -44,6 +44,15 @@ tags:
       y queda pendiente de admision del Consejo Directivo (`RS 5.2`, `RS 5.3`).
       El RUT y la certificacion bancaria son obligatorios (`R-12`). Pertenecer
       a otra SGC del mismo genero sin renuncia expresa bloquea el alta (`R-28`).
+  - name: admin
+    description: |
+      Superficie del pipeline. Solo `administrador` (Consejo Directivo).
+      Requiere Bearer y el rol; sin sesion es 401, con otro rol es 403.
+  - name: auditoria
+    description: |
+      Superficie de lectura de la bitacora. `auditor` (Revisor Fiscal) o
+      `administrador`. Requiere Bearer y el rol; sin sesion es 401, con
+      otro rol es 403.
 
 paths:
   /health:
@@ -307,6 +316,26 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: el ipi es obligatorio para admitir a una persona natural
+
+  /admin/pipeline:
+    get:
+      tags: [admin]
+      summary: Superficie del pipeline
+      description: |
+        Reserva el prefijo `/admin/*` al rol `administrador` (Consejo
+        Directivo). Los casos de uso del pipeline aterrizan en PRs
+        posteriores; hoy el grupo existe para que el rol se haga cumplir
+        en un solo sitio.
+
+        Sin sesion responde 401 (el middleware de autenticacion). Con
+        sesion de otro rol responde 403.
+      operationId: adminPipeline
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      responses:
+        "204":
+          description: Autorizado. Sin cuerpo; la superficie aun no tiene payload.
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -316,7 +345,64 @@ paths:
               example:
                 error: sesion invalida o expirada
         "403":
-          description: El rol de la sesion no es el del Consejo Directivo.
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /auditoria/asientos:
+    get:
+      tags: [auditoria]
+      summary: Superficie de la bitacora
+      description: |
+        Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
+        `administrador`. Los asientos aterrizan con el PR de bitacora;
+        hoy el grupo existe para que el rol se haga cumplir en un solo
+        sitio.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403.
+      operationId: auditoriaAsientos
+      security:
+        - bearerAuth: []
+      x-required-roles: [auditor, administrador]
+      responses:
+        "204":
+          description: Autorizado. Sin cuerpo; la superficie aun no tiene payload.
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
           content:
             application/json:
               schema:
@@ -348,6 +434,11 @@ components:
       description: |
         Token de sesion. Las sesiones expiran: el token no es una credencial
         permanente.
+
+        La autenticacion no basta: cada grupo de rutas exige un rol del
+        reglamento (`x-required-roles` en la operacion). Sin sesion la
+        respuesta es 401; con sesion de un rol no permitido, 403. La
+        matriz Rol -> capacidad esta en docs/architecture/roles.md.
 
   schemas:
     Estado:
