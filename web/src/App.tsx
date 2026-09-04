@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import ListadoONI from "./pages/ListadoONI";
 
 /**
  * Shell del tablero.
@@ -22,12 +23,14 @@ export default function App() {
         <nav>
           <Link to="/">Inicio</Link>
           <Link to="/estado">Estado</Link>
+          <Link to="/publico/oni">Listado ONI</Link>
         </nav>
       </header>
       <main>
         <Routes>
           <Route path="/" element={<Inicio />} />
           <Route path="/estado" element={<Estado />} />
+          <Route path="/publico/oni" element={<ListadoONI />} />
           <Route path="*" element={<NoEncontrado />} />
         </Routes>
       </main>

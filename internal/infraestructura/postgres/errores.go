@@ -5,9 +5,18 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
+
+// esClaveDuplicada detecta un 23505. Lo usa la publicacion ONI para
+// traducirlo a ErrYaPublicado: republicar el mismo periodo no es un fallo
+// de infraestructura, es reescribir el ancla de R-19.
+func esClaveDuplicada(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // traducirError lleva un error de pgx al vocabulario de aplicacion.
 //

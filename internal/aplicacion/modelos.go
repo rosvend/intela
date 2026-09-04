@@ -5,8 +5,24 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/oni"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
+
+// HechoListadoONIPublicado es el hecho que deja PublicarListadoONI en la
+// bitacora. El modulo ONI publica sus propios asientos (ADR 0003, ADR 0006).
+const HechoListadoONIPublicado = "oni.listado_publicado"
+
+// RefTipoPublicacionONI es la referencia de ese asiento. El id es el de la
+// fila en oni_publicaciones, no un id derivado del periodo: publicar dos
+// veces el mismo periodo no debe ser idempotente en silencio.
+const RefTipoPublicacionONI = "oni_publicacion"
+
+// ExplicacionListadoONI es el texto de RD 13.8.4.4: una explicacion clara
+// del proceso de Distribucion en el que se incluyen los derechos de las ONI.
+// Vive aqui, no en el frontend, para que el contrato HTTP y la pagina
+// publica no divergjan.
+const ExplicacionListadoONI = "REDES SGC publica este listado de obras no identificadas (ONI) para que los titulares documenten su autoria y soliciten la remuneracion en el siguiente proceso de Distribucion (RD 13.8). Se publican titulos e informacion identificatoria, sin montos: la informacion economica se mantiene en reserva (RD 13.8.2-13.8.3). La prescripcion de estos recaudos es de tres anos contados desde esta publicacion (RD 13.8.7, R-19)."
 
 // Rol de un actor. La autorizacion de cada caso de uso se decide contra esto,
 // no contra la mera existencia de una sesion.
@@ -115,4 +131,17 @@ type Anticipo struct {
 	TitularID string
 	Monto     decimal.Decimal
 	Estado    string
+}
+
+// PublicacionONI es la instantanea de un listado publicado.
+//
+// FechaProceso es el ancla de R-19. Obras es la proyeccion publica: titulos
+// e identificadores, nunca importes.
+type PublicacionONI struct {
+	ID                   string
+	Periodo              string
+	FechaProceso         time.Time
+	DireccionFisica      string
+	DireccionElectronica string
+	Obras                []oni.ProyeccionPublica
 }

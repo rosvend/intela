@@ -5,8 +5,13 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/rosvend/intela/internal/aplicacion"
 )
+
+var _ aplicacion.UnidadDeTrabajo = (*Store)(nil)
 
 // Store es el adaptador de PostgreSQL. Un solo tipo puede satisfacer varios
 // puertos; lo que importa es que cada caso de uso declare solo el que usa.
@@ -75,4 +80,31 @@ func (s *Store) EnTransaccion(ctx context.Context, fn func(pgx.Tx) error) error 
 		return fmt.Errorf("confirmar transaccion: %w", err)
 	}
 	return nil
+}
+
+// claveTx es un tipo propio para no chocar con otras claves de contexto.
+type claveTx struct{}
+
+// querier es lo que comparten el pool y una transaccion. Los metodos que
+// participan en UnidadDeTrabajo leen por q(ctx) y no por s.pool: si el caso
+// de uso abrio una transaccion, entran en ella.
+type querier interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
+}
+
+func (s *Store) q(ctx context.Context) querier {
+	if tx, ok := ctx.Value(claveTx{}).(pgx.Tx); ok {
+		return tx
+	}
+	return s.pool
+}
+
+// Ejecutar abre una transaccion y se la deja a fn en el contexto. Es la
+// forma que tiene aplicacion de fijar el limite sin nombrar pgx.Tx.
+func (s *Store) Ejecutar(ctx context.Context, fn func(context.Context) error) error {
+	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		return fn(context.WithValue(ctx, claveTx{}, tx))
+	})
 }

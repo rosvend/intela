@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setToken } from "./api";
+import { api, apiPublica, setToken } from "./api";
 
 describe("api", () => {
   beforeEach(() => {
@@ -49,5 +49,18 @@ describe("api", () => {
 
     await expect(api("/api/sesiones", { method: "POST" })).rejects.toThrow();
     expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+
+  it("apiPublica no adjunta token ni redirige ante 404", async () => {
+    setToken("token-de-prueba");
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("no hay listado", { status: 404 }),
+    );
+
+    await expect(apiPublica("/api/publico/oni")).resolves.toBeNull();
+
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init?.headers).toBeUndefined();
+    expect(localStorage.getItem("intela.token")).toBe("token-de-prueba");
   });
 });
