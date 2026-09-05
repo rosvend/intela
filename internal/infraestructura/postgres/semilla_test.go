@@ -72,11 +72,30 @@ func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 	          VALUES ($1, $2, 'Ana Escritora', 'titular', $3, $4)`,
 		usuarioTitular, emailTitular, titularAna, hashBcrypt)
 
-	ejecutar(`INSERT INTO obras (id, titulo, ida, eidr, imdb, tipo) VALUES
-	            ($1, 'La Casa de las Dos Palmas', 'IDA-1', 'EIDR-1', 'tt0001', 'serie'),
-	            ($2, 'Cronica de una Muerte',     '',      '',       '',       'cinematografica'),
-	            ($3, 'Obra Huerfana',             '',      '',       '',       'unitario'),
-	            ($4, 'Obra Sin IPI',              '',      '',       '',       'telenovela')`,
+	// genero y anio son NOT NULL desde 00003 y no tienen DEFAULT: el catalogo
+	// no admite una obra sin ellos. `genero` es texto libre a proposito -el
+	// mapeo a las cuatro categorias de `tipo` es una pregunta abierta con el
+	// cliente-, asi que aqui van valores de parrilla, no de reglamento.
+	ejecutar(`INSERT INTO obras (id, titulo, genero, anio, ida, eidr, imdb, tipo) VALUES
+	            ($1, 'La Casa de las Dos Palmas', 'Drama',    1991, 'IDA-1', 'EIDR-1', 'tt0001', 'serie'),
+	            ($2, 'Cronica de una Muerte',     'Drama',    1987, '',      '',       '',       'cinematografica'),
+	            ($3, 'Obra Huerfana',             'Comedia',  2005, '',      '',       '',       'unitario'),
+	            ($4, 'Obra Sin IPI',              'Comedia',  1991, '',      '',       '',       'telenovela')`,
+		obraCompleta, obraIncompleta, obraSinDeclaracion, obraSinIPI)
+
+	// Coautores del catalogo: identidad, no reparto. No hay porcentaje aqui y
+	// no lo va a haber (`R-02`, `R-03`) -eso vive en `declaraciones`, mas
+	// abajo, y las dos tablas dicen cosas distintas a proposito.
+	//
+	// obraCompleta lleva dos coautores con roles autorales DISTINTOS, que es
+	// el criterio de aceptacion del issue; obraSinDeclaracion comparte el IPI
+	// de Ana para que la busqueda por IPI tenga que devolver mas de una obra.
+	ejecutar(`INSERT INTO obra_coautores (obra_id, ipi, nombre, rol) VALUES
+	            ($1, 'IPI-00000001', 'Ana Escritora',   'guionista'),
+	            ($1, 'IPI-00000002', 'Beto Libretista', 'libretista'),
+	            ($2, 'IPI-00000002', 'Beto Libretista', 'guionista'),
+	            ($3, 'IPI-00000001', 'Ana Escritora',   'adaptador'),
+	            ($4, 'IPI-00000002', 'Beto Libretista', 'argumentista')`,
 		obraCompleta, obraIncompleta, obraSinDeclaracion, obraSinIPI)
 
 	// Suma exacta 100 con IPI en las dos partes: completa.
