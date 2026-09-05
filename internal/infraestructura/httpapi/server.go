@@ -56,6 +56,7 @@ type Opciones struct {
 type API struct {
 	salud Salud
 	auth  Autenticacion
+	liq   ConsultaLiquidaciones
 	opts  Opciones
 	log   *slog.Logger
 }
@@ -65,13 +66,13 @@ type API struct {
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
 // se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+// Casos; con dos todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, liq ConsultaLiquidaciones, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, liq: liq, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -106,6 +107,10 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		if a.liq != nil {
+			protegido.Get("/liquidaciones", a.listarLiquidaciones)
+			protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
+		}
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
