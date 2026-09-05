@@ -3,6 +3,8 @@
 Fecha: 2026-08-23
 Estado: Vigente
 Sustituye a: [0009 Stack de aplicacion: TypeScript y NestJS](0009-stack-typescript-nestjs.md)
+Modificada por: [0014 La cola de trabajos es una tabla propia, no River](0014-cola-de-trabajos-en-tabla-propia.md) — solo la
+fila "Cola" de la tabla de stack de abajo. El resto sigue vigente.
 
 ## Contexto
 
@@ -43,7 +45,7 @@ garantia deja de ser configuracion y pasa a ser el compilador.
 | `internal/infraestructura/` | `chi` o `net/http` de la biblioteca estandar | Sin framework que quiera ser dueno de los handlers. Desaparece el riesgo de los decoradores |
 | `cmd/{api,scheduler,worker}/` | Un `main` por punto de entrada | Es literalmente lo que pide `0003` |
 | Persistencia | `pgx` v5 + `sqlc`, PostgreSQL 16 | SQL primero, con tipos generados desde el SQL. `pgx` escanea `NUMERIC` directo a `decimal.Decimal` |
-| Cola | `River` (respaldada por PostgreSQL) | Encolado transaccional: conserva la transaccion local por etapa que exige `0003` |
+| Cola | ~~`River` (respaldada por PostgreSQL)~~ → tabla `cola_trabajos` propia, ver [0014](0014-cola-de-trabajos-en-tabla-propia.md) | Encolado transaccional: conserva la transaccion local por etapa que exige `0003` |
 | Migraciones | `goose` | — |
 | Planificador | Temporizador leyendo `CalendarioDeDistribucion` | `0004`: el planificador no es dueno de las fechas |
 | Similitud | `pg_trgm` + `unaccent` tras `PuertoMotorDeSimilitud` | Igual que en `0009`. Sin cambio |

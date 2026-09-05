@@ -218,24 +218,60 @@ type BitacoraAuditoria interface {
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
+//
+// Los tres metodos son los que pide el issue #35; el detalle de por que la
+// cola es una tabla propia y no River esta en el ADR 0014.
+//
+// El contrato tiene una obligacion que no se ve en las firmas: Tomar reclama
+// en exclusiva. Dos workers que llamen a la vez tienen que recibir trabajos
+// distintos o ErrSinTrabajo, nunca el mismo. El adaptador de PostgreSQL lo
+// resuelve con SELECT ... FOR UPDATE SKIP LOCKED; cualquier otro tiene que
+// dar la misma garantia, porque el nucleo no la comprueba.
 type ColaTrabajos interface {
-	Encolar(ctx context.Context, tipo string, payload []byte) error
-	Tomar(ctx context.Context) (Trabajo, error)
-	Cerrar(ctx context.Context, id int64, errMsg string) error
+	// Encolar es IDEMPOTENTE por clave natural. Devuelve false, sin error,
+	// cuando el trabajo ya estaba encolado: reintentar el encolado no es un
+	// fallo, y duplicarlo pagaria un periodo dos veces.
+	Encolar(ctx context.Context, clave ClaveTrabajo, payload []byte) (encolado bool, err error)
+
+	// Tomar reclama el trabajo pendiente mas antiguo cuya espera de reintento
+	// ya vencio, lo marca en curso y suma uno a Intentos. Devuelve
+	// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a
+	// la vez para decir lo mismo.
+	//
+	// `ahora` entra por parametro y no de now() por lo mismo que en Sesiones:
+	// una espera de reintento que solo se puede probar esperando no se prueba.
+	Tomar(ctx context.Context, ahora time.Time) (Trabajo, error)
+
+	// Cerrar termina un trabajo EN CURSO. Cerrar uno que no lo esta devuelve
+	// ErrNoEncontrado: un cierre por duplicado es un defecto del worker, no
+	// algo que convenga tragarse.
+	Cerrar(ctx context.Context, id int64, c Cierre) error
 }
 
-// Trabajo es una unidad de trabajo tomada de la cola. Tomar devuelve
-// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a la
-// vez para decir lo mismo.
+// Trabajo es una unidad de trabajo tomada de la cola.
+//
+// Intentos es el numero de veces que se ha tomado ESTE trabajo, ya contando la
+// actual. Clave.Corrida es otra cosa: cual corrida logica del periodo es. Ver
+// [ClaveTrabajo].
 type Trabajo struct {
-	ID      int64
-	Tipo    string
-	Payload []byte
+	ID       int64
+	Clave    ClaveTrabajo
+	Payload  []byte
+	Intentos int
 }
 
 // Calendario dispara las corridas segun RD 10 y RD 12.
+//
+// Es dato que administra el Consejo Directivo, no configuracion de operacion
+// (ADR 0004): por eso las fechas se leen de aqui y no de un cron del sistema
+// operativo.
 type Calendario interface {
+	// Pendientes devuelve los periodos cuya fecha de apertura ya llego y que
+	// todavia no se han disparado.
 	Pendientes(ctx context.Context, hoy time.Time) ([]string, error)
+
+	// MarcarDisparado deja constancia de que el periodo ya se encolo.
+	// Devuelve ErrNoEncontrado si el periodo no esta en el calendario.
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 
