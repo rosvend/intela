@@ -31,46 +31,65 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE cola_trabajos
-  ADD COLUMN periodo       TEXT        NOT NULL DEFAULT '',
+  ADD COLUMN periodo       TEXT        NOT NULL DEFAULT '0000',
   ADD COLUMN corrida       INT         NOT NULL DEFAULT 1,
   ADD COLUMN disponible_en TIMESTAMPTZ NOT NULL DEFAULT now();
 
--- El DEFAULT solo existe para poder anadir la columna como NOT NULL sobre
--- filas ya escritas. A partir de aqui el periodo lo pone quien encola: una
--- cadena vacia por descuido compartiria clave con cualquier otro trabajo sin
--- periodo del mismo tipo.
+-- El DEFAULT de `periodo` no es cosmetico: es el BACKFILL de las filas que ya
+-- existieran. '0000' es un centinela, no un periodo -significa "trabajo legado,
+-- de antes de que `periodo` existiera"-. Un ano de cuatro digitos que nunca va
+-- a ser un periodo de reparto real, asi que no se confunde con una instruccion
+-- de pago, que es en lo que se convertiria derivarlo de `creado`. Y a la vez SI
+-- casa con el patron del CHECK de mas abajo, que es lo que mantiene la fila
+-- legada actualizable. Por que eso importa tanto, en el bloque siguiente.
+--
+-- El DEFAULT se quita en cuanto el backfill esta hecho. A partir de aqui el
+-- periodo lo pone quien encola, y una fila nueva que se olvide de ponerlo falla
+-- con 23502 en vez de heredar el centinela en silencio.
 ALTER TABLE cola_trabajos ALTER COLUMN periodo DROP DEFAULT;
 
--- `cola_periodo_valido` entra NOT VALID a proposito.
+-- `cola_periodo_valido` entra VALIDADA, sin NOT VALID. Merece explicacion
+-- porque el intento anterior hizo lo contrario y eso costo caro.
 --
--- El DEFAULT de arriba deja `periodo = ''` en las filas que ya existieran, y
--- '' no casa con el patron. Una constraint normal escanea la tabla entera al
--- crearse, asi que sobre una base con UNA sola fila en la cola la migracion
--- muere con 23514 y el despliegue se queda a medias. NOT VALID se salta ese
--- escaneo retroactivo, que es lo unico que sobra.
+-- Aquel razonamiento era: el DEFAULT dejaba `periodo = ''` en las filas ya
+-- escritas, '' no casa con el patron, y una constraint normal escanea la tabla
+-- al crearse; sobre una base con UNA sola fila en la cola la migracion moria
+-- con 23514. NOT VALID se salta ese escaneo, y la migracion pasaba en verde.
 --
--- Lo que NO se debilita, que es la garantia que el resto del PR necesita:
--- NOT VALID exime solo a las filas que ya estaban. Desde este ALTER, todo
--- INSERT y todo UPDATE se comprueba, asi que el periodo de una fila NUEVA
--- tiene formato AAAA o AAAA-MM o la insercion falla.
+-- Lo que NOT VALID no hace es eximir a esas filas para siempre. Exime SOLO la
+-- validacion retroactiva del momento de crear la constraint. PostgreSQL
+-- comprueba un CHECK contra cada version NUEVA de la fila, asi que desde ese
+-- ALTER cualquier UPDATE sobre una fila legada falla con 23514, sin importar
+-- que columnas toque el UPDATE ni en que estado este la fila: hasta un
+-- `UPDATE ... SET id = id` sobre una fila ya cerrada en `hecho` falla. Solo el
+-- DELETE se escapa.
 --
--- Y no hay VALIDATE CONSTRAINT despues, a proposito: volveria a escanear esas
--- mismas filas y a fallar con el mismo 23514. Las filas anteriores conservan
--- `periodo = ''` de forma permanente. No se rellenan con un valor inventado
--- porque no existe ninguno correcto: `cola_trabajos` no tenia de donde
--- sacarlo, y derivarlo de `creado` fabricaria una instruccion de pago
--- plausible y falsa -el nucleo lee esta columna para saber que periodo
--- repartir-. '' no es un periodo y no puede confundirse con uno: significa
--- "fila anterior a la clave natural".
+-- El defecto que se cerraba asi era mas barato que el que se abria. Una
+-- migracion que muere es ruidosa y se atiende en el despliegue; una cola que
+-- acepta la migracion y despues se niega a avanzar no avisa a nadie. `Tomar`
+-- es un UPDATE que ordena por (disponible_en, id), y una fila legada lleva el
+-- disponible_en mas viejo de la tabla: el worker la elige siempre, el UPDATE
+-- revienta, la transaccion revierte y la fila se queda pendiente con los
+-- mismos intentos. La cola entera bloqueada, en silencio, de forma permanente.
+-- Y el alcance no se agotaba en `Tomar`: cualquier codigo futuro que
+-- actualizara una fila legada -un archivado, una limpieza, una metrica- fallaba
+-- igual, tambien sobre filas terminales en `hecho` o `fallido`.
 --
--- Aviso operativo sobre `cola_clave_natural`: una UNIQUE no admite NOT VALID.
--- Si al aplicar esta migracion hubiera DOS filas anteriores del mismo `tipo`,
--- las dos quedan en (tipo, '', 1) y la creacion del indice falla con 23505.
--- Eso si exige drenar la cola antes de desplegar. Falla en transaccion y con
--- un mensaje que nombra la clave duplicada, asi que no deja la base a medias.
+-- Con el centinela del backfill de arriba nada de eso hace falta: todas las
+-- filas, legadas y nuevas, cumplen el patron. La constraint se crea validada de
+-- una vez, y su escaneo retroactivo pasa a ser la red de seguridad -si alguna
+-- fila se hubiera quedado sin centinela, la migracion falla aqui, en el
+-- despliegue y dentro de la transaccion, en vez de envenenar la fila-.
+--
+-- Aviso operativo sobre `cola_clave_natural`: una UNIQUE no admite NOT VALID, y
+-- el centinela no cambia esa conclusion. Si al aplicar esta migracion hubiera
+-- DOS filas anteriores del mismo `tipo`, las dos quedan en (tipo, '0000', 1) y
+-- la creacion del indice falla con 23505. Ese sigue siendo el unico caso que
+-- exige drenar la cola antes de desplegar. Falla en transaccion y con un
+-- mensaje que nombra la clave duplicada, asi que no deja la base a medias.
 ALTER TABLE cola_trabajos
   ADD CONSTRAINT cola_periodo_valido
-    CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$') NOT VALID,
+    CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$'),
   ADD CONSTRAINT cola_corrida_positiva
     CHECK (corrida >= 1),
   ADD CONSTRAINT cola_clave_natural
