@@ -56,6 +56,7 @@ type Opciones struct {
 type API struct {
 	salud       Salud
 	auth        Autenticacion
+	catalogo    Catalogo
 	listadoONI  LecturaONI
 	publicarONI EscrituraONI
 	opts        Opciones
@@ -66,6 +67,7 @@ type API struct {
 // seguir creciendo parametro a parametro: el comentario de abajo lo pedia
 // a partir del tercero.
 type Casos struct {
+	Catalogo    Catalogo
 	ListadoONI  LecturaONI
 	PublicarONI EscrituraONI
 }
@@ -83,6 +85,7 @@ func Nueva(salud Salud, auth Autenticacion, casos Casos, opts Opciones) *API {
 	return &API{
 		salud:       salud,
 		auth:        auth,
+		catalogo:    casos.Catalogo,
 		listadoONI:  casos.ListadoONI,
 		publicarONI: casos.PublicarONI,
 		opts:        opts,
@@ -146,6 +149,20 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
+		})
+
+		// El catalogo maestro. Las cuatro rutas piden `administrador`,
+		// lectura incluida: el catalogo es el cubo contra el que resuelve
+		// todo el matching, y quien lo lee entero ve el repertorio completo
+		// de la sociedad. Abrirlo a `auditor` -que tiene lectura de todo- o
+		// recortarlo para `titular` con SoloPropiasObras (OE-6) son
+		// decisiones de los issues que traigan esos paneles, no de este.
+		protegido.Route("/obras", func(cat chi.Router) {
+			cat.Use(requiereRol(aplicacion.RolAdministrador))
+			cat.Get("/", a.buscarObras)
+			cat.Post("/", a.registrarObra)
+			cat.Get("/{id}", a.obraPorID)
+			cat.Patch("/{id}", a.actualizarObra)
 		})
 	})
 

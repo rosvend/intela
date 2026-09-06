@@ -10,12 +10,30 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
-// esClaveDuplicada detecta un 23505. Lo usa la publicacion ONI para
-// traducirlo a ErrYaPublicado: republicar el mismo periodo no es un fallo
-// de infraestructura, es reescribir el ancla de R-19.
+// codigoUnicidad es el SQLSTATE 23505, unique_violation.
+//
+// El numero esta en el estandar y PostgreSQL lo respeta; el TEXTO del mensaje
+// no, cambia con la version y con el idioma del servidor. Reconocer un
+// duplicado por substring del mensaje funciona hasta que alguien despliega con
+// otro locale.
+const codigoUnicidad = "23505"
+
+// esClaveDuplicada dice si el error es una violacion de clave unica.
+//
+// Sirve para que el adaptador traduzca "esta fila ya estaba" al vocabulario
+// del nucleo en vez de dejarlo subir como un fallo cualquiera. La alternativa
+// -un SELECT antes del INSERT- deja una ventana entre la consulta y la
+// escritura por la que cabe otra peticion: la unica comprobacion de unicidad
+// que no tiene carrera es la que hace la base.
+//
+// Lo usan la publicacion ONI (ErrYaPublicado: republicar reescribiria el
+// ancla de R-19) y el alta del catalogo (ErrObraDuplicada).
+//
+// errors.As y no una asercion de tipo: pgx envuelve el *pgconn.PgError cuando
+// el error sale de una operacion por lotes.
 func esClaveDuplicada(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return errors.As(err, &pgErr) && pgErr.Code == codigoUnicidad
 }
 
 // traducirError lleva un error de pgx al vocabulario de aplicacion.

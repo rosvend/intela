@@ -70,7 +70,11 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	// El mismo *Store cubre bitacora y ONI. CatalogoObras va por un
+	// envoltorio: BitacoraAuditoria.PorID y CatalogoObras.PorID no pueden
+	// convivir en el mismo tipo. El nucleo sigue viendo puertos separados.
 	casos := httpapi.Casos{
+		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{
 			ONI:         store,

@@ -36,4 +36,12 @@ var (
 	// ErrDireccionPublicacionAusente: no hay direccion fisica o electronica
 	// configurada, y RD 13.8.4.3 las exige en el listado.
 	ErrDireccionPublicacionAusente = errors.New("faltan las direcciones de publicacion ONI")
+
+	// ErrObraDuplicada: ya hay una obra con ese identificador en el catalogo.
+	//
+	// No es "no se pudo escribir" y no es "los datos son invalidos": el alta
+	// estaba bien formada y el catalogo ya la tiene. Distinguirlo es lo que
+	// deja responder 409 en vez de 500, y lo que hace comprobable el criterio
+	// "un segundo alta con el mismo identificador se rechaza".
+	ErrObraDuplicada = errors.New("ya existe una obra con ese identificador")
 )
