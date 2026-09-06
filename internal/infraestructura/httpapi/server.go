@@ -52,11 +52,12 @@ type Opciones struct {
 }
 
 // Casos de uso que el adaptador invoca. Agrupados porque ya no son uno:
-// autenticacion, el panel del titular y ExplicarCifra.
+// autenticacion, el panel del titular, ExplicarCifra y el catalogo maestro.
 type Casos struct {
 	Auth     Autenticacion
 	Ingresos ConsultaIngresos
 	Explicar ExplicarCifra
+	Catalogo Catalogo
 }
 
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
@@ -66,6 +67,7 @@ type API struct {
 	auth          Autenticacion
 	ingresos      ConsultaIngresos
 	explicarCifra ExplicarCifra
+	catalogo      Catalogo
 	opts          Opciones
 	log           *slog.Logger
 }
@@ -85,6 +87,7 @@ func Nueva(salud Salud, casos Casos, opts Opciones) *API {
 		auth:          casos.Auth,
 		ingresos:      casos.Ingresos,
 		explicarCifra: casos.Explicar,
+		catalogo:      casos.Catalogo,
 		opts:          opts,
 		log:           log,
 	}
@@ -152,6 +155,19 @@ func (a *API) Router() http.Handler {
 				aplicacion.RolAdministrador,
 			))
 			exp.Get("/explicar/{ref}", a.explicar)
+		})
+		// El catalogo maestro. Las cuatro rutas piden `administrador`,
+		// lectura incluida: el catalogo es el cubo contra el que resuelve
+		// todo el matching, y quien lo lee entero ve el repertorio completo
+		// de la sociedad. Abrirlo a `auditor` -que tiene lectura de todo- o
+		// recortarlo para `titular` con SoloPropiasObras (OE-6) son
+		// decisiones de los issues que traigan esos paneles, no de este.
+		protegido.Route("/obras", func(cat chi.Router) {
+			cat.Use(requiereRol(aplicacion.RolAdministrador))
+			cat.Get("/", a.buscarObras)
+			cat.Post("/", a.registrarObra)
+			cat.Get("/{id}", a.obraPorID)
+			cat.Patch("/{id}", a.actualizarObra)
 		})
 	})
 

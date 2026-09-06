@@ -102,6 +102,52 @@ type RepositorioRepertorio interface {
 	DeclaracionDeObra(ctx context.Context, obraID string) (repertorio.Declaracion, error)
 }
 
+// CatalogoObras es la escritura y la busqueda del catalogo maestro.
+//
+// Esta separado de [RepositorioRepertorio] y no fusionado con el, aunque las
+// dos toquen la tabla `obras`, porque son dos lecturas distintas del mismo
+// dato y el ADR 0003 pide un puerto por responsabilidad:
+//
+//   - [RepositorioRepertorio] sirve al motor de reparto. Devuelve [Obra], que
+//     es una PROYECCION: identidad mas EstadoDecl, el estado de la declaracion
+//     derivado de `declaraciones`. No sabe de coautores.
+//   - CatalogoObras es el ABM del catalogo. Habla en [repertorio.Obra], que es
+//     la ENTIDAD, con su identificador inmutable y su invariante. No sabe de
+//     `declaraciones`, y no debe saber: el catalogo no reparte.
+//
+// Fundirlas daria un tipo que a la vez lleva el invariante de construccion y
+// un campo derivado de otra tabla, y cada lectura tendria que decidir cual de
+// las dos mitades vale.
+//
+// Registrar devuelve [ErrObraDuplicada] si el identificador ya existe. Lo
+// decide la clave primaria, no un SELECT previo: entre la consulta y el INSERT
+// cabe otra peticion.
+//
+// Registrar y Actualizar son ATOMICOS por contrato -la obra y sus coautores
+// entran o no entran-. Una obra a medias, sin coautores, viola la invariante
+// de [repertorio.Obra] en cuanto alguien la lea de vuelta.
+type CatalogoObras interface {
+	Registrar(ctx context.Context, o repertorio.Obra) error
+	Actualizar(ctx context.Context, o repertorio.Obra) error
+	PorID(ctx context.Context, id string) (repertorio.Obra, error)
+	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
+}
+
+// FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
+// NO filtra, y los que vienen se combinan con Y.
+//
+// Titulo es parcial porque es el unico campo por el que se busca sin saber el
+// dato exacto -es el escalon 3 de la cascada, y la muestra muestra por que:
+// el titulo localizado y el original difieren en 16 de 59 filas de Caracol-.
+// Los otros tres son exactos: un genero, un anio y un IPI se conocen enteros
+// o no se conocen.
+type FiltroObras struct {
+	Titulo string
+	Genero string
+	IPI    string
+	Anio   int
+}
+
 // RepositorioIdentificacion cubre alias, identificadores globales y el
 // resultado del matching.
 //

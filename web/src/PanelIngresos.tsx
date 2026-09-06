@@ -33,8 +33,10 @@ export function PanelIngresos() {
   useEffect(() => {
     let vigente = true;
     setCargando(true);
-    api(rutaMisIngresos({ obra: "", fuente: "", periodo: "" }))
-      .then((r: ListaIngresos) => {
+    (api(
+      rutaMisIngresos({ obra: "", fuente: "", periodo: "" }),
+    ) as Promise<ListaIngresos>)
+      .then((r) => {
         if (vigente) setFilas(r.ingresos);
       })
       .catch((e: Error) => vigente && setError(e.message))
@@ -155,8 +157,8 @@ export function TablaIngresos({ filas }: { filas: Ingreso[] }) {
     setExplicacion(null);
     setErrorExplicar("");
     setCargandoExplicar(true);
-    api(rutaExplicar(ref))
-      .then((r: Explicacion) => {
+    (api(rutaExplicar(ref)) as Promise<Explicacion>)
+      .then((r) => {
         setExplicacion(r);
       })
       .catch((e: Error) => setErrorExplicar(e.message))
