@@ -122,6 +122,18 @@ func TestObtenerInexistente(t *testing.T) {
 // ErrObjetoYaExiste -"esos bytes ya estan congelados"- y la ingesta escribe un
 // acuse que certifica un SHA-256 que el objeto real no tiene.
 //
+// # Lo que esta prueba NO cubre, y no lo cubre ninguna otra
+//
+// Cubre la ATOMICIDAD del enlace, no la DURABILIDAD de los bytes. Los dos fsync
+// de Poner -el del fichero temporal y el de la entrada de directorio- se pueden
+// borrar los dos y la suite entera sigue verde; esta incluida. Comprobado
+// quitandolos y corriendo `go test -race -count=1 ./...` completo.
+//
+// El motivo esta en el doc de Poner, con el riesgo dimensionado: un fsync
+// compra que los bytes sobrevivan a un corte de corriente, y eso no se observa
+// desde el proceso que lo pide. Aqui se repite el aviso porque este es el
+// fichero que se lee cuando alguien pregunta "¿y esto quien lo prueba?".
+//
 // El fallo se provoca con RLIMIT_FSIZE, que es un EFBIG autentico del nucleo y
 // no un doble: lo que se prueba es el adaptador de verdad contra el sistema de
 // ficheros de verdad. Go deja SIGXFSZ sin efecto y el write devuelve el error,

@@ -98,6 +98,41 @@ func (d Disco) ruta(clave string) (string, error) {
 // os.Link y NO os.Rename: Rename SOBRESCRIBE en silencio, que es justo lo que
 // el ADR 0006 prohibe. Link falla con EEXIST y conserva la semantica que daba
 // el O_EXCL.
+//
+// # Hueco de cobertura conocido: los dos fsync no los defiende ninguna prueba
+//
+// Se deja escrito porque el verde de la suite NO es senal aqui, y quien venga
+// despues merece saberlo antes de "limpiar" dos lineas que parecen de mas.
+//
+// Medido, no supuesto: quitando `tmp.Sync()`, o quitando el `sincronizarDir`
+// del final, `go test -race -count=1 ./...` sigue en verde ENTERO, incluidas
+// las pruebas contra Postgres real. Las dos llamadas son hoy codigo que nadie
+// comprueba.
+//
+// No es un descuido de las pruebas, es lo que cuesta el fenomeno: lo que un
+// fsync compra es que los bytes sobrevivan a un CORTE DE CORRIENTE, y eso no se
+// observa desde dentro del proceso que lo pide. `fsync` devuelve nil en los dos
+// casos; la diferencia solo aparece despues del corte, en el arranque
+// siguiente. Provocarlo de verdad pide algo que `go test` sin privilegios no
+// alcanza -`dm-flakey` o una capa de bloques que descarte la cache, un
+// LD_PRELOAD que haga fallar la syscall, o una VM a la que se le quite la
+// alimentacion-, y un doble que solo compruebe "se llamo a Sync" no probaria
+// durabilidad: probaria que esta escrita la linea que se acaba de escribir.
+//
+// Lo que se pierde si alguien las quita, para que el riesgo quede dimensionado:
+// el objeto se enlaza y `GuardarReporte` escribe acto seguido el acuse en
+// `reportes` diciendo de que bytes sale cada cifra. Tras un corte, el acuse
+// -que si paso por el WAL de Postgres- puede sobrevivir a la evidencia que
+// certifica. Es el mismo estado que el orden de GuardarReporte existe para
+// impedir, alcanzado por el otro lado, y con el agravante de que no se recupera
+// solo: la resubida de los mismos bytes choca contra el UNIQUE (sha256, fuente)
+// y sale como ErrReporteDuplicado. La reproducibilidad a diez anos de `RD 16`
+// se apoya en estas dos llamadas.
+//
+// Donde deja de importar: Disco es el adaptador de DESARROLLO. En cuanto entre
+// el de MinIO o S3 que el ADR 0006 pide de verdad -con object-lock-, la
+// durabilidad la responde el almacen y su contrato, no este fichero. Hasta
+// entonces el hueco existe y esta aqui escrito.
 func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 	destino, err := d.ruta(clave)
 	if err != nil {
