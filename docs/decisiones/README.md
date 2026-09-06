@@ -25,7 +25,27 @@ proposito.
 | [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) | Sustituida por 0012 |
 | [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md) | Vigente |
 | [0013 La sesion es un token opaco en tabla, no un JWT](0013-sesiones-opacas-en-tabla.md) | Vigente |
+| [0014 La infraestructura de ejecucion es AWS serverless, descrita en Terraform](0014-infraestructura-serverless-en-aws.md) | Vigente |
 | [0016 El log de rechazos de la ingesta vive en una tabla aparte](0016-log-de-rechazos-en-tabla-aparte.md) | Vigente |
+
+El `0015` falta a proposito: es `0015-cola-de-trabajos-en-tabla-propia.md`, que llega con la PR #85
+y ocupa su fila cuando esa PR entre. Un hueco no rompe nada; un numero repetido si.
+
+Y por eso, para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el
+mismo numero y nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa,
+y el unico sintoma es esta tabla. Es peor que un conflicto normal, que al menos bloquea. El numero
+libre se busca sobre `main` y sobre las ramas abiertas:
+
+```
+git fetch origin --prune
+for b in $(git branch -r --format='%(refname:short)' | grep -v HEAD); do
+  git ls-tree "$b" --name-only -- docs/decisiones/
+done | sed 's|.*/||' | sort -u
+```
+
+Es la misma politica que la de las migraciones de `goose` (cabecera de
+`migrations/00002_catalogo_obras.sql`), con la diferencia de que alli la version repetida es un
+error duro en cada arranque y aqui no salta nada.
 
 El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.
 Documenta la intencion; lo que `0002` y `0003` prometen se hace cumplir sobre el codigo con
