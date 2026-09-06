@@ -46,6 +46,12 @@ on:
       AWS_PLAN_ROLE_ARN:
         description: Role assumed through OIDC to read the account and lock the state.
         required: false
+      BUDGET_NOTIFICATION_EMAILS:
+        description: >-
+          Comma-separated addresses for the cost alarm. A secret and not a
+          `vars.` entry because this repository is public and this workflow
+          posts the plan as a pull request comment.
+        required: false
 
 permissions:
   contents: read
@@ -142,11 +148,12 @@ jobs:
         env:
           ROLE: ${{ secrets.AWS_PLAN_ROLE_ARN }}
           BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
         run: |
           set -euo pipefail
-          if [ -z "${ROLE}" ] || [ -z "${BUCKET}" ]; then
+          if [ -z "${ROLE}" ] || [ -z "${BUCKET}" ] || [ -z "${EMAILS}" ]; then
             echo "listo=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No plan: AWS is not wired up yet. Run infra/bootstrap once, then set the TF_STATE_BUCKET variable and the AWS_PLAN_ROLE_ARN secret. See infra/README.md."
+            echo "::notice::No plan: AWS is not wired up yet. Run infra/bootstrap once, then set the TF_STATE_BUCKET variable and the AWS_PLAN_ROLE_ARN and BUDGET_NOTIFICATION_EMAILS secrets. See infra/README.md."
             {
               echo "### Terraform plan skipped"
               echo
@@ -202,10 +209,22 @@ jobs:
             -backend-config="key=envs/${{ inputs.environment }}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}"
 
+      # See the long note in deploy.yml: the address arrives as a secret, not a
+      # repository variable, because this repository is public and the plan
+      # this job produces is posted as a pull request comment. The variable is
+      # also marked `sensitive` in envs/*/variables.tf, so Terraform renders it
+      # as "(sensitive value)" in that comment.
       - name: Plan
         if: steps.pre.outputs.listo == 'true'
         working-directory: infra/envs/${{ inputs.environment }}
+        env:
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
         run: |
+          set -euo pipefail
+          TF_VAR_budget_notification_emails="$(jq -cR \
+            'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))' <<<"$EMAILS")"
+          export TF_VAR_budget_notification_emails
+
           terraform plan -input=false -no-color -lock-timeout=5m \
             -var "app_version=${GITHUB_SHA}" \
             -out=tfplan
