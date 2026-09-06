@@ -24,6 +24,27 @@ variable "github_repo" {
   type        = string
 }
 
+# The numeric ids below are what GitHub's immutable subject claim embeds. Both
+# or neither: with only one there is no second subject to build, and the trust
+# policy silently keeps trusting just the legacy spelling.
+#
+#   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+#
+# and confirm against the prefix the platform reports:
+#
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+variable "github_owner_id" {
+  description = "Numeric id of the owner, for GitHub's immutable subject claim. Null keeps only the legacy subject."
+  type        = number
+  default     = null
+}
+
+variable "github_repo_id" {
+  description = "Numeric id of the repository, for GitHub's immutable subject claim. Null keeps only the legacy subject."
+  type        = number
+  default     = null
+}
+
 variable "deploy_branch" {
   description = "Branch allowed to assume the deploy role. Matched exactly, not by prefix."
   type        = string

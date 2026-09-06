@@ -62,8 +62,15 @@ variable "domain_name" {
 }
 
 variable "budget_notification_emails" {
-  description = "Who gets told when spend crosses a threshold."
+  description = "Who gets told when spend crosses a threshold. Comes from the BUDGET_NOTIFICATION_EMAILS secret, never from a file in the repository."
   type        = list(string)
+
+  # This repository is PUBLIC and terraform.yml posts the plan as a pull
+  # request comment. Without this, the first plan would publish whoever's
+  # address this is, in a comment, on the open internet, for scrapers to find.
+  # `sensitive` makes Terraform render it as "(sensitive value)" everywhere it
+  # would otherwise print it.
+  sensitive = true
 }
 
 variable "monthly_budget_usd" {
