@@ -31,4 +31,12 @@ var (
 
 	// ErrPeriodoInvalido: el filtro de periodo no es YYYY ni YYYY-MM.
 	ErrPeriodoInvalido = errors.New("periodo invalido")
+
+	// ErrObraDuplicada: ya hay una obra con ese identificador en el catalogo.
+	//
+	// No es "no se pudo escribir" y no es "los datos son invalidos": el alta
+	// estaba bien formada y el catalogo ya la tiene. Distinguirlo es lo que
+	// deja responder 409 en vez de 500, y lo que hace comprobable el criterio
+	// "un segundo alta con el mismo identificador se rechaza".
+	ErrObraDuplicada = errors.New("ya existe una obra con ese identificador")
 )
