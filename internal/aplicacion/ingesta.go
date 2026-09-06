@@ -162,10 +162,24 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 			return Reporte{}, fmt.Errorf(
 				"comprobar la evidencia ya presente en %q: %w", rep.ClaveObjeto, errLeer)
 		}
-		if huella(ya) != rep.SHA256 {
+		// El mensaje lleva las DOS huellas, y los dos tamanos. La version
+		// anterior imprimia la esperada DOS veces sin darse cuenta -claveObjeto
+		// la deriva de ella, asi que la clave ya la contiene-, y se leia como
+		// "X no corresponde a X": confirmaba que algo iba mal y no daba un solo
+		// dato para averiguar el que. Lo que hace falta saber es que hay AHI.
+		//
+		// Con la huella real y el tamano, los dos casos que hay que separar se
+		// distinguen de un vistazo: un objeto CORTADO -menos bytes, otra huella-
+		// viene de una escritura que murio a medias o de una copia restaurada
+		// mal, y la clave se puede liberar; una huella distinta con el tamano
+		// intacto es contenido AJENO bajo esa clave, que es un problema de otro
+		// orden. La huella real es ademas con lo que se busca el objeto en el
+		// almacen para ver de donde salio.
+		if huellaReal := huella(ya); huellaReal != rep.SHA256 {
 			return Reporte{}, fmt.Errorf(
-				"%w: el objeto %q no corresponde a la huella %s",
-				ErrEvidenciaCorrupta, rep.ClaveObjeto, rep.SHA256)
+				"%w: bajo %q hay %d bytes de huella %s; la entrega son %d bytes de huella %s",
+				ErrEvidenciaCorrupta, rep.ClaveObjeto,
+				len(ya), huellaReal, rep.NBytes, rep.SHA256)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -350,6 +351,21 @@ func TestGuardarReporteNoCertificaUnObjetoQueNoEsElSuyo(t *testing.T) {
 		t.Fatalf(
 			"no puede quedar un acuse que certifique una huella que el objeto no tiene: %+v",
 			repo.reportes)
+	}
+
+	// El mensaje tiene que nombrar las DOS huellas. La esperada sola no sirve
+	// de nada: la clave del objeto se DERIVA de ella, asi que un mensaje que
+	// solo la lleve la dice dos veces y se lee como "X no corresponde a X". Lo
+	// que hace falta para depurar es que hay ahi de verdad.
+	esperada, real := huella(datos), huella(datos[:10])
+	if esperada == real {
+		t.Fatal("el fixture no sirve: el objeto desgarrado tiene que hashear distinto")
+	}
+	if !strings.Contains(err.Error(), real) {
+		t.Errorf("el mensaje no dice la huella REAL del objeto (%s): %v", real, err)
+	}
+	if !strings.Contains(err.Error(), esperada) {
+		t.Errorf("el mensaje no dice la huella esperada (%s): %v", esperada, err)
 	}
 }
 
