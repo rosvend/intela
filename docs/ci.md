@@ -44,7 +44,8 @@ if: always()
 | `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
 | `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
-| `Deploy (production)` | Andamio de release. No despliega | Solo en `push` a `main`, tras la compuerta |
+| `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
+| `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
 
 **Hoy las tres capas ya estan en `main`** (`go.mod`, `Dockerfile` y `web/`), asi que las etapas de
 Go y de frontend corren cuando el PR toca su capa, y los dos `Docker build` cuando toca los
@@ -151,10 +152,12 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 
 ## Lo que todavia no cubre
 
-- **El despliegue es un andamio.** Las imagenes se publican de verdad en GHCR al mergear, pero
-  `Deploy (production)` no despliega: falta decidir proveedor. Detalle en [`docs/cd.md`](cd.md).
 - **Sin arranque de imagen.** Las etapas de Docker comprueban que la imagen *construye*, no que
-  *arranca*.
+  *arranca*. Pesa menos desde el [ADR 0014](decisiones/0014-infraestructura-serverless-en-aws.md):
+  la imagen ya no es lo que se despliega, aunque `docker compose` siga dependiendo de ella.
+- **El `plan` de infraestructura necesita AWS.** `Infrastructure` valida siempre, pero su job de
+  `plan` solo corre si el secreto del rol esta cargado; sin el, la etapa reporta y no bloquea.
+  Detalle en [`docs/cd.md`](cd.md).
 - **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
   corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
   ejemplos resueltos de los propios reglamentos.
