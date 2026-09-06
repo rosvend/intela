@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -480,5 +481,264 @@ func TestGuardarMatchRechazaUnaObraQueNoExiste(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("se esperaba un error de clave foranea")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Integracion de aplicacion.ResolverUsos contra PostgreSQL real.
+//
+// RepositorioIngesta no tiene adaptador en main (#72 abierta): este issue no
+// lo implementa. ingestaDePrueba es un doble LOCAL solo para la lectura de
+// usos por periodo -lee del mismo pool con SQL directo-; todo lo que es
+// escritura y sondeo de este issue (Alias, GuardarAlias, ObraPorIDGlobal,
+// GuardarMatch) corre contra el Store real.
+
+// ingestaDePrueba satisface aplicacion.RepositorioIngesta. Solo UsosDePeriodo
+// tiene comportamiento: es el unico metodo que ResolverUsos llama.
+type ingestaDePrueba struct {
+	pool *pgxpool.Pool
+}
+
+func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string, string, string, int) error {
+	return nil
+}
+func (i ingestaDePrueba) GuardarUsos(context.Context, []aplicacion.UsoPersistido) error { return nil }
+func (i ingestaDePrueba) UsosSinResolver(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
+func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersistido, error) {
+	return aplicacion.UsoPersistido{}, nil
+}
+
+func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion.UsoPersistido, error) {
+	filas, err := i.pool.Query(ctx,
+		`SELECT u.id, u.reporte_id, u.fuente, u.titulo, u.ids_fuente, COALESCE(u.obra_id, ''),
+		        u.escalon, u.evidencia, u.oni, u.modalidad
+		   FROM usos u
+		   JOIN reportes r ON r.id = u.reporte_id
+		  WHERE r.periodo = $1
+		  ORDER BY u.id`, periodo)
+	if err != nil {
+		return nil, err
+	}
+	defer filas.Close()
+
+	var usos []aplicacion.UsoPersistido
+	for filas.Next() {
+		var u aplicacion.UsoPersistido
+		var modalidad string
+		if err := filas.Scan(&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
+			&u.Escalon, &u.Evidencia, &u.ONI, &modalidad); err != nil {
+			return nil, err
+		}
+		u.Modalidad = reparto.Modalidad(modalidad)
+		usos = append(usos, u)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, err
+	}
+	return usos, nil
+}
+
+// filaUso trae lo que un test de integracion necesita mirar de una fila de
+// usos, en un solo SELECT.
+type filaUso struct {
+	obraIDNulo bool
+	obraID     string
+	escalon    string
+	evidencia  string
+	oni        bool
+}
+
+func leerUso(t *testing.T, pool *pgxpool.Pool, id string) filaUso {
+	t.Helper()
+	var f filaUso
+	err := pool.QueryRow(t.Context(),
+		`SELECT obra_id IS NULL, COALESCE(obra_id, ''), escalon, evidencia, oni
+		   FROM usos WHERE id = $1`, id).
+		Scan(&f.obraIDNulo, &f.obraID, &f.escalon, &f.evidencia, &f.oni)
+	if err != nil {
+		t.Fatalf("leer el uso %q: %v", id, err)
+	}
+	return f
+}
+
+func contarAlias(t *testing.T, pool *pgxpool.Pool, fuente, tipo, valor string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM alias_obra WHERE fuente = $1 AND tipo_id = $2 AND valor = $3`,
+		fuente, tipo, valor).Scan(&n); err != nil {
+		t.Fatalf("contar alias: %v", err)
+	}
+	return n
+}
+
+// I1 (criterio 1 de la issue): una fila cuyo id de fuente ya esta en
+// alias_obra resuelve en escalon 1 con confianza maxima, sin trabajo difuso.
+func TestResolverUsosIntegracionCriterio1AliasExistente(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	if err := s.GuardarAlias(ctx, "caracol", "id_ficha", "871732", obraImdb, ""); err != nil {
+		t.Fatalf("sembrar alias: %v", err)
+	}
+
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	n, err := r.ResolverUsos(ctx, "2024")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("n = %d, se esperaban 2 (u-1 y u-2 comparten el par)", n)
+	}
+
+	for _, id := range []string{"u-1", "u-2"} {
+		f := leerUso(t, pool, id)
+		if f.obraID != obraImdb || f.escalon != identificacion.EscalonAlias || f.oni {
+			t.Fatalf("uso %q mal resuelto: %+v", id, f)
+		}
+		if f.evidencia != "alias caracol id_ficha=871732 -> obra-45" {
+			t.Fatalf("uso %q evidencia = %q", id, f.evidencia)
+		}
+	}
+}
+
+// I2 (criterio 2) + I3 (criterio 3, cortocircuito): una fila sin alias pero
+// con un identificador global que casa resuelve en escalon 2 y aprende el
+// alias; una fila nueva con el mismo id de fuente, en una corrida posterior,
+// resuelve en escalon 1 -y la fila vieja no se vuelve a tocar.
+func TestResolverUsosIntegracionCriterio2Y3(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("primera corrida: %v", err)
+	}
+
+	u1 := leerUso(t, pool, "u-1")
+	if u1.obraID != obraImdb || u1.escalon != identificacion.EscalonIDGlobal {
+		t.Fatalf("u-1 mal resuelto: %+v", u1)
+	}
+	if !strings.Contains(u1.evidencia, "imdb") {
+		t.Fatalf("la evidencia de u-1 no nombra imdb: %q", u1.evidencia)
+	}
+	if contarAlias(t, pool, "caracol", "id_ficha", "871732") != 1 {
+		t.Fatal("el escalon 2 deberia haber aprendido el alias")
+	}
+
+	// Un segundo uso del mismo programa, otra emision, en una corrida
+	// posterior: el alias que la corrida anterior aprendio tiene que
+	// cortocircuitarlo por escalon 1.
+	insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+		ID: "u-4", ReporteID: reporteUno, Fuente: "caracol",
+		Titulo: "La Casa de las Dos Palmas", IDsFuente: "id_ficha=871732",
+	})
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("segunda corrida: %v", err)
+	}
+
+	u4 := leerUso(t, pool, "u-4")
+	if u4.obraID != obraImdb || u4.escalon != identificacion.EscalonAlias {
+		t.Fatalf("u-4 deberia cortocircuitar por alias: %+v", u4)
+	}
+
+	// La fila vieja no se re-procesa: sigue como la dejo el escalon 2.
+	u1otraVez := leerUso(t, pool, "u-1")
+	if u1otraVez != u1 {
+		t.Fatalf("u-1 se volvio a tocar: antes %+v, ahora %+v", u1, u1otraVez)
+	}
+}
+
+// I4 (criterio 4): un canal/programa fuera de repertorio se excluye antes de
+// la cascada y no se marca ONI -queda exactamente como llego.
+func TestResolverUsosIntegracionCriterio4Repertorio(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	// El alias SI pegaria si la fuente no estuviera excluida: la prueba real
+	// es que la exclusion corre antes y ni lo intenta.
+	if err := s.GuardarAlias(ctx, "canal-deportes", "id_ficha", "999", obraImdb, ""); err != nil {
+		t.Fatalf("sembrar alias de canal-deportes: %v", err)
+	}
+	insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+		ID: "u-5", ReporteID: reporteUno, Fuente: "canal-deportes",
+		Titulo: "Gol Caracol", IDsFuente: "id_ficha=999",
+	})
+
+	r := aplicacion.ResolverUsos{
+		Usos: ingestaDePrueba{pool: pool}, Identificacion: s,
+		FueraDeRepertorio: identificacion.FuentesExcluidas{"canal-deportes"},
+	}
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+
+	u5 := leerUso(t, pool, "u-5")
+	if u5.escalon != "pendiente" || !u5.obraIDNulo || !u5.oni {
+		t.Fatalf("una fila excluida no puede cambiar de estado: %+v", u5)
+	}
+	if contarAlias(t, pool, "canal-deportes", "id_ficha", "999") != 1 {
+		t.Fatal("la exclusion no puede ganar ni perder filas de alias_obra")
+	}
+}
+
+// I5 (criterio 5): lo que no resuelve queda intacto, como insumo del difuso.
+func TestResolverUsosIntegracionCriterio5NoResuelto(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+		ID: "u-6", ReporteID: reporteUno, Fuente: "caracol",
+		Titulo: "Obra sin catalogar", IDsFuente: "id_ficha=555\nimdb=tt9999999",
+	})
+
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+
+	u6 := leerUso(t, pool, "u-6")
+	if u6.escalon != "pendiente" || !u6.obraIDNulo {
+		t.Fatalf("una fila sin match no puede resolver: %+v", u6)
+	}
+	if contarAlias(t, pool, "caracol", "id_ficha", "555") != 0 {
+		t.Fatal("una fila que no resolvio no puede aprender un alias")
+	}
+}
+
+// I6: re-ejecutar sobre un periodo ya corrido no cambia nada y no duplica.
+func TestResolverUsosIntegracionEsIdempotente(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+
+	n1, err := r.ResolverUsos(ctx, "2024")
+	if err != nil {
+		t.Fatalf("primera corrida: %v", err)
+	}
+	if n1 == 0 {
+		t.Fatal("la primera corrida deberia haber resuelto algo")
+	}
+	u1 := leerUso(t, pool, "u-1")
+	u2 := leerUso(t, pool, "u-2")
+	alias := contarAlias(t, pool, "caracol", "id_ficha", "871732")
+
+	n2, err := r.ResolverUsos(ctx, "2024")
+	if err != nil {
+		t.Fatalf("segunda corrida: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("la segunda corrida resolvio %d filas, se esperaban 0: no quedan pendientes", n2)
+	}
+	if got := leerUso(t, pool, "u-1"); got != u1 {
+		t.Fatalf("u-1 cambio en la re-corrida: antes %+v, ahora %+v", u1, got)
+	}
+	if got := leerUso(t, pool, "u-2"); got != u2 {
+		t.Fatalf("u-2 cambio en la re-corrida: antes %+v, ahora %+v", u2, got)
+	}
+	if got := contarAlias(t, pool, "caracol", "id_ficha", "871732"); got != alias {
+		t.Fatalf("alias_obra duplico filas: antes %d, ahora %d", alias, got)
 	}
 }
