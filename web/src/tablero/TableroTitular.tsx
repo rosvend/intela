@@ -1,6 +1,6 @@
 import { Usuario } from "../sesion";
 import { Tarjeta } from "./Tarjeta";
-import { formatearEntero } from "./formato";
+import { formatearEntero, formatearImporte } from "./formato";
 import { useDashboard } from "./useDashboard";
 
 /**
@@ -51,7 +51,7 @@ export default function TableroTitular({ usuario }: { usuario: Usuario }) {
         >
           {(datos) => (
             <>
-              <p className="tarjeta-valor">{datos.neto}</p>
+              <p className="tarjeta-valor">{formatearImporte(datos.neto)}</p>
               <p className="muted">
                 {datos.periodo}
                 {datos.obras > 0

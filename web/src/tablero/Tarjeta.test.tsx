@@ -57,4 +57,10 @@ describe("Tarjeta", () => {
     const enlace = screen.getByRole("link");
     expect(enlace.getAttribute("href")).toBe("/anomalias");
   });
+
+  it("un destino que es solo fragmento usa un ancla nativa", () => {
+    montar(listo, "#ingresos");
+    const enlace = screen.getByRole("link");
+    expect(enlace.getAttribute("href")).toBe("#ingresos");
+  });
 });

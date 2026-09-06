@@ -54,6 +54,20 @@ describe("useRecurso", () => {
     });
   });
 
+  it("un 403 termina en error, no en ausente", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json({ error: "el reglamento no te deja ver esto" }, 403),
+    );
+
+    const { result } = renderHook(() => useRecurso("/api/x"));
+
+    await waitFor(() => expect(result.current.tipo).toBe("error"));
+    expect(result.current).toEqual({
+      tipo: "error",
+      mensaje: "el reglamento no te deja ver esto",
+    });
+  });
+
   it("un fallo de red se trata como backend ausente", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
 

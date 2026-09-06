@@ -26,6 +26,8 @@ export function Tarjeta<T>({
   mensajeAusente = "Sin datos todavía",
   children,
 }: Props<T>) {
+  const etiqueta = etiquetaEnlace ?? `Ver ${titulo.toLowerCase()}`;
+
   return (
     <article className="tarjeta">
       <h2 className="tarjeta-etiqueta">{titulo}</h2>
@@ -33,13 +35,22 @@ export function Tarjeta<T>({
       <div className="tarjeta-cuerpo">
         {cuerpo(recurso, mensajeAusente, children)}
       </div>
-      {to && (
-        <Link className="tarjeta-enlace" to={to}>
-          {etiquetaEnlace ?? `Ver ${titulo.toLowerCase()}`}
-        </Link>
-      )}
+      {to &&
+        (esFragmento(to) ? (
+          <a className="tarjeta-enlace" href={to}>
+            {etiqueta}
+          </a>
+        ) : (
+          <Link className="tarjeta-enlace" to={to}>
+            {etiqueta}
+          </Link>
+        ))}
     </article>
   );
+}
+
+function esFragmento(to: string): boolean {
+  return to.startsWith("#");
 }
 
 function cuerpo<T>(

@@ -1,8 +1,9 @@
 /**
  * Formas que el tablero espera de los conteos. Cada endpoint llega con el
  * PR del modulo que lo posee (ingesta, repertorio, ONI, corridas,
- * liquidaciones). Hasta entonces el hook trata 404/501/red como "ausente"
- * y la tarjeta muestra el vacio, nunca un crash (issue #31).
+ * liquidaciones). Hasta entonces el hook trata 404/501/502/503/red como
+ * "ausente" y la tarjeta muestra el vacio, nunca un crash (issue #31).
+ * Un 403 no entra: es denegacion de permisos y la tarjeta lo muestra.
  *
  * No se anaden a openapi.yaml todavia: un contrato que promete rutas que
  * devuelven 404 es peor que uno corto.

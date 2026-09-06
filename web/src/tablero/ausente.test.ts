@@ -8,6 +8,11 @@ describe("esAusente", () => {
     expect(esAusente(new ApiError(501, "no implementado"))).toBe(true);
   });
 
+  it("un 502 o 503 del proxy es la misma ausencia que un ErrorDeRed", () => {
+    expect(esAusente(new ApiError(502, "bad gateway"))).toBe(true);
+    expect(esAusente(new ApiError(503, "service unavailable"))).toBe(true);
+  });
+
   it("un fallo de red no tumba la tarjeta: el backend esta ausente", () => {
     expect(esAusente(new ErrorDeRed(new TypeError("Failed to fetch")))).toBe(
       true,
@@ -16,6 +21,12 @@ describe("esAusente", () => {
 
   it("un 500 es un error de verdad, no un vacio", () => {
     expect(esAusente(new ApiError(500, "la base esta caida"))).toBe(false);
+  });
+
+  it("un 403 es denegacion de permisos, no 'sin datos'", () => {
+    expect(
+      esAusente(new ApiError(403, "el reglamento no te deja ver esto")),
+    ).toBe(false);
   });
 
   it("un 401 no se clasifica aqui: api() ya redirige al login", () => {
