@@ -148,13 +148,37 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 	rep.ID = idReporte(fuente, rep.SHA256)
 	rep.ClaveObjeto = claveObjeto(rep.SHA256)
 
-	// ErrObjetoYaExiste no es un fallo: la clave es la huella, asi que lo que
-	// ya hay bajo ella son estos mismos bytes. Puede venir de una resubida
-	// -que la fila de abajo rechazara-, de otra fuente que entrego lo mismo, o
-	// de un intento anterior que murio entre el Poner y el INSERT.
-	if err := i.Almacen.Poner(ctx, rep.ClaveObjeto, datos); err != nil &&
-		!errors.Is(err, ErrObjetoYaExiste) {
-		return Reporte{}, fmt.Errorf("guardar los bytes crudos de %q: %w", fuente, err)
+	// ErrObjetoYaExiste no es un fallo por si mismo: la clave es la huella, asi
+	// que lo que ya hay bajo ella DEBERIA ser estos mismos bytes. Puede venir
+	// de una resubida -que la fila de abajo rechazara-, de otra fuente que
+	// entrego lo mismo, o de un intento anterior que murio entre el Poner y el
+	// INSERT.
+	//
+	// Pero ese "deberia" lo garantiza quien ESCRIBIO, no quien lee. Un objeto
+	// desgarrado por un fallo anterior, una copia restaurada a medias o un
+	// almacen que no escriba atomicamente dejan bajo la clave contenido que no
+	// hashea a rep.SHA256, y sin comprobarlo el acuse de abajo lo certificaria:
+	// una fila de `reportes` que dice de que bytes salio una cifra, apuntando a
+	// unos bytes que no son. Asi que "ya estaba" solo autoriza a seguir si lo
+	// que hay son ESTOS bytes.
+	//
+	// Cuesta una lectura, y solo en el camino de colision, que es el raro. Se
+	// hace aqui y no en el adaptador a proposito: el dia que entre MinIO o S3
+	// la comprobacion sigue siendo cierta sin que nadie tenga que acordarse.
+	if err := i.Almacen.Poner(ctx, rep.ClaveObjeto, datos); err != nil {
+		if !errors.Is(err, ErrObjetoYaExiste) {
+			return Reporte{}, fmt.Errorf("guardar los bytes crudos de %q: %w", fuente, err)
+		}
+		ya, errLeer := i.Almacen.Obtener(ctx, rep.ClaveObjeto)
+		if errLeer != nil {
+			return Reporte{}, fmt.Errorf(
+				"comprobar la evidencia ya presente en %q: %w", rep.ClaveObjeto, errLeer)
+		}
+		if huella(ya) != rep.SHA256 {
+			return Reporte{}, fmt.Errorf(
+				"%w: el objeto %q no corresponde a la huella %s",
+				ErrEvidenciaCorrupta, rep.ClaveObjeto, rep.SHA256)
+		}
 	}
 
 	if err := i.Reportes.GuardarReporte(

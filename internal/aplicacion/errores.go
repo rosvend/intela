@@ -61,4 +61,19 @@ var (
 	// que el nucleo no tenga que reconocer los errores del sistema de ficheros
 	// ni los de S3.
 	ErrObjetoYaExiste = errors.New("objeto ya existe")
+
+	// ErrEvidenciaCorrupta: bajo la clave hay bytes que no son los que dice la
+	// huella.
+	//
+	// No es un fallo de escritura ni un duplicado, y por eso no puede compartir
+	// centinela con ninguno de los dos: es que la boveda YA tenia contenido
+	// bajo esa clave y ese contenido no hashea a lo que el acuse iba a
+	// certificar. Un objeto desgarrado por un fallo anterior, una copia
+	// restaurada a medias o un almacen que no escriba atomicamente llegan asi.
+	//
+	// Aceptarlo dejaria una fila en `reportes` certificando un SHA-256 que el
+	// objeto real no tiene: una cifra que dice de donde salio y no se puede
+	// comprobar, que es exactamente lo que el ADR 0006 existe para impedir. El
+	// handler de #29 tampoco lo puede mandar a un 500 generico.
+	ErrEvidenciaCorrupta = errors.New("evidencia corrupta")
 )

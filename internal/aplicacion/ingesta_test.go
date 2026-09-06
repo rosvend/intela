@@ -323,6 +323,59 @@ func TestGuardarReporteCompletaUnaSubidaAMedias(t *testing.T) {
 	}
 }
 
+// H4b: "ya estaba" no es lo mismo que "son estos bytes".
+//
+// La clave es la huella, asi que lo que hay bajo ella DEBERIA ser el contenido
+// que se esta subiendo. Pero eso lo garantiza quien escribio, no quien lee: un
+// objeto desgarrado por un fallo anterior, una copia restaurada a medias o un
+// almacen que no escriba atomicamente dejan ahi otra cosa. Sin comprobarlo, el
+// acuse certifica un SHA-256 que el objeto real no tiene, y no se recupera
+// solo: la resubida choca con ErrReporteDuplicado.
+//
+// Es independiente del adaptador a proposito. Aunque Disco ya escriba
+// atomicamente, esto sigue siendo cierto el dia que entre MinIO o S3.
+func TestGuardarReporteNoCertificaUnObjetoQueNoEsElSuyo(t *testing.T) {
+	ingesta, repo, almacen := nuevaIngesta()
+	datos := []byte("titulo,emisiones\nLa Casa,3\n")
+
+	// Objeto DESGARRADO bajo la clave: los primeros bytes de la entrega y nada
+	// mas, que es lo que deja una escritura que murio a medias.
+	almacen.objetos[claveObjeto(huella(datos))] = datos[:10]
+
+	_, err := ingesta.GuardarReporte(t.Context(), "caracol", "2026-01", datos)
+	if !errors.Is(err, ErrEvidenciaCorrupta) {
+		t.Fatalf("se esperaba ErrEvidenciaCorrupta, se obtuvo %v", err)
+	}
+	if len(repo.reportes) != 0 {
+		t.Fatalf(
+			"no puede quedar un acuse que certifique una huella que el objeto no tiene: %+v",
+			repo.reportes)
+	}
+}
+
+// La contrapartida de la prueba de arriba, y la razon de que la comprobacion
+// sea por HUELLA y no por "habia algo": el huerfano legitimo -bytes correctos,
+// acuse que falto- tiene que seguir completandose. Es lo que ya comprueba
+// TestGuardarReporteCompletaUnaSubidaAMedias; aqui se fija que la verificacion
+// nueva no le quita esa propiedad ni siquiera cuando el objeto lo puso otra
+// fuente.
+func TestGuardarReporteAceptaElObjetoAjenoSiEsElMismoContenido(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+	datos := []byte("titulo,vistas\nLa Casa,7\n")
+
+	if _, err := ingesta.GuardarReporte(t.Context(), "caracol", "2026-01", datos); err != nil {
+		t.Fatalf("primera fuente: %v", err)
+	}
+	// La segunda fuente encuentra el objeto ya puesto por la primera. Los bytes
+	// son los mismos, asi que la verificacion pasa y la entrega se acepta.
+	if _, err := ingesta.GuardarReporte(t.Context(), "netflix", "2026-01", datos); err != nil {
+		t.Fatalf("los mismos bytes de otra fuente son una entrega valida: %v", err)
+	}
+	if len(repo.reportes) != 2 {
+		t.Fatalf("se esperaban 2 acuses, hay %d", len(repo.reportes))
+	}
+}
+
 // La estructura minima se comprueba ANTES de tocar la boveda: un periodo mal
 // formateado lo rechazaria el CHECK de la tabla despues de haber escrito un
 // objeto que ya no se puede borrar.

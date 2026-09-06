@@ -80,25 +80,90 @@ func (d Disco) ruta(clave string) (string, error) {
 // congelados" -sea por una resubida, por otra fuente que entrego lo mismo, o
 // por un intento anterior que murio antes de dejar el acuse-, y ninguna de las
 // tres es un fallo de escritura.
+//
+// # Todo o nada, y no solo "no sobrescribe"
+//
+// Los bytes NO se escriben sobre el destino. Van a un temporal del MISMO
+// directorio, se sincronizan, y solo entonces se enlaza el resultado sobre la
+// clave definitiva.
+//
+// El O_EXCL de antes daba "no sobrescribe" pero no daba "todo o nada": el
+// fichero se creaba al abrirlo y los bytes se escribian despues, asi que un
+// Write o un Sync que fallara a medias dejaba el destino OCUPADO por un objeto
+// truncado. Y como la clave es la huella, el siguiente intento con los mismos
+// bytes recibia ese resto como ErrObjetoYaExiste -o sea, como "esos bytes ya
+// estan congelados"- y la ingesta lo certificaba. Medido con RLIMIT_FSIZE en
+// TestPonerNoDejaObjetoTruncadoSiFallaLaEscritura.
+//
+// os.Link y NO os.Rename: Rename SOBRESCRIBE en silencio, que es justo lo que
+// el ADR 0006 prohibe. Link falla con EEXIST y conserva la semantica que daba
+// el O_EXCL.
 func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 	destino, err := d.ruta(clave)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(destino), 0o750); err != nil {
+	dir := filepath.Dir(destino)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(destino, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
-	if errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("%w: %q", aplicacion.ErrObjetoYaExiste, clave)
+
+	// En el mismo directorio que el destino a proposito: os.Link no cruza
+	// sistemas de ficheros, y un temporal en /tmp podria estar en otro.
+	tmp, err := os.CreateTemp(dir, ".parcial-*")
+	if err != nil {
+		return err
 	}
+	// Si algo falla antes del Link, esto se lleva el temporal y el destino no
+	// llega a existir. Si el Link va bien, esto solo quita el NOMBRE temporal:
+	// el contenido se queda bajo la clave definitiva, que es el otro enlace.
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	// CreateTemp abre con 0600; el objeto definitivo lleva los mismos permisos
+	// que le daba el OpenFile de antes.
+	if err := tmp.Chmod(0o640); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(datos); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	// El Close explicito y no solo el del defer: en algunos sistemas de
+	// ficheros el error de escritura diferida aparece aqui y en ningun otro
+	// sitio, y tragarselo seria enlazar un objeto incompleto.
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Link(tmp.Name(), destino); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%w: %q", aplicacion.ErrObjetoYaExiste, clave)
+		}
+		return err
+	}
+
+	// El Sync de arriba es el del FICHERO; este es el de su ENTRADA de
+	// directorio, y hacen falta los dos. Un fsync del fichero no arrastra el
+	// directorio que lo nombra: sin esto, un corte tras el COMMIT puede dejar
+	// el acuse de `reportes` apuntando a un objeto que el sistema de ficheros
+	// nunca llego a publicar. Es el mismo estado que el orden de GuardarReporte
+	// existe para impedir, alcanzado por el otro lado.
+	return sincronizarDir(dir)
+}
+
+// sincronizarDir fuerza a disco la entrada de directorio de lo que se acaba de
+// enlazar.
+func sincronizarDir(dir string) error {
+	f, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := f.Write(datos); err != nil {
-		return err
-	}
 	return f.Sync()
 }
 

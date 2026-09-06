@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -592,6 +594,53 @@ func TestBorrarUnReporteArrastraSusRechazos(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("quedaron %d rechazos huerfanos", n)
+	}
+}
+
+// H4b contra la base de verdad: un objeto desgarrado bajo la clave NO puede
+// acabar certificado por una fila de `reportes`.
+//
+// La regresion vive aqui y no solo en `aplicacion` porque el dano se veia en la
+// TABLA: una fila de acuse declarando un SHA-256 que el objeto real no tiene.
+// Eso es evidencia falsa (ADR 0006) y ademas no se recupera sola -la resubida
+// choca con el UNIQUE (sha256, fuente) y sale ErrReporteDuplicado-, asi que
+// contra un doble en memoria no se ve lo que de verdad importa: que la fila no
+// llegue a existir.
+//
+// El objeto truncado se planta a mano, que es como queda tras un fallo de
+// escritura, una copia restaurada a medias o un kill -9.
+func TestGuardarReporteNoCertificaUnObjetoTruncadoDeLaBoveda(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	dir := t.TempDir()
+	almacen := objetos.Disco{Dir: dir}
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: almacen}
+
+	fixture := []byte("Titulo,ID_Ficha,Fecha,Duracion\n" +
+		"La Casa de las Dos Palmas,1234,20260115,52\n")
+
+	// La clave que le va a tocar a esta entrega, ocupada por un resto truncado.
+	sha := sha256.Sum256(fixture)
+	clave := "reportes/" + hex.EncodeToString(sha[:])
+	if err := almacen.Poner(ctx, clave, fixture[:20]); err != nil {
+		t.Fatalf("plantar el objeto desgarrado: %v", err)
+	}
+
+	_, err := ingesta.GuardarReporte(ctx, "caracol-desgarrado", "2026-01", fixture)
+	if !errors.Is(err, aplicacion.ErrEvidenciaCorrupta) {
+		t.Fatalf("se esperaba ErrEvidenciaCorrupta, se obtuvo %v", err)
+	}
+
+	// Lo que cierra el agujero: en la tabla no quedo acuse ninguno.
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM reportes WHERE fuente = $1`, "caracol-desgarrado").
+		Scan(&n); err != nil {
+		t.Fatalf("contar reportes: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("quedo %d acuse certificando una huella que el objeto no tiene", n)
 	}
 }
 
