@@ -23,8 +23,9 @@ infra/
 | Red | VPC, dos subredes privadas, endpoint S3 gateway | $0 |
 | Vigilancia de gasto | AWS Budgets filtrado por `Project=intela` | $0 |
 
-**RDS es lo unico que factura sin trafico.** Sin NAT Gateway, sin balanceador y sin VPC interface
-endpoints, que costarian $7.20/mes cada uno.
+**RDS es el unico coste fijo mensual.** S3 tambien cobra sin trafico, pero por almacenamiento, asi
+que empieza en centimos y crece con las parrillas guardadas, no con el calendario. Sin NAT Gateway,
+sin balanceador y sin VPC interface endpoints, que costarian $7.20/mes cada uno.
 
 ## Arrancar en una cuenta nueva
 
@@ -36,16 +37,25 @@ terraform init
 AWS_PROFILE=nheo-roy terraform apply
 ```
 
-Imprime tres cosas. Con ellas:
+Imprime tres valores: el bucket de estado y los ARN de los dos roles. Cargarlos en GitHub asi
+—**el sitio importa, y no es el mismo para los dos roles**:
 
-2. **Variable de repositorio** `TF_STATE_BUCKET` = el bucket que imprimio.
-3. **Secretos del entorno `production`** (de entorno, no de repositorio):
-   `AWS_PLAN_ROLE_ARN` y `AWS_DEPLOY_ROLE_ARN`.
-4. **Consola de Billing -> Cost allocation tags -> activar `Project`.** Solo se puede desde la
-   cuenta de gestion, y hasta que se haga el presupuesto no mide nada.
+| Valor | Donde va | Por que ahi |
+| ----- | -------- | ----------- |
+| bucket de estado | Variable de **repositorio** `TF_STATE_BUCKET` | La leen el plan y el despliegue |
+| ARN del rol de plan | Secreto de **repositorio** `AWS_PLAN_ROLE_ARN` | Un secreto de entorno solo lo ve un job que declara ese entorno, y el job del plan no puede declarar `production` sin dejar cada PR esperando la aprobacion de despliegue. El rol es de solo lectura y su confianza OIDC solo admite `…:pull_request` |
+| ARN del rol de despliegue | Secreto del **entorno `production`** `AWS_DEPLOY_ROLE_ARN` | Es el que escribe en la cuenta, asi que va detras de la compuerta. `deploy.yml` declara `environment: production` y lo resuelve ahi; `ci.yml` se lo pasa con `secrets: inherit` |
+
+Poner el rol de plan como secreto de entorno lo deja invisible y el plan se salta reportando verde,
+que es peor que fallar.
+
+Y un paso manual que no sale del `apply`:
+
+**Consola de Billing -> Cost allocation tags -> activar `Project`.** Solo se puede desde la cuenta
+de gestion, y hasta que se haga, el presupuesto no mide nada.
 
 ```bash
-# 5. El entorno.
+# El entorno.
 cd infra/envs/nheo
 cp backend.hcl.example backend.hcl             # bucket del paso 1
 cp terraform.tfvars.example terraform.tfvars   # editar

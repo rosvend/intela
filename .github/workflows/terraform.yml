@@ -14,6 +14,14 @@
 # only add ways for it to miss one. `index("delete")` catches a replacement too,
 # because a replacement is a delete and a create.
 #
+# ONE TYPE IS EXEMPT: aws_lambda_invocation. It is not infrastructure that holds
+# anything -- it is the record of "the function was called", and its `triggers`
+# are ForceNew, so feeding it the commit SHA replaces it on EVERY push by
+# design. That is the point: re-running the migration is what a deploy IS.
+# Without this exemption the guard fires on its own migration step, and the
+# second push to `main` is refused forever. Nothing is destroyed by replacing
+# it; the schema lives in RDS, which is not exempt.
+#
 # Note the plan needs the Lambda zips: modules/go-lambda hashes the artifact, so
 # without `make lambda` the plan cannot even be evaluated.
 
@@ -211,8 +219,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # aws_lambda_invocation is exempt: see the note at the top of this
+          # file. It is replaced on every push by design and destroys nothing.
           destruye=$(terraform show -json tfplan \
-            | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | .address')
+            | jq -r '.resource_changes[]?
+                     | select(.type != "aws_lambda_invocation")
+                     | select(.change.actions | index("delete"))
+                     | .address')
 
           if [ -z "${destruye}" ]; then
             echo "destroys=" >> "$GITHUB_OUTPUT"

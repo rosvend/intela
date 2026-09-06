@@ -322,8 +322,14 @@ jobs:
       push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
   # Infrastructure. `validate` inside this stage needs no credentials and always
-  # runs; `plan` only runs on a pull request, where a human is there to read the
+  # runs; `plan` runs on a pull request, where a human is there to read the
   # result and where the destroy guard has something to refuse.
+  #
+  # It ALSO runs on workflow_dispatch, and that is the only way the destroy
+  # guard's escape hatch is reachable: `confirm_destroy` is a dispatch input, so
+  # a run that cannot be dispatched can never carry it. Planning only on
+  # pull_request made the documented "re-run manually with confirm_destroy: yes"
+  # a promise with nothing behind it.
   #
   # A push to `main` skips the plan on purpose: the deploy job applies, and an
   # apply plans anyway. Running it twice would only widen the window in which
@@ -339,8 +345,14 @@ jobs:
       pull-requests: write # to post the plan
     with:
       environment: nheo
-      plan: ${{ github.event_name == 'pull_request' }}
+      plan: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
       confirm_destroy: ${{ inputs.confirm_destroy || '' }}
+    # AWS_PLAN_ROLE_ARN is a REPOSITORY secret, not an environment one, and that
+    # is deliberate. An environment secret is invisible to a job that does not
+    # declare `environment:`, and this job must not declare `production`: every
+    # pull request would then sit waiting for the deploy approval just to read a
+    # plan. The role it names is read-only and its OIDC trust admits only
+    # `...:pull_request`, so the approval gate would buy nothing anyway.
     secrets:
       AWS_PLAN_ROLE_ARN: ${{ secrets.AWS_PLAN_ROLE_ARN }}
 
@@ -429,5 +441,17 @@ jobs:
       backend-image: ${{ needs.container-backend.outputs.image }}
       frontend-image: ${{ needs.container-frontend.outputs.image }}
       confirm_destroy: ${{ inputs.confirm_destroy || '' }}
-    secrets:
-      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+    # `inherit`, and not an explicit `AWS_DEPLOY_ROLE_ARN: ${{ secrets.… }}`.
+    #
+    # That deploy role IS an environment secret of `production` -- it is the one
+    # that can write to the account, so it belongs behind the approval gate. But
+    # an explicit mapping is evaluated HERE, in a job that declares no
+    # `environment:`, where an environment secret resolves to the empty string:
+    # the rollout would authenticate with nothing and fail at the OIDC step for
+    # a reason nothing in the log explains.
+    #
+    # Adding `environment: production` to this job instead would ask for the
+    # approval twice, because deploy.yml's own job already declares it. With
+    # `inherit`, that inner job resolves the secret in its own environment,
+    # which is where the gate already lives.
+    secrets: inherit

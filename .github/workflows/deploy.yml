@@ -201,6 +201,12 @@ jobs:
 
       # The same guard the pull request had, applied again here. A plan is only
       # a promise; this is the last point before it is kept.
+      #
+      # Same aws_lambda_invocation exemption, and for the same reason: its
+      # `triggers` carry the commit SHA and are ForceNew, so it is replaced on
+      # every deploy on purpose. Without the exemption the second push to `main`
+      # would be refused by the guard protecting it. terraform.yml carries the
+      # long version of this note.
       - name: Destroy guard
         working-directory: infra/envs/${{ inputs.terraform-environment }}
         env:
@@ -209,7 +215,10 @@ jobs:
           set -euo pipefail
 
           destruye=$(terraform show -json tfplan \
-            | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | .address')
+            | jq -r '.resource_changes[]?
+                     | select(.type != "aws_lambda_invocation")
+                     | select(.change.actions | index("delete"))
+                     | .address')
 
           if [ -z "${destruye}" ]; then
             echo "No resource is destroyed by this plan."
