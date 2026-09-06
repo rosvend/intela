@@ -75,8 +75,8 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
     let vigente = true;
     setRecurso({ tipo: "cargando" });
 
-    api(path)
-      .then((datos: T) => {
+    (api(path) as Promise<T>)
+      .then((datos) => {
         if (vigente) setRecurso({ tipo: "listo", datos });
       })
       .catch((error: unknown) => {
