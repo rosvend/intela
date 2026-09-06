@@ -18,7 +18,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -26,6 +28,22 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
 )
+
+// ordenesPermitidas es lo que esta funcion acepta hacer. Todo lo demas se
+// rechaza sin abrir la conexion.
+//
+// goose entiende bastante mas -`down`, `down-to`, `reset`- y `reset` tira el
+// esquema entero. Esta funcion es alcanzable por cualquiera que tenga
+// lambda:InvokeFunction en la cuenta, y su nombre se publica en los outputs de
+// Terraform para poder usarla en un incidente: sin esta lista, ese permiso
+// equivale a borrar la base, sin pasar por Terraform y sin que la guarda de
+// destruccion del pipeline se entere de nada.
+//
+// La lista vive aqui y NO en internal/infraestructura/migraciones a proposito.
+// El otro llamante de ese paquete es cmd/migrate, que corre una persona con
+// credenciales delante de una terminal, y ahi revertir es legitimo. Lo que hay
+// que acotar no es la mecanica de goose, es esta superficie.
+var ordenesPermitidas = []string{"up", "up-by-one", "status", "version"}
 
 // peticion es lo que manda Terraform: {"orden":"up"}.
 type peticion struct {
@@ -46,6 +64,14 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 		orden := p.Orden
 		if orden == "" {
 			orden = migraciones.OrdenPorDefecto
+		}
+
+		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
+		// ni a dejar una conexion abierta.
+		if !slices.Contains(ordenesPermitidas, orden) {
+			err := fmt.Errorf("orden %q no permitida; solo %v", orden, ordenesPermitidas)
+			log.Error("orden rechazada", slog.Any("error", err))
+			return respuesta{}, err
 		}
 
 		// Derivado del contexto de la invocacion: gana el plazo mas corto entre
