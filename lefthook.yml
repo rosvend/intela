@@ -48,6 +48,13 @@ pre-commit:
         command -v docker >/dev/null || { echo "docker not available - skipping (CI will check)"; exit 0; }
         docker run --rm -v "$(pwd):/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
+    terraform-fmt:
+      glob: "infra/**/*.tf"
+      run: |
+        command -v terraform >/dev/null || { echo "terraform not installed - skipping (CI will check)"; exit 0; }
+        terraform fmt {staged_files}
+      stage_fixed: true
+
 # Slower checks move to pre-push: a test suite on every commit trains people to
 # use --no-verify, which switches off the fast checks above too.
 pre-push:
