@@ -21,6 +21,19 @@ resource "aws_subnet" "private" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = { Name = "${var.name_prefix}-private-${count.index}" }
+
+  # The upper bound on subnet_count, which the variable itself cannot express:
+  # a `validation` block may not read a data source, and how many AZs exist is
+  # only known after this region is queried. Without it, asking for more
+  # subnets than the region has AZs fails on an index out of range -- an error
+  # that points at this line and says nothing about the variable that caused
+  # it.
+  lifecycle {
+    precondition {
+      condition     = var.subnet_count <= length(data.aws_availability_zones.available.names)
+      error_message = "subnet_count (${var.subnet_count}) exceeds the availability zones in this region (${length(data.aws_availability_zones.available.names)}). One subnet per AZ."
+    }
+  }
 }
 
 # An explicit route table with no default route. The only entry it ever gets is

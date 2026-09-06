@@ -38,8 +38,17 @@ variable "monthly_limit_usd" {
 }
 
 variable "notification_emails" {
-  description = "Who hears about it. Empty creates the budget without alerts, which defeats the point."
+  description = "Who hears about it. At least one address: a budget nobody is told about is a dashboard, not a control."
   type        = list(string)
+
+  # The description already said an empty list defeats the point, and nothing
+  # enforced it. aws_budgets_budget accepts an empty
+  # subscriber_email_addresses without complaint, so the stack would apply
+  # clean and the first anyone heard of an overrun would be the invoice.
+  validation {
+    condition     = length(var.notification_emails) > 0
+    error_message = "At least one notification email. A budget that alerts nobody does not limit anything."
+  }
 }
 
 variable "thresholds_percent" {

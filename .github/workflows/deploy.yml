@@ -26,9 +26,21 @@
 # the ordering a property of this file, which nobody reads during an incident,
 # instead of a property of the graph, which fails loudly.
 #
-# If goose fails, the apply fails, the API keeps the old code, and the old code
-# keeps serving the old schema. ADR 0008 is why that matters: a reparto run in
-# flight must never meet a schema its code does not know.
+# If goose fails, the apply fails and the API keeps the OLD CODE. ADR 0008 is
+# why that matters: a reparto run in flight must never meet a schema its code
+# does not know.
+#
+# Be precise about the schema, though, because the reassuring version is wrong:
+# `goose up` wraps EACH migration in its own transaction, not the batch. A
+# failure partway down the list leaves the ones before it committed. So the
+# actual state after a failed deploy is "partially new schema, old code", not
+# "old schema, old code".
+#
+# That is still the safe direction -- old code against a schema that only grew
+# is exactly the backward-compatibility ADR 0008 already demands of every
+# migration -- but it is the reason that demand is not optional. A migration
+# that renames or drops breaks the running version the moment it commits, and
+# no rollback of this pipeline puts it back.
 #
 # AUTHENTICATION
 #
@@ -144,14 +156,6 @@ jobs:
           fi
           echo "AWS is wired up."
 
-      # 1. AUTHENTICATE
-      - name: Authenticate against AWS
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: intela-deploy-${{ github.run_id }}
-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -168,6 +172,15 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      # BOTH BUILDS RUN BEFORE AUTHENTICATING, and that ordering is the point.
+      #
+      # `npm ci` executes install scripts from the entire dependency tree. Run
+      # after the OIDC step, a compromised `postinstall` anywhere in that tree
+      # finds deploy credentials already exported in the environment, and this
+      # role can write to the account. Built first, the blast radius is the
+      # artifact -- bad, but recoverable, and not the AWS account.
+      #
+      # Neither build needs AWS, so the order costs nothing. Keep it.
       - name: Build the Lambda artifacts
         run: make lambda
 
@@ -176,6 +189,14 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      # 1. AUTHENTICATE
+      - name: Authenticate against AWS
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: intela-deploy-${{ github.run_id }}
 
       - name: Terraform init
         working-directory: infra/envs/${{ inputs.terraform-environment }}

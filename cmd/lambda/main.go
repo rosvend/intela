@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -104,11 +105,21 @@ func construir() (http.Handler, error) {
 	ctx, cancelar := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelar()
 
+	// Comprobado antes de conectar, igual que en cmd/api. Sin esto, una funcion
+	// desplegada sin la variable no dice que le falta: se queda diez segundos
+	// intentando conectar contra la cadena vacia y muere por el timeout de
+	// arriba, que es el sintoma de "la base no responde" -exactamente la pista
+	// equivocada durante un incidente-.
+	dsn := config.Cadena("DATABASE_URL", "")
+	if dsn == "" {
+		return nil, errors.New("falta DATABASE_URL")
+	}
+
 	// El tamano del pool entra por el DSN (pool_max_conns), que pgxpool lee al
 	// parsearlo. Es lo que impide que N contenedores tibios se coman las
 	// conexiones de la instancia; el otro lado del limite es la concurrencia
 	// reservada de la funcion.
-	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	store, err := postgres.Abrir(ctx, dsn)
 	if err != nil {
 		return nil, err
 	}
