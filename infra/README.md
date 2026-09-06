@@ -44,10 +44,14 @@ Imprime tres valores: el bucket de estado y los ARN de los dos roles. Cargarlos 
 | ----- | -------- | ----------- |
 | bucket de estado | Variable de **repositorio** `TF_STATE_BUCKET` | La leen el plan y el despliegue |
 | ARN del rol de plan | Secreto de **repositorio** `AWS_PLAN_ROLE_ARN` | Un secreto de entorno solo lo ve un job que declara ese entorno, y el job del plan no puede declarar `production` sin dejar cada PR esperando la aprobacion de despliegue. El rol es de solo lectura y su confianza OIDC solo admite `…:pull_request` |
-| ARN del rol de despliegue | Secreto del **entorno `production`** `AWS_DEPLOY_ROLE_ARN` | Es el que escribe en la cuenta, asi que va detras de la compuerta. `deploy.yml` declara `environment: production` y lo resuelve ahi; `ci.yml` se lo pasa con `secrets: inherit` |
+| ARN del rol de despliegue | Secreto del **entorno `production`** `AWS_DEPLOY_ROLE_ARN` | Es el que escribe en la cuenta, asi que va detras de la compuerta. Nadie se lo pasa: `deploy.yml` declara `environment: production` y **lo resuelve el propio job**, que es la unica forma —un job que llama a un workflow reutilizable no puede declarar `environment:`, asi que el llamante ni siquiera puede leerlo |
 
 Poner el rol de plan como secreto de entorno lo deja invisible y el plan se salta reportando verde,
 que es peor que fallar.
+
+**Hasta que estos tres valores existan, el job de despliegue de `main` sale en rojo en cada push.**
+Es deliberado: `deploy.yml` falla en vez de apartarse, porque un despliegue que no hace nada y
+reporta verde es justo el check que se lee como prueba. El mensaje dice que falta y remite aqui.
 
 Y un paso manual que no sale del `apply`:
 

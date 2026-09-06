@@ -81,10 +81,32 @@ on:
         description: Set to "yes" to allow an apply that destroys resources.
         type: string
         default: ""
+    # NOT `required: true`, and the reason is subtle enough to be worth writing
+    # down, because getting it wrong took `main` red.
+    #
+    # This secret does NOT actually arrive from the caller. It is a secret of
+    # the `production` environment, and `on.workflow_call` has no `environment`
+    # keyword -- a caller job cannot declare one, so it can never read it to
+    # pass it on. What resolves it is the job below, which DOES declare
+    # `environment:`: a reusable workflow uses its own environment's secret in
+    # preference to anything the caller hands over.
+    #
+    # `required: true` then means "the caller must pass a secret the caller
+    # cannot see". GitHub validates that contract when the workflow is CALLED,
+    # before a single job starts, so a missing value fails with
+    #
+    #   Secret AWS_DEPLOY_ROLE_ARN is required, but not provided while calling.
+    #
+    # and the "Is AWS wired up yet" step below -- written precisely to explain
+    # this situation in words a human can act on -- never runs. Optional here
+    # lets the job start and fail where the diagnosis lives.
     secrets:
       AWS_DEPLOY_ROLE_ARN:
-        description: Role assumed through OIDC. Scoped to pushes on the deploy branch.
-        required: true
+        description: >-
+          Role assumed through OIDC, scoped to pushes on the deploy branch.
+          Normally read from the `production` environment by the job itself;
+          declared here only so a caller MAY override it.
+        required: false
 
 permissions:
   contents: read
