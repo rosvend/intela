@@ -17,7 +17,8 @@ func TestEnTransaccionConfirmaAlTerminarBien(t *testing.T) {
 
 	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
-			`INSERT INTO obras (id, titulo, tipo) VALUES ('obra-nueva', 'Recien Declarada', 'unitario')`)
+			`INSERT INTO obras (id, titulo, genero, anio, tipo)
+			 VALUES ('obra-nueva', 'Recien Declarada', 'Drama', 2020, 'unitario')`)
 		return err
 	})
 	if err != nil {
@@ -38,7 +39,8 @@ func TestEnTransaccionRevierteSiFnFalla(t *testing.T) {
 	fallo := errors.New("el caso de uso decidio abortar")
 	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO obras (id, titulo, tipo) VALUES ('obra-fantasma', 'No Deberia Existir', 'serie')`); err != nil {
+			`INSERT INTO obras (id, titulo, genero, anio, tipo)
+			 VALUES ('obra-fantasma', 'No Deberia Existir', 'Drama', 2020, 'serie')`); err != nil {
 			return err
 		}
 		return fallo
