@@ -5,7 +5,7 @@
 -- lo que permite volver a pedirle al cliente exactamente lo que falta.
 --
 -- Va en tabla APARTE de `usos` y no en una columna `rechazo_motivo` de `usos`.
--- El razonamiento completo esta en el ADR 0014; en corto, tres cosas que la
+-- El razonamiento completo esta en el ADR 0016; en corto, tres cosas que la
 -- columna habria costado:
 --
 --   1. `usos` esta lleno de CHECK -modalidad en las cuatro, escalon en los

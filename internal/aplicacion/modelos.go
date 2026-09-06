@@ -108,7 +108,7 @@ type UsoPersistido struct {
 	// Es la misma forma que reparto.LineaObra.Retenida/Motivo y que
 	// ProcesoVista.RechazoMotivo: en este sistema, lo que se aparta se aparta
 	// CON su razon. Donde acaba cada una de las dos clases de fila lo decide
-	// el adaptador (ADR 0014).
+	// el adaptador (ADR 0016).
 	RechazoMotivo string
 }
 

@@ -89,7 +89,7 @@ func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, cl
 // nucleo decida QUE fila es invalida y el adaptador DONDE acaba cada clase es
 // la misma division que en sesiones.go, donde el caso de uso maneja tokens en
 // claro y el adaptador decide guardar un resumen: en que tabla vive algo es una
-// propiedad del almacenamiento. El ADR 0014 explica por que son dos tablas.
+// propiedad del almacenamiento. El ADR 0016 explica por que son dos tablas.
 //
 // Con esto, la exclusion de los rechazos de las lecturas canonicas es
 // estructural: no depende de que ninguna consulta futura se acuerde de un
@@ -141,7 +141,7 @@ func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) err
 //
 // Guarda lo identificatorio y el motivo, y NINGUNA columna de medida: una fila
 // rechazada no pondera, y sin las medidas aqui no hay forma de que una consulta
-// futura la sume "solo para ver" (ADR 0014).
+// futura la sume "solo para ver" (ADR 0016).
 func insertarRechazo(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) error {
 	_, err := tx.Exec(ctx,
 		`INSERT INTO usos_rechazados (id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo)

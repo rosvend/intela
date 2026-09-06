@@ -669,7 +669,7 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 	}
 
 	// El motivo tiene que decir QUE campo la aparto: es lo que sirve para
-	// volver a pedirle al cliente exactamente eso (ADR 0014).
+	// volver a pedirle al cliente exactamente eso (ADR 0016).
 	//
 	// Se compara el motivo ENTERO y fila a fila, no "que en algun sitio aparezca
 	// la palabra obra_id". Con la version por substring esta prueba pasaba

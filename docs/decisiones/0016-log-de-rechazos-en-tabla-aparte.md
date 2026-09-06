@@ -1,7 +1,19 @@
-# 0014 El log de rechazos de la ingesta vive en una tabla aparte
+# 0016 El log de rechazos de la ingesta vive en una tabla aparte
 
 Fecha: 2026-08-31
 Estado: Vigente
+
+> **Sobre el numero.** Esta decision nacio como `0014` y se renumero a `0016` en la revision de
+> la PR #72. El `0014` se lo quedo `0014-infraestructura-serverless-en-aws.md`, que ya esta en
+> `main`, y el `0015` esta reclamado por `0015-cola-de-trabajos-en-tabla-propia.md` en la rama de
+> la PR #85. El hueco de `0015` es a proposito: se llena cuando esa PR entre.
+>
+> Es la misma politica que la de las migraciones (ver la cabecera de `00002_catalogo_obras.sql`),
+> pero el riesgo aqui es PEOR y conviene dejarlo escrito: dos migraciones con la misma version
+> son un error duro de goose en cada arranque, mientras que dos ADR con el mismo numero y
+> nombres de archivo distintos **no chocan en git**. El merge no se bloquea, no avisa nadie, y
+> el unico sintoma es el indice de `README.md`. Por eso se renumera ANTES de pedir revision, y
+> mirando las ramas abiertas, no solo `main`.
 
 ## Contexto
 
