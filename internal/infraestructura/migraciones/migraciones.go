@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	// Registra el driver "pgx" en database/sql, que es con lo que habla goose.
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/rosvend/intela/migrations"
@@ -40,9 +40,9 @@ func Aplicar(ctx context.Context, dsn, orden string, log *slog.Logger) error {
 		orden = OrdenPorDefecto
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := abrir(dsn)
 	if err != nil {
-		return fmt.Errorf("abrir conexion: %w", err)
+		return err
 	}
 	defer func() { _ = db.Close() }()
 
@@ -65,6 +65,33 @@ func Aplicar(ctx context.Context, dsn, orden string, log *slog.Logger) error {
 	}
 	log.Info("migraciones al dia")
 	return nil
+}
+
+// abrir conecta con el MISMO DSN que usa el resto del sistema, incluidos los
+// parametros de dimensionado del pool.
+//
+// El sistema reparte un unico DSN, y ese DSN lleva `pool_max_conns` porque es
+// lo que dimensiona el pool de la API. Ese parametro lo entiende
+// [pgxpool.ParseConfig] y NADIE MAS: `sql.Open("pgx", dsn)` pasa por
+// pgx.ParseConfig, que no lo reconoce, lo trata como parametro de arranque del
+// servidor y lo manda en el paquete de conexion. Postgres responde
+//
+//	FATAL: unrecognized configuration parameter "pool_max_conns" (SQLSTATE 42704)
+//
+// y la migracion no llega ni a empezar. En local no se veia porque el DSN de
+// docker-compose no lleva parametros de pool; el de Terraform si.
+//
+// Se parsea con pgxpool y se abre con ConnConfig -que es el resultado ya
+// limpio, porque pgxpool retira los `pool_*` que consume- en vez de recortar la
+// cadena a mano. Asi este runner interpreta el DSN exactamente igual que el
+// adaptador de persistencia, incluida la forma `clave=valor`, y no hay una
+// segunda lista de parametros que mantener al dia.
+func abrir(dsn string) (*sql.DB, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("dsn invalido: %w", err)
+	}
+	return stdlib.OpenDB(*cfg.ConnConfig), nil
 }
 
 // registro adapta el logger de goose a slog, para que todo el proceso salga con
