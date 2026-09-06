@@ -3,6 +3,10 @@
 -- Bruto, cada deduccion y neto viven en tablas distintas a proposito: OE-4 y
 -- OE-6 piden el desglose en cada consulta. Colapsar las deducciones en el
 -- neto haria inexpresable el resumen que exige RD 13.2.
+--
+-- Esta migracion nacio como 00002. El catalogo (#86) se quedo con esa version
+-- al entrar a main; goose no admite dos ficheros con el mismo numero, asi que
+-- liquidacion pasa a 00003. Un hueco no es error; un duplicado si.
 
 -- +goose Up
 
