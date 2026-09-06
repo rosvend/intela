@@ -99,27 +99,62 @@ resource "aws_iam_role_policy_attachment" "plan_readonly" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/ReadOnlyAccess"
 }
 
-data "aws_iam_policy_document" "state_access" {
+# The two roles need DIFFERENT access to the state, and giving them the same
+# document was the bug: a plan does not write state, only the lock.
+#
+# Terraform 1.10+ keeps the lock as an object in the bucket (use_lockfile), so
+# there is no DynamoDB table -- but it does mean "take the lock" is an S3 write,
+# and the naive way to allow it is PutObject over the whole bucket. That is what
+# this used to do, for both roles. Since the plan role is assumable by ANY pull
+# request, it also meant any pull request could overwrite or delete
+# terraform.tfstate: the only record of what exists in the account.
+locals {
+  state_objects = "${var.state_bucket_arn}/*"
+  state_lock    = "${var.state_bucket_arn}/*.tflock"
+}
+
+data "aws_iam_policy_document" "state_read" {
   statement {
     effect    = "Allow"
     actions   = ["s3:ListBucket", "s3:GetBucketVersioning"]
     resources = [var.state_bucket_arn]
   }
 
-  # Terraform 1.10+ takes the state lock as an object in the bucket
-  # (use_lockfile), so no DynamoDB table is needed -- and a plan still has to
-  # write that object.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = [local.state_objects]
+  }
+
+  # The lock, and nothing else. A plan may take it and release it; it may not
+  # touch the state file.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = [local.state_lock]
+  }
+}
+
+data "aws_iam_policy_document" "state_write" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketVersioning"]
+    resources = [var.state_bucket_arn]
+  }
+
+  # An apply does write the state. This role is only assumable by a push to the
+  # deploy branch, which is behind branch protection and the environment gate.
   statement {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${var.state_bucket_arn}/*"]
+    resources = [local.state_objects]
   }
 }
 
 resource "aws_iam_role_policy" "plan_state" {
   name   = "${var.name_prefix}-state"
   role   = aws_iam_role.plan.id
-  policy = data.aws_iam_policy_document.state_access.json
+  policy = data.aws_iam_policy_document.state_read.json
 }
 
 # ---------------------------------------------------------------------------
@@ -135,7 +170,7 @@ resource "aws_iam_role" "deploy" {
 resource "aws_iam_role_policy" "deploy_state" {
   name   = "${var.name_prefix}-state"
   role   = aws_iam_role.deploy.id
-  policy = data.aws_iam_policy_document.state_access.json
+  policy = data.aws_iam_policy_document.state_write.json
 }
 
 data "aws_iam_policy_document" "deploy" {
@@ -174,6 +209,53 @@ data "aws_iam_policy_document" "deploy" {
       "iam:UntagPolicy",
     ]
     resources = [local.iam_role_scope, local.iam_policy_scope]
+  }
+
+  # The scope above reads as tight, and it is not: both OIDC roles are named
+  # ${name_prefix}-gha-*, so `role/${name_prefix}-*` MATCHES THIS ROLE ITSELF.
+  # With iam:AttachRolePolicy in the list and no constraint on which policy is
+  # attached, whoever could merge to the deploy branch could attach
+  # AdministratorAccess to the very role the pipeline runs as. That is a direct
+  # path from "merge a PR" to "own the account", in an account that holds other
+  # people's work.
+  #
+  # An explicit Deny is the fix that does not depend on getting the Allow above
+  # exactly right: Deny always wins, in this policy and in any future one.
+  # Terraform manages the Lambda execution roles, not these two -- these are
+  # created once by infra/bootstrap with admin credentials.
+  statement {
+    sid    = "NoTouchingTheDeploymentRoles"
+    effect = "Deny"
+    actions = [
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy",
+      "iam:PutRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:UpdateRole",
+      "iam:DeleteRole",
+    ]
+    resources = [aws_iam_role.plan.arn, aws_iam_role.deploy.arn]
+  }
+
+  # Second lock on the same door: even for the roles it MAY manage, this one can
+  # only attach the two AWS-managed policies a Go Lambda in a VPC actually
+  # needs. Without the condition, "manage the execution role" is enough to mint
+  # an administrator and pass it to a function.
+  statement {
+    sid       = "OnlyTheLambdaExecutionPolicies"
+    effect    = "Deny"
+    actions   = ["iam:AttachRolePolicy"]
+    resources = [local.iam_role_scope]
+
+    condition {
+      test     = "ArnNotEquals"
+      variable = "iam:PolicyARN"
+      values = [
+        "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+        "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+      ]
+    }
   }
 
   # Reading the managed policies it attaches, and the service-linked roles AWS
