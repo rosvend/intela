@@ -34,7 +34,7 @@ func (a *admisionFalsa) Aprobar(_ context.Context, actor aplicacion.Usuario, id 
 
 func servidorAdmision(t *testing.T, auth Autenticacion, adm Admision) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, adm, Opciones{}).Router()
+	return Nueva(nil, auth, adm, nil, Opciones{}).Router()
 }
 
 func multipartSolicitud(t *testing.T, campos map[string]string, archivos map[string][]byte) (*bytes.Buffer, string) {

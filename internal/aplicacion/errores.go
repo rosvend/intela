@@ -35,4 +35,12 @@ var (
 	// vacio. El dominio no mira bytes; esto lo decide el caso de uso antes
 	// de mandarlos al almacen.
 	ErrDocumentoInvalido = errors.New("el documento tiene que ser un pdf o una imagen y no puede estar vacio")
+
+	// ErrObraDuplicada: ya hay una obra con ese identificador en el catalogo.
+	//
+	// No es "no se pudo escribir" y no es "los datos son invalidos": el alta
+	// estaba bien formada y el catalogo ya la tiene. Distinguirlo es lo que
+	// deja responder 409 en vez de 500, y lo que hace comprobable el criterio
+	// "un segundo alta con el mismo identificador se rechaza".
+	ErrObraDuplicada = errors.New("ya existe una obra con ese identificador")
 )

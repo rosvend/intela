@@ -81,6 +81,7 @@ export default function WizardAfiliacion() {
       const r = (await api("/api/afiliaciones", {
         method: "POST",
         body: cuerpo,
+        anonima: true,
       })) as AfiliacionCreada;
       setCreada(r);
     } catch (err) {

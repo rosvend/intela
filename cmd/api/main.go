@@ -77,7 +77,11 @@ func ejecutar(log *slog.Logger) error {
 		IDs:         cripto.TokensAleatorios{},
 	}
 
-	api := httpapi.Nueva(store, autenticacion, admision, httpapi.Opciones{
+	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
+	// puertos separados: que el adaptador sea uno solo es asunto suyo.
+	catalogo := aplicacion.Catalogo{Obras: store}
+
+	api := httpapi.Nueva(store, autenticacion, admision, catalogo, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})
