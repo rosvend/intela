@@ -131,7 +131,8 @@ Decidido en [ADR 0010](../decisiones/0010-stack-go.md), que sustituye a
 | Pruebas | `testing`, `testcontainers-go`, `rapid` | El motor se prueba sin infraestructura |
 | Frontera | El compilador, mas `depguard` | Los ciclos de importacion **no compilan** |
 | Observabilidad | `log/slog` + OpenTelemetry | Separada de la bitacora, que es dominio |
-| Despliegue | Binario estatico, imagen distroless, `docker compose` | Lo exige `docs/context.md` |
+| Despliegue local | Binario estatico, imagen distroless, `docker compose` | Lo exige `docs/context.md` |
+| Despliegue en nube | Lambda `provided.al2023` arm64, Amplify Hosting, RDS PostgreSQL, Terraform | `0014`: serverless, sin nada que facture por hora salvo la base |
 
 `src/scripts/` se queda en Python permanentemente (PEP 723), aunque el backend sea Go.
 
