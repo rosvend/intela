@@ -228,3 +228,27 @@ web/dist/
 node_modules/
 web/dist/
 *.tsbuildinfo
+
+# Terraform
+#
+# `.terraform.lock.hcl` NO esta aqui a proposito: fija las versiones de los
+# proveedores igual que package-lock.json fija las de npm, y por el mismo
+# argumento de reproducibilidad se versiona. Solo se ignora el de los modulos
+# hijos, donde Terraform lo genera al validar y no significa nada.
+.terraform/
+infra/modules/**/.terraform.lock.hcl
+
+# Estado. El de envs/ vive en S3; el de bootstrap/ es local a proposito y no se
+# comparte -ver infra/bootstrap/versions.tf-.
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Todo lo especifico de una cuenta. Los .example si se versionan.
+*.tfvars
+backend.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

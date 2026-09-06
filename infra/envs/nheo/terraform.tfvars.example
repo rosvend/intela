@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+#
+# Anything account-specific belongs here, never in the .tf files.
+
+region      = "us-east-1"
+name_prefix = "intela"
+environment = "production"
+
+# Overwritten by CI with the commit SHA. Changing it is what runs migrations.
+app_version = "local"
+
+# Who hears about a cost overrun. Required: a budget with no subscribers is
+# decoration.
+budget_notification_emails = ["you@example.com"]
+monthly_budget_usd         = 20
+
+# Extra tags merged into every resource. Project is forced on top of these and
+# cannot be overridden here.
+tags = {
+  Owner = "roy"
+}
+
+# Set once a real domain exists and its DNS is reachable from this account.
+# domain_name = "intela.example"
