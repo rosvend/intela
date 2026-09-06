@@ -137,6 +137,6 @@ reabrirla, porque a esas alturas se estaria escribiendo River a mano y peor.
 
 Esta decision la toma el issue #35 porque el issue pide explicitamente decidir y dejarlo escrito.
 **@rosvend y @killgreck la confirman o la revierten en la revision del PR.** Si la revierten, lo que
-hay que rehacer es el adaptador `internal/infraestructura/postgres/cola.go` y la migracion `00002`;
+hay que rehacer es el adaptador `internal/infraestructura/postgres/cola.go` y la migracion `00003`;
 el nucleo (`ClaveTrabajo`, `Despachador`, `Planificador`) y sus pruebas se conservan tal cual, que es
 justamente lo que la frontera de `0002` existe para permitir.
