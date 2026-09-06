@@ -43,3 +43,8 @@ Makefile
 *.log
 /out/
 /tmp/
+
+# Infraestructura y artefactos de despliegue: no los necesita la imagen, y
+# meterlos en el contexto invalida la cache de build en cada cambio de .tf.
+infra/
+dist/
