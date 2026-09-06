@@ -712,6 +712,128 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 	}
 }
 
+// El borde de H5 contra la base de verdad: un obra_id de solo blancos es "sin
+// obra", y no cuesta ni un motivo falso ni el lote.
+//
+// # Por que esta prueba tiene que vivir contra PostgreSQL
+//
+// El defecto tenia DOS sintomas y el segundo solo existe aqui:
+//
+//  1. En Go, la fila se rechazaba con el motivo de H5 -"obra_id en la
+//     ingesta"- acusando de traer una obra a una fila que no traia ninguna.
+//     Eso se ve con un doble en memoria.
+//  2. En cuanto se arregla SOLO en Go, la fila pasa como vacia y llega al
+//     INSERT con el blanco intacto. El NULLIF del INSERT compara con la cadena
+//     vacia LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
+//     la rechaza con un 23514 DENTRO de la transaccion del lote. No se pierde
+//     esa fila: se pierden TODAS. Ese sintoma no existe contra un doble -no
+//     hay CHECK que violar- y es el mas caro de los dos: el reporte ya quedo
+//     escrito, asi que reintentar el mismo archivo choca con
+//     ErrReporteDuplicado.
+//
+// El lote lleva las tres clases de fila a la vez -normal, con blanco, y con
+// obra de verdad- porque lo que hay que demostrar es que conviven: la del
+// blanco entra como cualquier otra, la de la obra se aparta con su motivo
+// verdadero, y ninguna de las dos se lleva por delante a las buenas.
+func TestIngestaNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
+	const motivoH5 = "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
+
+	// El NBSP (U+00A0) no es rebuscado: es con lo que Excel rellena las celdas
+	// que se ven vacias, y es el que separa un recorte hecho a mano de
+	// strings.TrimSpace, cuya definicion de blanco es unicode.IsSpace.
+	blancos := map[string]string{
+		"espacio":          " ",
+		"tabulador":        "\t",
+		"salto de linea":   "\n",
+		"nbsp":             " ",
+		"varios mezclados": " \t\r\n  ",
+	}
+
+	for nombre, blanco := range blancos {
+		t.Run(nombre, func(t *testing.T) {
+			s, pool := sembrarReportes(t)
+			ctx := t.Context()
+
+			ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+			rep, err := ingesta.GuardarReporte(ctx, "caracol-blancos", "2026-01",
+				[]byte("Titulo,ID_Ficha\nLa Casa de las Dos Palmas,1234\n"))
+			if err != nil {
+				t.Fatalf("GuardarReporte: %v", err)
+			}
+
+			// La del blanco: no tiene obra ninguna, solo la celda rellena.
+			conBlanco := usoPendiente("", "", "Blanco En Obra")
+			conBlanco.ObraID = blanco
+
+			// La que SI trae obra, con blancos alrededor: sigue siendo H5. El
+			// obra_id no existe en `obras`, que es lo que la haria reventar por
+			// clave foranea si se colara hasta `usos`.
+			conObra := usoPendiente("", "", "Viene Con Obra")
+			conObra.ObraID = blanco + "obra-que-no-existe" + blanco
+			conObra.ONI = false
+
+			rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+				usoPendiente("", "", "Buena Uno"),
+				conBlanco,
+				conObra,
+				usoPendiente("", "", "Buena Dos"),
+			})
+			// El primer sintoma que se ve si el arreglo esta a medias: el lote
+			// entero cae con 23514 y aqui llega un error.
+			if err != nil {
+				t.Fatalf("un blanco en una fila no puede tumbar el lote: %v", err)
+			}
+			if len(rechazados) != 1 || rechazados[0].Titulo != "Viene Con Obra" {
+				t.Fatalf("se esperaba 1 rechazo, el de la obra de verdad: %+v", rechazados)
+			}
+			if rechazados[0].RechazoMotivo != motivoH5 {
+				t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, motivoH5)
+			}
+
+			// Tres canonicas -las dos buenas y la del blanco- y un rechazo. Con
+			// el defecto original salen 2 y 2: la del blanco se iba al log con el
+			// motivo falso. Con el arreglo a medias salen 0 y 0: se pierde todo.
+			var canonicos, rechazos int
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM usos WHERE reporte_id = $1`, rep.ID).Scan(&canonicos); err != nil {
+				t.Fatalf("contar usos: %v", err)
+			}
+			if err := pool.QueryRow(ctx,
+				`SELECT count(*) FROM usos_rechazados WHERE reporte_id = $1`, rep.ID).Scan(&rechazos); err != nil {
+				t.Fatalf("contar rechazos: %v", err)
+			}
+			if canonicos != 3 || rechazos != 1 {
+				t.Fatalf("usos = %d, rechazos = %d; se esperaba 3 y 1", canonicos, rechazos)
+			}
+
+			// Y la del blanco quedo en la COLUMNA como NULL, no como un blanco:
+			// es lo que dice el CHECK y lo que la cascada (ADR 0007) va a buscar.
+			// `obra_id = ''` no puede existir -es referencia a obras(id)-, pero
+			// un blanco no vacio si pasaria la clave foranea el dia que exista una
+			// obra con ese id, y entonces la fila mentiria en silencio.
+			var (
+				obraID  *string
+				oni     bool
+				escalon string
+			)
+			err = pool.QueryRow(ctx,
+				`SELECT obra_id, oni, escalon FROM usos WHERE id = $1`, rep.ID+"-1").
+				Scan(&obraID, &oni, &escalon)
+			if err != nil {
+				t.Fatalf("leer la fila del blanco: %v", err)
+			}
+			if obraID != nil {
+				t.Errorf("obra_id = %q, se esperaba NULL: un blanco es sin obra", *obraID)
+			}
+			if !oni || escalon != "pendiente" {
+				t.Errorf("oni = %v, escalon = %q: la fila del blanco tiene que salir sin identificar",
+					oni, escalon)
+			}
+		})
+	}
+}
+
 // H4b contra la base de verdad: un objeto desgarrado bajo la clave NO puede
 // acabar certificado por una fila de `reportes`.
 //

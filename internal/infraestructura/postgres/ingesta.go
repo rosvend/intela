@@ -122,6 +122,19 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 // esto, una fila en ONI intentaria guardar la cadena vacia como referencia a
 // obras(id) y fallaria por clave foranea con un mensaje que no dice nada de lo
 // que pasa.
+//
+// NULLIF compara con la cadena vacia LITERAL, y no hay forma de que sea mas
+// indulgente sin meter aqui una regla de negocio: envolver el parametro en un
+// btrim() haria que la base decidiera por su cuenta que cuenta como "sin obra",
+// que es justo la clase de criterio que no puede vivir en dos sitios.
+//
+// Por eso el valor llega ya recortado: Ingesta.GuardarUsos hace el TrimSpace una
+// sola vez, arriba del todo, y esta comparacion es la MISMA que la de Go, no una
+// segunda opinion.
+//
+// Si algun dia otro camino escribiera usos sin pasar por ese caso de uso, tiene
+// que traer esa misma garantia. Sin ella, un obra_id de solo blancos esquiva el
+// NULLIF, viola el CHECK y aborta la transaccion del lote ENTERO.
 func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) error {
 	_, err := tx.Exec(ctx,
 		`INSERT INTO usos (

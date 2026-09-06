@@ -3,6 +3,7 @@ package aplicacion
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -367,6 +368,32 @@ func TestGuardarReporteNoCertificaUnObjetoQueNoEsElSuyo(t *testing.T) {
 	if !strings.Contains(err.Error(), esperada) {
 		t.Errorf("el mensaje no dice la huella esperada (%s): %v", esperada, err)
 	}
+
+	// Y los DOS tamanos, que son la mitad del mensaje que nadie estaba
+	// comprobando. Las huellas dicen QUE no cuadra; los tamanos separan los dos
+	// casos que hay que tratar distinto:
+	//
+	//   - menos bytes de los que se suben es un objeto CORTADO -escritura que
+	//     murio a medias, copia restaurada mal-, y la clave se puede liberar;
+	//   - el mismo tamano con otra huella es contenido AJENO bajo esa clave, que
+	//     es un problema de otro orden y no se arregla reescribiendo.
+	//
+	// Sin esta asercion, borrar los dos %d del formato deja el mensaje sin esa
+	// distincion y ninguna prueba se entera.
+	//
+	// Cada tamano se busca PEGADO a su huella y no suelto: un "10" a secas
+	// aparece por azar en cualquiera de los dos hexadecimales de 64 caracteres,
+	// asi que buscarlo solo daria una prueba que pasa aunque se quiten los
+	// tamanos. Emparejados, la asercion caza ademas el fallo de cruzarlos.
+	quiero := []string{
+		fmt.Sprintf("%d bytes de huella %s", len(datos[:10]), real),
+		fmt.Sprintf("%d bytes de huella %s", len(datos), esperada),
+	}
+	for _, q := range quiero {
+		if !strings.Contains(err.Error(), q) {
+			t.Errorf("el mensaje no dice %q: %v", q, err)
+		}
+	}
 }
 
 // La contrapartida de la prueba de arriba, y la razon de que la comprobacion
@@ -675,6 +702,170 @@ func TestGuardarUsosRechazaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 				t.Fatalf("las 2 filas tienen que persistirse, llegaron %d", len(repo.usos))
 			}
 		})
+	}
+}
+
+// blancos son las formas de "vacio en espiritu" que traen los archivos reales.
+//
+// El NBSP (U+00A0) esta a proposito y no es rebuscado: es con lo que Excel
+// rellena las celdas que se ven vacias, y es ademas el que separa un recorte
+// hecho a mano -" \t\n" y poco mas- de strings.TrimSpace, cuya definicion de
+// blanco es unicode.IsSpace y si lo incluye.
+var blancos = map[string]string{
+	"espacio":          " ",
+	"tabulador":        "\t",
+	"salto de linea":   "\n",
+	"retorno":          "\r",
+	"nbsp":             " ",
+	"varios mezclados": " \t\r\n  ",
+}
+
+// Un obra_id de solo blancos es "sin obra", no "con obra", y tiene que seguir
+// el camino normal de ONI.
+//
+// # Por que existe este caso borde
+//
+// H5 rechaza la fila que llega ya identificada. Pero "identificada" se decidia
+// comparando con la cadena vacia EN CRUDO, y un espacio no es la cadena vacia:
+// una fila sin obra ninguna, con un blanco donde el export dejo la celda,
+// acababa en el log de rechazos con el motivo de H5 -"obra_id en la ingesta"-
+// acusandola de traer una identificacion que no traia. Es el mismo motivo FALSO
+// que H5 vino a arreglar, un borde mas alla.
+//
+// # La asercion que importa es la del VALOR GUARDADO, no la del rechazo
+//
+// Que no se rechace lo cumple cualquier TrimSpace puesto en la comprobacion de
+// turno. Lo que hace falta es que el valor que sale hacia el repositorio sea la
+// cadena vacia EXACTA, porque el INSERT lo pasa por un NULLIF contra la cadena
+// vacia literal y esa comparacion no se puede aflojar desde Go.
+//
+// Un TrimSpace escrito en las comprobaciones en vez de sobre el campo deja pasar
+// la fila y manda el blanco intacto al SQL, donde el NULLIF no lo anula y el
+// CHECK uso_resuelto_tiene_obra aborta el lote ENTERO. Por eso se comprueba
+// `guardado.ObraID == ""`: es lo unico que distingue la normalizacion de verdad
+// del parche que la aparenta.
+func TestGuardarUsosTrataElObraIDEnBlancoComoSinObra(t *testing.T) {
+	for nombre, blanco := range blancos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			// Una fila que de verdad no tiene obra: lo unico raro es el blanco.
+			sinObra := usoBueno("Sin Obra De Verdad")
+			sinObra.ObraID = blanco
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+				[]UsoPersistido{sinObra})
+			if err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+			if len(rechazados) != 0 {
+				t.Fatalf(
+					"una fila sin obra rechazada por traer obra: motivo %q",
+					rechazados[0].RechazoMotivo)
+			}
+			if len(repo.canonicos()) != 1 {
+				t.Fatalf("se esperaba 1 uso canonico, hay %d", len(repo.canonicos()))
+			}
+
+			guardado := repo.usos[0]
+			if guardado.ObraID != "" {
+				t.Errorf(
+					"ObraID = %q, se esperaba la cadena vacia EXACTA: "+
+						"el INSERT compara con NULLIF($6, ''), que no recorta nada",
+					guardado.ObraID)
+			}
+			if !guardado.ONI {
+				t.Error("sin obra es ONI: el blanco no puede saltarse esa guarda")
+			}
+			if guardado.Escalon != "pendiente" {
+				t.Errorf("Escalon = %q, se esperaba \"pendiente\"", guardado.Escalon)
+			}
+		})
+	}
+}
+
+// La contrapartida, y la que impide que el arreglo se pase de frenada: recortar
+// los blancos NO afloja H5.
+//
+// Una fila que trae una obra de verdad sigue rechazada con su motivo verdadero,
+// venga pegada al margen o rodeada de espacios. El recorte decide si el campo
+// esta vacio, no si la regla aplica.
+func TestGuardarUsosNoAflojaH5AlRecortarLosBlancos(t *testing.T) {
+	const motivoH5 = "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
+
+	casos := map[string]string{
+		"pegada":            "obra-1",
+		"con espacios":      "  obra-1  ",
+		"con tabuladores":   "\tobra-1\t",
+		"con nbsp":          " obra-1 ",
+		"blanco por dentro": "obra 1",
+		"solo un guion":     "-",
+	}
+
+	for nombre, obraID := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			conObra := usoBueno("Llega Ya Resuelta")
+			conObra.ObraID = obraID
+			conObra.ONI = false
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+				[]UsoPersistido{conObra, usoBueno("La Casa")})
+			if err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+			if len(rechazados) != 1 {
+				t.Fatalf("se esperaba 1 rechazo, llegaron %d", len(rechazados))
+			}
+			// El motivo ENTERO: un rechazo por la razon equivocada no es el
+			// comportamiento que H5 promete.
+			if rechazados[0].RechazoMotivo != motivoH5 {
+				t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, motivoH5)
+			}
+			if len(repo.canonicos()) != 1 || repo.canonicos()[0].Titulo != "La Casa" {
+				t.Fatalf("la fila buena no sobrevivio: %+v", repo.canonicos())
+			}
+		})
+	}
+}
+
+// Un blanco en UNA fila no puede costar el lote entero.
+//
+// Es la mitad cara del defecto y la que no se ve en la capa de aplicacion sin
+// buscarla: con el criterio de "vacio" repartido entre Go y el NULLIF del SQL,
+// la fila del blanco esquiva las dos comprobaciones de Go, viola el CHECK
+// uso_resuelto_tiene_obra en el INSERT y se lleva por delante a las buenas que
+// la acompanan -la escritura del lote es UNA transaccion a proposito-. Aqui se
+// fija la forma que sale del caso de uso; contra PostgreSQL lo comprueba
+// TestIngestaNoPierdeElLotePorUnObraIDEnBlanco, que es donde el CHECK existe.
+func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	conBlanco := usoBueno("Blanco En Obra")
+	conBlanco.ObraID = "  \t"
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{
+		usoBueno("Buena Uno"),
+		conBlanco,
+		usoBueno("Buena Dos"),
+	})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 0 {
+		t.Fatalf("ninguna de las tres es rechazable: %+v", rechazados)
+	}
+	if len(repo.canonicos()) != 3 {
+		t.Fatalf("se esperaban 3 usos canonicos, hay %d: %+v", len(repo.canonicos()), repo.canonicos())
+	}
+	// Y las tres salen con obra_id vacio EXACTO, que es lo que el INSERT sabe
+	// convertir en NULL.
+	for _, u := range repo.usos {
+		if u.ObraID != "" {
+			t.Errorf("%q sale con ObraID = %q: el NULLIF del INSERT no lo va a anular",
+				u.Titulo, u.ObraID)
+		}
 	}
 }
 

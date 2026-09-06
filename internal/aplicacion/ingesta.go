@@ -250,6 +250,42 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 	var rechazados []UsoPersistido
 
 	for n, u := range usos {
+		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
+		// no es el espacio: es que el campo se lee TRES veces en DOS capas
+		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el
+		// NULLIF($6, '') del INSERT- y cada lectura decide "vacio" por su cuenta.
+		// Mientras el criterio se escriba tres veces, puede discrepar tres veces.
+		//
+		// Discrepaba ya. Un obra_id de solo blancos -un espacio, un tabulador, un
+		// NBSP de un Excel- no es "" para ninguna de las dos comprobaciones de Go,
+		// asi que la fila se rechazaba con el motivo de H5, "obra_id en la
+		// ingesta", diciendo que traia una obra que NO traia. Es el mismo motivo
+		// FALSO que H5 vino a arreglar, en el borde que se quedo sin cubrir: el
+		// log de rechazos existe para pedirle al cliente exactamente lo que falla,
+		// y ahi le pedia que quitara una identificacion inexistente.
+		//
+		// Y arreglarlo solo en Go lo empeora, que es la razon de que la
+		// normalizacion sea UNA y este ANTES de todo. Con TrimSpace en las dos
+		// comparaciones de arriba pero no en el SQL, la fila pasa como vacia,
+		// llega al INSERT con el espacio intacto, NULLIF no la anula -no es
+		// literalmente ''- y el CHECK uso_resuelto_tiene_obra la rechaza: 23514
+		// dentro de la transaccion del lote, que se lleva por delante TODAS las
+		// filas buenas que la acompanan. Un rechazo con el motivo equivocado se
+		// convertiria asi en una entrega entera perdida.
+		//
+		// Normalizando aqui el valor viaja ya limpio a las tres lecturas, incluido
+		// el que se manda al INSERT, y "vacio" pasa a significar lo mismo en Go y
+		// en SQL por construccion, no por acuerdo.
+		//
+		// TrimSpace y no un recorte propio: su definicion de blanco es
+		// unicode.IsSpace, que incluye el NBSP (U+00A0) con el que los exports de
+		// Excel rellenan las celdas "vacias".
+		//
+		// No maquilla ningun rechazo: `usos_rechazados` no guarda obra_id, y una
+		// fila que SI trae obra -" obra-1 "- sigue cayendo en la regla de H5 con
+		// su motivo verdadero.
+		u.ObraID = strings.TrimSpace(u.ObraID)
+
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
 		if u.ID == "" {
@@ -266,6 +302,10 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 			// hacia afuera.
 			u.Escalon = "pendiente"
 		}
+		// Compara contra "" a secas, y tiene que seguir siendo asi: el TrimSpace
+		// esta arriba, una vez. Repetirlo aqui volveria a dar dos criterios que
+		// pueden separarse, y el de mas abajo -el NULLIF del INSERT- no se puede
+		// repetir en Go de ninguna manera.
 		if u.ObraID == "" {
 			// A la salida de ingesta ninguna fila esta identificada: es lo que
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
@@ -367,6 +407,11 @@ func validarUso(u UsoPersistido) string {
 	// Si algun dia una fuente trae un identificador global de fiar, entra por el
 	// escalon `id_global` DE LA CASCADA, con su evidencia y su puntaje, no por
 	// un atajo aqui.
+	// Contra "" a secas: GuardarUsos ya recorto los blancos antes de llamar, y
+	// esa es la UNICA normalizacion del campo en todo el camino. Un TrimSpace
+	// tambien aqui no seria redundante sino peligroso: sugeriria que esta funcion
+	// se puede llamar con un valor sin normalizar, y el INSERT -que compara con
+	// NULLIF($6, '')- no puede hacer esa misma concesion.
 	if u.ObraID != "" {
 		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
 	}
