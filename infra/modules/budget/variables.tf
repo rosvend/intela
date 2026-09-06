@@ -41,6 +41,12 @@ variable "notification_emails" {
   description = "Who hears about it. At least one address: a budget nobody is told about is a dashboard, not a control."
   type        = list(string)
 
+  # Sensitive for the same reason as the root variable that feeds it: the plan
+  # is posted publicly. Marking only the root would leak it here, because a
+  # sensitive value passed into a non-sensitive module variable is rendered in
+  # full again.
+  sensitive = true
+
   # The description already said an empty list defeats the point, and nothing
   # enforced it. aws_budgets_budget accepts an empty
   # subscriber_email_addresses without complaint, so the stack would apply

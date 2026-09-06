@@ -355,6 +355,7 @@ jobs:
     # `...:pull_request`, so the approval gate would buy nothing anyway.
     secrets:
       AWS_PLAN_ROLE_ARN: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+      BUDGET_NOTIFICATION_EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
 
   # The gate. This is the ONLY required check in `main`'s branch protection,
   # so its name must stay `ci` - renaming it locks the branch.

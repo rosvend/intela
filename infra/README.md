@@ -45,6 +45,7 @@ Imprime tres valores: el bucket de estado y los ARN de los dos roles. Cargarlos 
 | bucket de estado | Variable de **repositorio** `TF_STATE_BUCKET` | La leen el plan y el despliegue |
 | ARN del rol de plan | Secreto de **repositorio** `AWS_PLAN_ROLE_ARN` | Un secreto de entorno solo lo ve un job que declara ese entorno, y el job del plan no puede declarar `production` sin dejar cada PR esperando la aprobacion de despliegue. El rol es de solo lectura y su confianza OIDC solo admite `…:pull_request` |
 | ARN del rol de despliegue | Secreto del **entorno `production`** `AWS_DEPLOY_ROLE_ARN` | Es el que escribe en la cuenta, asi que va detras de la compuerta. Nadie se lo pasa: `deploy.yml` declara `environment: production` y **lo resuelve el propio job**, que es la unica forma —un job que llama a un workflow reutilizable no puede declarar `environment:`, asi que el llamante ni siquiera puede leerlo |
+| Emails del presupuesto | Secreto de **repositorio** `BUDGET_NOTIFICATION_EMAILS` | Separados por coma. Secreto y no variable **porque este repositorio es publico** y `terraform.yml` publica el plan como comentario de PR: una variable normal publicaria la direccion. La variable de Terraform va ademas marcada `sensitive`, asi que el plan la imprime como `(sensitive value)` |
 
 Poner el rol de plan como secreto de entorno lo deja invisible y el plan se salta reportando verde,
 que es peor que fallar.

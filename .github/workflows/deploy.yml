@@ -107,6 +107,14 @@ on:
           Normally read from the `production` environment by the job itself;
           declared here only so a caller MAY override it.
         required: false
+      BUDGET_NOTIFICATION_EMAILS:
+        description: >-
+          Comma-separated addresses for the cost alarm. A repository secret,
+          reaching this workflow through the caller's `secrets: inherit`.
+          Declared here because a reusable workflow must declare every secret
+          it names -- actionlint fails the build otherwise, which is how this
+          was caught.
+        required: false
 
 permissions:
   contents: read
@@ -167,11 +175,13 @@ jobs:
         env:
           ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
         run: |
           set -euo pipefail
           falta=""
           [ -n "${ROLE}" ]   || falta="${falta} AWS_DEPLOY_ROLE_ARN(secret)"
           [ -n "${BUCKET}" ] || falta="${falta} TF_STATE_BUCKET(variable)"
+          [ -n "${EMAILS}" ] || falta="${falta} BUDGET_NOTIFICATION_EMAILS(secret)"
           if [ -n "${falta}" ]; then
             echo "::error::cannot deploy, missing:${falta}. Run infra/bootstrap once and load what it prints. See infra/README.md."
             exit 1
@@ -235,9 +245,25 @@ jobs:
             -backend-config="key=envs/${{ inputs.terraform-environment }}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}"
 
+      # budget_notification_emails has no default and `*.tfvars` is gitignored,
+      # so without this the plan dies on "No value for required variable"
+      # before it reaches AWS. It arrives as a SECRET rather than a `vars.`
+      # entry because this repository is public and the plan is echoed into a
+      # pull request comment: a repository variable would publish the address.
+      #
+      # The secret is comma-separated, which is what a human types; Terraform
+      # wants a list, which is what jq makes. Empty yields [] and trips the
+      # module's own validation with a message that says so.
       - name: Terraform plan
         working-directory: infra/envs/${{ inputs.terraform-environment }}
+        env:
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
         run: |
+          set -euo pipefail
+          TF_VAR_budget_notification_emails="$(jq -cR \
+            'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))' <<<"$EMAILS")"
+          export TF_VAR_budget_notification_emails
+
           terraform plan -input=false -no-color -lock-timeout=5m \
             -var "app_version=${GITHUB_SHA}" \
             -out=tfplan
