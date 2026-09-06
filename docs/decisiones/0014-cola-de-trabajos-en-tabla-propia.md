@@ -7,9 +7,10 @@ stack. El resto de `0010` sigue vigente sin cambios.
 
 ## Contexto
 
-La tabla de stack de `0010` dice, en una linea: **Cola — `River` (respaldada por PostgreSQL) —
+La tabla de stack de `0010` decia, en una linea: **Cola — `River` (respaldada por PostgreSQL) —
 encolado transaccional: conserva la transaccion local por etapa que exige `0003`**. Nunca se
-implemento.
+implemento, y con ella se quedo sin implementar la garantia transaccional que prometia: ver
+"El encolado no es transaccional" en las consecuencias.
 
 Lo que si existe, desde la migracion `00001`, es una tabla `cola_trabajos` escrita a mano y un
 puerto `ColaTrabajos` con tres metodos (`Encolar`, `Tomar`, `Cerrar`) declarado en
@@ -77,7 +78,9 @@ metodos y un adaptador nuevo los satisface sin tocar el nucleo. La costura esta 
 **Adoptar River ahora, como decia `0010`.** Es la alternativa seria y estuvo sobre la mesa. Da
 gratis lo que aqui hay que escribir a mano: reintentos con espera exponencial, trabajos periodicos,
 un catalogo de estados, rescate de trabajos huerfanos, y un panel de observabilidad. Y su encolado
-es transaccional, que es lo que `0003` pide.
+si es transaccional —acepta la transaccion de quien llama—, que es lo que `0003` pide. **Eso es lo
+que esta decision deja sobre la mesa**, y es la unica de sus ventajas que no se recupera escribiendo
+mas codigo en esta capa: ver "El encolado no es transaccional" en las consecuencias.
 
 Se descarta por tres razones, en este orden:
 
@@ -113,10 +116,31 @@ seguridad—. El sondeo cada cinco segundos es suficiente y no tiene ese modo de
 Positivas: cero dependencias nuevas. El estado de la cola se consulta con `SELECT` sobre columnas
 que estan en la misma migracion que el resto del esquema, que es lo que `RD 16` acaba necesitando.
 La clave natural convierte "no pagar dos veces" en una restriccion de la base, es decir, en algo que
-no depende de que ningun proceso se comporte bien. Y el ADR 0003 conserva su transaccion local: el
-encolado es un `INSERT` que puede ir dentro de la transaccion de la etapa que lo emite.
+no depende de que ningun proceso se comporte bien.
 
 A cambio, y esto es el precio real:
+
+- **El encolado NO es transaccional.** Es el punto donde esta ADR se aparta de `0003`, y conviene
+  decirlo sin rodeos porque quien escriba #33/#34 va a querer exactamente lo contrario: guardar la
+  liquidacion y encolar el paso siguiente sin ventana entre medias. Hoy no se puede.
+  `Store.Encolar` ejecuta `s.pool.Exec` (`postgres/cola.go`), que saca su propia conexion del pool.
+  El puerto es `Encolar(ctx, clave, payload) (bool, error)` y **no tiene por donde recibir una
+  transaccion**: no puede tenerla, porque `internal/aplicacion` no puede nombrar `pgx.Tx` sin
+  romper la frontera que vigila `depguard` (`0012`). El unico mecanismo transaccional del proyecto
+  es `Store.EnTransaccion(ctx, func(pgx.Tx) error)`, que pasa la `tx` **dentro** del adaptador, y no
+  hay propagacion por contexto.
+
+  Se puede vivir con ello por lo mismo que documenta `Planificador.Disparar` en
+  `internal/aplicacion/trabajos.go`: **las dos operaciones son idempotentes y el orden tolera la
+  interrupcion**. Encolar va antes de marcar, asi que una muerte en medio deja el periodo encolado
+  y sin marcar, y la pasada siguiente lo vuelve a encolar —no-op por clave natural— y lo marca.
+  Nada se duplica. Al reves si habria dano: marcado y sin trabajo, la corrida del ano no se
+  ejecutaria y nadie se enteraria. La atomicidad se sustituye por idempotencia mas orden, que en
+  este perfil es suficiente y no depende de una transaccion que abrace dos puertos.
+
+  Recuperar la promesa de `0003` no es un cambio de documentacion: exige que el puerto tenga forma
+  de participar en la transaccion de quien llama. Si #33/#34 lo necesitan de verdad, es una ADR
+  nueva, no una nota al pie de esta.
 
 - **No hay panel.** El estado se mira consultando la tabla hasta que #40 lo exponga.
 - **Los reintentos son nuestros.** Estan probados, pero cualquier defecto en la espera exponencial

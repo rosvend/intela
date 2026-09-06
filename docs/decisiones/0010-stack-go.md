@@ -45,7 +45,7 @@ garantia deja de ser configuracion y pasa a ser el compilador.
 | `internal/infraestructura/` | `chi` o `net/http` de la biblioteca estandar | Sin framework que quiera ser dueno de los handlers. Desaparece el riesgo de los decoradores |
 | `cmd/{api,scheduler,worker}/` | Un `main` por punto de entrada | Es literalmente lo que pide `0003` |
 | Persistencia | `pgx` v5 + `sqlc`, PostgreSQL 16 | SQL primero, con tipos generados desde el SQL. `pgx` escanea `NUMERIC` directo a `decimal.Decimal` |
-| Cola | ~~`River` (respaldada por PostgreSQL)~~ → tabla `cola_trabajos` propia, ver [0014](0014-cola-de-trabajos-en-tabla-propia.md) | Encolado transaccional: conserva la transaccion local por etapa que exige `0003` |
+| Cola | ~~`River` (respaldada por PostgreSQL)~~ → tabla `cola_trabajos` propia, ver [0014](0014-cola-de-trabajos-en-tabla-propia.md) | ~~Encolado transaccional: conserva la transaccion local por etapa que exige `0003`~~ → **el encolado NO es transaccional**: `Encolar` inserta por el pool y el puerto no puede recibir una `pgx.Tx`. En su lugar, idempotencia por clave natural y orden tolerante a la interrupcion ([0014](0014-cola-de-trabajos-en-tabla-propia.md), consecuencias) |
 | Migraciones | `goose` | — |
 | Planificador | Temporizador leyendo `CalendarioDeDistribucion` | `0004`: el planificador no es dueno de las fechas |
 | Similitud | `pg_trgm` + `unaccent` tras `PuertoMotorDeSimilitud` | Igual que en `0009`. Sin cambio |
