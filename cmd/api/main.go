@@ -75,7 +75,11 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
-	api := httpapi.Nueva(store, autenticacion, liquidaciones, httpapi.Opciones{
+	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
+	// puertos separados: que el adaptador sea uno solo es asunto suyo.
+	catalogo := aplicacion.Catalogo{Obras: store}
+
+	api := httpapi.Nueva(store, autenticacion, liquidaciones, catalogo, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})
