@@ -26,6 +26,16 @@ info:
     url: https://redescritores.com
 
 servers:
+  # El host va como variable y no como literal a proposito: Amplify lo genera
+  # al crear la rama, asi que no se conoce hasta el primer `terraform apply`.
+  # Lo imprime `terraform output -raw url` (ADR 0014). Fijarlo aqui obligaria a
+  # tocar el contrato cada vez que el entorno se recrea.
+  - url: https://{host}/api
+    description: Produccion, detras de Amplify Hosting
+    variables:
+      host:
+        default: main.intela.amplifyapp.com
+        description: Dominio de la rama en Amplify, o el dominio propio si se configura uno.
   - url: http://localhost/api
     description: Desarrollo, detras de nginx
   - url: http://localhost:8080
