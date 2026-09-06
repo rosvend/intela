@@ -257,6 +257,16 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
 			// DEFAULT TRUE de la columna no llega a aplicarse porque
 			// insertarUso manda el valor siempre, asi que el que vale es este.
+			//
+			// Es ademas lo que deja el CHECK uso_resuelto_tiene_obra fuera del
+			// alcance de esta ruta, y por eso validarUso ya no lo repite.
+			//
+			// La guarda no sobra, aunque la fila con obra_id acabe rechazada
+			// igualmente: esa fila -la de H5- llega hasta aqui. Estampar
+			// ONI = true sin mirar le inventaria un estado que nunca tuvo
+			// -en ONI y con obra a la vez- justo en el registro que se devuelve
+			// como acuse de lo que llego. Un rechazo describe lo RECIBIDO; si de
+			// paso lo normaliza, deja de ser prueba de nada.
 			u.ONI = true
 		}
 		if u.Emisiones == 0 {
@@ -350,15 +360,23 @@ func validarUso(u UsoPersistido) string {
 		return fmt.Sprintf("escalon %q en la ingesta: solo sale \"pendiente\" de aqui", u.Escalon)
 	}
 
-	// El CHECK uso_resuelto_tiene_obra, dicho en Go. Con la regla de arriba
-	// puesta, obra_id ya es siempre vacio aqui, asi que de las dos ramas del
-	// CHECK solo queda alcanzable esta: una fila que se declara identificada y
-	// no senala ninguna obra. La otra -oni y con obra a la vez- no se deja como
-	// red porque una comprobacion que no puede fallar se lee como prueba de algo
-	// que en realidad no se esta comprobando.
-	if !u.ONI {
-		return "marcada como identificada y sin obra_id"
-	}
+	// El CHECK uso_resuelto_tiene_obra NO se repite aqui, y sus DOS ramas se
+	// quedan fuera por el mismo motivo: con la regla de obra_id puesta ninguna
+	// de las dos puede fallar por este camino.
+	//
+	//   - "en ONI y con obra a la vez" no llega: la regla de obra_id de arriba
+	//     devuelve antes.
+	//   - "identificada y sin obra" tampoco: GuardarUsos estampa ONI = true en
+	//     toda fila con obra_id vacio ANTES de llamar aqui. Eso -y no una
+	//     comprobacion en esta funcion- es lo que impide la fila que violaria el
+	//     CHECK, y lo fija TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada.
+	//
+	// La segunda rama SI estuvo escrita, y salio cara: su texto tambien nombraba
+	// `obra_id`, asi que las pruebas de H5 -que casaban por substring- se daban
+	// por satisfechas con ella y seguian en verde aunque se quitara la regla de
+	// obra_id. Rechazaban la fila por un motivo FALSO y no lo distinguian. Una
+	// comprobacion que no puede fallar no prueba nada, y encima puede tapar a la
+	// que si.
 
 	// Los CHECK de no negatividad de las columnas de medida. Una medida
 	// negativa no es un uso pequeno: es un dato roto, y ponderaria a la baja.

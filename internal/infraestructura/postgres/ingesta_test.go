@@ -670,27 +670,45 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 
 	// El motivo tiene que decir QUE campo la aparto: es lo que sirve para
 	// volver a pedirle al cliente exactamente eso (ADR 0014).
+	//
+	// Se compara el motivo ENTERO y fila a fila, no "que en algun sitio aparezca
+	// la palabra obra_id". Con la version por substring esta prueba pasaba
+	// aunque se borrara la regla de obra_id: la fila caia en la comprobacion de
+	// coherencia oni/obra, que la rechazaba igual pero con el motivo contrario
+	// -"marcada como identificada y sin obra_id", de una fila que traia
+	// obra_id-, y el substring casaba con las dos. Los recuentos de arriba
+	// tampoco cambiaban. La prueba solo demostraba "acaba en el log", nunca
+	// "acaba en el log por lo que decimos".
+	//
+	// GuardarUsos deriva el id de la POSICION en el lote, asi que cada motivo se
+	// mira contra la fila exacta que lo produjo.
+	motivos := map[string]string{}
 	filas, err := pool.Query(ctx,
-		`SELECT motivo FROM usos_rechazados WHERE reporte_id = $1 ORDER BY id`, rep.ID)
+		`SELECT id, motivo FROM usos_rechazados WHERE reporte_id = $1`, rep.ID)
 	if err != nil {
 		t.Fatalf("leer motivos: %v", err)
 	}
 	defer filas.Close()
 
-	var motivos []string
 	for filas.Next() {
-		var m string
-		if err := filas.Scan(&m); err != nil {
+		var id, m string
+		if err := filas.Scan(&id, &m); err != nil {
 			t.Fatalf("escanear motivo: %v", err)
 		}
-		motivos = append(motivos, m)
+		motivos[id] = m
 	}
 	if err := filas.Err(); err != nil {
 		t.Fatalf("recorrer motivos: %v", err)
 	}
-	juntos := strings.Join(motivos, " | ")
-	if !strings.Contains(juntos, "obra_id") || !strings.Contains(juntos, "escalon") {
-		t.Fatalf("los motivos no nombran los campos que fallan: %q", juntos)
+
+	esperados := map[string]string{
+		rep.ID + "-0": "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)",
+		rep.ID + "-1": `escalon "alias" en la ingesta: solo sale "pendiente" de aqui`,
+	}
+	for id, quiero := range esperados {
+		if motivos[id] != quiero {
+			t.Errorf("motivo de %q = %q, se esperaba %q", id, motivos[id], quiero)
+		}
 	}
 }
 

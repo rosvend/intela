@@ -522,6 +522,14 @@ func TestGuardarUsosSinFilasNoTocaElRepositorio(t *testing.T) {
 // Cada regla de aqui refleja un CHECK de la tabla usos. No es duplicar el
 // esquema por gusto: una fila que viola un CHECK aborta el INSERT del lote
 // ENTERO y se lleva por delante las filas buenas que la acompanan.
+//
+// El motivo se compara ENTERO y no por substring. Comprobar que "nombra el
+// campo" es mas debil de lo que parece: varias reglas distintas nombran el
+// mismo campo, asi que una asercion por substring no distingue "rechazada por
+// la regla que se esta probando" de "rechazada por otra que dice algo falso".
+// Ya paso: la regla de obra_id de H5 se podia quitar entera y estas pruebas
+// seguian verdes porque el motivo de la coherencia oni/obra tambien decia
+// `obra_id`.
 func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 	conObra := usoBueno("Identificada")
 	conObra.ObraID = "obra-1"
@@ -534,37 +542,34 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 	manual.Escalon = "manual"
 
 	casos := map[string]struct {
-		uso      UsoPersistido
-		nombra   string
-		esValido bool
+		uso    UsoPersistido
+		motivo string
 	}{
-		"buena":                 {usoBueno("La Casa"), "", true},
-		"sin titulo":            {usoBueno("   "), "titulo", false},
-		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), "modalidad", false},
-		"escalon desconocido":   {func() UsoPersistido { u := usoBueno("X"); u.Escalon = "adivinado"; return u }(), "escalon", false},
+		"buena":                 {usoBueno("La Casa"), ""},
+		"sin titulo":            {usoBueno("   "), "titulo vacio: sin titulo no hay nada que identificar"},
+		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), `modalidad "radio" fuera de tv|cine|ott|hotel`},
+		"escalon desconocido":   {func() UsoPersistido { u := usoBueno("X"); u.Escalon = "adivinado"; return u }(), `escalon "adivinado" en la ingesta: solo sale "pendiente" de aqui`},
 		// Ya no la caza la coherencia oni/obra sino la regla de H5, que es
-		// anterior y mas estricta: con obra_id puesto no se mira nada mas.
-		"con obra por ingesta": {conObra, "obra_id", false},
-		"resuelta sin obra":    {func() UsoPersistido { u := usoBueno("X"); u.ONI = false; return u }(), "obra", false},
-		"medida negativa":      {negativo, "vistas", false},
-		"emisiones negativas":  {func() UsoPersistido { u := usoBueno("X"); u.Emisiones = -1; return u }(), "emisiones", false},
-		"manual por ingesta":   {manual, "manual", false},
+		// anterior y mas estricta: con obra_id puesto no se mira nada mas. Que el
+		// motivo se compare entero es lo que lo demuestra.
+		"con obra por ingesta": {conObra, "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"},
+		// A proposito VALIDA, y no es un descuido: la mitad "identificada y sin
+		// obra" del CHECK uso_resuelto_tiene_obra ya no se comprueba aqui porque
+		// GuardarUsos estampa ONI = true antes de llamar, asi que esta forma no
+		// existe por esa ruta. Quien lo garantiza es
+		// TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada, no esta
+		// funcion. Dejarlo escrito para que la frontera se vea, en vez de que la
+		// linea desaparezca sin dejar rastro.
+		"resuelta sin obra, que aqui ya no se mira": {func() UsoPersistido { u := usoBueno("X"); u.ONI = false; return u }(), ""},
+		"medida negativa":     {negativo, "vistas negativa: -1"},
+		"emisiones negativas": {func() UsoPersistido { u := usoBueno("X"); u.Emisiones = -1; return u }(), "emisiones negativas: -1"},
+		"manual por ingesta":  {manual, "escalon manual: una resolucion manual necesita autor e instante, y no entra por ingesta"},
 	}
 
 	for nombre, c := range casos {
 		t.Run(nombre, func(t *testing.T) {
-			motivo := validarUso(c.uso)
-			if c.esValido {
-				if motivo != "" {
-					t.Fatalf("se esperaba valida, se rechazo con %q", motivo)
-				}
-				return
-			}
-			if motivo == "" {
-				t.Fatal("se esperaba un motivo de rechazo")
-			}
-			if !regexp.MustCompile(c.nombra).MatchString(motivo) {
-				t.Fatalf("el motivo %q no nombra %q", motivo, c.nombra)
+			if motivo := validarUso(c.uso); motivo != c.motivo {
+				t.Fatalf("motivo = %q, se esperaba %q", motivo, c.motivo)
 			}
 		})
 	}
@@ -580,30 +585,41 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 // clave foranea que revienta el INSERT del lote ENTERO; y `UsosSinResolver`
 // filtra por escalon = 'pendiente', asi que una fila que entrara ya resuelta se
 // saltaria la cascada en silencio.
+//
+// # El motivo se compara ENTERO, y esa es la mitad del valor de esta prueba
+//
+// Con la asercion anterior -substring "obra_id"- el caso "con obra_id" pasaba
+// aunque se borrara la regla que dice probar: la fila caia entonces en la
+// comprobacion de coherencia oni/obra, cuyo motivo ("marcada como identificada
+// y sin obra_id") tambien contiene la palabra. La fila SI se rechazaba, pero
+// por una razon FALSA -decia "sin obra_id" de una fila que traia obra_id- y la
+// prueba no sabia notar la diferencia. Un rechazo con el motivo equivocado no
+// es el comportamiento que H5 promete: el log de rechazos existe para poder
+// pedirle al cliente exactamente lo que falla.
 func TestGuardarUsosRechazaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 	casos := map[string]struct {
 		ajustar func(*UsoPersistido)
-		nombra  string
+		motivo  string
 	}{
 		"con obra_id": {
 			func(u *UsoPersistido) { u.ObraID = "obra-1"; u.ONI = false },
-			"obra_id",
+			"obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)",
 		},
 		"escalon alias": {
 			func(u *UsoPersistido) { u.Escalon = "alias" },
-			"escalon",
+			`escalon "alias" en la ingesta: solo sale "pendiente" de aqui`,
 		},
 		"escalon id_global": {
 			func(u *UsoPersistido) { u.Escalon = "id_global" },
-			"escalon",
+			`escalon "id_global" en la ingesta: solo sale "pendiente" de aqui`,
 		},
 		"escalon difuso": {
 			func(u *UsoPersistido) { u.Escalon = "difuso" },
-			"escalon",
+			`escalon "difuso" en la ingesta: solo sale "pendiente" de aqui`,
 		},
 		"escalon oni": {
 			func(u *UsoPersistido) { u.Escalon = "oni" },
-			"escalon",
+			`escalon "oni" en la ingesta: solo sale "pendiente" de aqui`,
 		},
 	}
 
@@ -626,8 +642,8 @@ func TestGuardarUsosRechazaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 			if rechazados[0].Titulo != "Llega Ya Resuelta" {
 				t.Fatalf("se rechazo la fila equivocada: %+v", rechazados[0])
 			}
-			if !regexp.MustCompile(c.nombra).MatchString(rechazados[0].RechazoMotivo) {
-				t.Fatalf("el motivo %q no nombra %q", rechazados[0].RechazoMotivo, c.nombra)
+			if rechazados[0].RechazoMotivo != c.motivo {
+				t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, c.motivo)
 			}
 
 			// No en `usos`: la fila buena que la acompana si, la manipulada no.
@@ -694,11 +710,20 @@ func TestGuardarUsosTrataElEscalonVacioComoPendiente(t *testing.T) {
 // son columna de ninguna parrilla ni de ningun reporte OTT, asi que llegan en
 // el valor cero de Go y los tiene que rellenar el caso de uso.
 //
+// Lo de ONI es ademas lo UNICO que hoy impide la fila que violaria el CHECK
+// uso_resuelto_tiene_obra: validarUso ya no repite ese CHECK, precisamente
+// porque este relleno hace inalcanzable la unica de sus dos ramas que quedaba.
+// Si alguien quita el relleno, la fila deja de rechazarse y pasa a reventar el
+// INSERT del lote ENTERO contra la base; el fallo se ve aqui o no se ve hasta
+// produccion.
+//
 // Los tres sintomas que cubre, y ninguno se ve como un error:
 //
-//   - ONI en false con obra vacia rechaza la fila entera por "identificada y
-//     sin obra_id", un motivo FALSO -no la marco nadie-, y encima el reporte ya
-//     esta escrito: reintentar el mismo archivo choca con ErrReporteDuplicado.
+//   - ONI en false con obra vacia sale de validarUso como VALIDA -esa rama del
+//     CHECK ya no se comprueba en Go- y llega a `usos` con oni = false y
+//     obra_id NULL, que es justo lo que el CHECK prohibe: aborta el lote entero,
+//     buenas incluidas, y encima el reporte ya esta escrito, asi que reintentar
+//     el mismo archivo choca con ErrReporteDuplicado.
 //   - Emisiones en 0 pasa el CHECK y deja la fila canonica aportando CERO
 //     puntos a su obra, porque las emisiones multiplican (RD 9.1.1).
 //   - Fuente vacia satisface el TEXT NOT NULL y hace que Alias(), que indexa
