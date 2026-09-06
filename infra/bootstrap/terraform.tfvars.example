@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+region      = "us-east-1"
+name_prefix = "intela"
+
+github_owner = "rosvend"
+github_repo  = "intela"
+
+# Set to false, and supply existing_oidc_provider_arn, if this AWS account
+# already trusts token.actions.githubusercontent.com for something else.
+create_oidc_provider = true
