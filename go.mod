@@ -3,6 +3,15 @@ module github.com/rosvend/intela
 go 1.24.0
 
 require (
+	// Fijada a proposito. v1.55.0 declara `go 1.26`, y basta con que este en el
+	// grafo para que `go mod tidy` suba la directiva `go` de este modulo -lo que
+	// rompe el Dockerfile (golang:1.24-bookworm) y cambia la version de Go que
+	// instala CI, que la lee de aqui. Es la misma trampa que documenta la
+	// fijacion de grpc-gateway mas abajo.
+	//
+	// v1.54.0 declara `go 1.18` y su unico requisito es testify, que ya estaba
+	// en el grafo por testcontainers.
+	github.com/aws/aws-lambda-go v1.54.0
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/johnfercher/maroto/v2 v2.3.1

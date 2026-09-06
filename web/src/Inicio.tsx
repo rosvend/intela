@@ -1,26 +1,19 @@
 import { useSesion } from "./sesion";
-import Liquidaciones from "./Liquidaciones";
+import TableroAdministrador from "./tablero/TableroAdministrador";
+import TableroTitular from "./tablero/TableroTitular";
+import { perfilDeTablero } from "./tablero/perfil";
 
 /**
  * "/" no cambia de ruta segun el rol (M-5): el mockup no le da al titular un
- * item de nav propio, cambia el CONTENIDO de Inicio. El panel de
- * administracion real (KPIs, graficos) llega con #31; esto es el esqueleto
- * que ese PR reemplaza.
+ * item de nav propio, cambia el CONTENIDO de Inicio. Administrador y staff
+ * ven el panel de control; el titular, su liquidacion.
  */
 export default function Inicio() {
   const { usuario } = useSesion();
+  if (!usuario) return null;
 
-  if (usuario?.rol === "titular") {
-    return <Liquidaciones />;
+  if (perfilDeTablero(usuario.rol) === "titular") {
+    return <TableroTitular usuario={usuario} />;
   }
-
-  return (
-    <section>
-      <h1>Panel de control</h1>
-      <p className="muted">
-        Reconocimiento de obras y distribución de ingresos por propiedad
-        intelectual para REDES SGC.
-      </p>
-    </section>
-  );
+  return <TableroAdministrador usuario={usuario} />;
 }
