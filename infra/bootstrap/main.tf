@@ -103,6 +103,9 @@ module "github_oidc" {
   github_repo   = var.github_repo
   deploy_branch = var.deploy_branch
 
+  github_owner_id = var.github_owner_id
+  github_repo_id  = var.github_repo_id
+
   create_oidc_provider       = var.create_oidc_provider
   existing_oidc_provider_arn = var.existing_oidc_provider_arn
 

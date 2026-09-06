@@ -6,6 +6,16 @@ name_prefix = "intela"
 github_owner = "rosvend"
 github_repo  = "intela"
 
+# GitHub is moving the OIDC subject claim to a form that embeds these numeric
+# ids: repo:owner@<owner id>/repo@<repo id>:pull_request. Without them the role
+# cannot be assumed once the rollout reaches the repository, and the failure is
+# an opaque "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+#
+#   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+github_owner_id = 123431768
+github_repo_id  = 1314348584
+
 # Set to false, and supply existing_oidc_provider_arn, if this AWS account
 # already trusts token.actions.githubusercontent.com for something else.
 create_oidc_provider = true
