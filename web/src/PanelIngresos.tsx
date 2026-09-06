@@ -33,9 +33,11 @@ export function PanelIngresos() {
   useEffect(() => {
     let vigente = true;
     setCargando(true);
-    (api(
-      rutaMisIngresos({ obra: "", fuente: "", periodo: "" }),
-    ) as Promise<ListaIngresos>)
+    (
+      api(
+        rutaMisIngresos({ obra: "", fuente: "", periodo: "" }),
+      ) as Promise<ListaIngresos>
+    )
       .then((r) => {
         if (vigente) setFilas(r.ingresos);
       })

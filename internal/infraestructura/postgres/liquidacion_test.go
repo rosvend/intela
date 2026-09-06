@@ -38,9 +38,9 @@ func sembrarCorridas(t *testing.T) *Store {
 		}
 	}
 
-	ejecutar(`INSERT INTO obras (id, titulo, tipo) VALUES
-	            ($1, 'Solo de Beto', 'unitario'),
-	            ($2, 'El Segundo Guion', 'serie')`,
+	ejecutar(`INSERT INTO obras (id, titulo, genero, anio, tipo) VALUES
+	            ($1, 'Solo de Beto',     'Drama',  2024, 'unitario'),
+	            ($2, 'El Segundo Guion', 'Drama',  1991, 'serie')`,
 		obraBeto, obraAna2)
 	ejecutar(`INSERT INTO declaraciones (obra_id, titular_id, ipi, porcentaje) VALUES
 	            ($1, $2, 'IPI-00000002', 100.0000),
