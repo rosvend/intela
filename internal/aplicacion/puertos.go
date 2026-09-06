@@ -266,7 +266,7 @@ type BitacoraAuditoria interface {
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
 //
 // Los tres metodos son los que pide el issue #35; el detalle de por que la
-// cola es una tabla propia y no River esta en el ADR 0014.
+// cola es una tabla propia y no River esta en el ADR 0015.
 //
 // El contrato tiene una obligacion que no se ve en las firmas: Tomar reclama
 // en exclusiva. Dos workers que llamen a la vez tienen que recibir trabajos

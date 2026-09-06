@@ -134,7 +134,7 @@ npm --prefix web run dev                            # http://localhost:5173
 Los cuatro valores del worker son **configuracion de operacion, no parametros normativos**: no
 salen del reglamento y por eso no entran por la tabla `parametros` (ADR 0004). El detalle de por
 que la cola es una tabla propia y no River esta en el
-[ADR 0014](decisiones/0014-cola-de-trabajos-en-tabla-propia.md).
+[ADR 0015](decisiones/0015-cola-de-trabajos-en-tabla-propia.md).
 
 ## Que es real y que es sintetico
 
