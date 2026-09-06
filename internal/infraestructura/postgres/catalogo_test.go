@@ -432,7 +432,7 @@ const codigoCheck = "23514"
 // escribe SQL crudo -la ingesta de #18, el seed de #22- o si el enum del
 // dominio se rompe.
 //
-// Sin esta prueba, borrar el CHECK de la migracion 00003 deja la suite entera
+// Sin esta prueba, borrar el CHECK de la migracion 00002 deja la suite entera
 // en verde y un "director" entra al catalogo como coautor sin que nadie lo
 // note, que es literalmente el fallo que el CHECK existe para impedir.
 func TestLaBaseRechazaUnCoautorConRolNoAutoral(t *testing.T) {

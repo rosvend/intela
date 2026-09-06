@@ -72,7 +72,7 @@ func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 	          VALUES ($1, $2, 'Ana Escritora', 'titular', $3, $4)`,
 		usuarioTitular, emailTitular, titularAna, hashBcrypt)
 
-	// genero y anio son NOT NULL desde 00003 y no tienen DEFAULT: el catalogo
+	// genero y anio son NOT NULL desde 00002 y no tienen DEFAULT: el catalogo
 	// no admite una obra sin ellos. `genero` es texto libre a proposito -el
 	// mapeo a las cuatro categorias de `tipo` es una pregunta abierta con el
 	// cliente-, asi que aqui van valores de parrilla, no de reglamento.

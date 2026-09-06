@@ -5,10 +5,11 @@
 -- van en la propia Declaracion de Obra, `RD 13.1.2`- y los coautores con su
 -- IPI, que es por donde se busca a una persona (`RD 3`).
 --
--- El numero 00003 y no 00002: hay cuatro PRs abiertos que reclaman el 00002 a
--- la vez. Dos ficheros con la MISMA version son un error duro de goose en cada
--- arranque, incluido el contenedor de pruebas; un hueco entre versiones no lo
--- es. Quien merguee despues renumera con un `git mv`.
+-- El numero 00002 lo asigna la revision: varios PRs abiertos reclamaban esa
+-- version a la vez y el orden de merge decide cual se la queda. Dos ficheros
+-- con la MISMA version son un error duro de goose en cada arranque, incluido
+-- el contenedor de pruebas; un hueco entre versiones no lo es. Quien merguee
+-- despues renumera con un `git mv`.
 
 -- +goose Up
 
