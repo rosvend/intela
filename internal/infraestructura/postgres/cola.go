@@ -16,7 +16,13 @@ var _ aplicacion.ColaTrabajos = (*Store)(nil)
 // columnasTrabajo es la proyeccion que devuelve Tomar. Compartida con nada
 // mas por ahora, pero declarada aparte por la misma razon que columnasUsuario:
 // el orden de escaneo se define una vez.
-const columnasTrabajo = `id, tipo, periodo, corrida, payload, intentos`
+//
+// Las seis van cualificadas con `c` -el alias de cola_trabajos en Tomar- y no
+// solo la primera. La sentencia de Tomar une la tabla con el CTE `candidato`:
+// hoy ese CTE expone unicamente `id`, asi que las cinco sin cualificar
+// resuelven bien, pero el dia que alguien le anada una columna la lista pasa a
+// ser ambigua. Cualificarlas todas cierra eso ahora y no despues.
+const columnasTrabajo = `c.id, c.tipo, c.periodo, c.corrida, c.payload, c.intentos`
 
 // Encolar inserta el trabajo, o no hace nada si ya estaba.
 //
@@ -99,7 +105,7 @@ func (s *Store) Tomar(ctx context.Context, ahora time.Time) (aplicacion.Trabajo,
 		    SET estado = 'en_curso', intentos = c.intentos + 1
 		   FROM candidato
 		  WHERE c.id = candidato.id
-		 RETURNING c.`+columnasTrabajo, ahora)
+		 RETURNING `+columnasTrabajo, ahora)
 
 	var (
 		t    aplicacion.Trabajo
