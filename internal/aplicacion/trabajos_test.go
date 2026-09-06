@@ -291,16 +291,39 @@ func TestDespachadorCierraHechoTrasExito(t *testing.T) {
 	}
 }
 
-// Un fallo transitorio vuelve a la cola con la espera de la politica. Es el
-// criterio "un trabajo que falla se registra y se reintenta, no se pierde".
+// Un fallo transitorio vuelve a la cola con la espera de la politica, contada
+// desde que el manejador TERMINO. Es el criterio "un trabajo que falla se
+// registra y se reintenta, no se pierde" mas la parte que lo hace util: que la
+// espera se aplique de verdad.
+//
+// El manejador tarda aqui MAS que la espera de la politica -cinco minutos
+// contra uno- y adelanta el reloj mientras corre. Sin eso la prueba no puede
+// fallar: con un reloj quieto y un manejador instantaneo, pedir el instante
+// antes o despues de manejar da el mismo valor, y la version anterior de esta
+// prueba pasaba igual con el defecto y sin el.
+//
+// La propiedad que fija es que `Volver` cae DESPUES del fin del manejador. Si
+// se contara desde la toma saldria en el pasado, el bucle `vaciar` de
+// cmd/worker retomaria el trabajo en la misma pasada y los cinco intentos se
+// quemarian seguidos en vez de repartirse por la espera exponencial.
 func TestDespachadorReprogramaTrasUnFalloTransitorio(t *testing.T) {
+	// Mas que la Base de un minuto de nuevoDespachador: es lo que separa las
+	// dos lecturas del reloj.
+	const tardanza = 5 * time.Minute
+
+	// relojFijo por puntero: el instante deja de ser fijo y el manejador lo
+	// puede adelantar. Es el doble mas pequeno que sirve, sin anadir un tipo.
+	reloj := &relojFijo{instante: ahoraPrueba}
+
 	cola := nuevaCola()
 	cola.pendientes = []Trabajo{trabajo(TrabajoEjecutarReparto, 7, 1)}
 	d := nuevoDespachador(cola, map[TipoTrabajo]Manejador{
 		TrabajoEjecutarReparto: ManejadorFunc(func(context.Context, Trabajo) error {
+			reloj.instante = reloj.instante.Add(tardanza)
 			return errors.New("la base no responde")
 		}),
 	})
+	d.Reloj = reloj
 
 	_, err := d.ProcesarUno(t.Context())
 	if err == nil {
@@ -311,8 +334,16 @@ func TestDespachadorReprogramaTrasUnFalloTransitorio(t *testing.T) {
 	if !cierre.Reintentado() {
 		t.Fatal("un fallo transitorio se reprograma")
 	}
-	if quiero := ahoraPrueba.Add(time.Minute); !cierre.Volver.Equal(quiero) {
-		t.Errorf("Volver = %v, se esperaba %v", cierre.Volver, quiero)
+
+	finManejo := ahoraPrueba.Add(tardanza)
+	if !cierre.Volver.After(finManejo) {
+		t.Errorf("Volver = %v, no es posterior al fin del manejador (%v): la espera "+
+			"queda anulada y el trabajo se puede retomar de inmediato",
+			cierre.Volver, finManejo)
+	}
+	if quiero := finManejo.Add(time.Minute); !cierre.Volver.Equal(quiero) {
+		t.Errorf("Volver = %v, se esperaba %v (fin del manejador + la Base de la politica)",
+			cierre.Volver, quiero)
 	}
 	// El motivo queda escrito: sin el, la fila dice "fallido" y no por que.
 	if cierre.Motivo == "" {

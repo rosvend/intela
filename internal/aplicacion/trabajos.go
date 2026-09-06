@@ -248,7 +248,13 @@ func (d Despachador) ProcesarUno(ctx context.Context) (Trabajo, error) {
 	}
 
 	if errManejo := d.manejar(ctx, t); errManejo != nil {
-		cierre := d.cierreTrasFallo(t, ahora, errManejo)
+		// El instante se vuelve a pedir AQUI en vez de reusar el de Tomar:
+		// entre los dos corrio el manejador. Con el instante de la toma, un
+		// manejador que tarde mas que la espera de la politica deja
+		// `disponible_en` en el pasado, el bucle de vaciado retoma el trabajo
+		// en la misma pasada y los reintentos se queman seguidos en vez de
+		// repartirse por la espera exponencial.
+		cierre := d.cierreTrasFallo(t, d.Reloj.Ahora(), errManejo)
 		if err := d.Cola.Cerrar(ctx, t.ID, cierre); err != nil {
 			return t, errors.Join(errManejo, err)
 		}
@@ -283,7 +289,11 @@ func (d Despachador) manejar(ctx context.Context, t Trabajo) (err error) {
 }
 
 // cierreTrasFallo decide si el trabajo vuelve a la cola o se abandona.
-func (d Despachador) cierreTrasFallo(t Trabajo, ahora time.Time, causa error) Cierre {
+//
+// `finManejo` es el instante en que el manejador TERMINO, no el de la toma. La
+// espera exponencial se cuenta desde el final del intento: contarla desde el
+// principio la anula entera cuando el manejador tarda mas que la espera.
+func (d Despachador) cierreTrasFallo(t Trabajo, finManejo time.Time, causa error) Cierre {
 	if errors.Is(causa, ErrPermanente) {
 		return Abandonar(causa.Error())
 	}
@@ -291,7 +301,7 @@ func (d Despachador) cierreTrasFallo(t Trabajo, ahora time.Time, causa error) Ci
 	if !quedan {
 		return Abandonar(causa.Error())
 	}
-	return Reintentar(ahora.Add(espera), causa.Error())
+	return Reintentar(finManejo.Add(espera), causa.Error())
 }
 
 // ---------------------------------------------------------------------------
