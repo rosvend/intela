@@ -25,6 +25,7 @@ proposito.
 | [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) | Sustituida por 0012 |
 | [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md) | Vigente |
 | [0013 La sesion es un token opaco en tabla, no un JWT](0013-sesiones-opacas-en-tabla.md) | Vigente |
+| [0014 La infraestructura de ejecucion es AWS serverless, descrita en Terraform](0014-infraestructura-serverless-en-aws.md) | Vigente |
 | [0015 La cola de trabajos es una tabla propia, no River](0015-cola-de-trabajos-en-tabla-propia.md) | Vigente |
 
 El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.

@@ -67,6 +67,8 @@ linters:
               desc: "ADR 0002: pgx is the PostgreSQL adapter. It lives in infraestructura."
             - pkg: github.com/go-chi/chi
               desc: "ADR 0002: the router is an inbound adapter."
+            - pkg: github.com/aws/aws-lambda-go
+              desc: "ADR 0014: Lambda is a runtime, not a domain concept. It is owned by cmd/lambda; the core must not learn where it happens to execute."
             - pkg: github.com/riverqueue/river
               desc: "ADR 0002: the queue is infrastructure. dominio does not enqueue."
             - pkg: os
@@ -127,6 +129,13 @@ linters:
               desc: "ADR 0002: HTTP is an inbound adapter."
             - pkg: database/sql
               desc: "ADR 0002: persistence enters through a repository puerto."
+            # ADR 0014 put the API on Lambda. That must stay a fact about the
+            # composition root and nothing else: cmd/lambda and cmd/api both
+            # hand the SAME httpapi.Router() to their runtime, and the day a use
+            # case imports an events.LambdaFunctionURL* type, that stops being
+            # true and moving off Lambda becomes a rewrite instead of a new main.
+            - pkg: github.com/aws/aws-lambda-go
+              desc: "ADR 0014: Lambda is a runtime, not a use case. It is owned by cmd/lambda."
 
         # ADR 0003: "Reparto lee de Repertorio y de Recaudo. Ninguno de los dos
         # conoce a Reparto." Go already rejects cycles at compile time; this
