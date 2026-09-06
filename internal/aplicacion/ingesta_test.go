@@ -752,6 +752,12 @@ func TestGuardarUsosTrataElObraIDEnBlancoComoSinObra(t *testing.T) {
 			// Una fila que de verdad no tiene obra: lo unico raro es el blanco.
 			sinObra := usoBueno("Sin Obra De Verdad")
 			sinObra.ObraID = blanco
+			// ONI a false a proposito, y no el true que trae usoBueno: es el
+			// valor cero de Go, o sea lo que deja un adaptador de formato (#25)
+			// que mapee lo que hay en el archivo, porque `oni` no es columna de
+			// ninguna parrilla. Con el true del fixture, la asercion de mas abajo
+			// pasaria sin que la guarda llegara a ejecutarse nunca.
+			sinObra.ONI = false
 
 			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
 				[]UsoPersistido{sinObra})
@@ -775,7 +781,9 @@ func TestGuardarUsosTrataElObraIDEnBlancoComoSinObra(t *testing.T) {
 					guardado.ObraID)
 			}
 			if !guardado.ONI {
-				t.Error("sin obra es ONI: el blanco no puede saltarse esa guarda")
+				t.Error("sin obra es ONI: la guarda que estampa ONI tiene que ver " +
+					"el blanco como vacio, o la fila llega al INSERT con oni = false " +
+					"y obra_id NULL, que es justo lo que el CHECK prohibe")
 			}
 			if guardado.Escalon != "pendiente" {
 				t.Errorf("Escalon = %q, se esperaba \"pendiente\"", guardado.Escalon)

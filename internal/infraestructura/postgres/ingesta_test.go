@@ -762,9 +762,14 @@ func TestIngestaNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 				t.Fatalf("GuardarReporte: %v", err)
 			}
 
-			// La del blanco: no tiene obra ninguna, solo la celda rellena.
+			// La del blanco: no tiene obra ninguna, solo la celda rellena. ONI a
+			// false, que es el valor cero de Go y lo que deja un adaptador de
+			// formato (#25) -`oni` no es columna de ninguna parrilla-. Con el
+			// true de usoPendiente, la asercion de mas abajo pasaria sin que la
+			// guarda que estampa ONI llegara a ejecutarse.
 			conBlanco := usoPendiente("", "", "Blanco En Obra")
 			conBlanco.ObraID = blanco
+			conBlanco.ONI = false
 
 			// La que SI trae obra, con blancos alrededor: sigue siendo H5. El
 			// obra_id no existe en `obras`, que es lo que la haria reventar por
