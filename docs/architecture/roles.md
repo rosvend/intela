@@ -22,6 +22,14 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | ------- | ----- |
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
+| `/obras/*` | `administrador` |
+
+`/obras/*` es el catalogo maestro, y pide `administrador` tambien para
+LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo
+el matching, y quien lo lista entero ve el repertorio completo de la
+sociedad. Abrirlo a `auditor` —que tiene lectura de todo— o recortarlo para
+`titular` con `SoloPropiasObras` (`OE-6`) son decisiones de los issues que
+traigan esos paneles.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
