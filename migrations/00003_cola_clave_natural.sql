@@ -1,5 +1,18 @@
 -- La cola de trabajos gana clave natural y espera de reintento.
 --
+-- AVISO DE COORDINACION: el numero 00003 esta reclamado por cuatro PRs a la vez
+-- -#85 (esta, `cola_clave_natural`), #80 (`liquidacion`), #87 (`oni_publicacion`)
+-- y #88 (`afiliaciones`)-, y el 00004 por otras dos (#72 y #78, las dos con
+-- `log_de_rechazos`). Renumerarlas fue lo que se pidio en la revision de esta
+-- PR, pero renumerar cada una por su cuenta mueve el choque en vez de
+-- resolverlo: dos ramas que no se ven eligen el mismo hueco otra vez.
+--
+-- El reparto de numeros no lo puede decidir esta PR sola. Lo tiene que fijar
+-- quien vea las seis -orden de merge, o numeros asignados- antes de que la
+-- primera entre a `main`. Aqui queda escrito el riesgo, no un arreglo a ciegas.
+-- Quien mergee segundo renumera la suya; goose ordena por el numero del archivo
+-- y aplicar dos veces la version 3 revienta con `duplicate version 3`.
+--
 -- `cola_trabajos` nacio en 00001 con lo justo para que un worker tomara filas:
 -- tipo, payload, estado, error, intentos. Le faltan las dos cosas que hacen
 -- que una corrida no se repita y que un fallo no se pierda.
