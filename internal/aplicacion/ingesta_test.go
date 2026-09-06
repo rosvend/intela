@@ -542,11 +542,13 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 		"sin titulo":            {usoBueno("   "), "titulo", false},
 		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), "modalidad", false},
 		"escalon desconocido":   {func() UsoPersistido { u := usoBueno("X"); u.Escalon = "adivinado"; return u }(), "escalon", false},
-		"oni con obra":          {conObra, "oni", false},
-		"resuelta sin obra":     {func() UsoPersistido { u := usoBueno("X"); u.ONI = false; return u }(), "obra", false},
-		"medida negativa":       {negativo, "vistas", false},
-		"emisiones negativas":   {func() UsoPersistido { u := usoBueno("X"); u.Emisiones = -1; return u }(), "emisiones", false},
-		"manual por ingesta":    {manual, "manual", false},
+		// Ya no la caza la coherencia oni/obra sino la regla de H5, que es
+		// anterior y mas estricta: con obra_id puesto no se mira nada mas.
+		"con obra por ingesta": {conObra, "obra_id", false},
+		"resuelta sin obra":    {func() UsoPersistido { u := usoBueno("X"); u.ONI = false; return u }(), "obra", false},
+		"medida negativa":      {negativo, "vistas", false},
+		"emisiones negativas":  {func() UsoPersistido { u := usoBueno("X"); u.Emisiones = -1; return u }(), "emisiones", false},
+		"manual por ingesta":   {manual, "manual", false},
 	}
 
 	for nombre, c := range casos {
@@ -565,6 +567,104 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 				t.Fatalf("el motivo %q no nombra %q", motivo, c.nombra)
 			}
 		})
+	}
+}
+
+// H5: la cascada (ADR 0007) es el UNICO camino a obra_id.
+//
+// Una fila que llega ya identificada -con obra_id puesto o con un escalon
+// adelantado- es una entrada corrupta o manipulada, y tiene que acabar en el log
+// de rechazos con su motivo, nunca en `usos`. Lo que cierra son tres cosas:
+// `evidencia` y `puntaje` describirian una decision de la cascada que nunca
+// ocurrio (pregunta 3 del ADR 0006); un obra_id inexistente es una violacion de
+// clave foranea que revienta el INSERT del lote ENTERO; y `UsosSinResolver`
+// filtra por escalon = 'pendiente', asi que una fila que entrara ya resuelta se
+// saltaria la cascada en silencio.
+func TestGuardarUsosRechazaLaFilaQueLlegaYaIdentificada(t *testing.T) {
+	casos := map[string]struct {
+		ajustar func(*UsoPersistido)
+		nombra  string
+	}{
+		"con obra_id": {
+			func(u *UsoPersistido) { u.ObraID = "obra-1"; u.ONI = false },
+			"obra_id",
+		},
+		"escalon alias": {
+			func(u *UsoPersistido) { u.Escalon = "alias" },
+			"escalon",
+		},
+		"escalon id_global": {
+			func(u *UsoPersistido) { u.Escalon = "id_global" },
+			"escalon",
+		},
+		"escalon difuso": {
+			func(u *UsoPersistido) { u.Escalon = "difuso" },
+			"escalon",
+		},
+		"escalon oni": {
+			func(u *UsoPersistido) { u.Escalon = "oni" },
+			"escalon",
+		},
+	}
+
+	for nombre, c := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			manipulada := usoBueno("Llega Ya Resuelta")
+			c.ajustar(&manipulada)
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+				[]UsoPersistido{manipulada, usoBueno("La Casa")})
+			if err != nil {
+				t.Fatalf("una fila manipulada no es un fallo del caso de uso: %v", err)
+			}
+
+			if len(rechazados) != 1 {
+				t.Fatalf("se esperaba 1 rechazo, llegaron %d", len(rechazados))
+			}
+			if rechazados[0].Titulo != "Llega Ya Resuelta" {
+				t.Fatalf("se rechazo la fila equivocada: %+v", rechazados[0])
+			}
+			if !regexp.MustCompile(c.nombra).MatchString(rechazados[0].RechazoMotivo) {
+				t.Fatalf("el motivo %q no nombra %q", rechazados[0].RechazoMotivo, c.nombra)
+			}
+
+			// No en `usos`: la fila buena que la acompana si, la manipulada no.
+			canonicos := repo.canonicos()
+			if len(canonicos) != 1 {
+				t.Fatalf("se esperaba 1 uso canonico, hay %d: %+v", len(canonicos), canonicos)
+			}
+			if canonicos[0].Titulo != "La Casa" {
+				t.Fatalf("la fila canonica no es la buena: %+v", canonicos[0])
+			}
+			// Y no se descarta: el log de rechazos la conserva con su motivo.
+			if len(repo.usos) != 2 {
+				t.Fatalf("las 2 filas tienen que persistirse, llegaron %d", len(repo.usos))
+			}
+		})
+	}
+}
+
+// La otra mitad de H5, y la que impide que el arreglo se pase de frenada: una
+// fila recien parseada NO trae escalon, y el relleno a "pendiente" corre ANTES
+// de la validacion. Si la regla nueva mirara el valor sin rellenar, rechazaria
+// el 100% de un lote recien mapeado por un adaptador de formato (#25), que es
+// justo el fallo que ya costo H1.
+func TestGuardarUsosNoConfundeElEscalonVacioConUnoAdelantado(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	recien := UsoPersistido{Titulo: "Recien Parseada", Modalidad: reparto.TV}
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 0 {
+		t.Fatalf("una fila recien parseada no puede salir rechazada: %q", rechazados[0].RechazoMotivo)
+	}
+	if len(repo.canonicos()) != 1 {
+		t.Fatalf("se esperaba 1 uso canonico, hay %d", len(repo.canonicos()))
 	}
 }
 

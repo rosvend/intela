@@ -597,6 +597,103 @@ func TestBorrarUnReporteArrastraSusRechazos(t *testing.T) {
 	}
 }
 
+// H5 contra la base de verdad: una fila que llega ya identificada acaba en
+// `usos_rechazados` con su motivo, y NO en `usos`.
+//
+// Se comprueba en la TABLA y no solo en lo que devuelve el caso de uso porque
+// lo que hay que demostrar es estructural: que `usos` no puede recibir por esta
+// via una fila con `obra_id` o con un escalon que la cascada nunca decidio. Es
+// lo que hace que `usos.evidencia` y `usos.puntaje` -la pregunta 3 del ADR
+// 0006- no puedan mentir.
+//
+// La fila buena que la acompana sigue entrando: el lote no se pierde entero.
+func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+	rep, err := ingesta.GuardarReporte(ctx, "caracol-manipulado", "2026-01",
+		[]byte("Titulo,ID_Ficha\nLa Casa de las Dos Palmas,1234\n"))
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	// La que trae obra_id: un obra_id que no existe en `obras` es ademas una
+	// violacion de clave foranea que reventaria el INSERT del lote ENTERO.
+	conObra := usoPendiente("", "", "Viene Con Obra")
+	conObra.ObraID = "obra-que-no-existe"
+	conObra.ONI = false
+
+	// La que trae un escalon adelantado: describe una decision de la cascada
+	// que nunca ocurrio.
+	conEscalon := usoPendiente("", "", "Viene Resuelta Por Alias")
+	conEscalon.Escalon = "alias"
+	conEscalon.Evidencia = "alias inventado por el adaptador"
+
+	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+		conObra,
+		conEscalon,
+		usoPendiente("", "", "La Casa de las Dos Palmas"),
+	})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 2 {
+		t.Fatalf("se esperaban 2 rechazos, llegaron %d", len(rechazados))
+	}
+
+	var canonicos, rechazos int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM usos WHERE reporte_id = $1`, rep.ID).Scan(&canonicos); err != nil {
+		t.Fatalf("contar usos: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM usos_rechazados WHERE reporte_id = $1`, rep.ID).Scan(&rechazos); err != nil {
+		t.Fatalf("contar rechazos: %v", err)
+	}
+	if canonicos != 1 || rechazos != 2 {
+		t.Fatalf("usos = %d, rechazos = %d; se esperaba 1 y 2", canonicos, rechazos)
+	}
+
+	// Y en `usos` no quedo NINGUNA fila con obra_id ni con escalon adelantado.
+	var intrusas int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM usos
+		  WHERE reporte_id = $1 AND (obra_id IS NOT NULL OR escalon <> 'pendiente')`,
+		rep.ID).Scan(&intrusas); err != nil {
+		t.Fatalf("buscar filas ya identificadas: %v", err)
+	}
+	if intrusas != 0 {
+		t.Fatalf("%d filas identificadas se colaron en usos: la cascada es el unico camino", intrusas)
+	}
+
+	// El motivo tiene que decir QUE campo la aparto: es lo que sirve para
+	// volver a pedirle al cliente exactamente eso (ADR 0014).
+	filas, err := pool.Query(ctx,
+		`SELECT motivo FROM usos_rechazados WHERE reporte_id = $1 ORDER BY id`, rep.ID)
+	if err != nil {
+		t.Fatalf("leer motivos: %v", err)
+	}
+	defer filas.Close()
+
+	var motivos []string
+	for filas.Next() {
+		var m string
+		if err := filas.Scan(&m); err != nil {
+			t.Fatalf("escanear motivo: %v", err)
+		}
+		motivos = append(motivos, m)
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("recorrer motivos: %v", err)
+	}
+	juntos := strings.Join(motivos, " | ")
+	if !strings.Contains(juntos, "obra_id") || !strings.Contains(juntos, "escalon") {
+		t.Fatalf("los motivos no nombran los campos que fallan: %q", juntos)
+	}
+}
+
 // H4b contra la base de verdad: un objeto desgarrado bajo la clave NO puede
 // acabar certificado por una fila de `reportes`.
 //

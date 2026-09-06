@@ -44,18 +44,6 @@ type Ingesta struct {
 // boveda no se puede borrar nada.
 var periodoValido = regexp.MustCompile(`^[0-9]{4}(-[0-9]{2})?$`)
 
-// escalones son los valores que admite el CHECK de usos.escalon.
-//
-// "manual" no esta: una resolucion manual necesita autor e instante -lo exige
-// el CHECK manual_tiene_autor- y ninguno de los dos entra por ingesta.
-var escalones = map[string]bool{
-	"pendiente": true,
-	"alias":     true,
-	"id_global": true,
-	"difuso":    true,
-	"oni":       true,
-}
-
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
 //
 // En minusculas y sin separadores porque asi lo exige el CHECK del esquema
@@ -314,9 +302,10 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 // que permite volver a pedirle al cliente exactamente eso.
 //
 // Lo que NO se valida aqui: que obra_id exista. Eso es una clave foranea y
-// mirarla costaria una consulta por fila; ademas, a la salida de ingesta
-// ninguna fila trae obra, que es lo que comprueba la regla de coherencia de
-// abajo. Identificar es trabajo de la cascada (ADR 0007).
+// mirarla costaria una consulta por fila. No hace falta: una fila que traiga
+// obra_id se rechaza ANTES por venir ya identificada, asi que el unico obra_id
+// que puede llegar a `usos` desde este camino es la cadena vacia. Identificar
+// es trabajo de la cascada (ADR 0007).
 func validarUso(u UsoPersistido) string {
 	if strings.TrimSpace(u.Titulo) == "" {
 		return "titulo vacio: sin titulo no hay nada que identificar"
@@ -329,17 +318,45 @@ func validarUso(u UsoPersistido) string {
 	if u.Escalon == "manual" {
 		return "escalon manual: una resolucion manual necesita autor e instante, y no entra por ingesta"
 	}
-	if !escalones[u.Escalon] {
-		return fmt.Sprintf("escalon %q desconocido", u.Escalon)
+
+	// La cascada del ADR 0007 es el UNICO camino a obra_id (decision N4 de la
+	// revision de #72). Nada entra por ingesta ya identificado: es lo que el
+	// doc de Ingesta promete y lo que la cascada asume, y hasta aqui dependia de
+	// que ningun adaptador de formato lo intentara. Ahora la ingesta es
+	// ESTRUCTURALMENTE incapaz de producir una fila resuelta.
+	//
+	// Tres razones, en orden de peso:
+	//
+	//  1. `usos.evidencia` y `usos.puntaje` dejan de poder mentir. Son la
+	//     pregunta 3 del ADR 0006, "COMO se reconocio": un escalon "alias"
+	//     puesto por un adaptador de formato describiria una decision de la
+	//     cascada que nunca ocurrio, y despues no hay forma de distinguirlo.
+	//  2. Desaparece el camino que revienta el lote entero. Un obra_id que sale
+	//     del archivo y no existe en `obras` es una violacion de clave foranea
+	//     que esta funcion NO ve -es lo que demuestra TestGuardarUsosEsAtomico-
+	//     y se lleva por delante las filas buenas que lo acompanan.
+	//  3. Es lo que ya asume todo lo demas: UsosSinResolver filtra por
+	//     escalon = 'pendiente' porque "una pendiente ni siquiera se ha
+	//     intentado". Si la ingesta entregara filas ya resueltas, la cascada se
+	//     saltaria trabajo en silencio.
+	//
+	// Si algun dia una fuente trae un identificador global de fiar, entra por el
+	// escalon `id_global` DE LA CASCADA, con su evidencia y su puntaje, no por
+	// un atajo aqui.
+	if u.ObraID != "" {
+		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
+	}
+	if u.Escalon != "pendiente" {
+		return fmt.Sprintf("escalon %q en la ingesta: solo sale \"pendiente\" de aqui", u.Escalon)
 	}
 
-	// El CHECK uso_resuelto_tiene_obra, dicho en Go: una fila identificada
-	// apunta a una obra, y una en ONI no apunta a ninguna. Sin esto se puede
-	// guardar una fila que dice "identificada" y no senala nada.
-	switch {
-	case u.ONI && u.ObraID != "":
-		return "marcada oni y con obra_id a la vez"
-	case !u.ONI && u.ObraID == "":
+	// El CHECK uso_resuelto_tiene_obra, dicho en Go. Con la regla de arriba
+	// puesta, obra_id ya es siempre vacio aqui, asi que de las dos ramas del
+	// CHECK solo queda alcanzable esta: una fila que se declara identificada y
+	// no senala ninguna obra. La otra -oni y con obra a la vez- no se deja como
+	// red porque una comprobacion que no puede fallar se lee como prueba de algo
+	// que en realidad no se esta comprobando.
+	if !u.ONI {
 		return "marcada como identificada y sin obra_id"
 	}
 
