@@ -113,12 +113,15 @@ export interface DefinicionSerpiente {
 }
 
 /**
- * Las tres serpientes de la escena.
+ * Las cinco serpientes de la escena.
  *
- * Figuras distintas y no la misma desfasada: dos trazos iguales corriendo en
- * paralelo se leen como un error de repeticion. Y en distinto grosor y
- * opacidad, que es lo que da profundidad -- la mas gruesa y opaca manda, las
- * otras acompanan.
+ * Cada una con su FIGURA (`fx`:`fy` -- 3:2, 3:4, 2:3, 4:3, 5:3) y no la misma
+ * desfasada: dos trazos iguales corriendo en paralelo se leen como un error de
+ * repeticion. Y `omega` distinto en cada una, para que no se sincronicen.
+ *
+ * La lista va de mas a menos presencia, y el grosor y la opacidad bajan con
+ * ella: es lo que da profundidad. Se pintan en orden inverso, asi que la
+ * primera -- la mas gruesa y opaca -- queda encima.
  */
 export const DEFINICIONES: readonly DefinicionSerpiente[] = [
   {
@@ -127,6 +130,20 @@ export const DEFINICIONES: readonly DefinicionSerpiente[] = [
     grosor: 9,
     cabeza: 46,
     alfa: 1,
+  },
+  {
+    trayectoria: {
+      rx: 0.32,
+      ry: 0.28,
+      fx: 3,
+      fy: 4,
+      fase: Math.PI / 5,
+      omega: 0.35,
+    },
+    nodos: 40,
+    grosor: 7,
+    cabeza: 38,
+    alfa: 0.68,
   },
   {
     trayectoria: {
@@ -155,6 +172,20 @@ export const DEFINICIONES: readonly DefinicionSerpiente[] = [
     grosor: 4,
     cabeza: 24,
     alfa: 0.28,
+  },
+  {
+    trayectoria: {
+      rx: 0.3,
+      ry: 0.3,
+      fx: 5,
+      fy: 3,
+      fase: Math.PI / 2.2,
+      omega: 0.19,
+    },
+    nodos: 24,
+    grosor: 3,
+    cabeza: 19,
+    alfa: 0.18,
   },
 ];
 

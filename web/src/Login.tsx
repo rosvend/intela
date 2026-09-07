@@ -265,18 +265,6 @@ export default function Login() {
               {creando ? "Iniciar sesión" : "Crear una cuenta"}
             </button>
           </p>
-
-          {/*
-            Solo en dev: son las cinco cuentas sembradas (docs/ARRANQUE.md) y el
-            rate-limiting de auth.go sigue pendiente. `import.meta.env.DEV` es
-            false en `vite build`, asi que esto se cae del bundle de produccion
-            por tree-shaking.
-          */}
-          {import.meta.env.DEV && !creando && (
-            <p className="muted acceso-demo">
-              Cuentas de desarrollo — admin@redes.co · ana@redes.co
-            </p>
-          )}
         </div>
       </main>
 

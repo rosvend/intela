@@ -348,29 +348,40 @@ a {
   display: block;
   width: 132px;
   height: 42px; /* 132 / 3.179, el aspecto real del activo */
-  margin-bottom: 3rem;
+  margin: 0 auto 3rem;
   background-color: var(--acento);
   mask-repeat: no-repeat;
-  mask-position: left center;
+  mask-position: center;
   mask-size: contain;
   -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: left center;
+  -webkit-mask-position: center;
   -webkit-mask-size: contain;
 }
 
+/*
+ * El bloque de cabecera va centrado: logo, titulo y entradilla. Los campos y
+ * sus etiquetas se quedan a la izquierda -- un formulario se lee por el borde
+ * izquierdo de las etiquetas, y centrarlas obliga a buscar cada una.
+ *
+ * La entradilla se centra con el titulo aunque no se pidiera explicitamente:
+ * es la segunda linea del mismo bloque, y dejarla a la izquierda debajo de un
+ * titulo centrado se lee como un descuido.
+ */
 .acceso-titulo {
   margin: 0 0 0.5rem;
   font-size: 1.75rem;
   line-height: 1.2;
   letter-spacing: -0.02em;
+  text-align: center;
 }
 
 .acceso-entradilla {
-  margin: 0 0 2rem;
+  margin: 0 auto 2rem;
   max-width: 22rem;
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--texto-suave);
+  text-align: center;
 }
 
 .acceso-aviso,
@@ -495,6 +506,7 @@ a {
   margin: 1.5rem 0 0;
   font-size: 0.85rem;
   color: var(--texto-suave);
+  text-align: center;
 }
 
 .enlace {
@@ -513,11 +525,6 @@ a {
   outline: 2px solid var(--acento);
   outline-offset: 2px;
   border-radius: 2px;
-}
-
-.acceso-demo {
-  margin-top: 2rem;
-  font-size: 0.78rem;
 }
 
 /* ---------- panel de marca y juego ---------- */

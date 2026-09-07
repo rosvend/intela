@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SnakeCanvas from "./SnakeCanvas";
+import { DEFINICIONES } from "./snake";
 
 afterEach(() => {
   cleanup();
@@ -124,7 +125,7 @@ describe("SnakeCanvas", () => {
     expect(quitar.mock.calls.some(([t]) => t === "resize")).toBe(true);
   });
 
-  it("pinta las tres serpientes en cada frame", () => {
+  it("pinta todas las serpientes en cada frame", () => {
     const ctx = contexto2DFalso();
     // En un array y no en un `let`: asignar dentro del callback no lo ve el
     // analisis de flujo de TypeScript, que despues estrecha la variable a
@@ -140,11 +141,15 @@ describe("SnakeCanvas", () => {
     ctx.drawImage.mockClear();
     pedidos[0]?.(16);
 
-    // Un trazo por serpiente como minimo, y la cabeza de cada una. Sin imagen
-    // cargada todavia la cabeza es un circulo, asi que se cuenta `restore`,
-    // que se llama una vez por serpiente.
-    expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(ctx.restore.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // Contra DEFINICIONES.length y no contra un numero escrito: la primera
+    // version fijaba 3, y al anadir dos serpientes la prueba fallo por el
+    // numero, no por el comportamiento.
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(
+      DEFINICIONES.length,
+    );
+    expect(ctx.restore.mock.calls.length).toBeGreaterThanOrEqual(
+      DEFINICIONES.length,
+    );
   });
 
   it("usa trazos y no un circulo por nodo", () => {
@@ -164,8 +169,9 @@ describe("SnakeCanvas", () => {
     pedidos[0]?.(16);
 
     // Con circulos el cuerpo se veia como un collar de cuentas. Ahora el cuerpo
-    // es `stroke`; los `arc` que queden son solo las cabezas sin imagen.
+    // es `stroke`; los `arc` que queden son solo las cabezas sin imagen, uno
+    // por serpiente como maximo.
     expect(ctx.stroke.mock.calls.length).toBeGreaterThan(0);
-    expect(ctx.arc.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(ctx.arc.mock.calls.length).toBeLessThanOrEqual(DEFINICIONES.length);
   });
 });
