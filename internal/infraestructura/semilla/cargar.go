@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -38,8 +39,9 @@ type Claves struct {
 
 // Cargar persiste el dataset contra una base ya migrada.
 //
-// Sin reset es idempotente: si el juego completo ya esta, no hace nada; si
-// esta a medias, pide SEED_RESET.
+// Sin reset es idempotente, y "ya esta" significa el juego COMPLETO -las obras,
+// los reportes y la identificacion de todos sus usos-: cualquier otra cosa es
+// una semilla a medias y pide SEED_RESET en vez de decir que todo va bien.
 //
 // Con reset vacia las tablas mutables y vuelve a escribir, pero solo si lo que
 // hay es reconocible como semilla: ver [vaciar]. No toca asientos ni
@@ -51,20 +53,31 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 	pool := store.Pool()
 	d := Construir()
 
-	nObras, nReportes, err := recuento(ctx, pool)
+	hay, err := recuento(ctx, pool)
 	if err != nil {
 		return err
 	}
 
-	if reset {
+	// La comparacion es contra la FORMA esperada del dataset, no contra cero.
+	//
+	// Con "hay obras y hay reportes" bastaba media identificacion para que la
+	// recarga dijera "ya sembrado" y saliera con exito: 4 de 6 usos resueltos
+	// -el residuo exacto que deja una caida dentro de identificar- se
+	// reportaba como estado conocido. Para una herramienta cuyo proposito es un
+	// estado reproducible (ADR 0005), dar por bueno un estado inconsistente es
+	// el fallo que mas cuesta, porque nadie lo va a mirar.
+	switch {
+	case reset:
 		if err := vaciar(ctx, pool, d); err != nil {
 			return err
 		}
-	} else if nObras > 0 && nReportes > 0 {
+	case hay.completo(d):
 		log.Info("dataset ya sembrado; pase SEED_RESET=true para recargar")
 		return nil
-	} else if nObras > 0 || nReportes > 0 {
-		return fmt.Errorf("semilla a medias (%d obras, %d reportes): pase SEED_RESET=true", nObras, nReportes)
+	case !hay.vacio():
+		return fmt.Errorf(
+			"semilla a medias (%d/%d obras, %d/%d reportes, %d usos sin identificar): pase SEED_RESET=true",
+			hay.obras, len(d.Obras), hay.reportes, len(d.Reportes), hay.usosSinIdentificar)
 	}
 
 	hashes, err := hashear(hasher, claves)
@@ -92,7 +105,7 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 			return fmt.Errorf("guardar usos de %q: %d filas rechazadas (%s)",
 				r.Fuente, len(rechazados), rechazados[0].RechazoMotivo)
 		}
-		if err := identificar(ctx, pool, rep.ID, r.Usos); err != nil {
+		if err := identificar(ctx, store, rep.ID, r.Usos); err != nil {
 			return fmt.Errorf("identificar usos de %q: %w", r.Fuente, err)
 		}
 		log.Info("reporte sembrado",
@@ -109,14 +122,37 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 	return nil
 }
 
-func recuento(ctx context.Context, pool *pgxpool.Pool) (obras, reportes int, err error) {
-	if err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&obras); err != nil {
-		return 0, 0, fmt.Errorf("contar obras: %w", err)
+// estado es lo que hay en la base ahora mismo, medido en las tres cosas que
+// tienen que estar todas o ninguna.
+//
+// usosSinIdentificar cuenta aparte porque es el unico resto que no se ve en
+// las otras dos: la ingesta y la identificacion son dos pasos, y entre ellos
+// cabe una caida que deja el numero de obras y de reportes correcto.
+type estado struct {
+	obras              int
+	reportes           int
+	usosSinIdentificar int
+}
+
+func (e estado) completo(d Dataset) bool {
+	return e.obras == len(d.Obras) && e.reportes == len(d.Reportes) && e.usosSinIdentificar == 0
+}
+
+func (e estado) vacio() bool { return e.obras == 0 && e.reportes == 0 }
+
+func recuento(ctx context.Context, pool *pgxpool.Pool) (estado, error) {
+	var e estado
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&e.obras); err != nil {
+		return estado{}, fmt.Errorf("contar obras: %w", err)
 	}
-	if err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM reportes`).Scan(&reportes); err != nil {
-		return 0, 0, fmt.Errorf("contar reportes: %w", err)
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM reportes`).Scan(&e.reportes); err != nil {
+		return estado{}, fmt.Errorf("contar reportes: %w", err)
 	}
-	return obras, reportes, nil
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM usos WHERE obra_id IS NULL`).Scan(&e.usosSinIdentificar); err != nil {
+		return estado{}, fmt.Errorf("contar usos sin identificar: %w", err)
+	}
+	return e, nil
 }
 
 // vaciar borra las tablas mutables para volver a escribirlas. Solo si lo que
@@ -390,24 +426,33 @@ func usosCrudos(usos []aplicacion.UsoPersistido) []aplicacion.UsoPersistido {
 
 // identificar aplica el match sintetico DESPUES de la ingesta. El id de
 // cada fila es el que GuardarUsos deriva (reporte + posicion en el lote).
-func identificar(ctx context.Context, pool *pgxpool.Pool, reporteID string, usos []aplicacion.UsoPersistido) error {
-	for n, u := range usos {
-		id := reporteID + "-" + strconv.Itoa(n)
-		tag, err := pool.Exec(ctx, `
-			UPDATE usos
-			   SET obra_id = $2,
-			       oni = false,
-			       escalon = 'alias',
-			       evidencia = $3,
-			       puntaje = 1
-			 WHERE id = $1`,
-			id, u.ObraID, u.Evidencia)
-		if err != nil {
-			return fmt.Errorf("uso %s: %w", id, err)
+//
+// El lote entero en UNA transaccion, y no un Exec por fila como antes. Son las
+// mismas filas que GuardarUsos acaba de escribir atomicamente: identificarlas
+// de a una deshacia para ese lote la atomicidad que la ingesta acababa de dar,
+// y un fallo en la fila 5 de 6 dejaba cuatro identificadas y dos pendientes.
+// Es media identificacion que ninguna guarda posterior distingue de un
+// reporte que llego a medias.
+func identificar(ctx context.Context, store *postgres.Store, reporteID string, usos []aplicacion.UsoPersistido) error {
+	return store.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		for n, u := range usos {
+			id := reporteID + "-" + strconv.Itoa(n)
+			tag, err := tx.Exec(ctx, `
+				UPDATE usos
+				   SET obra_id = $2,
+				       oni = false,
+				       escalon = 'alias',
+				       evidencia = $3,
+				       puntaje = 1
+				 WHERE id = $1`,
+				id, u.ObraID, u.Evidencia)
+			if err != nil {
+				return fmt.Errorf("uso %s: %w", id, err)
+			}
+			if tag.RowsAffected() != 1 {
+				return fmt.Errorf("uso %s: no estaba en usos", id)
+			}
 		}
-		if tag.RowsAffected() != 1 {
-			return fmt.Errorf("uso %s: no estaba en usos", id)
-		}
-	}
-	return nil
+		return nil
+	})
 }

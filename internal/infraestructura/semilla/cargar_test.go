@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -254,6 +255,80 @@ func TestResetRechazaTitularesAjenos(t *testing.T) {
 	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
 	if !errors.Is(err, ErrDatosNoSinteticos) {
 		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestCargarDetectaLaIdentificacionAMedias: 4 de 6 usos identificados es el
+// residuo exacto que deja una caida dentro de identificar. La recarga decia
+// "dataset ya sembrado" y salia con 0.
+func TestCargarDetectaLaIdentificacionAMedias(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	almacen := disco(t)
+	if err := Cargar(ctx, store, almacen, hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+
+	// Devolver dos usos a "pendiente", como si identificar hubiera muerto a
+	// mitad del lote. El CHECK uso_resuelto_tiene_obra obliga a mover oni y
+	// obra_id juntos, que es justo lo que el escalon 'pendiente' significa.
+	etiqueta, err := pool.Exec(ctx, `
+		UPDATE usos
+		   SET obra_id = NULL, oni = true, escalon = 'pendiente',
+		       evidencia = '', puntaje = 0
+		 WHERE id IN (SELECT id FROM usos ORDER BY id LIMIT 2)`)
+	if err != nil {
+		t.Fatalf("desidentificar dos usos: %v", err)
+	}
+	if etiqueta.RowsAffected() != 2 {
+		t.Fatalf("se desidentificaron %d usos, se esperaban 2", etiqueta.RowsAffected())
+	}
+
+	err = Cargar(ctx, store, almacen, hasher(), clavesPrueba(), false, silencio())
+	if err == nil {
+		t.Fatal("una base a medias se reporto como completa: Cargar salio sin error")
+	}
+	if !strings.Contains(err.Error(), "SEED_RESET") {
+		t.Fatalf("el error no dice como salir del atasco: %v", err)
+	}
+}
+
+// TestIdentificarEsAtomico: identificar corria N Exec sueltos fuera de
+// transaccion, deshaciendo para el mismo lote la atomicidad que GuardarUsos
+// acababa de dar. Un fallo a mitad dejaba las filas anteriores identificadas.
+func TestIdentificarEsAtomico(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	d := Construir()
+
+	if err := registrarObras(ctx, store, d.Obras); err != nil {
+		t.Fatalf("registrarObras: %v", err)
+	}
+	ingesta := aplicacion.Ingesta{Reportes: store, Almacen: disco(t)}
+	r := d.Reportes[0]
+	rep, err := ingesta.GuardarReporte(ctx, r.Fuente, r.Periodo, r.Bytes)
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+	if _, err := ingesta.GuardarUsos(ctx, rep, usosCrudos(r.Usos)); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// Un uso de mas: su id derivado no existe en `usos`, asi que identificar
+	// falla DESPUES de haber actualizado los anteriores.
+	conSobrante := append(append([]aplicacion.UsoPersistido{}, r.Usos...), r.Usos[0])
+	if err := identificar(ctx, store, rep.ID, conSobrante); err == nil {
+		t.Fatal("identificar acepto un uso que no estaba en la tabla")
+	}
+
+	var identificados int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM usos WHERE reporte_id = $1 AND obra_id IS NOT NULL`,
+		rep.ID).Scan(&identificados); err != nil {
+		t.Fatalf("contar identificados: %v", err)
+	}
+	if identificados != 0 {
+		t.Fatalf("%d usos quedaron identificados tras un fallo a mitad: no hubo rollback", identificados)
 	}
 }
 
