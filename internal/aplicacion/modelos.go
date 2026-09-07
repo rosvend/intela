@@ -112,6 +112,22 @@ type UsoPersistido struct {
 	RechazoMotivo string
 }
 
+// ItemRevision es una fila de la cola de revision: lo que no se pudo
+// normalizar, y mas adelante las anomalias del #37.
+//
+// Tipo discrimina el origen ("normalizacion" | "anomalia") para que un solo
+// listado sirva a las dos colas sin mezclar los vocabularios. Codigo es el
+// motivo tipado; Motivo es el texto que nombra el campo.
+type ItemRevision struct {
+	ID        string
+	Tipo      string
+	Codigo    string
+	Motivo    string
+	Fuente    string
+	Titulo    string
+	ReporteID string
+}
+
 type BolsaPersistida struct {
 	ID        string
 	UsuarioID string

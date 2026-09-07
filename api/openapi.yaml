@@ -256,6 +256,59 @@ paths:
               example:
                 error: no autorizado
 
+  /admin/cola-revision:
+    get:
+      tags: [admin]
+      summary: Cola de revision
+      description: |
+        Lista las filas que esperan ojo humano antes de ponderar: las que
+        no se pudieron normalizar (fecha inparseable, moneda no reconocida,
+        parametro normativo ausente) y, cuando aterrice el #37, las anomalias
+        de un periodo (ONI, duplicados, declaraciones que no suman 100%).
+
+        Un solo listado y un solo schema. `tipo` discrimina el origen
+        (`normalizacion` | `anomalia`); `codigo` es el motivo tipado; `motivo`
+        nombra el campo. La fila no se descarto: esta aqui, con su razon.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403.
+      operationId: listarColaRevision
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      responses:
+        "200":
+          description: Cola actual. Lista vacia si no hay nada que revisar.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ItemRevision"
+              example:
+                - id: tv-fecha
+                  tipo: normalizacion
+                  codigo: fecha_inparseable
+                  motivo: "fecha_inparseable: fecha \"ayer\": no es YYYYMMDD, ISO ni serial de Excel"
+                  fuente: caracol
+                  titulo: Fecha rota
+                  reporte_id: rep-1
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
   /auditoria/asientos:
     get:
       tags: [auditoria]
@@ -838,6 +891,41 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    ItemRevision:
+      type: object
+      required: [id, tipo, codigo, motivo, fuente, titulo, reporte_id]
+      description: |
+        Una fila de la cola de revision. El mismo schema sirve a la
+        normalizacion (OE-1) y a las anomalias (OE-5 / #37): `tipo` dice de
+        cual detector salio, `codigo` es el motivo tipado y `motivo` nombra
+        el campo. No hay importes: una fila en revision no pondera.
+      properties:
+        id:
+          type: string
+          description: Identificador de la fila, el mismo espacio que `usos`.
+        tipo:
+          type: string
+          description: Origen del item.
+          enum: [normalizacion, anomalia]
+        codigo:
+          type: string
+          description: |
+            Motivo tipado (`fecha_inparseable`, `moneda_desconocida`,
+            `parametro_ausente`, y los del #37). Permite filtrar sin parsear
+            prosa.
+        motivo:
+          type: string
+          description: Texto que nombra el campo y explica que falta o esta mal.
+        fuente:
+          type: string
+          description: Fuente del reporte (Caracol, Netflix, ...).
+        titulo:
+          type: string
+          description: Titulo tal como vino. Pista para pedirle al cliente la linea.
+        reporte_id:
+          type: string
+          description: Entrega de la que salio la fila.
 
 security:
   - bearerAuth: []

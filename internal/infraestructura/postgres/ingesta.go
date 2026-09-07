@@ -205,6 +205,39 @@ func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersisti
 	return u, nil
 }
 
+// ListarRechazos es la cola de revision de OE-1. Devuelve lo que no se pudo
+// normalizar, cada fila con su motivo. Un log vacio es una lista vacia, no
+// un error: la cola encoge cuando el cliente manda el archivo bien.
+func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
+	filas, err := s.pool.Query(ctx,
+		`SELECT id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo
+		   FROM usos_rechazados
+		  ORDER BY id`)
+	if err != nil {
+		return nil, traducirError(err, "listar rechazos")
+	}
+	defer filas.Close()
+
+	usos := make([]aplicacion.UsoPersistido, 0)
+	for filas.Next() {
+		var (
+			u         aplicacion.UsoPersistido
+			modalidad string
+		)
+		if err := filas.Scan(
+			&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &modalidad, &u.RechazoMotivo,
+		); err != nil {
+			return nil, traducirError(err, "escanear rechazo")
+		}
+		u.Modalidad = reparto.Modalidad(modalidad)
+		usos = append(usos, u)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar rechazos")
+	}
+	return usos, nil
+}
+
 // consultarUsos comparte el recorrido de las dos lecturas de lista.
 //
 // Los argumentos del SQL son los mismos que los del contexto del error a

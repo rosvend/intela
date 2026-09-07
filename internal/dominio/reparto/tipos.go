@@ -65,6 +65,15 @@ type Snapshot struct {
 	Wc           decimal.Decimal
 	UmbralMatch  decimal.Decimal
 	Reglamento   string
+
+	// Coeficientes de RD 9.1.1(c). Viven en el snapshot y no en el codigo
+	// (ADR 0004): el 80% artistico y los 48 minutos de la hora televisiva
+	// los aplica normalizacion al canonizar la fila, y el motor consume
+	// ya la duracion transformada.
+	DuracionArtisticaPct decimal.Decimal
+	MinutosHoraTV        decimal.Decimal
+	MonedaBase           string
+	TRM                  decimal.Decimal
 }
 
 // Uso de una obra en un periodo, ya identificado.

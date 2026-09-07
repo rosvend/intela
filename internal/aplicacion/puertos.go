@@ -197,6 +197,7 @@ type RepositorioIngesta interface {
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
+	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
 }
 
 // RepositorioONI es la cola manual. Separado de identificacion porque son dos

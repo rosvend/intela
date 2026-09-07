@@ -57,22 +57,29 @@ type API struct {
 	salud    Salud
 	auth     Autenticacion
 	catalogo Catalogo
+	cola     ColaRevision
 	opts     Opciones
 	log      *slog.Logger
+}
+
+// ColaRevision lista lo que espera ojo humano: filas que no se pudieron
+// normalizar, y mas adelante las anomalias del #37. Se declara en el
+// consumidor, igual que [Catalogo].
+type ColaRevision interface {
+	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
 
 // Nueva construye el adaptador.
 //
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
-// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con dos todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, opts Opciones) *API {
+// se cablea en cmd/api.
+func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, cola ColaRevision, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, catalogo: catalogo, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, catalogo: catalogo, cola: cola, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -115,6 +122,7 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/admin", func(admin chi.Router) {
 			admin.Use(requiereRol(aplicacion.RolAdministrador))
 			admin.Get("/pipeline", superficieOK)
+			admin.Get("/cola-revision", a.listarColaRevision)
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))

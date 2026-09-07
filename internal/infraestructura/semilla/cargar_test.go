@@ -62,10 +62,11 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	}
 
 	// Las dos mitades de la consulta con la que un auditor separa lo aprobado
-	// de lo inventado. Lo publicado son las CUATRO ponderaciones de RD 9.1.1 y
-	// nada mas: las deducciones, la reserva y el umbral de matching son techos
-	// del reglamento o decisiones de ingenieria, y ninguna Asamblea las
-	// resolvio (ADR 0004).
+	// de lo inventado. Lo publicado son las cuatro ponderaciones de RD 9.1.1
+	// y los dos coeficientes de duracion (80% artistica, 48 min/hora). Las
+	// deducciones, la reserva y el umbral de matching son techos del
+	// reglamento o decisiones de ingenieria, y ninguna Asamblea las resolvio
+	// (ADR 0004).
 	var nSinteticos, nPublicados int
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE reglamento =  $1),
@@ -77,8 +78,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	if nSinteticos != 7 {
 		t.Fatalf("parametros con %s: %d, se esperaban 7", ReglamentoSintetico, nSinteticos)
 	}
-	if nPublicados != 4 {
-		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 4 (ponderacion.* de RD 9.1.1)", nPublicados)
+	if nPublicados != 6 {
+		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
 	}
 
 	var nBolsas int
