@@ -61,6 +61,12 @@ variable "github_repo_id" {
   default     = null
 }
 
+variable "deploy_environment" {
+  description = "GitHub environment the deploy job declares. When set, the deploy role trusts `environment:<name>` instead of the branch ref -- which is what GitHub actually sends. The environment's deployment branch policy then becomes what restricts the branch."
+  type        = string
+  default     = null
+}
+
 variable "deploy_branch" {
   description = "Branch allowed to assume the deploy role."
   type        = string
