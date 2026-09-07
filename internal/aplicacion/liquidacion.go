@@ -3,14 +3,10 @@ package aplicacion
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
 )
-
-// periodoValido es el mismo patron que el CHECK de procesos.periodo.
-var periodoValido = regexp.MustCompile(`^[0-9]{4}(-[0-9]{2})?$`)
 
 // ServicioLiquidacion consulta y exporta la liquidacion del titular que
 // pregunta.
@@ -102,6 +98,7 @@ func validarPeriodo(periodo string) error {
 	if periodo == "" {
 		return nil
 	}
+	// periodoValido vive en trabajos.go, una sola vez para el paquete.
 	if !periodoValido.MatchString(periodo) {
 		return ErrPeriodoInvalido
 	}
