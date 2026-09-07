@@ -42,7 +42,7 @@ func ejecutar(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer store.Cerrar()
+	defer store.CerrarPool()
 
 	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", "/data/objetos")}
 	return semilla.Cargar(ctx, store, almacen, cripto.Bcrypt{}, claves(),
