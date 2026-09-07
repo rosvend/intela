@@ -21,6 +21,10 @@ import (
 // no es una opcion, es borrar el libro.
 var ErrBitacoraNoVacia = errors.New("SEED_RESET rechazado: la bitacora no esta vacia")
 
+// ErrDatosNoSinteticos: SEED_RESET se nego porque en la base hay datos que no
+// son del dataset.
+var ErrDatosNoSinteticos = errors.New("SEED_RESET rechazado: hay datos que no son del dataset sintetico")
+
 // Claves de las cuentas de desarrollo. Cada rol la suya: una sola clave
 // compartida entre distribucion y contabilidad anula el control de doble
 // firma (docs/ARRANQUE.md).
@@ -35,13 +39,17 @@ type Claves struct {
 // Cargar persiste el dataset contra una base ya migrada.
 //
 // Sin reset es idempotente: si el juego completo ya esta, no hace nada; si
-// esta a medias, pide SEED_RESET. Con reset, vacia las tablas mutables y
-// vuelve a escribir. No toca asientos ni notificaciones.
+// esta a medias, pide SEED_RESET.
+//
+// Con reset vacia las tablas mutables y vuelve a escribir, pero solo si lo que
+// hay es reconocible como semilla: ver [vaciar]. No toca asientos ni
+// notificaciones.
 func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, hasher aplicacion.Hasher, claves Claves, reset bool, log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
 	pool := store.Pool()
+	d := Construir()
 
 	nObras, nReportes, err := recuento(ctx, pool)
 	if err != nil {
@@ -49,7 +57,7 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 	}
 
 	if reset {
-		if err := vaciar(ctx, pool); err != nil {
+		if err := vaciar(ctx, pool, d); err != nil {
 			return err
 		}
 	} else if nObras > 0 && nReportes > 0 {
@@ -59,7 +67,6 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 		return fmt.Errorf("semilla a medias (%d obras, %d reportes): pase SEED_RESET=true", nObras, nReportes)
 	}
 
-	d := Construir()
 	hashes, err := hashear(hasher, claves)
 	if err != nil {
 		return err
@@ -112,7 +119,43 @@ func recuento(ctx context.Context, pool *pgxpool.Pool) (obras, reportes int, err
 	return obras, reportes, nil
 }
 
-func vaciar(ctx context.Context, pool *pgxpool.Pool) error {
+// vaciar borra las tablas mutables para volver a escribirlas. Solo si lo que
+// hay es reconocible como semilla.
+//
+// # Por que la bitacora no basta como guarda
+//
+// La comprobacion de asientos y notificaciones mira el LIBRO, no la
+// PROCEDENCIA de los datos. El estado real de REDES hoy -catalogo y padron IPI
+// cargados, ningun reparto asentado todavia- la pasa entera. Y este binario
+// llega a produccion tan facil como con un DSN copiado de staging: con
+// SEED_RESET=true borraba titulares y obras de verdad y reescribia `usuarios`
+// con admin@redes.co y una clave publicada en docs/ARRANQUE.md.
+//
+// # La comprobacion mas barata que es honesta
+//
+// Que todos los ids presentes en `obras` y en `titulares` esten en el propio
+// dataset. Son las dos tablas de las que cuelga lo demas -`declaraciones`,
+// `alias_obra` y `usos` referencian obras; `declaraciones` y `notificaciones`
+// referencian titulares- y son exactamente las dos que REDES ya tiene
+// cargadas, asi que una base con un solo dato real dice NO. No hace falta una
+// columna de procedencia por fila: el dataset es un juego cerrado de ids
+// (ADR 0005), y "no reconozco este id" es todo lo que hay que saber.
+func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
+	idsObras := make([]string, len(d.Obras))
+	for i, o := range d.Obras {
+		idsObras[i] = o.ID
+	}
+	idsTitulares := make([]string, len(d.Titulares))
+	for i, t := range d.Titulares {
+		idsTitulares[i] = t.ID
+	}
+	if err := soloDelDataset(ctx, pool, "obras", idsObras); err != nil {
+		return err
+	}
+	if err := soloDelDataset(ctx, pool, "titulares", idsTitulares); err != nil {
+		return err
+	}
+
 	var asientos, avisos int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM asientos`).Scan(&asientos); err != nil {
 		return fmt.Errorf("contar asientos: %w", err)
@@ -165,6 +208,27 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("confirmar vaciado: %w", err)
+	}
+	return nil
+}
+
+// soloDelDataset falla si en la tabla hay algun id que el dataset no conoce.
+//
+// El nombre de la tabla se concatena porque un identificador no puede viajar
+// como parametro; los dos valores posibles son literales de este fichero.
+func soloDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla string, ids []string) error {
+	var (
+		ajenas  int
+		ejemplo string
+	)
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(MIN(id), '') FROM `+tabla+` WHERE id <> ALL($1)`, ids,
+	).Scan(&ajenas, &ejemplo); err != nil {
+		return fmt.Errorf("comprobar la procedencia de %s: %w", tabla, err)
+	}
+	if ajenas > 0 {
+		return fmt.Errorf("%w: %d filas de %s no son del dataset (por ejemplo %q)",
+			ErrDatosNoSinteticos, ajenas, tabla, ejemplo)
 	}
 	return nil
 }

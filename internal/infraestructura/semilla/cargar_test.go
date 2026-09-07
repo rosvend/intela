@@ -206,6 +206,57 @@ func ids(obras []repertorio.Obra) []string {
 	return out
 }
 
+// TestResetRechazaObrasAjenas es la guarda que faltaba: vaciar solo mira si la
+// bitacora esta vacia, y el estado real de REDES -catalogo y padron cargados,
+// ningun reparto asentado todavia- pasa esa comprobacion.
+func TestResetRechazaObrasAjenas(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Una obra del catalogo real, que el dataset no conoce.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO obras (id, titulo, genero, anio, tipo)
+		VALUES ('obra-real-redes', 'Cafe con aroma de mujer', 'Telenovela', 1994, 'telenovela')`,
+	); err != nil {
+		t.Fatalf("insertar obra real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+
+	var quedan int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM obras WHERE id = 'obra-real-redes'`).Scan(&quedan); err != nil {
+		t.Fatalf("contar la obra real: %v", err)
+	}
+	if quedan != 1 {
+		t.Fatal("el reset borro la obra que no era del dataset")
+	}
+}
+
+// TestResetRechazaTitularesAjenos: el padron IPI es la otra mitad de lo que
+// REDES ya tiene cargado, y `usuarios` se reescribe con una clave publicada en
+// docs/ARRANQUE.md.
+func TestResetRechazaTitularesAjenos(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO titulares (id, nombre, ipi, persona_natural, clase)
+		VALUES ('tit-real', 'Titular Real', 'IPI-99999999', true, 'socio')`,
+	); err != nil {
+		t.Fatalf("insertar titular real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testhelp.Pool(t)

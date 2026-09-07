@@ -38,6 +38,19 @@ SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
 go run ./cmd/seed                 # equivalente, con DATABASE_URL
 ```
 
+El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
+tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que
+publica CI y despliega el CD es la etapa `runtime`, y no lo contiene. El motivo
+es lo que hace `SEED_RESET=true`: borra 21 tablas -`titulares`, `obras`,
+`declaraciones`, `bolsas`, `usuarios`...- y reescribe las cuentas con las
+claves de esta pagina. Que exista en la imagen de produccion es todo lo que
+hace falta para que un DSN copiado de staging lo ejecute contra datos reales.
+
+`SEED_RESET` tiene ademas su propia guarda: se **niega** si en la base hay
+alguna obra o algun titular cuyo id no sea del dataset. La comprobacion
+anterior solo miraba que la bitacora estuviera vacia, y el estado real de REDES
+-catalogo y padron IPI cargados, ningun reparto asentado- la pasaba entera.
+
 Cada rol tiene **su propia clave**, desde entorno. Una sola constante
 compartida entre `distribucion` y `contabilidad` anula el control de doble
 firma: una persona firmaba por ambos.
@@ -113,7 +126,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `WORKER_ESPERA_BASE` | `30s` | Espera tras el primer fallo. Se dobla en cada fallo siguiente |
 | `WORKER_ESPERA_TECHO` | `10m` | Tope de esa espera. `0` significa sin tope |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
-| `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos |
+| `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos, y tambien si hay obras o titulares que no son del dataset |
 | `SEED_CLAVE_ADMIN` | `admin-local` | Clave del usuario administrador del seed |
 | `SEED_CLAVE_DISTRIBUCION` | `distribucion-local` | Clave del rol distribucion |
 | `SEED_CLAVE_CONTABILIDAD` | `contabilidad-local` | Clave del rol contabilidad |
