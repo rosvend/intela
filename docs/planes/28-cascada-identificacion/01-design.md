@@ -239,7 +239,7 @@ existen: `"alias"` e `"id_global"`, más `"excluido"` que **solo** vive en memor
 ver D4). `GuardarMatch` traduce el `Resultado` al `UPDATE` de la fila sin reinterpretar nada:
 
 - `obra_id = NULLIF($2,'')`, `escalon = $3`, `evidencia = $4`, `puntaje = $5`,
-  `oni = (obra_id no vacío)` — consistente con el CHECK `uso_resuelto_tiene_obra` por construcción.
+  `oni = (obra_id vacío)` — consistente con el CHECK `uso_resuelto_tiene_obra` por construcción.
 - Los aciertos de alias/id_global llevan `puntaje = 1` (certeza máxima por igualdad exacta) y
   `oni = false`; `resuelto_por` y `resuelto_en` quedan `NULL` (el CHECK `manual_tiene_autor` los
   reserva a la resolución manual; el instante de la resolución automática quedará en el asiento de
@@ -519,7 +519,7 @@ SQL de las cuatro operaciones (firmas: las de `puertos.go`, sin cambios):
   con uno solo poblado).
 - `GuardarMatch(ctx, usoID string, r identificacion.Resultado) error`
   `UPDATE usos SET obra_id = NULLIF($2,''), escalon = $3, evidencia = $4, puntaje = $5,
-   oni = ($2 <> '') WHERE id = $1`; si `RowsAffected() == 0` →
+   oni = ($2 = '') WHERE id = $1`; si `RowsAffected() == 0` →
   `traducirError`-style wrap de `ErrNoEncontrado` («el uso X no existe» — patrón del `Actualizar` de
   `catalogo.go`); los CHECK (`escalon`, `uso_resuelto_tiene_obra`, `manual_tiene_autor`, FK de
   `obra_id`) que fallen suben envueltos. El `puntaje` viaja como `decimal.Decimal` directo a pgx
@@ -559,7 +559,7 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
 | Escalón 1: `(fuente, tipo_id, valor) → obra` | `alias_obra(fuente, tipo_id, valor, obra_id, quien, aprendido)`, PK `(fuente, tipo_id, valor)` |
 | Escalón 2: igualdad por IDA/EIDR/IMDB | `obras(ida, eidr, imdb)` + índices parciales `obras_ida/eidr/imdb` (00001, creados para esto) |
 | GuardarMatch: qué escalón y qué evidencia | `usos(obra_id, escalon, evidencia, puntaje, oni)` — columnas y CHECK ya en 00001 |
-| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra presente`) |
+| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra ausente`) |
 | Actor/instante de la resolución | `usos.resuelto_por/resuelto_en` + CHECK `manual_tiene_autor`: reservados a `escalon='manual'` (#39) |
 | Puntaje de confianza | `usos.puntaje NUMERIC(6,5) CHECK (0..1)`; alias/id_global = 1 |
 | Ids de fuente de la fila | `usos.ids_fuente TEXT` (formato: D1) |

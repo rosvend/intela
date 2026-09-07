@@ -33,8 +33,9 @@ Detalle y evidencia en `docs/dominio/identificadores.md`.
 
 Resolver una vez, reutilizar siempre. Tabla real (00001) `alias_obra(fuente, tipo_id, valor,
 obra_id, quien, aprendido)`: no existen `valor_id`, `confianza`, `resuelto_por` ni `resuelto_en`
-en esa tabla. `quien` es NULL para el aprendizaje automático de la cascada y el id del usuario
-para una resolución manual; `aprendido` es el instante en que se escribió la fila. La confianza
+en esa tabla. `quien` guarda `"cascada"` para el aprendizaje automático de la cascada y el id del usuario
+para una resolución manual (#39); queda NULL solo si no se indica ningún actor. `aprendido` es
+el instante en que se escribió la fila. La confianza
 máxima de los escalones 1-2 (igualdad exacta) se guarda como `usos.puntaje`, no aquí: esta tabla
 es el rastro de qué par (fuente, tipo, valor) resuelve a qué obra, no un puntaje por fila. El
 difuso solo corre para IDs nunca vistos, y queda trazabilidad para auditoria.
