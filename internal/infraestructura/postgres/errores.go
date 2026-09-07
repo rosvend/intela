@@ -18,7 +18,7 @@ import (
 // otro locale.
 const codigoUnicidad = "23505"
 
-// esClaveDuplicada dice si el error es una violacion de clave unica.
+// esClaveDuplicada dice si el error es una violacion de UNIQUE o de PRIMARY KEY.
 //
 // Sirve para que el adaptador traduzca "esta fila ya estaba" al vocabulario
 // del nucleo en vez de dejarlo subir como un fallo cualquiera. La alternativa
@@ -26,8 +26,17 @@ const codigoUnicidad = "23505"
 // escritura por la que cabe otra peticion: la unica comprobacion de unicidad
 // que no tiene carrera es la que hace la base.
 //
+// No vive dentro de traducirError, y es deliberado: "ya existe una fila igual"
+// no significa lo mismo en todas las tablas. En `reportes` es la deteccion de
+// duplicado por huella, que es una respuesta del negocio; en `obras` es un alta
+// repetida; en otra tabla puede ser un identificador mal generado, que si es un
+// fallo. Traducirlo a un unico centinela desde el traductor general convertiria
+// el ultimo caso en los primeros sin que nadie lo notara. Asi que cada sitio de
+// llamada decide: pregunta por esto ANTES de pasar por traducirError y pone el
+// nombre que la violacion tiene en SU tabla.
+//
 // errors.As y no una asercion de tipo: pgx envuelve el *pgconn.PgError cuando
-// el error sale de una operacion por lotes.
+// el error sale de un lote o de una transaccion.
 func esClaveDuplicada(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == codigoUnicidad

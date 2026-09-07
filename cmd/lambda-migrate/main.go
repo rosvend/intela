@@ -7,7 +7,16 @@
 // argumentos.
 //
 // La mecanica es la misma: internal/infraestructura/migraciones. Este fichero
-// solo traduce un evento de invocacion en una orden de goose.
+// traduce un evento de invocacion en una orden de goose.
+//
+// Y una que NO es de goose: `primer-administrador`. Esta aqui porque el
+// problema que resuelve es el mismo -- hay que ejecutar algo DENTRO de la VPC
+// contra una base sin endpoint publico -- y esta es la unica funcion que ya
+// vive ahi con DATABASE_URL. Levantar una Lambda propia para una operacion que
+// se corre una vez en la vida de una instalacion es infraestructura que hay
+// que mantener para siempre. La deuda que si se asume: este binario ya no es
+// solo goose, y si aparece una segunda operacion de este tipo conviene sacarlas
+// las dos a su propia funcion.
 //
 // Lo invoca Terraform (aws_lambda_invocation en modules/migrations), no el
 // workflow, para que el orden migrar-antes-de-servir quede en el grafo de
@@ -18,6 +27,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -25,8 +35,11 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
+	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
+	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
+	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
 
 // ordenesPermitidas es lo que esta funcion acepta hacer. Todo lo demas se
@@ -45,9 +58,27 @@ import (
 // que acotar no es la mecanica de goose, es esta superficie.
 var ordenesPermitidas = []string{"up", "up-by-one", "status", "version"}
 
+// ordenPrimerAdministrador provisiona la cuenta inicial. Deliberadamente FUERA
+// de ordenesPermitidas: no es una orden de goose y no debe llegar a Aplicar.
+const ordenPrimerAdministrador = "primer-administrador"
+
 // peticion es lo que manda Terraform: {"orden":"up"}.
+//
+// Los cuatro campos de abajo solo los usa `primer-administrador`, y llegan en
+// el evento en vez de en el entorno a proposito: son de un solo uso, y una
+// variable de entorno de la Lambda se queda ahi -- visible en la consola y en
+// cada `terraform plan` -- mucho despues de que la cuenta exista.
+//
+// Hash y no la clave en claro. La calcula quien invoca, en su terminal, asi que
+// la credencial no viaja en el evento, no queda en el registro de la plataforma
+// y este proceso no la ve nunca.
 type peticion struct {
 	Orden string `json:"orden"`
+
+	ID     string `json:"id,omitempty"`
+	Email  string `json:"email,omitempty"`
+	Nombre string `json:"nombre,omitempty"`
+	Hash   string `json:"hash,omitempty"`
 }
 
 type respuesta struct {
@@ -64,6 +95,10 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 		orden := p.Orden
 		if orden == "" {
 			orden = migraciones.OrdenPorDefecto
+		}
+
+		if orden == ordenPrimerAdministrador {
+			return provisionar(ctx, p, log)
 		}
 
 		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
@@ -91,4 +126,54 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 
 		return respuesta{Orden: orden, Estado: "aplicadas"}, nil
 	}
+}
+
+// provisionar crea la cuenta inicial de una instalacion vacia.
+//
+// El caso de uso valida ANTES de que esto conecte, igual que la lista de
+// ordenes se comprueba antes de llamar a goose: una peticion mal formada no
+// tiene por que abrir un pool contra la base.
+//
+// ErrYaHayUsuarios NO se devuelve como error de la invocacion. La operacion es
+// de una sola vez; que ya se haya hecho no es un fallo, y hacerla fallar
+// convertiria un reintento inocuo en una alarma. Se responde con estado
+// "ya provisionada" y se registra.
+func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, error) {
+	// Se valida sin tocar la base. Si algo falta, el error nombra el campo --
+	// nunca su valor -- y la conexion no se abre.
+	//
+	// cripto.Bcrypt se construye aqui y no despues porque la comprobacion que
+	// de verdad importa es la de la FORMA del hash, y esa la contesta el
+	// adaptador. Construirlo no cuesta nada: no tiene estado ni E/S.
+	provision := aplicacion.Provision{Claves: cripto.Bcrypt{}}
+	if err := provision.Validar(p.ID, p.Email, p.Nombre, p.Hash); err != nil {
+		log.Error("provision rechazada", slog.Any("error", err))
+		return respuesta{}, err
+	}
+
+	ctx, cancelar := context.WithTimeout(ctx,
+		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
+	defer cancelar()
+
+	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	if err != nil {
+		log.Error("abrir la base", slog.Any("error", err))
+		return respuesta{}, err
+	}
+	defer store.CerrarPool()
+
+	provision.Usuarios = store
+	u, err := provision.CrearPrimerAdministrador(ctx, p.ID, p.Email, p.Nombre, p.Hash)
+	switch {
+	case errors.Is(err, aplicacion.ErrYaHayUsuarios):
+		log.Info("la instalacion ya estaba provisionada; no se crea nada")
+		return respuesta{Orden: ordenPrimerAdministrador, Estado: "ya provisionada"}, nil
+	case err != nil:
+		log.Error("provision fallida", slog.Any("error", err))
+		return respuesta{}, err
+	}
+
+	// Sin el email ni el hash en el registro: basta con QUE cuenta quedo.
+	log.Info("primer administrador creado", slog.String("id", u.ID), slog.String("rol", string(u.Rol)))
+	return respuesta{Orden: ordenPrimerAdministrador, Estado: "creado"}, nil
 }

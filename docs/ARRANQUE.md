@@ -29,51 +29,49 @@ arranca la API. Antes lo hacia la propia API al levantar, lo que significaba que
 cada replica intentaba migrar en paralelo y que un fallo de migracion se
 confundia con un fallo de arranque.
 
-**El seed no existe todavia** (`#22`). No hay `cmd/seed`, asi que tras un
-arranque limpio la tabla `usuarios` esta **vacia** y no se puede entrar al
-tablero. Para trabajar o para una demo, ver la seccion siguiente.
+El seed **no corre en `up`**: es un comando explicito, contra una base ya
+migrada, para demos y desarrollo. No hay siembra en produccion.
 
-Cuando llegue el seed, cada usuario tendra **su propia clave, desde entorno**.
-La version anterior daba la misma constante conocida a `distribucion` y
-`contabilidad`, que son justo los dos roles que constituyen el control de
-doble firma: una sola persona con esa clave firmaba por ambos, y el control no
-controlaba nada.
+```bash
+docker compose run --rm seed      # dataset sintetico; no corre en `up`
+SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
+go run ./cmd/seed                 # equivalente, con DATABASE_URL
+```
+
+El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
+tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que
+publica CI y despliega el CD es la etapa `runtime`, y no lo contiene. El motivo
+es lo que hace `SEED_RESET=true`: borra 21 tablas -`titulares`, `obras`,
+`declaraciones`, `bolsas`, `usuarios`...- y reescribe las cuentas con las
+claves de esta pagina. Que exista en la imagen de produccion es todo lo que
+hace falta para que un DSN copiado de staging lo ejecute contra datos reales.
+
+`SEED_RESET` tiene ademas su propia guarda: se **niega** si en la base hay
+alguna obra o algun titular cuyo id no sea del dataset. La comprobacion
+anterior solo miraba que la bitacora estuviera vacia, y el estado real de REDES
+-catalogo y padron IPI cargados, ningun reparto asentado- la pasaba entera.
+
+Cada rol tiene **su propia clave**, desde entorno. Una sola constante
+compartida entre `distribucion` y `contabilidad` anula el control de doble
+firma: una persona firmaba por ambos. El seed **rechaza** dos roles con la
+misma clave: bcrypt lleva sal, asi que dos hashes distintos no delatan nada y
+el control se perderia en silencio.
 
 ## Entrar al tablero
 
-Mientras `#22` no exista, los usuarios se crean a mano. **Esto es solo para
-desarrollo**: no se commitea como script para no pisar el trabajo de ese issue,
-y la clave es la misma para los cinco a proposito -es un juego de prueba, no un
-esquema de credenciales.
+El seed crea los cinco usuarios. Correr **una vez** despues de un arranque
+limpio o de un `docker compose down -v`; los usuarios sobreviven a `down` y a
+reiniciar la maquina.
 
-Correr **una vez** despues de un arranque limpio o de un `docker compose down -v`;
-los usuarios sobreviven a `down` y a reiniciar la maquina.
+Claves por defecto (sobreescribibles con `SEED_CLAVE_*`):
 
-```bash
-docker compose exec -T postgres psql -U intela -d intela <<'SQL'
-INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
-VALUES ('tit-ana', 'Ana Escritora', 'IPI-00000001', TRUE, 'socio', 'ana@redes.co')
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO usuarios (id, email, nombre, rol, titular_id, password_hash) VALUES
-  ('usr-admin', 'admin@redes.co', 'Admin Intela',   'administrador', NULL,      '$2a$10$8HlgoFDxy5G6rLR8ewFRMesmXVIUkgb3etEMOoYqsPT778JCAbH5q'),
-  ('usr-dist',  'dist@redes.co',  'Distribucion',   'distribucion',  NULL,      '$2a$10$8HlgoFDxy5G6rLR8ewFRMesmXVIUkgb3etEMOoYqsPT778JCAbH5q'),
-  ('usr-conta', 'conta@redes.co', 'Contabilidad',   'contabilidad',  NULL,      '$2a$10$8HlgoFDxy5G6rLR8ewFRMesmXVIUkgb3etEMOoYqsPT778JCAbH5q'),
-  ('usr-audit', 'audit@redes.co', 'Revisor Fiscal', 'auditor',       NULL,      '$2a$10$8HlgoFDxy5G6rLR8ewFRMesmXVIUkgb3etEMOoYqsPT778JCAbH5q'),
-  ('usr-ana',   'ana@redes.co',   'Ana Escritora',  'titular',       'tit-ana', '$2a$10$8HlgoFDxy5G6rLR8ewFRMesmXVIUkgb3etEMOoYqsPT778JCAbH5q')
-ON CONFLICT (id) DO NOTHING;
-SQL
-```
-
-Los cinco usan la clave `intela-dev`:
-
-| Correo | Rol | Que ve en el tablero |
-| --- | --- | --- |
-| `admin@redes.co` | administrador | Los nueve modulos |
-| `dist@redes.co` | distribucion | Ingesta, Catalogo, Distribucion, Anomalias |
-| `conta@redes.co` | contabilidad | Titulares y Reportes - no Distribucion |
-| `audit@redes.co` | auditor | Todo, en solo lectura |
-| `ana@redes.co` | titular | Solo Inicio, con su liquidacion |
+| Correo | Rol | Clave | Que ve en el tablero |
+| --- | --- | --- | --- |
+| `admin@redes.co` | administrador | `admin-local` | Los nueve modulos |
+| `distribucion@redes.co` | distribucion | `distribucion-local` | Ingesta, Catalogo, Distribucion, Anomalias |
+| `contabilidad@redes.co` | contabilidad | `contabilidad-local` | Titulares y Reportes - no Distribucion |
+| `auditor@redes.co` | auditor | `auditor-local` | Todo, en solo lectura |
+| `ana@redes.co` | titular | `ana-local` | Solo Inicio, con su liquidacion |
 
 `distribucion` y `contabilidad` **no se solapan** a proposito: son las dos firmas
 del control de doble firma (ADR 0008, `RD 13.5`).
@@ -100,7 +98,7 @@ autorizacion de verdad va en el servidor y es el `#17`.
 | Sintoma | Causa | Arreglo |
 | --- | --- | --- |
 | `404 ruta no encontrada` al entrar | Imagenes viejas | `docker compose up -d --build` |
-| `credenciales invalidas` | La tabla `usuarios` esta vacia | Repetir el bloque de arriba |
+| `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed` |
 | La API se reinicia sola, `lookup postgres ... no such host` | Docker se reinicio y el contenedor quedo con una direccion vieja | `docker compose up -d --force-recreate api` |
 
 ### Modo desarrollo del frontend
@@ -121,7 +119,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `DATABASE_URL` | *(obligatoria)* | DSN de PostgreSQL. Sin ella el proceso no arranca |
 | `ADDR` | `:8080` | Donde escucha la API |
 | `CORS_ORIGENES` | *(vacio)* | Lista blanca separada por comas. Vacio = sin CORS. Nunca `*` |
-| `OBJECT_DIR` | `/data/objetos` | Raiz del almacen de reportes crudos |
+| `OBJECT_DIR` | `./data/objetos` | Raiz del almacen de reportes crudos. Relativa a proposito: con una ruta absoluta, `go run ./cmd/seed` falla con EACCES. En contenedor la fija `docker-compose.yml` a `/objetos` |
 | `LOG_FORMATO` | `json` | `texto` para desarrollo |
 | `DEBUG` | `false` | Sube el nivel de log a debug |
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
@@ -130,6 +128,13 @@ npm --prefix web run dev                            # http://localhost:5173
 | `WORKER_ESPERA_BASE` | `30s` | Espera tras el primer fallo. Se dobla en cada fallo siguiente |
 | `WORKER_ESPERA_TECHO` | `10m` | Tope de esa espera. `0` significa sin tope |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
+| `SEED_TIMEOUT` | `2m` | Tope para la corrida entera del seed. Si expira, la carga se corta a medias y la siguiente pide `SEED_RESET=true` |
+| `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos, y tambien si hay obras o titulares que no son del dataset |
+| `SEED_CLAVE_ADMIN` | `admin-local` | Clave del usuario administrador del seed |
+| `SEED_CLAVE_DISTRIBUCION` | `distribucion-local` | Clave del rol distribucion |
+| `SEED_CLAVE_CONTABILIDAD` | `contabilidad-local` | Clave del rol contabilidad |
+| `SEED_CLAVE_AUDITOR` | `auditor-local` | Clave del rol auditor |
+| `SEED_CLAVE_TITULAR` | `ana-local` | Clave de Ana (`ana@redes.co`) |
 
 Los cuatro valores del worker son **configuracion de operacion, no parametros normativos**: no
 salen del reglamento y por eso no entran por la tabla `parametros` (ADR 0004). El detalle de por
