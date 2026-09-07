@@ -55,6 +55,20 @@ type Similitud interface {
 type Hasher interface {
 	Verificar(hash, clave string) bool
 	Hash(clave string) (string, error)
+
+	// EsHash dice si una cadena tiene la forma de un hash de ESTE hasher.
+	//
+	// Existe porque el nucleo tiene una regla que cumplir -- lo que se guarda
+	// en `usuarios.password_hash` tiene que ser verificable -- y no puede
+	// comprobarla por si mismo sin aprenderse el algoritmo, que es justo lo
+	// que este puerto oculta. Asi que pregunta.
+	//
+	// No es cosmetico: una clave EN CLARO de 20 caracteres o mas pasaba el
+	// unico control que habia (la longitud) y el CHECK del esquema, se
+	// guardaba tal cual, y a partir de ahi el login fallaba con la clave
+	// correcta y con cualquier otra. Sin ninguna via para arreglarlo, porque
+	// esta operacion se niega a correr dos veces.
+	EsHash(posible string) bool
 }
 
 // GeneradorTokens produce el identificador opaco de una sesion.
@@ -84,6 +98,21 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
+//
+// Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
+// usuarios en cada peticion autenticada, y esto se invoca UNA vez en la vida de
+// una instalacion. Juntarlos obligaria a todo doble de la afiliacion a
+// implementar una escritura que no usa.
+//
+// El contrato incluye la unicidad: la implementacion inserta solo si la tabla
+// esta vacia, EN LA MISMA SENTENCIA, y devuelve ErrYaHayUsuarios si no lo
+// estaba. Comprobarlo con un recuento previo deja una ventana entre el SELECT y
+// el INSERT por la que cabe una segunda cuenta de administrador.
+type RepositorioProvisionInicial interface {
+	CrearPrimerAdministrador(ctx context.Context, u Usuario, hash string) error
 }
 
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una
