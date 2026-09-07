@@ -48,7 +48,9 @@ func main() {
 // El aviso va por stderr y el hash por stdout, separados a proposito: asi
 // `go run ./cmd/hash-clave > h.txt` deja en el fichero el hash y nada mas.
 func ejecutar(entrada io.Reader, salida, aviso io.Writer) error {
-	fmt.Fprint(aviso, "clave: ")
+	// El aviso es cosmetico: si no se puede escribir, el comando sigue siendo
+	// util -- el hash va por otro flujo. Se descarta explicitamente.
+	_, _ = fmt.Fprint(aviso, "clave: ")
 
 	lector := bufio.NewReader(entrada)
 	linea, err := lector.ReadString('\n')
@@ -69,6 +71,11 @@ func ejecutar(entrada io.Reader, salida, aviso io.Writer) error {
 		return fmt.Errorf("hashear: %w", err)
 	}
 
-	fmt.Fprintln(salida, hash)
+	// Este SI se comprueba, y no por el linter: con la salida redirigida a un
+	// fichero, una escritura que falle a medias deja al operador con un hash
+	// truncado y la impresion de que todo fue bien. Preferible fallar aqui.
+	if _, err := fmt.Fprintln(salida, hash); err != nil {
+		return fmt.Errorf("escribir el hash: %w", err)
+	}
 	return nil
 }
