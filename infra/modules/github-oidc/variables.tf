@@ -24,6 +24,43 @@ variable "github_repo" {
   type        = string
 }
 
+# The numeric ids below are what GitHub's immutable subject claim embeds. Both
+# or neither: with only one there is no second subject to build, and the trust
+# policy silently keeps trusting just the legacy spelling.
+#
+#   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+#
+# and confirm against the prefix the platform reports:
+#
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+variable "github_owner_id" {
+  description = "Numeric id of the owner, for GitHub's immutable subject claim. Null keeps only the legacy subject."
+  type        = number
+  default     = null
+}
+
+variable "github_repo_id" {
+  description = "Numeric id of the repository, for GitHub's immutable subject claim. Null keeps only the legacy subject."
+  type        = number
+  default     = null
+}
+
+variable "deploy_environment" {
+  description = <<-TEXT
+    GitHub environment the deploy job declares, if any. When set, the trust
+    policy matches `environment:<name>` instead of `ref:refs/heads/<branch>`,
+    because that is what GitHub actually puts in the subject for a job that
+    declares an environment.
+
+    SETTING THIS MOVES THE BRANCH RESTRICTION OUT OF IAM. The environment's
+    deployment branch policy becomes the only thing keeping other branches from
+    assuming the deploy role, so it must list the deploy branch and nothing
+    else. See the note in main.tf.
+  TEXT
+  type        = string
+  default     = null
+}
+
 variable "deploy_branch" {
   description = "Branch allowed to assume the deploy role. Matched exactly, not by prefix."
   type        = string

@@ -1,3 +1,8 @@
+variable "partition" {
+  description = "AWS partition (aws, aws-us-gov, aws-cn). Passed in, never looked up here: a data source in this module would be deferred by the caller's depends_on and churn the role on every deploy. See the note in main.tf."
+  type        = string
+}
+
 # Reusable building block: one Go binary running as a Lambda function.
 #
 # This module knows nothing about Intela. It takes a zip, a handful of runtime

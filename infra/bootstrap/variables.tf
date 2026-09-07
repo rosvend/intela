@@ -45,6 +45,28 @@ variable "github_repo" {
   type        = string
 }
 
+# Needed because GitHub is moving the OIDC subject claim to a form that embeds
+# these ids. See the note in modules/github-oidc/main.tf; get them with
+#
+#   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+variable "github_owner_id" {
+  description = "Numeric owner id, for GitHub's immutable subject claim."
+  type        = number
+  default     = null
+}
+
+variable "github_repo_id" {
+  description = "Numeric repository id, for GitHub's immutable subject claim."
+  type        = number
+  default     = null
+}
+
+variable "deploy_environment" {
+  description = "GitHub environment the deploy job declares. When set, the deploy role trusts `environment:<name>` instead of the branch ref -- which is what GitHub actually sends. The environment's deployment branch policy then becomes what restricts the branch."
+  type        = string
+  default     = null
+}
+
 variable "deploy_branch" {
   description = "Branch allowed to assume the deploy role."
   type        = string
