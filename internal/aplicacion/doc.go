@@ -28,6 +28,23 @@
 // uso que aterrizen lo aplican; no es un filtro SQL.
 //
 // # Casos de uso
+// # Operacion
+//
+// [Despachador] y [Planificador] son los dos casos de uso que mueven la cola
+// de trabajos: uno toma y despacha, el otro encola lo que el calendario
+// declara vencido. Estan aqui, y no en cmd/, porque lo que deciden es
+// politica -que se reintenta, cuando, con que clave natural- y eso se tiene
+// que poder probar sin levantar un proceso.
+//
+// Ninguno de los dos escribe en la bitacora, y es deliberado. El ADR 0006
+// separa observabilidad de trazabilidad: "el worker tomo el trabajo 7" es
+// operacion, va al log y se rota; el asiento existe para explicar por que una
+// CIFRA es la que es. El asiento lo escribe el manejador que mueve dinero
+// -los issues #33 y #34-, no el mecanismo que lo transporta. Meter aqui un
+// asiento por trabajo llenaria de ruido operativo el libro que un auditor
+// tiene que poder leer dentro de diez anos.
+//
+// # Que falta aqui
 //
 // Autenticacion, ConsultaIngresos (OE-6) y ExplicarCifra (ADR 0006). Cada
 // uno declara solo los puertos que necesita. El asiento en bitacora es
