@@ -4,9 +4,22 @@
 -- OE-6 piden el desglose en cada consulta. Colapsar las deducciones en el
 -- neto haria inexpresable el resumen que exige RD 13.2.
 --
--- Esta migracion nacio como 00002. El catalogo (#86) se quedo con esa version
--- al entrar a main; goose no admite dos ficheros con el mismo numero, asi que
--- liquidacion pasa a 00003. Un hueco no es error; un duplicado si.
+-- COORDINACION DE NUMERO: esta migracion nacio como 00002 y luego paso a
+-- 00003 cuando el catalogo (#86) se quedo con esa version. El 00003 ya no
+-- se puede usar. El PR #85 renumero la suya a 00005 y su despliegue corrio
+-- `goose up` de verdad; #72 entro despues como 00006. Produccion esta por
+-- encima del 00003, y goose corre con `allowMissing = false` -- un numero
+-- LIBRE por debajo de la version ya aplicada aborta con
+--
+--     found 1 missing migrations before current version N
+--
+-- antes de aplicar nada, y el despliegue condiciona el rollout a que
+-- goose termine bien.
+--
+-- Se toma el 00007: el 2026-09-07 el mayor en `main` y en TODAS las ramas
+-- abiertas era 00006 (`log_de_rechazos`). #87 (`oni_publicacion`) y #88
+-- (`afiliaciones`) siguen en 00003 y tendran que subir por encima de este
+-- numero, no rellenar el hueco. Un ADR admite huecos; una migracion no.
 
 -- +goose Up
 
