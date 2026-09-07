@@ -113,6 +113,9 @@ docker compose up --build
 
 Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`.
 
-El arranque no siembra usuarios ni aplica migraciones: las migraciones son
-`docker compose run --rm migrate` y el seed `docker compose run --rm seed`.
+El arranque **si** aplica las migraciones, como paso propio: el servicio
+`migrate` corre una vez y `api`, `worker` y `scheduler` heredan
+`depends_on: migrate: condition: service_completed_successfully`, asi que no
+arrancan hasta que termina. Lo que el arranque no hace es sembrar: el seed es
+`docker compose run --rm seed`, explicito, y su binario va en otra imagen.
 Detalle y variables de entorno en [`docs/ARRANQUE.md`](docs/ARRANQUE.md).

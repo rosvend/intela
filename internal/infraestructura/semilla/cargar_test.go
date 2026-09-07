@@ -115,10 +115,17 @@ func TestCargarEsIdempotenteSinReset(t *testing.T) {
 func TestCargarConResetReescribe(t *testing.T) {
 	store, pool := abrir(t)
 	ctx := t.Context()
-	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+	// UN solo almacen para las dos cargas. Con disco(t) dos veces, cada carga
+	// escribia en un t.TempDir() distinto -TempDir devuelve un directorio nuevo
+	// en cada llamada- y el reset nunca se ejercitaba contra una boveda que YA
+	// tuviera los objetos, que es el caso real: el volumen `objetos` de
+	// docker-compose es el mismo entre corridas, y ahi la reescritura pasa por
+	// el camino de ErrObjetoYaExiste.
+	almacen := disco(t)
+	if err := Cargar(ctx, store, almacen, hasher(), clavesPrueba(), false, silencio()); err != nil {
 		t.Fatalf("carga inicial: %v", err)
 	}
-	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio()); err != nil {
+	if err := Cargar(ctx, store, almacen, hasher(), clavesPrueba(), true, silencio()); err != nil {
 		t.Fatalf("carga con reset: %v", err)
 	}
 
@@ -342,6 +349,60 @@ func TestIdentificarEsAtomico(t *testing.T) {
 	}
 }
 
+// TestCargarSiembraElAliasDeCadaUso comprueba que el escalon "alias" no sea
+// una etiqueta huerfana.
+//
+// Los seis usos salian con escalon='alias' y `alias_obra` VACIA: un auditor que
+// siguiera el escalon no encontraba nada. La consulta de abajo es exactamente
+// ese camino -de la fila de uso a la fila de alias por (fuente, valor)- y con
+// la tabla vacia no casa ninguna.
+func TestCargarSiembraElAliasDeCadaUso(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var huerfanos int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM usos u
+		 WHERE u.escalon = 'alias'
+		   AND NOT EXISTS (
+		         SELECT 1 FROM alias_obra a
+		          WHERE a.fuente  = u.fuente
+		            AND a.valor   = u.ids_fuente
+		            AND a.obra_id = u.obra_id)`).Scan(&huerfanos); err != nil {
+		t.Fatalf("cruzar usos con alias_obra: %v", err)
+	}
+	if huerfanos != 0 {
+		t.Fatalf("%d usos con escalon 'alias' sin fila en alias_obra que los explique", huerfanos)
+	}
+
+	var nAlias int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM alias_obra`).Scan(&nAlias); err != nil {
+		t.Fatalf("contar alias: %v", err)
+	}
+	if nAlias == 0 {
+		t.Fatal("alias_obra vacia: el escalon 'alias' seria mentira")
+	}
+}
+
+// TestHashearRechazaClavesRepetidas: dos roles con la misma clave dan dos
+// hashes bcrypt distintos -bcrypt lleva sal-, asi que ni la base ni el hasher
+// lo notan. Una sola persona firmaria las dos mitades del control de doble
+// firma del `RD 13.5`, que es la propiedad que este seed presume.
+func TestHashearRechazaClavesRepetidas(t *testing.T) {
+	c := clavesPrueba()
+	c.Contabilidad = c.Distribucion
+
+	if _, err := hashear(hasher(), c); !errors.Is(err, ErrClaveRepetida) {
+		t.Fatalf("se esperaba ErrClaveRepetida, se obtuvo %v", err)
+	}
+	if _, err := hashear(hasher(), clavesPrueba()); err != nil {
+		t.Fatalf("claves distintas: %v", err)
+	}
+}
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testhelp.Pool(t)

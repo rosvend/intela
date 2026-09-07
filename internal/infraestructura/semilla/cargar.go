@@ -26,6 +26,9 @@ var ErrBitacoraNoVacia = errors.New("SEED_RESET rechazado: la bitacora no esta v
 // son del dataset.
 var ErrDatosNoSinteticos = errors.New("SEED_RESET rechazado: hay datos que no son del dataset sintetico")
 
+// ErrClaveRepetida: dos roles del seed comparten la clave.
+var ErrClaveRepetida = errors.New("dos roles del seed comparten la clave")
+
 // Claves de las cuentas de desarrollo. Cada rol la suya: una sola clave
 // compartida entre distribucion y contabilidad anula el control de doble
 // firma (docs/ARRANQUE.md).
@@ -278,10 +281,26 @@ func hashear(hasher aplicacion.Hasher, c Claves) (map[string]string, error) {
 		{EmailTitular, c.Titular},
 	}
 	out := make(map[string]string, len(pares))
+	// De quien es cada clave, para poder nombrar a los DOS que la comparten.
+	//
+	// Un hash no sirve para detectar la repeticion: bcrypt lleva sal, asi que
+	// la misma clave sale distinta cada vez y ni la base ni el hasher notan
+	// nada. La comprobacion tiene que ser sobre el texto y antes de hashear.
+	//
+	// Se rechaza cualquier par repetido y no solo distribucion/contabilidad. El
+	// que importa es ese -son las dos firmas del `RD 13.5`, y una sola persona
+	// firmaria las dos mitades-, pero un admin con la clave del auditor tampoco
+	// es un entorno en el que probar la autorizacion signifique algo.
+	dueno := make(map[string]string, len(pares))
 	for _, p := range pares {
 		if p.clave == "" {
 			return nil, fmt.Errorf("falta la clave de %s", p.email)
 		}
+		if otro, repetida := dueno[p.clave]; repetida {
+			return nil, fmt.Errorf("%w: %s y %s. Anula el control de doble firma (`RD 13.5`)",
+				ErrClaveRepetida, otro, p.email)
+		}
+		dueno[p.clave] = p.email
 		h, err := hasher.Hash(p.clave)
 		if err != nil {
 			return nil, fmt.Errorf("hashear %s: %w", p.email, err)
@@ -360,6 +379,26 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 			VALUES ($1, $2, $3, $4, $5)`,
 			p.Clave, p.Valor, p.VigenteDesde, p.Organo, p.Reglamento); err != nil {
 			return fmt.Errorf("insertar parametro %s: %w", p.Clave, err)
+		}
+	}
+
+	// El alias va ANTES de la ingesta, que es el orden en que ocurre de verdad:
+	// el escalon 1 de la cascada (ADR 0007) consulta una correspondencia que ya
+	// estaba aprendida. Sin estas filas, los seis usos salian con
+	// escalon='alias' y `alias_obra` vacia, y un auditor que siguiera el
+	// escalon no encontraba nada: la etiqueta decia como se reconocio la fila y
+	// no habia con que comprobarlo.
+	//
+	// `quien` dice 'semilla' y no un usuario: la correspondencia no la resolvio
+	// una persona, la trae el dataset (ADR 0004).
+	for _, r := range d.Reportes {
+		for _, u := range r.Usos {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO alias_obra (fuente, tipo_id, valor, obra_id, quien)
+				VALUES ($1, $2, $3, $4, 'semilla')`,
+				r.Fuente, r.TipoID, u.IDsFuente, u.ObraID); err != nil {
+				return fmt.Errorf("insertar alias %s/%s=%s: %w", r.Fuente, r.TipoID, u.IDsFuente, err)
+			}
 		}
 	}
 

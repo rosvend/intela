@@ -53,7 +53,9 @@ anterior solo miraba que la bitacora estuviera vacia, y el estado real de REDES
 
 Cada rol tiene **su propia clave**, desde entorno. Una sola constante
 compartida entre `distribucion` y `contabilidad` anula el control de doble
-firma: una persona firmaba por ambos.
+firma: una persona firmaba por ambos. El seed **rechaza** dos roles con la
+misma clave: bcrypt lleva sal, asi que dos hashes distintos no delatan nada y
+el control se perderia en silencio.
 
 ## Entrar al tablero
 
@@ -126,6 +128,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `WORKER_ESPERA_BASE` | `30s` | Espera tras el primer fallo. Se dobla en cada fallo siguiente |
 | `WORKER_ESPERA_TECHO` | `10m` | Tope de esa espera. `0` significa sin tope |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
+| `SEED_TIMEOUT` | `2m` | Tope para la corrida entera del seed. Si expira, la carga se corta a medias y la siguiente pide `SEED_RESET=true` |
 | `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos, y tambien si hay obras o titulares que no son del dataset |
 | `SEED_CLAVE_ADMIN` | `admin-local` | Clave del usuario administrador del seed |
 | `SEED_CLAVE_DISTRIBUCION` | `distribucion-local` | Clave del rol distribucion |

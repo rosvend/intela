@@ -46,6 +46,15 @@ const (
 	FuenteCine = "procinal"
 	FuenteOTT  = "netflix"
 
+	// La columna de la que sale el id de obra en el archivo de cada fuente, y
+	// la segunda mitad de la clave de `alias_obra`. Los nombres son los que
+	// documenta identificadores.md para las fuentes reales; el de Procinal es
+	// sintetico como el resto de su reporte, porque el cliente no ha entregado
+	// el formato de las salas.
+	TipoIDCaracol  = "ID_Ficha"
+	TipoIDProcinal = "id_pelicula"
+	TipoIDNetflix  = "show_id"
+
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
 	// columna `origen`, asi que vive en `reglamento` y `organo`.
@@ -108,8 +117,17 @@ type Usuario struct {
 	TitularID string
 }
 
+// Reporte es una entrega del dataset: los bytes crudos y las filas que
+// contienen.
+//
+// TipoID nombra la columna de la que sale IDsFuente en el archivo de esa
+// fuente, y es la segunda parte de la clave de `alias_obra`
+// (docs/dominio/identificadores.md). Sin el, el alias que siembra el seed no
+// se podria escribir, y el escalon "alias" de cada uso seria una etiqueta que
+// no apunta a ninguna fila.
 type Reporte struct {
 	Fuente  string
+	TipoID  string
 	Periodo string
 	Bytes   []byte
 	Usos    []aplicacion.UsoPersistido
@@ -263,25 +281,43 @@ func (d *Dataset) reportes() {
 		usoTV(ObraUnitario, "El Tercer Acto", "ETA-1", "unitario", "48", 1, "3.0"),
 		usoTV(ObraSketch, "Minuto Comico", "MC-1", "sketches", "10", 2, "2.0"),
 	}
-	for i := range tv {
-		tv[i].Fuente = FuenteTV
-	}
-
 	cine := []aplicacion.UsoPersistido{
 		usoCine(ObraCine, "Pelicula X", "PX-1", "10000"),
 	}
-	cine[0].Fuente = FuenteCine
-
 	ott := []aplicacion.UsoPersistido{
 		usoOTT(ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
 	}
-	ott[0].Fuente = FuenteOTT
 
 	d.Reportes = []Reporte{
-		{Fuente: FuenteTV, Periodo: Periodo, Usos: tv, Bytes: csvDe(tv)},
-		{Fuente: FuenteCine, Periodo: Periodo, Usos: cine, Bytes: csvDe(cine)},
-		{Fuente: FuenteOTT, Periodo: Periodo, Usos: ott, Bytes: csvDe(ott)},
+		{Fuente: FuenteTV, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tv},
+		{Fuente: FuenteCine, TipoID: TipoIDProcinal, Periodo: Periodo, Usos: cine},
+		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
 	}
+
+	// La fuente y la evidencia se estampan aqui y no en los constructores de
+	// arriba porque las dos son propiedades de la ENTREGA, no de la fila: la
+	// misma "PX-1" viaja en el reporte de Caracol y en el de Procinal, y lo que
+	// la distingue -y lo que la resuelve- es de que fuente viene.
+	for i := range d.Reportes {
+		r := &d.Reportes[i]
+		for j := range r.Usos {
+			r.Usos[j].Fuente = r.Fuente
+			r.Usos[j].Evidencia = evidenciaAlias(r.Fuente, r.TipoID, r.Usos[j].IDsFuente)
+		}
+		r.Bytes = csvDe(r.Usos)
+	}
+}
+
+// evidenciaAlias redacta el "como se reconocio" de un uso identificado por
+// alias, nombrando la fila de `alias_obra` que lo resolvio.
+//
+// Es la pregunta 3 del ADR 0006 y tiene que poder seguirse: con la fuente, el
+// tipo de id y el valor se compone la clave primaria de `alias_obra`, asi que
+// un auditor que lea esta cadena llega a la fila exacta y de ahi a la obra.
+// Antes decia "identificacion sintetica por titulo" mientras el escalon decia
+// "alias": dos versiones distintas del mismo hecho, y ninguna comprobable.
+func evidenciaAlias(fuente, tipoID, valor string) string {
+	return "semilla: alias " + fuente + "/" + tipoID + "=" + valor
 }
 
 func (d *Dataset) bolsas() {
@@ -357,11 +393,12 @@ func usoOTT(obraID, titulo, idFuente, vistas, minutos, pb string) aplicacion.Uso
 func usoIdentificado(obraID, titulo, idFuente string, modalidad reparto.Modalidad, tipo, duracion string, emisiones int64, rating, taquilla, vistas, minutos, pb string) aplicacion.UsoPersistido {
 	n := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
 	return aplicacion.UsoPersistido{
-		Titulo:        titulo,
-		IDsFuente:     idFuente,
-		ObraID:        obraID,
-		Escalon:       "alias",
-		Evidencia:     "semilla: identificacion sintetica por titulo",
+		Titulo:    titulo,
+		IDsFuente: idFuente,
+		ObraID:    obraID,
+		Escalon:   "alias",
+		// Evidencia la estampa reportes(), que es donde se sabe de que fuente
+		// viene la fila y por tanto cual es su alias.
 		ONI:           false,
 		Modalidad:     modalidad,
 		TipoObra:      tipo,
