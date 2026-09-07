@@ -17,6 +17,17 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
       -o /out/ ./cmd/api ./cmd/worker ./cmd/scheduler ./cmd/migrate
 
+# La raiz de la boveda de reportes crudos, creada AQUI para poder copiarla con
+# su dueno en las imagenes finales.
+#
+# Docker inicializa un volumen con nombre a partir de lo que la imagen tenga en
+# el punto de montaje. Sin este directorio, el volumen `objetos` nacia
+# root:root 0755 y el proceso, que corre como nonroot (uid 65532, distroless),
+# no podia escribir: `mkdir /objetos/reportes: permission denied`, y habia que
+# hacerle un chown a mano al volumen. Con el directorio en la imagen y el dueno
+# correcto, un volumen recien creado lo hereda.
+RUN mkdir -p /out/objetos
+
 # El seed se compila aparte para que su binario no comparta sistema de ficheros
 # con los binarios del servicio: la imagen de la API no puede contenerlo ni por
 # un COPY de mas.
@@ -35,6 +46,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
 # (ver semilla.vaciar) es la segunda mitad, no la primera.
 FROM gcr.io/distroless/static-debian12:nonroot AS seed
 WORKDIR /app
+COPY --from=build --chown=nonroot:nonroot /out/objetos /objetos
 COPY --from=build-seed /out-seed/seed /app/seed
 USER nonroot
 ENTRYPOINT ["/app/seed"]
@@ -49,6 +61,7 @@ COPY --from=build /out/scheduler /app/scheduler
 # Las migraciones van EMBEBIDAS en este binario (migrations/embed.go), asi que
 # no hay que copiar el directorio ni acertar con la variable MIGRATIONS.
 COPY --from=build /out/migrate   /app/migrate
+COPY --from=build --chown=nonroot:nonroot /out/objetos /objetos
 USER nonroot
 EXPOSE 8080
 ENTRYPOINT ["/app/api"]

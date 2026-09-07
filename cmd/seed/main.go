@@ -20,6 +20,16 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/semilla"
 )
 
+// dirObjetosPorDefecto es la boveda de reportes crudos cuando nadie fija
+// OBJECT_DIR.
+//
+// RELATIVA al directorio de trabajo a proposito. Era `/data/objetos`, que es
+// la ruta DENTRO del contenedor, y ninguna maquina de desarrollo deja crear
+// /data: el `go run ./cmd/seed` de ARRANQUE.md y el `make seed` fallaban con
+// EACCES. En contenedor la ruta la fija OBJECT_DIR, que es lo que hace
+// docker-compose.yml.
+const dirObjetosPorDefecto = "./data/objetos"
+
 func main() {
 	log := config.Logger("seed")
 	if err := ejecutar(log); err != nil {
@@ -44,7 +54,7 @@ func ejecutar(log *slog.Logger) error {
 	}
 	defer store.CerrarPool()
 
-	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", "/data/objetos")}
+	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)}
 	return semilla.Cargar(ctx, store, almacen, cripto.Bcrypt{}, claves(),
 		config.Bool("SEED_RESET", false), log)
 }

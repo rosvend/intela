@@ -117,7 +117,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `DATABASE_URL` | *(obligatoria)* | DSN de PostgreSQL. Sin ella el proceso no arranca |
 | `ADDR` | `:8080` | Donde escucha la API |
 | `CORS_ORIGENES` | *(vacio)* | Lista blanca separada por comas. Vacio = sin CORS. Nunca `*` |
-| `OBJECT_DIR` | `/data/objetos` | Raiz del almacen de reportes crudos |
+| `OBJECT_DIR` | `./data/objetos` | Raiz del almacen de reportes crudos. Relativa a proposito: con una ruta absoluta, `go run ./cmd/seed` falla con EACCES. En contenedor la fija `docker-compose.yml` a `/objetos` |
 | `LOG_FORMATO` | `json` | `texto` para desarrollo |
 | `DEBUG` | `false` | Sube el nivel de log a debug |
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
