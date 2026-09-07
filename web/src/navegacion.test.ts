@@ -25,9 +25,16 @@ describe("itemsDeNav", () => {
     );
   });
 
-  it("contabilidad no ve /distribucion (es de distribucion): las dos firmas no se solapan", () => {
-    expect(itemsDeNav("contabilidad").map((r) => r.to)).not.toContain(
+  it("contabilidad ve /distribucion: es la otra firma de la compuerta", () => {
+    expect(itemsDeNav("contabilidad").map((r) => r.to)).toContain(
       "/distribucion",
+    );
+  });
+
+  it("las dos firmas no se solapan en reportes: distribucion no los ve", () => {
+    expect(itemsDeNav("contabilidad").map((r) => r.to)).toContain("/reportes");
+    expect(itemsDeNav("distribucion").map((r) => r.to)).not.toContain(
+      "/reportes",
     );
   });
 

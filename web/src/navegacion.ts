@@ -56,7 +56,10 @@ export const RUTAS: readonly ItemDeNav[] = [
   {
     to: "/distribucion",
     label: "Distribución",
-    roles: ["administrador", "distribucion", "auditor"],
+    // Contabilidad entra aqui porque es la otra firma de la compuerta
+    // (tabla `firmas`). Ocultarle el panel dejaria la segunda firma sin
+    // sitio; la doble firma la hace el backend, no la nav.
+    roles: ["administrador", "distribucion", "contabilidad", "auditor"],
     seccion: "principal",
   },
   {

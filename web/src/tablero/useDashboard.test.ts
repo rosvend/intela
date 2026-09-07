@@ -82,6 +82,24 @@ describe("useRecurso", () => {
     expect(result.current.tipo).toBe("inactivo");
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("una recarga del mismo path no pinta Cargando otra vez", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ total: 1 }));
+    const { result, rerender } = renderHook(
+      ({ recarga }: { recarga: number }) => useRecurso("/api/x", true, recarga),
+      { initialProps: { recarga: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.tipo).toBe("listo"));
+
+    vi.mocked(fetch).mockResolvedValue(json({ total: 2 }));
+    rerender({ recarga: 1 });
+
+    expect(result.current).toEqual({ tipo: "listo", datos: { total: 1 } });
+    await waitFor(() =>
+      expect(result.current).toEqual({ tipo: "listo", datos: { total: 2 } }),
+    );
+  });
 });
 
 describe("useDashboard", () => {
