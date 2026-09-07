@@ -379,6 +379,20 @@ data "aws_iam_policy_document" "deploy" {
       "cloudwatch:ListMetrics",
       "sts:GetCallerIdentity",
       "tag:GetResources",
+
+      # ssm:DescribeParameters is the odd one out and it has to be here rather
+      # than beside the other ssm actions above. It is the account-level LIST
+      # operation -- note the plural -- and AWS does not support resource-level
+      # permissions on it, so `parameter/intela/*` never matches and the call is
+      # denied however narrowly it is written. The provider makes this call to
+      # read a parameter's metadata, so the first apply died on it after RDS,
+      # both Lambdas and the migration had already succeeded.
+      #
+      # Scoping stays on the singular, resource-level actions in
+      # ProjectScopedResources: reading or writing a VALUE still requires
+      # parameter/intela/*. This grants the ability to see that parameters
+      # exist, not to read them.
+      "ssm:DescribeParameters",
     ]
     resources = ["*"]
   }
