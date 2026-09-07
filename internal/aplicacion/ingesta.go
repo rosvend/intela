@@ -110,8 +110,33 @@ func idReporte(fuente, sha string) string {
 // sobrescribe, asi que una resubida de los mismos bytes deja el objeto
 // literalmente sin cambios y despues se rechaza con ErrReporteDuplicado.
 func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, datos []byte) (Reporte, error) {
+	// UNA sola normalizacion de la fuente, y ANTES de la validacion, por lo
+	// mismo que la de obra_id en GuardarUsos: la fuente se validaba recortada
+	// y se usaba CRUDA en los tres sitios que vienen despues -la fila de
+	// `reportes`, la derivacion del id de la entrega, y la fuente que
+	// GuardarUsos estampa en cada uso-.
+	//
+	// El dano no es cosmetico, y el mas caro es el del id. idReporte deriva de
+	// (fuente, huella), asi que "caracol" y " caracol " dan DOS ids distintos
+	// para los mismos bytes; y el UNIQUE (sha256, fuente) tampoco los junta,
+	// porque la fuente difiere. O sea: dos filas de `reportes` apuntando al
+	// MISMO objeto de la boveda -la clave del objeto es solo la huella-,
+	// ErrReporteDuplicado que no salta, y los dos juegos de filas ponderando la
+	// bolsa. Cada obra de ese archivo puntua DOS VECES. Es el invariante 1 del
+	// sistema roto por un espacio de un formulario.
+	//
+	// Y el silencioso: RepositorioIdentificacion.Alias indexa por fuente, asi
+	// que la variante con espacios no casa con ningun alias NUNCA y todas sus
+	// filas caen a ONI. El sintoma no es un error, es un catalogo que parece
+	// incompleto.
+	//
+	// TrimSpace y no un recorte propio, por lo mismo que alli: su definicion de
+	// blanco es unicode.IsSpace, que incluye el NBSP (U+00A0) de los exports de
+	// Excel.
+	fuente = strings.TrimSpace(fuente)
+
 	switch {
-	case strings.TrimSpace(fuente) == "":
+	case fuente == "":
 		return Reporte{}, fmt.Errorf("%w: falta la fuente", ErrReporteInvalido)
 	// periodoValido vive en trabajos.go, una sola vez para el paquete. Se
 	// comprueba aqui y no solo en la base porque GuardarReporte escribe la
@@ -227,10 +252,26 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 	if len(usos) == 0 {
 		return nil, nil
 	}
+	// El acuse se validaba recortado y se estampaba CRUDO en cada fila del
+	// lote, que es la misma trampa que la de obra_id un piso mas abajo: dos
+	// criterios para el mismo campo. Con un Reporte construido a mano -este
+	// metodo es publico- son dos danos distintos:
+	//
+	//   - `usos.reporte_id` es REFERENCES reportes(id), asi que " rep-1 " no
+	//     existe: 23503 dentro de la transaccion del lote, que se lleva TODAS
+	//     las filas, y ninguna con un motivo que explicarle al cliente.
+	//   - `usos.fuente` es TEXT NOT NULL y aguanta cualquier cosa, asi que el
+	//     dano es silencioso: Alias() indexa por fuente y " caracol " no casa
+	//     con ningun alias nunca.
+	//
+	// Recortando aqui, lo que se valida y lo que se estampa son el MISMO valor.
+	rep.ID = strings.TrimSpace(rep.ID)
+	rep.Fuente = strings.TrimSpace(rep.Fuente)
+
 	switch {
-	case strings.TrimSpace(rep.ID) == "":
+	case rep.ID == "":
 		return nil, fmt.Errorf("%w: falta el reporte del que salen las filas", ErrReporteInvalido)
-	case strings.TrimSpace(rep.Fuente) == "":
+	case rep.Fuente == "":
 		// Estampar la fuente no basta si la que se estampa viene vacia.
 		// `usos.fuente` es TEXT NOT NULL SIN DEFAULT, asi que la cadena vacia
 		// entra sin ruido, y a partir de ahi Alias() -que indexa por fuente- no
@@ -281,6 +322,58 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 		// fila que SI trae obra -" obra-1 "- sigue cayendo en la regla de H5 con
 		// su motivo verdadero.
 		u.ObraID = strings.TrimSpace(u.ObraID)
+
+		// Los otros cuatro campos donde el blanco esquiva una comprobacion, por
+		// el razonamiento de arriba, que vale igual para todos: mientras el
+		// criterio de "vacio" se escriba en mas de un sitio puede discrepar en
+		// mas de un sitio, y cada discrepancia acaba en el mismo lugar, que es
+		// una restriccion de la base abortando el INSERT del lote ENTERO. UNA
+		// normalizacion por campo, aqui arriba, ANTES de que nada los lea.
+		//
+		// Lo que se pierde por cada uno si el blanco no se recorta AQUI:
+		//
+		//   - `id`: la escapatoria `if u.ID == ""` de mas abajo se salta, el
+		//     blanco viaja como id LITERAL y la segunda fila que traiga el mismo
+		//     blanco choca con la clave primaria (23505). No es rebuscado que se
+		//     repita: la propia fuente reutiliza contadores de fila del estilo
+		//     Id_Ntx, que se renumeran en cada entrega.
+		//   - `escalon`: el relleno a "pendiente" se salta, y validarUso rechaza
+		//     la fila con el motivo FALSO `escalon " " en la ingesta`, cuando la
+		//     verdad es que llego vacio. Un motivo equivocado en un log que
+		//     existe para pedirle al cliente exactamente lo que falla es peor
+		//     que no tener motivo.
+		//   - `evidencia`: la regla nueva de validarUso la rechazaria por decir
+		//     COMO se reconocio una obra, cuando lo que trae es una celda vacia.
+		//     Mismo motivo falso, otro campo.
+		//   - `rechazo_motivo`: el peor de los cuatro, porque decide DOS cosas a
+		//     la vez -si la fila se valida (`== ""`, mas abajo) y si la fila va
+		//     al log de rechazos (`!= ""`, al final del bucle)-. Un blanco no
+		//     satisface ninguna como toca: la validacion se SALTA y la fila se
+		//     rutea al log de todas formas. Lo que pasa despues depende del
+		//     blanco, y las dos ramas son malas:
+		//
+		//     Con espacios, el CHECK (btrim(motivo) <> '') de `usos_rechazados`
+		//     la rechaza con un 23514 y se lleva la transaccion del lote: una
+		//     celda de una fila de una parrilla de 500 pierde las otras 499. Y
+		//     el reporte ya esta escrito, asi que reintentar el archivo choca
+		//     con ErrReporteDuplicado y la entrega no se recupera sin cirugia.
+		//
+		//     Con un tabulador, un salto de linea o el NBSP NO salta nada:
+		//     `btrim` sin segundo argumento quita SOLO espacios, asi que el
+		//     motivo pasa el CHECK. Eso es peor de encontrar, porque no hay
+		//     error: una fila BUENA queda archivada en `usos_rechazados` con un
+		//     motivo en blanco, o sea fuera de `usos`, o sea sin ponderar la
+		//     bolsa, y el acuse de la entrega dice que el archivo entro
+		//     completo.
+		//
+		// Recortar el motivo no lo pierde: uno de verdad con blancos alrededor
+		// sigue siendo un motivo y sigue yendo al log, ya recortado, que es la
+		// unica forma de que la comparacion de Go y el CHECK de la tabla
+		// signifiquen lo mismo.
+		u.ID = strings.TrimSpace(u.ID)
+		u.Escalon = strings.TrimSpace(u.Escalon)
+		u.Evidencia = strings.TrimSpace(u.Evidencia)
+		u.RechazoMotivo = strings.TrimSpace(u.RechazoMotivo)
 
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
@@ -414,6 +507,22 @@ func validarUso(u UsoPersistido) string {
 	if u.Escalon != "pendiente" {
 		return fmt.Sprintf("escalon %q en la ingesta: solo sale \"pendiente\" de aqui", u.Escalon)
 	}
+	// La otra mitad de la razon 1, que sin esta linea se quedaba a medias. Una
+	// fila puede traer evidencia y NO delatarse por ninguna de las dos reglas
+	// de arriba: obra_id vacio y escalon vacio -que el relleno de GuardarUsos
+	// deja en "pendiente"-. La evidencia se escribia entonces VERBATIM en la
+	// columna, y quedaba una fila pendiente diciendo como se reconocio una obra
+	// que nadie reconocio. Despues no hay forma de distinguirla de una que si.
+	//
+	// `puntaje` no necesita regla porque UsoPersistido no tiene ese campo: la
+	// columna se queda en su DEFAULT 0 y la ingesta no la puede tocar. El dia
+	// que se anada el campo, la regla entra aqui.
+	//
+	// Contra "" a secas, igual que obra_id y por lo mismo: el TrimSpace esta en
+	// GuardarUsos, una vez.
+	if u.Evidencia != "" {
+		return "evidencia en la ingesta: como se reconocio lo escribe la cascada (ADR 0007)"
+	}
 
 	// El CHECK uso_resuelto_tiene_obra NO se repite aqui, y sus DOS ramas se
 	// quedan fuera por el mismo motivo: con la regla de obra_id puesta ninguna
@@ -433,22 +542,61 @@ func validarUso(u UsoPersistido) string {
 	// comprobacion que no puede fallar no prueba nada, y encima puede tapar a la
 	// que si.
 
-	// Los CHECK de no negatividad de las columnas de medida. Una medida
-	// negativa no es un uso pequeno: es un dato roto, y ponderaria a la baja.
-	negativas := []struct {
+	// Las columnas de medida, con las DOS cosas que la base les exige: el CHECK
+	// de no negatividad y la precision del tipo.
+	//
+	// La negativa no es un uso pequeno: es un dato roto, y ponderaria a la baja.
+	//
+	// La precision es la que se quedaba sin comprobar, y cuesta lo mismo que un
+	// CHECK: un NUMERIC(p,s) no admite mas de p-s digitos ENTEROS, asi que un
+	// `rating` -NUMERIC(12,6), tope 999999.999999- con la audiencia en personas
+	// absolutas en vez de en porcentaje pasaba la validacion y moria en el
+	// INSERT con SQLSTATE 22003. Dentro de la transaccion del lote, o sea
+	// llevandose las filas buenas, y dejandole al operador un SQLSTATE crudo en
+	// vez de un motivo por fila. Los reportes de television colombianos
+	// entregan la audiencia de las dos formas, asi que es alcanzable el dia que
+	// entren los adaptadores de formato del #25.
+	//
+	// La precision y la escala van en la tabla, con los mismos nombres de
+	// columna que ya estaban, y no en seis condiciones escritas a mano: una
+	// tabla se puede leer contra 00001_init.sql de un vistazo, y anadir una
+	// medida es anadir una fila.
+	medidas := []struct {
 		campo string
 		valor decimal.Decimal
+		// Los de la definicion de la columna en migrations/00001_init.sql:
+		// NUMERIC(precision, escala).
+		precision int32
+		escala    int32
 	}{
-		{"duracion_min", u.DuracionMin},
-		{"rating", u.Rating},
-		{"taquilla", u.Taquilla},
-		{"vistas", u.Vistas},
-		{"minutos_vistos", u.MinutosVistos},
-		{"pb", u.PB},
+		{"duracion_min", u.DuracionMin, 12, 4},
+		{"rating", u.Rating, 12, 6},
+		{"taquilla", u.Taquilla, 18, 2},
+		{"vistas", u.Vistas, 18, 2},
+		{"minutos_vistos", u.MinutosVistos, 18, 4},
+		{"pb", u.PB, 18, 4},
 	}
-	for _, n := range negativas {
-		if n.valor.IsNegative() {
-			return fmt.Sprintf("%s negativa: %s", n.campo, n.valor)
+	for _, m := range medidas {
+		if m.valor.IsNegative() {
+			return fmt.Sprintf("%s negativa: %s", m.campo, m.valor)
+		}
+		// Se compara el valor REDONDEADO a la escala de la columna, que es el
+		// orden en el que Postgres lo hace: redondea primero y comprueba la
+		// precision despues. Sin el redondeo, 999999.9999996 cabe en seis
+		// digitos enteros aqui, se convierte en 1000000.000000 alla y desborda
+		// igual -el mismo 22003, en el borde que se habria quedado sin cubrir-.
+		//
+		// El tope es 10^(precision-escala) y es EXCLUSIVO: NUMERIC(12,6) llega
+		// hasta 999999.999999, asi que 1000000 ya no cabe. decimal.New(1, e)
+		// es 1 * 10^e.
+		//
+		// Mas decimales de los que tiene la columna no son un rechazo: la base
+		// redondea a la escala y guarda. Apartar esas filas seria perder datos
+		// buenos.
+		if m.valor.Round(m.escala).GreaterThanOrEqual(decimal.New(1, m.precision-m.escala)) {
+			return fmt.Sprintf(
+				"%s %s: la columna es NUMERIC(%d,%d) y no admite mas de %d digitos enteros",
+				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
 		}
 	}
 	if u.Emisiones < 0 {

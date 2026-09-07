@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -596,6 +597,13 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 		// anterior y mas estricta: con obra_id puesto no se mira nada mas. Que el
 		// motivo se compare entero es lo que lo demuestra.
 		"con obra por ingesta": {conObra, "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"},
+		// La otra mitad de lo que N4 argumenta: `evidencia` tampoco puede
+		// mentir. Esta fila no se delata por obra_id ni por el escalon.
+		"con evidencia por ingesta": {func() UsoPersistido {
+			u := usoBueno("X")
+			u.Evidencia = "alias caracol/ID_Ficha=1234"
+			return u
+		}(), "evidencia en la ingesta: como se reconocio lo escribe la cascada (ADR 0007)"},
 		// A proposito VALIDA, y no es un descuido: la mitad "identificada y sin
 		// obra" del CHECK uso_resuelto_tiene_obra ya no se comprueba aqui porque
 		// GuardarUsos estampa ONI = true antes de llamar, asi que esta forma no
@@ -902,21 +910,46 @@ func TestGuardarUsosNoConfundeElEscalonVacioConUnoAdelantado(t *testing.T) {
 // Un escalon vacio es lo que trae una fila recien parseada, y significa
 // "pendiente". Rechazarla obligaria a todo adaptador de formato a conocer el
 // vocabulario del esquema.
+//
+// Y "vacio" incluye los blancos, que es el borde donde el motivo salia FALSO.
+// Un escalon de un solo espacio no era "" para la guarda que rellena el
+// defecto, asi que llegaba SIN rellenar a validarUso y se rechazaba con
+//
+//	escalon " " en la ingesta: solo sale "pendiente" de aqui
+//
+// acusando a la fila de traer un escalon adelantado -de la cascada, o manual-
+// cuando lo que traia era una celda vacia. Es el mismo motivo FALSO que ya
+// costo el borde de obra_id: el log de rechazos existe para pedirle al cliente
+// exactamente lo que falla, y ahi le pedia que arreglara un escalon que nunca
+// declaro.
+//
+// El caso "cadena vacia" se queda en la tabla: es el que trae de verdad un
+// adaptador de formato (#25), y sin el el arreglo del blanco podria pasarse de
+// frenada sin que se notara.
 func TestGuardarUsosTrataElEscalonVacioComoPendiente(t *testing.T) {
-	ingesta, repo, _ := nuevaIngesta()
-
-	recien := usoBueno("Recien parseada")
-	recien.Escalon = ""
-
-	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
-	if err != nil {
-		t.Fatalf("GuardarUsos: %v", err)
+	casos := map[string]string{"cadena vacia": ""}
+	for nombre, blanco := range blancos {
+		casos[nombre] = blanco
 	}
-	if len(rechazados) != 0 {
-		t.Fatalf("no se esperaba rechazo: %q", rechazados[0].RechazoMotivo)
-	}
-	if repo.usos[0].Escalon != "pendiente" {
-		t.Fatalf("Escalon = %q, se esperaba \"pendiente\"", repo.usos[0].Escalon)
+
+	for nombre, escalon := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			recien := usoBueno("Recien parseada")
+			recien.Escalon = escalon
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
+			if err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+			if len(rechazados) != 0 {
+				t.Fatalf("no se esperaba rechazo: %q", rechazados[0].RechazoMotivo)
+			}
+			if repo.usos[0].Escalon != "pendiente" {
+				t.Fatalf("Escalon = %q, se esperaba \"pendiente\"", repo.usos[0].Escalon)
+			}
+		})
 	}
 }
 
@@ -1035,6 +1068,355 @@ func TestGuardarUsosExigeUnAcuseCompleto(t *testing.T) {
 			}
 			if len(repo.usos) != 0 {
 				t.Fatalf("no puede quedar fila de un lote rechazado: %+v", repo.usos)
+			}
+		})
+	}
+}
+
+// Un motivo de solo blancos no es un motivo, y la diferencia cuesta el lote
+// ENTERO.
+//
+// GuardarUsos lee RechazoMotivo para DOS decisiones distintas y las dos
+// comparaban contra la cadena vacia en crudo: si la fila se valida (`== ""`) y
+// si la fila va al log de rechazos (`!= ""`). Un blanco no satisface ninguna de
+// las dos como toca: la validacion se SALTA y la fila se rutea al log de todas
+// formas. Basta con que un adaptador de formato (#25) escriba " ", "\n" o el
+// NBSP que los exports de Excel dejan en las celdas vacias.
+//
+// Lo que pasa a partir de ahi lo decide `usos_rechazados`, y las dos ramas son
+// malas. Las dos se comprueban contra la base en
+// TestIngestaNoPierdeElLotePorUnBlancoEnUnaFila:
+//
+//   - Con ESPACIOS, el CHECK sobre btrim(motivo) la rechaza con un 23514 dentro
+//     de la transaccion del lote. No se pierde esa fila: se pierden todas. Y el
+//     reporte ya quedo escrito, asi que reintentar el mismo archivo choca con
+//     ErrReporteDuplicado y la entrega no se recupera sin cirugia en la base.
+//   - Con un TABULADOR, un salto de linea o el NBSP no salta nada: `btrim` sin
+//     segundo argumento quita SOLO espacios, asi que el motivo pasa el CHECK.
+//     Una fila BUENA queda archivada en el log de rechazos con un motivo en
+//     blanco -fuera de `usos`, o sea sin ponderar la bolsa- y nadie recibe un
+//     error: el acuse dice que el archivo entro completo.
+//
+// # La asercion que importa es la del VALOR GUARDADO
+//
+// Que no se rechace lo cumple cualquier TrimSpace puesto en la comparacion de
+// turno. Lo que hace falta es que el motivo salga hacia el repositorio como la
+// cadena vacia EXACTA, porque el encaminamiento del adaptador -a `usos` o a
+// `usos_rechazados`- vuelve a compararlo con `!= ""` y esa comparacion no se
+// puede aflojar desde aqui.
+func TestGuardarUsosNoRuteaAlLogDeRechazosUnMotivoEnBlanco(t *testing.T) {
+	for nombre, blanco := range blancos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			conBlanco := usoBueno("Buena Con Motivo En Blanco")
+			conBlanco.RechazoMotivo = blanco
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+				[]UsoPersistido{conBlanco, usoBueno("La Casa")})
+			if err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+			if len(rechazados) != 0 {
+				t.Fatalf("una fila buena rechazada por un blanco: motivo %q",
+					rechazados[0].RechazoMotivo)
+			}
+			if len(repo.canonicos()) != 2 {
+				t.Fatalf("se esperaban 2 usos canonicos, hay %d: %+v",
+					len(repo.canonicos()), repo.canonicos())
+			}
+			if repo.usos[0].RechazoMotivo != "" {
+				t.Errorf(
+					"RechazoMotivo = %q, se esperaba la cadena vacia EXACTA: "+
+						"el adaptador rutea con `!= \"\"` y el CHECK de la tabla es btrim(motivo) <> ''",
+					repo.usos[0].RechazoMotivo)
+			}
+		})
+	}
+}
+
+// La contrapartida: recortar el motivo no lo pierde ni afloja el rechazo.
+//
+// Un motivo de verdad con blancos alrededor -un `\n` de un CSV mal cerrado- es
+// un motivo, y la fila sigue yendo al log de rechazos. Se guarda recortado, que
+// es la unica forma de que la comparacion de Go y el CHECK de la tabla
+// signifiquen lo mismo.
+func TestGuardarUsosRecortaSinPerderElMotivoQueTraeLaFila(t *testing.T) {
+	const motivo = `episode_nbr: placeholder "--", no se pudo coercionar a entero`
+
+	ingesta, repo, _ := nuevaIngesta()
+
+	delAdaptador := usoBueno("Capitulo con placeholder")
+	delAdaptador.RechazoMotivo = "  " + motivo + "\n"
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+		[]UsoPersistido{delAdaptador})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 1 {
+		t.Fatalf("se esperaba 1 rechazo, llegaron %d", len(rechazados))
+	}
+	if rechazados[0].RechazoMotivo != motivo {
+		t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, motivo)
+	}
+	if len(repo.canonicos()) != 0 {
+		t.Fatalf("una fila con motivo no es canonica: %+v", repo.canonicos())
+	}
+}
+
+// Un id de solo blancos no es un id, y dos de ellos en el mismo lote chocan
+// contra la clave primaria.
+//
+// La escapatoria `if u.ID == ""` existe para que quien ya tenga un id trazable
+// lo conserve. Un " " la esquiva, se salta la derivacion, y llega al INSERT
+// como id literal: la segunda fila del lote que traiga el mismo blanco -o la
+// segunda entrega, porque los contadores de fila del estilo Id_Ntx se
+// renumeran en cada entrega y repiten- choca con un 23505 dentro de la
+// transaccion y se lleva el lote entero.
+//
+// Los ids se comprueban ENTEROS y contra la derivacion esperada: lo que tiene
+// que quedar es la entrega y la LINEA exactas de las que salio la fila (ADR
+// 0006), no dos ids cualesquiera que resulten distintos.
+func TestGuardarUsosDerivaElIDQueLlegaEnBlanco(t *testing.T) {
+	for nombre, blanco := range blancos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			rep := repDePrueba()
+			primera, segunda := usoBueno("Buena Uno"), usoBueno("Buena Dos")
+			primera.ID, segunda.ID = blanco, blanco
+
+			if _, err := ingesta.GuardarUsos(t.Context(), rep,
+				[]UsoPersistido{primera, segunda}); err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+			if len(repo.usos) != 2 {
+				t.Fatalf("se esperaban 2 filas, hay %d", len(repo.usos))
+			}
+			for n, u := range repo.usos {
+				quiero := rep.ID + "-" + strconv.Itoa(n)
+				if u.ID != quiero {
+					t.Errorf("ID = %q, se esperaba %q: un blanco no es un id",
+						u.ID, quiero)
+				}
+			}
+		})
+	}
+}
+
+// La otra mitad del argumento de N4: `usos.evidencia` tampoco puede mentir.
+//
+// La decision es que la cascada (ADR 0007) sea el UNICO camino a obra_id, y su
+// primera razon es que `evidencia` y `puntaje` dejen de poder describir una
+// decision que nunca ocurrio -la pregunta 3 del ADR 0006, "COMO se
+// reconocio"-. Con la regla puesta solo sobre obra_id y escalon, una fila con
+// `Evidencia: "alias caracol/ID_Ficha=1234"` y el escalon vacio pasa entera:
+// el relleno la deja en "pendiente" y la evidencia se escribe VERBATIM en la
+// columna. Queda una fila que dice como se reconocio una obra que nadie
+// reconocio, y despues no hay forma de distinguirla de una que si.
+//
+// `puntaje` no necesita regla porque UsoPersistido no tiene ese campo: la
+// columna se queda siempre en su DEFAULT 0. El dia que se anada, entra aqui.
+//
+// El blanco va en la misma tabla y por el mismo motivo que en los demas
+// campos: una evidencia de un solo espacio es una celda vacia, no una
+// afirmacion, y rechazarla daria un motivo falso.
+func TestGuardarUsosRechazaLaEvidenciaQueLaCascadaNoEscribio(t *testing.T) {
+	const motivo = "evidencia en la ingesta: como se reconocio lo escribe la cascada (ADR 0007)"
+
+	casos := map[string]struct {
+		evidencia string
+		motivo    string
+	}{
+		"de un alias":    {"alias caracol/ID_Ficha=1234", motivo},
+		"de un difuso":   {"difuso titulo=0.93", motivo},
+		"cadena vacia":   {"", ""},
+		"espacio":        {" ", ""},
+		"nbsp":           {" ", ""},
+		"salto de linea": {"\n", ""},
+		"varios blancos": {" \t\r\n ", ""},
+	}
+
+	for nombre, c := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			ingesta, repo, _ := nuevaIngesta()
+
+			fila := usoBueno("Dice Como Se Reconocio")
+			fila.Evidencia = c.evidencia
+			// El escalon vacio es lo que hace el caso REAL: la fila no se
+			// delata por el escalon -el relleno la deja en "pendiente"-, solo
+			// por la evidencia.
+			fila.Escalon = ""
+
+			rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(),
+				[]UsoPersistido{fila})
+			if err != nil {
+				t.Fatalf("GuardarUsos: %v", err)
+			}
+
+			if c.motivo == "" {
+				if len(rechazados) != 0 {
+					t.Fatalf("una evidencia en blanco no es una afirmacion: motivo %q",
+						rechazados[0].RechazoMotivo)
+				}
+				if repo.usos[0].Evidencia != "" {
+					t.Errorf("Evidencia = %q, se esperaba la cadena vacia EXACTA",
+						repo.usos[0].Evidencia)
+				}
+				return
+			}
+			if len(rechazados) != 1 {
+				t.Fatalf("se esperaba 1 rechazo, llegaron %d", len(rechazados))
+			}
+			if rechazados[0].RechazoMotivo != c.motivo {
+				t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, c.motivo)
+			}
+			if len(repo.canonicos()) != 0 {
+				t.Fatalf("no puede quedar canonica: %+v", repo.canonicos())
+			}
+		})
+	}
+}
+
+// El acuse se valida recortado y se estampa CRUDO, que es la misma clase de
+// defecto que el de obra_id un piso mas arriba.
+//
+// GuardarUsos comprueba `strings.TrimSpace(rep.ID) == ""` y
+// `strings.TrimSpace(rep.Fuente) == ""`, y despues copia los dos valores tal
+// como vinieron a cada fila del lote. Con un acuse construido a mano -este
+// metodo es publico- eso son dos danos distintos:
+//
+//   - `usos.reporte_id` es REFERENCES reportes(id): " rep-1 " no existe, la
+//     clave foranea salta con un 23503 y se lleva la transaccion del lote
+//     ENTERA. Ni una fila queda, y ninguna trae motivo que explicarle al
+//     cliente.
+//   - `usos.fuente` es TEXT NOT NULL y aguanta cualquier cosa, asi que el dano
+//     es silencioso: RepositorioIdentificacion.Alias indexa por fuente, y
+//     " caracol " no casa con ningun alias NUNCA. El sintoma no es un error,
+//     es un catalogo que parece incompleto.
+func TestGuardarUsosNormalizaElAcuseQueEstampaEnCadaFila(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	rep := Reporte{ID: "  rep-1\n", Fuente: "\tcaracol "}
+
+	if _, err := ingesta.GuardarUsos(t.Context(), rep,
+		[]UsoPersistido{usoBueno("La Casa")}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	guardado := repo.usos[0]
+	if guardado.ReporteID != "rep-1" {
+		t.Errorf("ReporteID = %q, se esperaba %q: la columna es REFERENCES reportes(id)",
+			guardado.ReporteID, "rep-1")
+	}
+	if guardado.Fuente != "caracol" {
+		t.Errorf("Fuente = %q, se esperaba %q: Alias() indexa por fuente",
+			guardado.Fuente, "caracol")
+	}
+	// Y el id derivado cuelga del reporte recortado, no del crudo: si no, la
+	// fila no se puede rastrear hasta la entrega.
+	if guardado.ID != "rep-1-0" {
+		t.Errorf("ID = %q, se esperaba %q", guardado.ID, "rep-1-0")
+	}
+}
+
+// validarUso reflejaba los CHECK de `usos` pero no la PRECISION de sus
+// columnas, y ese es el otro camino por el que una fila revienta el lote.
+//
+// Las seis medidas son NUMERIC(p,s), y un NUMERIC(p,s) no acepta mas de p-s
+// digitos enteros: `rating` es NUMERIC(12,6), asi que su tope es
+// 999999.999999. Un rating de 2500000 pasaba la unica comprobacion que habia
+// -no es negativo- y moria en el INSERT con
+//
+//	SQLSTATE 22003 numeric field overflow
+//
+// dentro de la transaccion del lote: se pierden todas las filas buenas que lo
+// acompanan, el operador recibe un SQLSTATE crudo en vez de un motivo por fila,
+// y el reporte ya esta escrito, asi que reintentar choca con
+// ErrReporteDuplicado.
+//
+// No es un caso teorico. Los reportes de television colombianos entregan la
+// audiencia de las dos formas -como porcentaje y como personas absolutas-, asi
+// que un adaptador de formato (#25) que mapee la columna equivocada mete
+// millones donde caben seis digitos. Es lo primero que va a pasar cuando entre
+// el issue #25.
+//
+// # Los limites se comprueban justo por debajo Y justo por encima
+//
+// Una prueba que solo mire un valor absurdo la pasa cualquier tope inventado.
+// El par (maximo que cabe, primer valor que no cabe) es lo que fija el tope
+// EXACTO de cada columna, que es el que tiene la base.
+func TestValidarUsoRechazaLaMedidaQueNoCabeEnLaColumna(t *testing.T) {
+	dec := decimal.RequireFromString
+
+	casos := map[string]struct {
+		ajustar func(*UsoPersistido)
+		motivo  string
+	}{
+		// duracion_min NUMERIC(12,4): 8 digitos enteros.
+		"duracion al tope": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("99999999.9999") }, "",
+		},
+		"duracion pasada": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("100000000") },
+			"duracion_min 100000000: la columna es NUMERIC(12,4) y no admite mas de 8 digitos enteros",
+		},
+		// rating NUMERIC(12,6): 6 digitos enteros. El caso del reporte de TV que
+		// trae personas absolutas donde se espera un porcentaje.
+		"rating al tope": {
+			func(u *UsoPersistido) { u.Rating = dec("999999.999999") }, "",
+		},
+		"rating con personas absolutas": {
+			func(u *UsoPersistido) { u.Rating = dec("2500000") },
+			"rating 2500000: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros",
+		},
+		// El borde que no se ve sin buscarlo: cabe en 6 digitos enteros TAL
+		// COMO viene, y no cabe una vez la base lo redondea a la escala de la
+		// columna. Postgres redondea PRIMERO a los 6 decimales -que da
+		// 1000000.000000- y comprueba la precision DESPUES.
+		"rating que solo desborda al redondear": {
+			func(u *UsoPersistido) { u.Rating = dec("999999.9999996") },
+			"rating 999999.9999996: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros",
+		},
+		// taquilla y vistas son NUMERIC(18,2): 16 digitos enteros.
+		"taquilla al tope": {
+			func(u *UsoPersistido) { u.Taquilla = dec("9999999999999999.99") }, "",
+		},
+		"taquilla pasada": {
+			func(u *UsoPersistido) { u.Taquilla = dec("10000000000000000") },
+			"taquilla 10000000000000000: la columna es NUMERIC(18,2) y no admite mas de 16 digitos enteros",
+		},
+		"vistas pasada": {
+			func(u *UsoPersistido) { u.Vistas = dec("10000000000000000") },
+			"vistas 10000000000000000: la columna es NUMERIC(18,2) y no admite mas de 16 digitos enteros",
+		},
+		// minutos_vistos y pb son NUMERIC(18,4): 14 digitos enteros.
+		"minutos vistos al tope": {
+			func(u *UsoPersistido) { u.MinutosVistos = dec("99999999999999.9999") }, "",
+		},
+		"minutos vistos pasados": {
+			func(u *UsoPersistido) { u.MinutosVistos = dec("100000000000000") },
+			"minutos_vistos 100000000000000: la columna es NUMERIC(18,4) y no admite mas de 14 digitos enteros",
+		},
+		"pb pasado": {
+			func(u *UsoPersistido) { u.PB = dec("100000000000000") },
+			"pb 100000000000000: la columna es NUMERIC(18,4) y no admite mas de 14 digitos enteros",
+		},
+		// Mas decimales de los que tiene la columna NO es un rechazo: la base
+		// redondea a la escala y guarda. Rechazarlo apartaria filas buenas.
+		"mas decimales de los que caben": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("52.123456789") }, "",
+		},
+	}
+
+	for nombre, c := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			u := usoBueno("La Casa")
+			c.ajustar(&u)
+
+			if motivo := validarUso(u); motivo != c.motivo {
+				t.Fatalf("motivo = %q, se esperaba %q", motivo, c.motivo)
 			}
 		})
 	}

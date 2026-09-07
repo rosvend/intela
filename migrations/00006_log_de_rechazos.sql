@@ -1,5 +1,29 @@
 -- El log de rechazos de la ingesta.
 --
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00004, y ese numero ya no
+-- se puede usar. El PR #85 renumero la suya a 00005 y su despliegue corrio
+-- `goose up` de verdad, asi que produccion esta en la version 5.
+--
+-- Un numero LIBRE por debajo de la version ya aplicada no es un hueco
+-- inofensivo: `goose` corre con `allowMissing = false` -el runner llama a
+-- RunContext sin opciones-, asi que se para en seco con
+--
+--     found 1 missing migrations before current version 5
+--
+-- antes de aplicar nada. Y el despliegue corre las migraciones ANTES de sacar
+-- la API y condiciona el rollout a que terminen bien, asi que el hueco no
+-- retrasa el esquema: bloquea el despliegue entero.
+--
+-- Se toma el 00006, que el 2026-09-07 estaba libre en `main` y en TODAS las
+-- ramas abiertas del repo. No se toca el 00003, que siguen reclamando #80
+-- (`liquidacion`), #87 (`oni_publicacion`) y #88 (`afiliaciones`): cual de las
+-- tres se lo queda no lo decide esta PR -- aunque las tres tendran que subirlo
+-- por encima del 00005 por este mismo motivo.
+--
+-- Para una migracion nueva el numero se toma SIEMPRE por encima del mayor que
+-- exista, nunca en un hueco. El contenido no cambia con el renombre: solo
+-- cambia la version que goose lee del nombre del archivo.
+--
 -- Una fila de reporte que no se puede normalizar NO se descarta: queda con su
 -- motivo, y no pondera nada. Es criterio de aceptacion de OE-1 y de KR-1, y es
 -- lo que permite volver a pedirle al cliente exactamente lo que falta.

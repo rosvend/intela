@@ -67,7 +67,7 @@ func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
 // ---------------------------------------------------------------------------
 
 func TestGuardarReporteDejaLaFilaCompleta(t *testing.T) {
-	s, pool := sembrarReportes(t)
+	_, pool := sembrarReportes(t)
 
 	var (
 		fuente, periodo, sha, clave string
@@ -88,7 +88,6 @@ func TestGuardarReporteDejaLaFilaCompleta(t *testing.T) {
 	if clave != "reportes/"+shaParrilla || nbytes != 128 {
 		t.Fatalf("clave %q, nbytes %d", clave, nbytes)
 	}
-	_ = s
 }
 
 // La deteccion de duplicado es la UNICA razon de ser del UNIQUE (sha256,
@@ -106,7 +105,6 @@ func TestGuardarReporteTraduceElDuplicadoDeHuella(t *testing.T) {
 	if err != nil && !strings.Contains(err.Error(), "caracol") {
 		t.Fatalf("el error no nombra la fuente: %v", err)
 	}
-	_ = s
 }
 
 // El esquema permite a proposito que dos fuentes entreguen los mismos bytes:
@@ -631,16 +629,26 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 	conEscalon.Escalon = "alias"
 	conEscalon.Evidencia = "alias inventado por el adaptador"
 
+	// La que trae SOLO evidencia, y es la que se colaba: sin obra_id y con el
+	// escalon vacio, ninguna de las otras dos reglas la ve, el relleno la deja
+	// en "pendiente" y su evidencia se escribia VERBATIM en la columna. Queda
+	// una fila que dice como se reconocio una obra que nadie reconocio, y es
+	// indistinguible de una que si (pregunta 3 del ADR 0006).
+	conEvidencia := usoPendiente("", "", "Dice Como Se Reconocio")
+	conEvidencia.Escalon = ""
+	conEvidencia.Evidencia = "alias caracol/ID_Ficha=1234"
+
 	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
 		conObra,
 		conEscalon,
+		conEvidencia,
 		usoPendiente("", "", "La Casa de las Dos Palmas"),
 	})
 	if err != nil {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
-	if len(rechazados) != 2 {
-		t.Fatalf("se esperaban 2 rechazos, llegaron %d", len(rechazados))
+	if len(rechazados) != 3 {
+		t.Fatalf("se esperaban 3 rechazos, llegaron %d", len(rechazados))
 	}
 
 	var canonicos, rechazos int
@@ -652,15 +660,17 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 		`SELECT count(*) FROM usos_rechazados WHERE reporte_id = $1`, rep.ID).Scan(&rechazos); err != nil {
 		t.Fatalf("contar rechazos: %v", err)
 	}
-	if canonicos != 1 || rechazos != 2 {
-		t.Fatalf("usos = %d, rechazos = %d; se esperaba 1 y 2", canonicos, rechazos)
+	if canonicos != 1 || rechazos != 3 {
+		t.Fatalf("usos = %d, rechazos = %d; se esperaba 1 y 3", canonicos, rechazos)
 	}
 
-	// Y en `usos` no quedo NINGUNA fila con obra_id ni con escalon adelantado.
+	// Y en `usos` no quedo NINGUNA fila con obra_id, con escalon adelantado ni
+	// con evidencia: las tres formas de decir "esto ya se identifico".
 	var intrusas int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM usos
-		  WHERE reporte_id = $1 AND (obra_id IS NOT NULL OR escalon <> 'pendiente')`,
+		  WHERE reporte_id = $1
+		    AND (obra_id IS NOT NULL OR escalon <> 'pendiente' OR evidencia <> '')`,
 		rep.ID).Scan(&intrusas); err != nil {
 		t.Fatalf("buscar filas ya identificadas: %v", err)
 	}
@@ -704,6 +714,7 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 	esperados := map[string]string{
 		rep.ID + "-0": "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)",
 		rep.ID + "-1": `escalon "alias" en la ingesta: solo sale "pendiente" de aqui`,
+		rep.ID + "-2": "evidencia en la ingesta: como se reconocio lo escribe la cascada (ADR 0007)",
 	}
 	for id, quiero := range esperados {
 		if motivos[id] != quiero {
@@ -896,5 +907,351 @@ func TestUsosSinResolverConContextoCancelado(t *testing.T) {
 
 	if _, err := s.UsosSinResolver(ctx); err == nil {
 		t.Fatal("se esperaba error con el contexto cancelado")
+	}
+}
+
+// Un blanco en UNA celda de UNA fila no puede costar la entrega, y estos tres
+// campos lo costaban.
+//
+// Vive aqui y no solo en `aplicacion` porque el dano de estos casos SOLO existe
+// contra la base: la restriccion que revienta no la tiene ningun doble en
+// memoria, y lo que se pierde no es la fila del blanco sino TODAS las del lote
+// -la escritura es UNA transaccion a proposito-. Y el reporte ya quedo escrito
+// antes, asi que reintentar el mismo archivo choca con ErrReporteDuplicado: la
+// entrega no se recupera sin cirugia en la base.
+//
+// Cada subprueba lleva el blanco acompanado de filas buenas, porque lo que hay
+// que demostrar es justamente que conviven.
+func TestIngestaNoPierdeElLotePorUnBlancoEnUnaFila(t *testing.T) {
+	// El NBSP (U+00A0) es con lo que Excel rellena las celdas que se ven
+	// vacias, y es el que separa un recorte hecho a mano de strings.TrimSpace,
+	// cuya definicion de blanco es unicode.IsSpace.
+	const nbsp = "\u00a0"
+
+	blancosDeCelda := map[string]string{
+		"espacios":       "   ",
+		"tabulador":      "\t",
+		"salto de linea": "\n",
+		"nbsp":           nbsp,
+		"mezclados":      " \t" + nbsp + "\r\n ",
+	}
+
+	// rechazo_motivo es el campo con DOS sintomas, y no el mismo para todos los
+	// blancos. Un motivo no vacio hace que el adaptador rutee la fila al log de
+	// rechazos sin validarla, y alli espera CHECK (btrim(motivo) <> ''):
+	//
+	//   - Con espacios, `btrim` los quita, el CHECK falla y salta un 23514
+	//     DENTRO de la transaccion del lote. Se pierden TODAS las filas.
+	//   - Con un tabulador, un salto de linea o el NBSP, NO salta: `btrim` sin
+	//     segundo argumento quita SOLO espacios, asi que el motivo sobrevive al
+	//     CHECK. El sintoma es entonces silencioso y peor de encontrar: una
+	//     fila buena queda en `usos_rechazados` con un motivo en blanco, o sea
+	//     fuera de `usos`, o sea sin ponderar la bolsa. Nadie recibe un error,
+	//     y el archivo aparece completo en el acuse.
+	//
+	// Los dos se arreglan con lo mismo -recortar el motivo una vez, arriba- y
+	// los dos se comprueban aqui: `usos` = 3 y `usos_rechazados` = 0.
+	t.Run("motivo en blanco", func(t *testing.T) {
+		for nombre, blanco := range blancosDeCelda {
+			t.Run(nombre, func(t *testing.T) {
+				s, pool := sembrarReportes(t)
+				ctx := t.Context()
+				ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+				rep, err := ingesta.GuardarReporte(ctx, "caracol-motivo", "2026-01",
+					[]byte("Titulo,ID_Ficha\nLa Casa de las Dos Palmas,1234\n"))
+				if err != nil {
+					t.Fatalf("GuardarReporte: %v", err)
+				}
+
+				conBlanco := usoPendiente("", "", "Buena Con Motivo En Blanco")
+				conBlanco.RechazoMotivo = blanco
+
+				rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+					usoPendiente("", "", "Buena Uno"),
+					conBlanco,
+					usoPendiente("", "", "Buena Dos"),
+				})
+				if err != nil {
+					t.Fatalf("un motivo en blanco no puede tumbar el lote: %v", err)
+				}
+				if len(rechazados) != 0 {
+					t.Fatalf("ninguna de las tres es rechazable, y una fila en "+
+						"`usos_rechazados` no pondera: motivo %q",
+						rechazados[0].RechazoMotivo)
+				}
+				contar(t, ctx, pool, rep.ID, 3, 0)
+			})
+		}
+	})
+
+	// 23505: la escapatoria `if u.ID == ""` de GuardarUsos se salta con un
+	// blanco, y las dos filas llegan al INSERT con el mismo id literal. La
+	// clave primaria no tiene btrim que la salve: cualquier blanco vale.
+	t.Run("id en blanco", func(t *testing.T) {
+		for nombre, blanco := range blancosDeCelda {
+			t.Run(nombre, func(t *testing.T) {
+				s, pool := sembrarReportes(t)
+				ctx := t.Context()
+				ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+				rep, err := ingesta.GuardarReporte(ctx, "caracol-id", "2026-01",
+					[]byte("Titulo,ID_Ficha\nLa Casa de las Dos Palmas,1234\n"))
+				if err != nil {
+					t.Fatalf("GuardarReporte: %v", err)
+				}
+
+				primera := usoPendiente(blanco, "", "Buena Uno")
+				segunda := usoPendiente(blanco, "", "Buena Dos")
+
+				if _, err := ingesta.GuardarUsos(ctx, rep,
+					[]aplicacion.UsoPersistido{primera, segunda}); err != nil {
+					t.Fatalf("dos ids en blanco no pueden tumbar el lote: %v", err)
+				}
+				contar(t, ctx, pool, rep.ID, 2, 0)
+
+				// Y los ids que quedan son los derivados, o sea la entrega y la
+				// LINEA de las que salio cada fila (ADR 0006).
+				for id, titulo := range map[string]string{
+					rep.ID + "-0": "Buena Uno",
+					rep.ID + "-1": "Buena Dos",
+				} {
+					var leido string
+					if err := pool.QueryRow(ctx, `SELECT titulo FROM usos WHERE id = $1`, id).
+						Scan(&leido); err != nil {
+						t.Fatalf("el id derivado %q no esta en la tabla: %v", id, err)
+					}
+					if leido != titulo {
+						t.Errorf("la fila %q es %q, se esperaba %q", id, leido, titulo)
+					}
+				}
+			})
+		}
+	})
+
+	// Este no revienta la base: sale del caso de uso con un motivo FALSO
+	// -`escalon " " en la ingesta`, cuando lo que llego era una celda vacia- y
+	// la fila buena acaba en el log de rechazos, o sea sin ponderar. La forma
+	// se ve contra la COLUMNA: `escalon` tiene que quedar en 'pendiente', que
+	// es lo que la cascada (ADR 0007) busca con UsosSinResolver.
+	t.Run("escalon en blanco", func(t *testing.T) {
+		for nombre, blanco := range blancosDeCelda {
+			t.Run(nombre, func(t *testing.T) {
+				s, pool := sembrarReportes(t)
+				ctx := t.Context()
+				ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+				rep, err := ingesta.GuardarReporte(ctx, "caracol-escalon", "2026-01",
+					[]byte("Titulo,ID_Ficha\nLa Casa de las Dos Palmas,1234\n"))
+				if err != nil {
+					t.Fatalf("GuardarReporte: %v", err)
+				}
+
+				conBlanco := usoPendiente("", "", "Buena Con Escalon En Blanco")
+				conBlanco.Escalon = blanco
+
+				rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+					usoPendiente("", "", "Buena Uno"),
+					conBlanco,
+				})
+				if err != nil {
+					t.Fatalf("GuardarUsos: %v", err)
+				}
+				if len(rechazados) != 0 {
+					t.Fatalf("una celda vacia no es un escalon adelantado: motivo %q",
+						rechazados[0].RechazoMotivo)
+				}
+				contar(t, ctx, pool, rep.ID, 2, 0)
+
+				var escalon string
+				if err := pool.QueryRow(ctx,
+					`SELECT escalon FROM usos WHERE id = $1`, rep.ID+"-1").Scan(&escalon); err != nil {
+					t.Fatalf("leer la fila del blanco: %v", err)
+				}
+				if escalon != "pendiente" {
+					t.Errorf("escalon = %q, se esperaba \"pendiente\": "+
+						"UsosSinResolver filtra por ese valor", escalon)
+				}
+			})
+		}
+	})
+}
+
+// La precision de las columnas de medida: una fila que no cabe se aparta CON su
+// motivo, no se lleva el lote.
+//
+// `rating` es NUMERIC(12,6) -tope 999999.999999-, y los reportes de television
+// colombianos entregan la audiencia de las dos formas: como porcentaje y como
+// personas absolutas. Mapear la columna equivocada mete millones donde caben
+// seis digitos. Antes eso pasaba la validacion entera y moria en el INSERT con
+//
+//	SQLSTATE 22003 numeric field overflow
+//
+// dentro de la transaccion del lote: se perdian TODAS las filas, y el operador
+// recibia un SQLSTATE crudo en vez de un motivo por fila que poder devolverle
+// al canal.
+func TestIngestaNoPierdeElLotePorUnaMedidaFueraDeRango(t *testing.T) {
+	const motivo = "rating 2500000: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros"
+
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+	rep, err := ingesta.GuardarReporte(ctx, "caracol-rating", "2026-01",
+		[]byte("Titulo,Rating\nLa Casa de las Dos Palmas,2500000\n"))
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	desbordada := usoPendiente("", "", "Audiencia En Personas")
+	desbordada.Rating = decimal.RequireFromString("2500000")
+
+	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+		usoPendiente("", "", "Buena Uno"),
+		desbordada,
+		usoPendiente("", "", "Buena Dos"),
+	})
+	if err != nil {
+		t.Fatalf("una medida fuera de rango no puede tumbar el lote: %v", err)
+	}
+	if len(rechazados) != 1 || rechazados[0].Titulo != "Audiencia En Personas" {
+		t.Fatalf("se esperaba 1 rechazo, el de la medida: %+v", rechazados)
+	}
+	// El motivo ENTERO: tiene que nombrar el campo y decir cual es el limite,
+	// que es lo que se le puede volver a pedir al canal.
+	if rechazados[0].RechazoMotivo != motivo {
+		t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, motivo)
+	}
+	contar(t, ctx, pool, rep.ID, 2, 1)
+}
+
+// El contrapeso de la prueba anterior, y lo que hace fiables sus constantes: el
+// tope EXACTO de cada columna tiene que ENTRAR.
+//
+// Los seis pares (precision, escala) de validarUso son una copia de
+// migrations/00001_init.sql, y una copia puede equivocarse en el sentido caro:
+// un tope de menos aparta filas buenas al log de rechazos, en silencio y para
+// siempre. Aqui se comprueba contra la columna de verdad, que es la unica que
+// tiene la respuesta.
+func TestLaTablaDeUsosAceptaLasMedidasAlTopeDeSuColumna(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	dec := decimal.RequireFromString
+	alTope := usoPendiente("uso-al-tope", reporteEnero, "Todas Las Medidas Al Tope")
+	alTope.DuracionMin = dec("99999999.9999")         // NUMERIC(12,4)
+	alTope.Rating = dec("999999.999999")              // NUMERIC(12,6)
+	alTope.Taquilla = dec("9999999999999999.99")      // NUMERIC(18,2)
+	alTope.Vistas = dec("9999999999999999.99")        // NUMERIC(18,2)
+	alTope.MinutosVistos = dec("99999999999999.9999") // NUMERIC(18,4)
+	alTope.PB = dec("99999999999999.9999")            // NUMERIC(18,4)
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{alTope}); err != nil {
+		t.Fatalf("el tope de cada columna tiene que caber en ella: %v", err)
+	}
+
+	leido, err := s.UsoPorID(ctx, alTope.ID)
+	if err != nil {
+		t.Fatalf("UsoPorID: %v", err)
+	}
+	// Equal y no ==: NUMERIC vuelve con la escala de la columna.
+	medidas := map[string][2]decimal.Decimal{
+		"duracion_min":   {leido.DuracionMin, alTope.DuracionMin},
+		"rating":         {leido.Rating, alTope.Rating},
+		"taquilla":       {leido.Taquilla, alTope.Taquilla},
+		"vistas":         {leido.Vistas, alTope.Vistas},
+		"minutos_vistos": {leido.MinutosVistos, alTope.MinutosVistos},
+		"pb":             {leido.PB, alTope.PB},
+	}
+	for campo, par := range medidas {
+		if !par[0].Equal(par[1]) {
+			t.Errorf("%s = %s, se esperaba %s", campo, par[0], par[1])
+		}
+	}
+	// Y una prueba mas de que el tope es EXACTAMENTE ese: un digito entero mas
+	// lo rechaza la propia columna. Si la base lo aceptara, el limite de
+	// validarUso estaria de mas y apartaria filas buenas.
+	_, err = pool.Exec(ctx, `UPDATE usos SET rating = 1000000 WHERE id = $1`, alTope.ID)
+	if err == nil {
+		t.Error("NUMERIC(12,6) no puede admitir 1000000: el limite de validarUso seria falso")
+	}
+}
+
+// Item 3 contra la base: una fuente con espacios NO es otra fuente.
+//
+// `idReporte` deriva de (fuente, huella) y el UNIQUE es sobre (sha256, fuente),
+// asi que sin normalizar, " caracol " entrega los MISMOS bytes bajo un id
+// distinto y sin chocar con nada: dos filas de `reportes` apuntando al mismo
+// objeto de la boveda -la clave del objeto es solo la huella-,
+// ErrReporteDuplicado que no salta, y los dos juegos de filas ponderando la
+// bolsa. Cada obra de ese archivo puntuaria DOS VECES, que es el invariante
+// numero uno del sistema roto por un espacio de un formulario.
+func TestGuardarReporteNoAdmiteLaMismaFuenteConEspacios(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	almacen := objetos.Disco{Dir: t.TempDir()}
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: almacen}
+	fixture := []byte("Titulo,ID_Ficha,Duracion\nLa Casa de las Dos Palmas,1234,52\n")
+
+	primera, err := ingesta.GuardarReporte(ctx, "caracol-espacios", "2026-01", fixture)
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	// El NBSP (U+00A0) va explicito y no como caracter suelto: es con lo que
+	// Excel rellena las celdas, sobrevive a un copiar y pegar en un formulario
+	// web, y es el que separa un recorte hecho a mano de strings.TrimSpace.
+	for _, conBlancos := range []string{
+		" caracol-espacios",
+		"caracol-espacios ",
+		"\tcaracol-espacios\n",
+		"\u00a0caracol-espacios\u00a0",
+	} {
+		segunda, err := ingesta.GuardarReporte(ctx, conBlancos, "2026-01", fixture)
+		if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
+			t.Fatalf("%q es la misma entrega que %q: se esperaba ErrReporteDuplicado, "+
+				"se obtuvo err = %v e id = %q", conBlancos, primera.Fuente, err, segunda.ID)
+		}
+	}
+
+	// Una sola fila, y con la fuente recortada: Alias() indexa por fuente, y
+	// " caracol " no casaria con ningun alias nunca.
+	var (
+		filas  int
+		fuente string
+	)
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*), max(fuente) FROM reportes WHERE clave_objeto = $1`,
+		primera.ClaveObjeto).Scan(&filas, &fuente); err != nil {
+		t.Fatalf("contar los acuses del objeto: %v", err)
+	}
+	if filas != 1 {
+		t.Fatalf("hay %d acuses para el mismo objeto de la boveda: cada obra del "+
+			"archivo ponderaria %d veces", filas, filas)
+	}
+	if fuente != "caracol-espacios" {
+		t.Errorf("fuente = %q, se esperaba %q", fuente, "caracol-espacios")
+	}
+}
+
+// contar comprueba de una vez las dos mitades de un lote: las filas canonicas
+// de `usos` y las del log de rechazos. Es la asercion que distingue "se aparto
+// una fila" de "se perdio la entrega", y se repite en cada prueba de lote.
+func contar(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reporteID string, canonicos, rechazos int) {
+	t.Helper()
+
+	var hayCanonicos, hayRechazos int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM usos WHERE reporte_id = $1`, reporteID).Scan(&hayCanonicos); err != nil {
+		t.Fatalf("contar usos: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM usos_rechazados WHERE reporte_id = $1`, reporteID).Scan(&hayRechazos); err != nil {
+		t.Fatalf("contar rechazos: %v", err)
+	}
+	if hayCanonicos != canonicos || hayRechazos != rechazos {
+		t.Fatalf("usos = %d, rechazos = %d; se esperaba %d y %d",
+			hayCanonicos, hayRechazos, canonicos, rechazos)
 	}
 }
