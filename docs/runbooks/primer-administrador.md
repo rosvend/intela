@@ -91,9 +91,11 @@ Tambien lo es el reintento automatico de una invocacion asincrona.
 
 ## Si algo va mal
 
-**La cuenta se creo pero el login falla.** No deberia poder pasar -- se rechaza cualquier valor que
-no tenga forma de hash, y hay una prueba que provisiona y despues inicia sesion de verdad. Si pasa,
-no hay via de arreglo desde la aplicacion: los unicos escritores de `usuarios` son esta orden, que
+**La cuenta se creo pero el login falla.** La validacion cubre lo que se ha visto fallar hasta hoy
+-- una clave en claro, un hash truncado, uno con caracteres de sobra -- y hay una prueba que
+provisiona y despues inicia sesion de verdad. Pero la lista de formas de estropear un hash ya
+crecio dos veces durante la revision de este mismo cambio, asi que **no se afirma que sea
+imposible**. Si pasa, no hay via de arreglo desde la aplicacion: los unicos escritores de `usuarios` son esta orden, que
 ya no vuelve a correr, y `cmd/seed`, que no esta en la imagen de produccion. Hace falta acceso a la
 base desde dentro de la VPC. **Escribirlo como incidente y abrir un issue de gestion de usuarios**,
 que es la pieza que falta.

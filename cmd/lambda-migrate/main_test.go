@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/rosvend/intela/internal/infraestructura/cripto"
 )
 
 func mudo() *slog.Logger {
@@ -121,4 +123,19 @@ func TestPrimerAdministradorNoEsUnaOrdenDeGoose(t *testing.T) {
 	}
 }
 
-const hashDePrueba = "$2a$10$0123456789012345678901234567890123456789012345678901"
+// hashDePrueba es un hash DE VERDAD, no una cadena con pinta de hash.
+//
+// La version anterior era un literal de 59 caracteres, que es exactamente el
+// caso truncado: pasaba `bcrypt.Cost` y por eso servia de fixture, hasta que
+// EsHash empezo a exigir el largo exacto. Que el propio fixture cayera en el
+// hueco dice bastante de lo estrecho que era.
+//
+// Se calcula con el hasher real para que no pueda volver a desincronizarse de
+// lo que la validacion acepta.
+var hashDePrueba = func() string {
+	h, err := cripto.Bcrypt{}.Hash("clave-de-prueba")
+	if err != nil {
+		panic("hashear el fixture: " + err.Error())
+	}
+	return h
+}()

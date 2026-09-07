@@ -34,14 +34,44 @@ func (b Bcrypt) Hash(clave string) (string, error) {
 	return string(h), err
 }
 
-// EsHash usa bcrypt.Cost como validador de forma.
+// largoHashBcrypt es el largo exacto de lo que produce [Bcrypt.Hash]: 7 de
+// cabecera (`$2a$10$`), 22 de sal y 31 de resumen.
 //
-// La libreria parsea la cabecera -- prefijo, coste de dos digitos, sal -- y
-// falla en cuanto algo no cuadra. Preguntarle a ella y no escribir aqui una
-// expresion regular con `$2[aby]$` es lo que hace que esto siga siendo cierto
-// el dia que bcrypt acepte un prefijo nuevo: la regla es "lo que esta libreria
-// sabe verificar", no "lo que se parece a lo que yo recuerdo de bcrypt".
+// Se comprueba a mano porque la libreria NO lo comprueba, y es el unico hueco
+// que quedaba: `bcrypt.Cost` valida la CABECERA, no el largo total, asi que un
+// hash truncado a 59 caracteres lo pasa -- devuelve coste 10 y ningun error --
+// y despues `CompareHashAndPassword` falla para siempre, con la clave correcta
+// y con cualquier otra. Medido: 59 pasa, 58 y menos ya los rechaza la libreria.
+//
+// Antes de escribir esta constante se probo delegarlo, que es lo que pide el
+// comentario de EsHash: `CompareHashAndPassword` sobre el hash de 59 devuelve
+// ErrMismatchedHashAndPassword, indistinguible de un hash bien formado con la
+// clave equivocada. No hay a quien preguntar; esta comprobacion hay que
+// escribirla.
+//
+// Igualdad exacta y no `>=`, aunque un hash con caracteres de sobra (61, 65)
+// SI verifica correctamente -- la libreria ignora lo que sobra, tambien
+// medido. Justo por eso: `>=` aceptaria en silencio un hash con basura pegada
+// detras, y lo que produce Hash() mide 60 exactos. Cualquier otro largo
+// significa que el valor se estropeo por el camino, que es la clase de fallo
+// de la que esto defiende. Se rechaza en la validacion, en voz alta y antes de
+// escribir nada, no en el login tres pasos despues.
+const largoHashBcrypt = 60
+
+// EsHash dice si una cadena es un hash de este hasher.
+//
+// Dos comprobaciones, y las dos hacen falta:
+//
+//  1. La CABECERA la valida la libreria (`bcrypt.Cost`): prefijo, coste de dos
+//     digitos, sal. Se le pregunta a ella y no se escribe aqui una expresion
+//     regular con `$2[aby]$`, para que esto siga siendo cierto el dia que
+//     bcrypt acepte un prefijo nuevo. La regla es "lo que esta libreria sabe
+//     verificar", no "lo que se parece a lo que yo recuerdo de bcrypt".
+//  2. El LARGO no lo valida nadie mas. Ver [largoHashBcrypt].
 func (b Bcrypt) EsHash(posible string) bool {
+	if len(posible) != largoHashBcrypt {
+		return false
+	}
 	_, err := bcrypt.Cost([]byte(posible))
 	return err == nil
 }

@@ -45,6 +45,15 @@ const claveProvisionInicial = 0x1E7E1A_9204
 // El lock es de transaccion (`_xact_`), asi que lo suelta el COMMIT o el
 // ROLLBACK. No hay forma de olvidarse de liberarlo.
 //
+// La garantia se apoya en que la transaccion corra bajo READ COMMITTED, que es
+// el nivel por defecto y lo que hace hoy EnTransaccion (`pool.Begin` sin
+// TxOptions): la perdedora, al despertar con el lock, tiene que VER la fila que
+// la ganadora acaba de confirmar. Bajo REPEATABLE READ o SERIALIZABLE su
+// instantanea seria anterior al COMMIT y el NOT EXISTS volveria a no verla --
+// con SERIALIZABLE fallaria con 40001 en vez de duplicar, pero la semantica de
+// esta funcion cambiaria en silencio. Si algun dia se toca el nivel de
+// aislamiento del pool, hay que volver aqui.
+//
 // # Lo que NO sirve de guarda
 //
 // Ni la PK ni el UNIQUE del email: las dos dejan pasar una segunda cuenta con

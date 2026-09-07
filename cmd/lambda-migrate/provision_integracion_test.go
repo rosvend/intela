@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -155,5 +156,71 @@ func TestLaCuentaProvisionadaPuedeIniciarSesion(t *testing.T) {
 	// siempre "si" pasaria la mitad de arriba.
 	if _, err := autenticacion.IniciarSesion(t.Context(), "admin@redes.co", "otra-clave"); err == nil {
 		t.Error("se inicio sesion con una clave equivocada")
+	}
+}
+
+// Un hash TRUNCADO no llega a la base, y esto se prueba en la provision y no
+// solo en EsHash a proposito: el punto no es que el validador sepa decir no,
+// es que la provision no lo deje pasar.
+//
+// El hueco era de un caracter. `bcrypt.Cost` valida la cabecera y no el largo,
+// asi que un hash de 59 devolvia coste 10 y ningun error, la cuenta se creaba
+// -- estado "creado" -- y el login fallaba despues con la clave correcta, sin
+// via de arreglo. El modo de fallo no es de laboratorio: es una escritura del
+// hash cortada a medias, un copiar/pegar que se come el ultimo caracter, un
+// `scp` interrumpido.
+func TestProvisionRechazaUnHashTruncado(t *testing.T) {
+	const clave = "una-clave-de-operador-larga"
+
+	cadena := testhelp.DSN(t)
+	t.Setenv("DATABASE_URL", cadena)
+
+	completo, err := cripto.Bcrypt{}.Hash(clave)
+	if err != nil {
+		t.Fatalf("hashear: %v", err)
+	}
+	truncado := completo[:len(completo)-1]
+
+	_, err = atender(mudo())(t.Context(), peticion{
+		Orden:  ordenPrimerAdministrador,
+		ID:     "usr-admin",
+		Email:  "admin@redes.co",
+		Nombre: "Administrador",
+		Hash:   truncado,
+	})
+	if !errors.Is(err, aplicacion.ErrUsuarioInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrUsuarioInvalido", err)
+	}
+
+	// Y la base sigue vacia: rechazar tarde, despues de escribir, seria el
+	// mismo callejon sin salida, porque la provision no corre dos veces.
+	pool, err := pgxpool.New(t.Context(), cadena)
+	if err != nil {
+		t.Fatalf("abrir pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var total int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM usuarios`).Scan(&total); err != nil {
+		t.Fatalf("contar: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("usuarios = %d, se esperaba 0: no debe crearse la cuenta", total)
+	}
+
+	// La instalacion sigue provisionable con el hash bueno: el rechazo no
+	// quema el unico intento que hay.
+	r, err := atender(mudo())(t.Context(), peticion{
+		Orden:  ordenPrimerAdministrador,
+		ID:     "usr-admin",
+		Email:  "admin@redes.co",
+		Nombre: "Administrador",
+		Hash:   completo,
+	})
+	if err != nil {
+		t.Fatalf("provisionar con el hash completo tras el rechazo: %v", err)
+	}
+	if r.Estado != "creado" {
+		t.Fatalf("estado = %q, se esperaba \"creado\"", r.Estado)
 	}
 }
