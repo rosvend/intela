@@ -45,6 +45,22 @@ variable "github_repo_id" {
   default     = null
 }
 
+variable "deploy_environment" {
+  description = <<-TEXT
+    GitHub environment the deploy job declares, if any. When set, the trust
+    policy matches `environment:<name>` instead of `ref:refs/heads/<branch>`,
+    because that is what GitHub actually puts in the subject for a job that
+    declares an environment.
+
+    SETTING THIS MOVES THE BRANCH RESTRICTION OUT OF IAM. The environment's
+    deployment branch policy becomes the only thing keeping other branches from
+    assuming the deploy role, so it must list the deploy branch and nothing
+    else. See the note in main.tf.
+  TEXT
+  type        = string
+  default     = null
+}
+
 variable "deploy_branch" {
   description = "Branch allowed to assume the deploy role. Matched exactly, not by prefix."
   type        = string

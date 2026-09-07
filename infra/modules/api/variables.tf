@@ -1,3 +1,8 @@
+variable "partition" {
+  description = "AWS partition (aws, aws-us-gov, aws-cn). Passed in, never looked up here: a data source in this module would be deferred by the caller's depends_on and churn the role on every deploy. See the note in main.tf."
+  type        = string
+}
+
 # The HTTP entrypoint.
 #
 # This module owns exactly one thing the generic go-lambda block does not: how

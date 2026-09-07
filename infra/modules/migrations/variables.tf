@@ -1,3 +1,8 @@
+variable "partition" {
+  description = "AWS partition (aws, aws-us-gov, aws-cn). Passed in, never looked up here: a data source in this module would be deferred by the caller's depends_on and churn the role on every deploy. See the note in main.tf."
+  type        = string
+}
+
 # The schema migration runner.
 #
 # Separate from modules/api even though the two share most of their

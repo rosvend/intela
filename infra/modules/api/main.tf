@@ -1,6 +1,8 @@
 module "function" {
   source = "../go-lambda"
 
+  partition = var.partition
+
   name        = "${var.name_prefix}-api"
   description = "Intela HTTP API (cmd/lambda)"
   zip_path    = var.zip_path
