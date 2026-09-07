@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -37,12 +36,6 @@ type Ingesta struct {
 	Reportes RepositorioIngesta
 	Almacen  AlmacenObjetos
 }
-
-// periodoValido refleja el CHECK de reportes.periodo: un ano, opcionalmente
-// con mes. Se comprueba aqui y no solo en la base porque el orden de las
-// operaciones de GuardarReporte escribe la boveda ANTES que la fila, y de la
-// boveda no se puede borrar nada.
-var periodoValido = regexp.MustCompile(`^[0-9]{4}(-[0-9]{2})?$`)
 
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
 //
@@ -120,6 +113,9 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 	switch {
 	case strings.TrimSpace(fuente) == "":
 		return Reporte{}, fmt.Errorf("%w: falta la fuente", ErrReporteInvalido)
+	// periodoValido vive en trabajos.go, una sola vez para el paquete. Se
+	// comprueba aqui y no solo en la base porque GuardarReporte escribe la
+	// boveda ANTES que la fila, y de la boveda no se puede borrar nada.
 	case !periodoValido.MatchString(periodo):
 		return Reporte{}, fmt.Errorf(
 			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)

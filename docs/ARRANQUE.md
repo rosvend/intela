@@ -108,7 +108,10 @@ npm --prefix web run dev                            # http://localhost:5173
 | `LOG_FORMATO` | `json` | `texto` para desarrollo |
 | `DEBUG` | `false` | Sube el nivel de log a debug |
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
-| `WORKER_INTERVALO` | `5s` | Cada cuanto el worker mira la cola |
+| `WORKER_INTERVALO` | `5s` | Cada cuanto el worker mira la cola. En cada pasada la vacia entera, no toma un trabajo por tic |
+| `WORKER_REINTENTOS` | `5` | Veces que se toma el mismo trabajo antes de darlo por fallido. `1` desactiva los reintentos |
+| `WORKER_ESPERA_BASE` | `30s` | Espera tras el primer fallo. Se dobla en cada fallo siguiente |
+| `WORKER_ESPERA_TECHO` | `10m` | Tope de esa espera. `0` significa sin tope |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
 | `SEED_RESET` | `false` | Vaciar y recargar el dataset. Falla si hay asientos |
 | `SEED_CLAVE_ADMIN` | `admin-local` | Clave del usuario administrador del seed |
@@ -116,6 +119,11 @@ npm --prefix web run dev                            # http://localhost:5173
 | `SEED_CLAVE_CONTABILIDAD` | `contabilidad-local` | Clave del rol contabilidad |
 | `SEED_CLAVE_AUDITOR` | `auditor-local` | Clave del rol auditor |
 | `SEED_CLAVE_TITULAR` | `ana-local` | Clave de Ana (`ana@redes.co`) |
+
+Los cuatro valores del worker son **configuracion de operacion, no parametros normativos**: no
+salen del reglamento y por eso no entran por la tabla `parametros` (ADR 0004). El detalle de por
+que la cola es una tabla propia y no River esta en el
+[ADR 0015](decisiones/0015-cola-de-trabajos-en-tabla-propia.md).
 
 ## Que es real y que es sintetico
 
