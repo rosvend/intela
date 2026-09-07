@@ -1077,6 +1077,106 @@ func TestIngestaNoPierdeElLotePorUnBlancoEnUnaFila(t *testing.T) {
 	})
 }
 
+// La precision de las columnas de medida: una fila que no cabe se aparta CON su
+// motivo, no se lleva el lote.
+//
+// `rating` es NUMERIC(12,6) -tope 999999.999999-, y los reportes de television
+// colombianos entregan la audiencia de las dos formas: como porcentaje y como
+// personas absolutas. Mapear la columna equivocada mete millones donde caben
+// seis digitos. Antes eso pasaba la validacion entera y moria en el INSERT con
+//
+//	SQLSTATE 22003 numeric field overflow
+//
+// dentro de la transaccion del lote: se perdian TODAS las filas, y el operador
+// recibia un SQLSTATE crudo en vez de un motivo por fila que poder devolverle
+// al canal.
+func TestIngestaNoPierdeElLotePorUnaMedidaFueraDeRango(t *testing.T) {
+	const motivo = "rating 2500000: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros"
+
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: objetos.Disco{Dir: t.TempDir()}}
+
+	rep, err := ingesta.GuardarReporte(ctx, "caracol-rating", "2026-01",
+		[]byte("Titulo,Rating\nLa Casa de las Dos Palmas,2500000\n"))
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	desbordada := usoPendiente("", "", "Audiencia En Personas")
+	desbordada.Rating = decimal.RequireFromString("2500000")
+
+	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{
+		usoPendiente("", "", "Buena Uno"),
+		desbordada,
+		usoPendiente("", "", "Buena Dos"),
+	})
+	if err != nil {
+		t.Fatalf("una medida fuera de rango no puede tumbar el lote: %v", err)
+	}
+	if len(rechazados) != 1 || rechazados[0].Titulo != "Audiencia En Personas" {
+		t.Fatalf("se esperaba 1 rechazo, el de la medida: %+v", rechazados)
+	}
+	// El motivo ENTERO: tiene que nombrar el campo y decir cual es el limite,
+	// que es lo que se le puede volver a pedir al canal.
+	if rechazados[0].RechazoMotivo != motivo {
+		t.Fatalf("motivo = %q, se esperaba %q", rechazados[0].RechazoMotivo, motivo)
+	}
+	contar(t, ctx, pool, rep.ID, 2, 1)
+}
+
+// El contrapeso de la prueba anterior, y lo que hace fiables sus constantes: el
+// tope EXACTO de cada columna tiene que ENTRAR.
+//
+// Los seis pares (precision, escala) de validarUso son una copia de
+// migrations/00001_init.sql, y una copia puede equivocarse en el sentido caro:
+// un tope de menos aparta filas buenas al log de rechazos, en silencio y para
+// siempre. Aqui se comprueba contra la columna de verdad, que es la unica que
+// tiene la respuesta.
+func TestLaTablaDeUsosAceptaLasMedidasAlTopeDeSuColumna(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	dec := decimal.RequireFromString
+	alTope := usoPendiente("uso-al-tope", reporteEnero, "Todas Las Medidas Al Tope")
+	alTope.DuracionMin = dec("99999999.9999")         // NUMERIC(12,4)
+	alTope.Rating = dec("999999.999999")              // NUMERIC(12,6)
+	alTope.Taquilla = dec("9999999999999999.99")      // NUMERIC(18,2)
+	alTope.Vistas = dec("9999999999999999.99")        // NUMERIC(18,2)
+	alTope.MinutosVistos = dec("99999999999999.9999") // NUMERIC(18,4)
+	alTope.PB = dec("99999999999999.9999")            // NUMERIC(18,4)
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{alTope}); err != nil {
+		t.Fatalf("el tope de cada columna tiene que caber en ella: %v", err)
+	}
+
+	leido, err := s.UsoPorID(ctx, alTope.ID)
+	if err != nil {
+		t.Fatalf("UsoPorID: %v", err)
+	}
+	// Equal y no ==: NUMERIC vuelve con la escala de la columna.
+	medidas := map[string][2]decimal.Decimal{
+		"duracion_min":   {leido.DuracionMin, alTope.DuracionMin},
+		"rating":         {leido.Rating, alTope.Rating},
+		"taquilla":       {leido.Taquilla, alTope.Taquilla},
+		"vistas":         {leido.Vistas, alTope.Vistas},
+		"minutos_vistos": {leido.MinutosVistos, alTope.MinutosVistos},
+		"pb":             {leido.PB, alTope.PB},
+	}
+	for campo, par := range medidas {
+		if !par[0].Equal(par[1]) {
+			t.Errorf("%s = %s, se esperaba %s", campo, par[0], par[1])
+		}
+	}
+	// Y una prueba mas de que el tope es EXACTAMENTE ese: un digito entero mas
+	// lo rechaza la propia columna. Si la base lo aceptara, el limite de
+	// validarUso estaria de mas y apartaria filas buenas.
+	_, err = pool.Exec(ctx, `UPDATE usos SET rating = 1000000 WHERE id = $1`, alTope.ID)
+	if err == nil {
+		t.Error("NUMERIC(12,6) no puede admitir 1000000: el limite de validarUso seria falso")
+	}
+}
+
 // Item 3 contra la base: una fuente con espacios NO es otra fuente.
 //
 // `idReporte` deriva de (fuente, huella) y el UNIQUE es sobre (sha256, fuente),

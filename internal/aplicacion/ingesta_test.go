@@ -1320,3 +1320,104 @@ func TestGuardarUsosNormalizaElAcuseQueEstampaEnCadaFila(t *testing.T) {
 		t.Errorf("ID = %q, se esperaba %q", guardado.ID, "rep-1-0")
 	}
 }
+
+// validarUso reflejaba los CHECK de `usos` pero no la PRECISION de sus
+// columnas, y ese es el otro camino por el que una fila revienta el lote.
+//
+// Las seis medidas son NUMERIC(p,s), y un NUMERIC(p,s) no acepta mas de p-s
+// digitos enteros: `rating` es NUMERIC(12,6), asi que su tope es
+// 999999.999999. Un rating de 2500000 pasaba la unica comprobacion que habia
+// -no es negativo- y moria en el INSERT con
+//
+//	SQLSTATE 22003 numeric field overflow
+//
+// dentro de la transaccion del lote: se pierden todas las filas buenas que lo
+// acompanan, el operador recibe un SQLSTATE crudo en vez de un motivo por fila,
+// y el reporte ya esta escrito, asi que reintentar choca con
+// ErrReporteDuplicado.
+//
+// No es un caso teorico. Los reportes de television colombianos entregan la
+// audiencia de las dos formas -como porcentaje y como personas absolutas-, asi
+// que un adaptador de formato (#25) que mapee la columna equivocada mete
+// millones donde caben seis digitos. Es lo primero que va a pasar cuando entre
+// el issue #25.
+//
+// # Los limites se comprueban justo por debajo Y justo por encima
+//
+// Una prueba que solo mire un valor absurdo la pasa cualquier tope inventado.
+// El par (maximo que cabe, primer valor que no cabe) es lo que fija el tope
+// EXACTO de cada columna, que es el que tiene la base.
+func TestValidarUsoRechazaLaMedidaQueNoCabeEnLaColumna(t *testing.T) {
+	dec := decimal.RequireFromString
+
+	casos := map[string]struct {
+		ajustar func(*UsoPersistido)
+		motivo  string
+	}{
+		// duracion_min NUMERIC(12,4): 8 digitos enteros.
+		"duracion al tope": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("99999999.9999") }, "",
+		},
+		"duracion pasada": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("100000000") },
+			"duracion_min 100000000: la columna es NUMERIC(12,4) y no admite mas de 8 digitos enteros",
+		},
+		// rating NUMERIC(12,6): 6 digitos enteros. El caso del reporte de TV que
+		// trae personas absolutas donde se espera un porcentaje.
+		"rating al tope": {
+			func(u *UsoPersistido) { u.Rating = dec("999999.999999") }, "",
+		},
+		"rating con personas absolutas": {
+			func(u *UsoPersistido) { u.Rating = dec("2500000") },
+			"rating 2500000: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros",
+		},
+		// El borde que no se ve sin buscarlo: cabe en 6 digitos enteros TAL
+		// COMO viene, y no cabe una vez la base lo redondea a la escala de la
+		// columna. Postgres redondea PRIMERO a los 6 decimales -que da
+		// 1000000.000000- y comprueba la precision DESPUES.
+		"rating que solo desborda al redondear": {
+			func(u *UsoPersistido) { u.Rating = dec("999999.9999996") },
+			"rating 999999.9999996: la columna es NUMERIC(12,6) y no admite mas de 6 digitos enteros",
+		},
+		// taquilla y vistas son NUMERIC(18,2): 16 digitos enteros.
+		"taquilla al tope": {
+			func(u *UsoPersistido) { u.Taquilla = dec("9999999999999999.99") }, "",
+		},
+		"taquilla pasada": {
+			func(u *UsoPersistido) { u.Taquilla = dec("10000000000000000") },
+			"taquilla 10000000000000000: la columna es NUMERIC(18,2) y no admite mas de 16 digitos enteros",
+		},
+		"vistas pasada": {
+			func(u *UsoPersistido) { u.Vistas = dec("10000000000000000") },
+			"vistas 10000000000000000: la columna es NUMERIC(18,2) y no admite mas de 16 digitos enteros",
+		},
+		// minutos_vistos y pb son NUMERIC(18,4): 14 digitos enteros.
+		"minutos vistos al tope": {
+			func(u *UsoPersistido) { u.MinutosVistos = dec("99999999999999.9999") }, "",
+		},
+		"minutos vistos pasados": {
+			func(u *UsoPersistido) { u.MinutosVistos = dec("100000000000000") },
+			"minutos_vistos 100000000000000: la columna es NUMERIC(18,4) y no admite mas de 14 digitos enteros",
+		},
+		"pb pasado": {
+			func(u *UsoPersistido) { u.PB = dec("100000000000000") },
+			"pb 100000000000000: la columna es NUMERIC(18,4) y no admite mas de 14 digitos enteros",
+		},
+		// Mas decimales de los que tiene la columna NO es un rechazo: la base
+		// redondea a la escala y guarda. Rechazarlo apartaria filas buenas.
+		"mas decimales de los que caben": {
+			func(u *UsoPersistido) { u.DuracionMin = dec("52.123456789") }, "",
+		},
+	}
+
+	for nombre, c := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			u := usoBueno("La Casa")
+			c.ajustar(&u)
+
+			if motivo := validarUso(u); motivo != c.motivo {
+				t.Fatalf("motivo = %q, se esperaba %q", motivo, c.motivo)
+			}
+		})
+	}
+}

@@ -542,22 +542,61 @@ func validarUso(u UsoPersistido) string {
 	// comprobacion que no puede fallar no prueba nada, y encima puede tapar a la
 	// que si.
 
-	// Los CHECK de no negatividad de las columnas de medida. Una medida
-	// negativa no es un uso pequeno: es un dato roto, y ponderaria a la baja.
-	negativas := []struct {
+	// Las columnas de medida, con las DOS cosas que la base les exige: el CHECK
+	// de no negatividad y la precision del tipo.
+	//
+	// La negativa no es un uso pequeno: es un dato roto, y ponderaria a la baja.
+	//
+	// La precision es la que se quedaba sin comprobar, y cuesta lo mismo que un
+	// CHECK: un NUMERIC(p,s) no admite mas de p-s digitos ENTEROS, asi que un
+	// `rating` -NUMERIC(12,6), tope 999999.999999- con la audiencia en personas
+	// absolutas en vez de en porcentaje pasaba la validacion y moria en el
+	// INSERT con SQLSTATE 22003. Dentro de la transaccion del lote, o sea
+	// llevandose las filas buenas, y dejandole al operador un SQLSTATE crudo en
+	// vez de un motivo por fila. Los reportes de television colombianos
+	// entregan la audiencia de las dos formas, asi que es alcanzable el dia que
+	// entren los adaptadores de formato del #25.
+	//
+	// La precision y la escala van en la tabla, con los mismos nombres de
+	// columna que ya estaban, y no en seis condiciones escritas a mano: una
+	// tabla se puede leer contra 00001_init.sql de un vistazo, y anadir una
+	// medida es anadir una fila.
+	medidas := []struct {
 		campo string
 		valor decimal.Decimal
+		// Los de la definicion de la columna en migrations/00001_init.sql:
+		// NUMERIC(precision, escala).
+		precision int32
+		escala    int32
 	}{
-		{"duracion_min", u.DuracionMin},
-		{"rating", u.Rating},
-		{"taquilla", u.Taquilla},
-		{"vistas", u.Vistas},
-		{"minutos_vistos", u.MinutosVistos},
-		{"pb", u.PB},
+		{"duracion_min", u.DuracionMin, 12, 4},
+		{"rating", u.Rating, 12, 6},
+		{"taquilla", u.Taquilla, 18, 2},
+		{"vistas", u.Vistas, 18, 2},
+		{"minutos_vistos", u.MinutosVistos, 18, 4},
+		{"pb", u.PB, 18, 4},
 	}
-	for _, n := range negativas {
-		if n.valor.IsNegative() {
-			return fmt.Sprintf("%s negativa: %s", n.campo, n.valor)
+	for _, m := range medidas {
+		if m.valor.IsNegative() {
+			return fmt.Sprintf("%s negativa: %s", m.campo, m.valor)
+		}
+		// Se compara el valor REDONDEADO a la escala de la columna, que es el
+		// orden en el que Postgres lo hace: redondea primero y comprueba la
+		// precision despues. Sin el redondeo, 999999.9999996 cabe en seis
+		// digitos enteros aqui, se convierte en 1000000.000000 alla y desborda
+		// igual -el mismo 22003, en el borde que se habria quedado sin cubrir-.
+		//
+		// El tope es 10^(precision-escala) y es EXCLUSIVO: NUMERIC(12,6) llega
+		// hasta 999999.999999, asi que 1000000 ya no cabe. decimal.New(1, e)
+		// es 1 * 10^e.
+		//
+		// Mas decimales de los que tiene la columna no son un rechazo: la base
+		// redondea a la escala y guarda. Apartar esas filas seria perder datos
+		// buenos.
+		if m.valor.Round(m.escala).GreaterThanOrEqual(decimal.New(1, m.precision-m.escala)) {
+			return fmt.Sprintf(
+				"%s %s: la columna es NUMERIC(%d,%d) y no admite mas de %d digitos enteros",
+				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
 		}
 	}
 	if u.Emisiones < 0 {
