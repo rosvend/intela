@@ -1,6 +1,8 @@
 module "function" {
   source = "../go-lambda"
 
+  partition = var.partition
+
   name        = "${var.name_prefix}-migrate"
   description = "Intela schema migrations, goose (cmd/lambda-migrate)"
   zip_path    = var.zip_path
