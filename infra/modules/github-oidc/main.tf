@@ -38,8 +38,36 @@ locals {
     : "",
   ])
 
-  plan_subjects   = [for p in local.subject_prefixes : "${p}:pull_request"]
-  deploy_subjects = [for p in local.subject_prefixes : "${p}:ref:refs/heads/${var.deploy_branch}"]
+  plan_subjects = [for p in local.subject_prefixes : "${p}:pull_request"]
+
+  # A JOB THAT DECLARES `environment:` GETS A DIFFERENT SUBJECT. GitHub swaps
+  # the `ref:` part for `environment:<name>` -- the branch disappears from the
+  # claim entirely. deploy.yml's job declares `environment: production`, so it
+  # presents
+  #
+  #   repo:.../...:environment:production
+  #
+  # and never the `ref:refs/heads/main` this policy used to demand. That is why
+  # the first real deploy failed with an opaque AccessDenied; CloudTrail is
+  # where the presented subject is legible.
+  #
+  # THE BRANCH RESTRICTION THEREFORE LIVES SOMEWHERE ELSE NOW, and this is the
+  # part that must not be lost: "only main can deploy" is no longer enforced by
+  # this trust policy, because the branch is not in the claim. It is enforced by
+  # the environment's DEPLOYMENT BRANCH POLICY, which must list only the deploy
+  # branch. Without that policy an environment accepts any branch, and this
+  # role would be assumable from any branch that names the environment.
+  #
+  #   gh api repos/<o>/<r>/environments/<env>/deployment-branch-policies
+  #
+  # The ref-based subject is deliberately NOT kept as a fallback. Trusting it
+  # too would let a job that does NOT declare the environment assume this role,
+  # which is exactly how the approval gate would get bypassed.
+  deploy_subjects = var.deploy_environment != null ? [
+    for p in local.subject_prefixes : "${p}:environment:${var.deploy_environment}"
+    ] : [
+    for p in local.subject_prefixes : "${p}:ref:refs/heads/${var.deploy_branch}"
+  ]
 }
 
 data "aws_caller_identity" "current" {}
@@ -351,6 +379,20 @@ data "aws_iam_policy_document" "deploy" {
       "cloudwatch:ListMetrics",
       "sts:GetCallerIdentity",
       "tag:GetResources",
+
+      # ssm:DescribeParameters is the odd one out and it has to be here rather
+      # than beside the other ssm actions above. It is the account-level LIST
+      # operation -- note the plural -- and AWS does not support resource-level
+      # permissions on it, so `parameter/intela/*` never matches and the call is
+      # denied however narrowly it is written. The provider makes this call to
+      # read a parameter's metadata, so the first apply died on it after RDS,
+      # both Lambdas and the migration had already succeeded.
+      #
+      # Scoping stays on the singular, resource-level actions in
+      # ProjectScopedResources: reading or writing a VALUE still requires
+      # parameter/intela/*. This grants the ability to see that parameters
+      # exist, not to read them.
+      "ssm:DescribeParameters",
     ]
     resources = ["*"]
   }

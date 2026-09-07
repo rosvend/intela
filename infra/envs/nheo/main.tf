@@ -9,6 +9,12 @@
 
 data "aws_caller_identity" "current" {}
 
+# Read HERE, at the root, and passed down -- never inside modules/go-lambda.
+# A data source inside a module that carries `depends_on` is deferred to apply
+# time on every run where the dependency changes, which made the Lambda roles
+# churn and the destroy guard refuse every deploy. See modules/go-lambda/main.tf.
+data "aws_partition" "current" {}
+
 locals {
   # Project last, so it wins over anything in var.tags. The cost boundary is not
   # something a caller gets to switch off.
@@ -51,6 +57,7 @@ module "migrations" {
   source = "../../modules/migrations"
 
   name_prefix        = var.name_prefix
+  partition          = data.aws_partition.current.partition
   zip_path           = local.migrate_zip_path
   app_version        = var.app_version
   database_url       = module.database.database_url
@@ -62,6 +69,7 @@ module "api" {
   source = "../../modules/api"
 
   name_prefix        = var.name_prefix
+  partition          = data.aws_partition.current.partition
   zip_path           = local.api_zip_path
   database_url       = module.database.database_url
   subnet_ids         = module.network.private_subnet_ids
