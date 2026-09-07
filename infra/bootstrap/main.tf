@@ -103,6 +103,8 @@ module "github_oidc" {
   github_repo   = var.github_repo
   deploy_branch = var.deploy_branch
 
+  deploy_environment = var.deploy_environment
+
   github_owner_id = var.github_owner_id
   github_repo_id  = var.github_repo_id
 
