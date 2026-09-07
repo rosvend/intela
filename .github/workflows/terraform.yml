@@ -1,0 +1,332 @@
+# Reusable stage: infrastructure.
+#
+# Two jobs, and the split is deliberate.
+#
+#   validate  Formatting and schema. Needs no AWS credentials, so it runs on
+#             every pull request including one that touches only a module.
+#   plan      A real plan against the real account, posted as a PR comment, with
+#             the destroy guard in front of it. Needs OIDC.
+#
+# THE DESTROY GUARD. A plan that deletes something is refused unless the run was
+# started by hand with an explicit confirmation. Everything in this state is
+# tagged Project=intela by construction (default_tags in envs/*/versions.tf), so
+# the guard fires on ANY delete rather than filtering by tag -- filtering would
+# only add ways for it to miss one. `index("delete")` catches a replacement too,
+# because a replacement is a delete and a create.
+#
+# ONE TYPE IS EXEMPT: aws_lambda_invocation. It is not infrastructure that holds
+# anything -- it is the record of "the function was called", and its `triggers`
+# are ForceNew, so feeding it the commit SHA replaces it on EVERY push by
+# design. That is the point: re-running the migration is what a deploy IS.
+# Without this exemption the guard fires on its own migration step, and the
+# second push to `main` is refused forever. Nothing is destroyed by replacing
+# it; the schema lives in RDS, which is not exempt.
+#
+# Note the plan needs the Lambda zips: modules/go-lambda hashes the artifact, so
+# without `make lambda` the plan cannot even be evaluated.
+
+name: Terraform
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Directory under infra/envs to plan.
+        type: string
+        default: "nheo"
+      plan:
+        description: Whether to run a real plan against AWS. Needs the role secret.
+        type: boolean
+        default: false
+      confirm_destroy:
+        description: Set to "yes" to allow a plan that destroys resources.
+        type: string
+        default: ""
+    secrets:
+      AWS_PLAN_ROLE_ARN:
+        description: Role assumed through OIDC to read the account and lock the state.
+        required: false
+      BUDGET_NOTIFICATION_EMAILS:
+        description: >-
+          Comma-separated addresses for the cost alarm. A secret and not a
+          `vars.` entry because this repository is public and this workflow
+          posts the plan as a pull request comment.
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.16.1"
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Formatting
+        run: terraform fmt -check -recursive -diff infra/
+
+      # Module by module, not just the environment. A module that only validates
+      # as part of the root has picked up a dependency it does not declare, and
+      # this is what catches it.
+      - name: Validate every module in isolation
+        run: |
+          set -euo pipefail
+          fallos=0
+          for dir in infra/modules/*/ infra/envs/*/ infra/bootstrap/; do
+            echo "::group::${dir}"
+            if terraform -chdir="${dir}" init -backend=false -input=false -no-color \
+               && terraform -chdir="${dir}" validate -no-color; then
+              echo "ok"
+            else
+              echo "::error file=${dir}::terraform validate failed"
+              fallos=$((fallos + 1))
+            fi
+            echo "::endgroup::"
+          done
+          [ "${fallos}" -eq 0 ] || { echo "::error::${fallos} module(s) failed validation"; exit 1; }
+
+      # Mechanical version of the coupling rules in the ADR. Cheap to run, and
+      # it fails on exactly the mistakes a reviewer skims past.
+      - name: Boundary check
+        run: |
+          set -euo pipefail
+
+          malos=$(grep -rn 'source *= *"\.\./' infra/modules/ \
+            | grep -v '"\.\./go-lambda"' || true)
+          if [ -n "${malos}" ]; then
+            echo "::error::a module calls another module. Only go-lambda may be composed; everything else is wired in infra/envs/<name>/main.tf."
+            echo "${malos}"
+            exit 1
+          fi
+
+          # Modules may read account/region/partition metadata and build IAM
+          # documents. Anything else means a module is discovering a resource by
+          # name instead of receiving it.
+          fugas=$(grep -rhoE '^data "aws_[a-z_]+"' infra/modules/ | sort -u \
+            | grep -vE 'aws_(caller_identity|region|partition|availability_zones|iam_policy_document)' || true)
+          if [ -n "${fugas}" ]; then
+            echo "::error::a module looks a resource up instead of taking it as a variable:"
+            echo "${fugas}"
+            exit 1
+          fi
+
+          if grep -rnE '[0-9]{12}' infra/ --include='*.tf' ; then
+            echo "::error::hardcoded account id. Use data.aws_caller_identity.current."
+            exit 1
+          fi
+
+          echo "boundary rules hold"
+
+  plan:
+    name: Plan
+    if: inputs.plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC. Granted here because this job is the one that uses it.
+      pull-requests: write # to post the plan as a comment
+    steps:
+      # infra/bootstrap has to run once, by hand, before any of this can work --
+      # it is what creates the state bucket and the roles. Until it has, the
+      # real plan cannot run, and failing here would block the very pull request
+      # that introduces the infrastructure.
+      #
+      # So it reports and stands down, which is the same rule ci.md already
+      # applies to every other stage: a stage skips itself while its layer does
+      # not exist. `validate` above is unconditional and still gates the merge.
+      - name: Is AWS wired up yet
+        id: pre
+        env:
+          ROLE: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ROLE}" ] || [ -z "${BUCKET}" ] || [ -z "${EMAILS}" ]; then
+            echo "listo=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No plan: AWS is not wired up yet. Run infra/bootstrap once, then set the TF_STATE_BUCKET variable and the AWS_PLAN_ROLE_ARN and BUDGET_NOTIFICATION_EMAILS secrets. See infra/README.md."
+            {
+              echo "### Terraform plan skipped"
+              echo
+              echo "AWS is not wired up yet. \`validate\` ran and passed; the plan needs"
+              echo "\`infra/bootstrap\` to have been applied once. See \`infra/README.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.pre.outputs.listo == 'true'
+
+      - uses: actions/setup-go@v7
+        if: steps.pre.outputs.listo == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.pre.outputs.listo == 'true'
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # modules/go-lambda hashes the zip, so the plan does not evaluate without
+      # the artifacts. Building them here also means the plan tells the truth
+      # about whether the code changed.
+      - name: Build Lambda artifacts
+        if: steps.pre.outputs.listo == 'true'
+        run: make lambda
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        if: steps.pre.outputs.listo == 'true'
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: intela-plan-${{ github.run_id }}
+
+      - name: Init
+        if: steps.pre.outputs.listo == 'true'
+        working-directory: infra/envs/${{ inputs.environment }}
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STATE_BUCKET}" ]; then
+            echo "::error::repository variable TF_STATE_BUCKET is not set. infra/bootstrap prints it."
+            exit 1
+          fi
+          terraform init -input=false -no-color \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="key=envs/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      # See the long note in deploy.yml: the address arrives as a secret, not a
+      # repository variable, because this repository is public and the plan
+      # this job produces is posted as a pull request comment. The variable is
+      # also marked `sensitive` in envs/*/variables.tf, so Terraform renders it
+      # as "(sensitive value)" in that comment.
+      - name: Plan
+        if: steps.pre.outputs.listo == 'true'
+        working-directory: infra/envs/${{ inputs.environment }}
+        env:
+          EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+        run: |
+          set -euo pipefail
+          TF_VAR_budget_notification_emails="$(jq -cR \
+            'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))' <<<"$EMAILS")"
+          export TF_VAR_budget_notification_emails
+
+          terraform plan -input=false -no-color -lock-timeout=5m \
+            -var "app_version=${GITHUB_SHA}" \
+            -out=tfplan
+
+      - name: Destroy guard
+        id: guard
+        if: steps.pre.outputs.listo == 'true'
+        working-directory: infra/envs/${{ inputs.environment }}
+        env:
+          CONFIRMED: ${{ inputs.confirm_destroy }}
+        run: |
+          set -euo pipefail
+
+          # aws_lambda_invocation is exempt: see the note at the top of this
+          # file. It is replaced on every push by design and destroys nothing.
+          destruye=$(terraform show -json tfplan \
+            | jq -r '.resource_changes[]?
+                     | select(.type != "aws_lambda_invocation")
+                     | select(.change.actions | index("delete"))
+                     | .address')
+
+          if [ -z "${destruye}" ]; then
+            echo "destroys=" >> "$GITHUB_OUTPUT"
+            echo "No resource is destroyed by this plan."
+            exit 0
+          fi
+
+          {
+            echo "destroys<<GUARD_EOF"
+            echo "${destruye}"
+            echo "GUARD_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::warning::this plan destroys or replaces resources:"
+          echo "${destruye}"
+
+          if [ "${CONFIRMED}" = "yes" ]; then
+            echo "::notice::allowed: the run was started by hand with confirm_destroy=yes."
+            exit 0
+          fi
+
+          echo "::error::refusing a plan that destroys resources. If this is intended, re-run the workflow manually (Run workflow -> confirm_destroy: yes)."
+          exit 1
+
+      - name: Render the plan
+        id: render
+        if: steps.pre.outputs.listo == 'true'
+        working-directory: infra/envs/${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          terraform show -no-color tfplan > plan.txt
+          # A comment body is capped at 65536 characters.
+          head -c 60000 plan.txt > plan.trunc.txt
+          if [ "$(wc -c < plan.txt)" -gt 60000 ]; then
+            echo "" >> plan.trunc.txt
+            echo "... truncated, see the job log for the full plan ..." >> plan.trunc.txt
+          fi
+          {
+            echo "body<<PLAN_EOF"
+            cat plan.trunc.txt
+            echo "PLAN_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on the pull request
+        if: steps.pre.outputs.listo == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        env:
+          PLAN: ${{ steps.render.outputs.body }}
+          DESTROYS: ${{ steps.guard.outputs.destroys }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        with:
+          script: |
+            const marca = '<!-- intela-terraform-plan -->';
+            const destruye = process.env.DESTROYS.trim();
+            const aviso = destruye
+              ? `> [!WARNING]\n> This plan destroys or replaces:\n>\n> \`\`\`\n> ${destruye.split('\n').join('\n> ')}\n> \`\`\`\n`
+              : '';
+            const cuerpo = [
+              marca,
+              `### Terraform plan — \`${process.env.ENVIRONMENT}\``,
+              '',
+              aviso,
+              '<details><summary>Show the plan</summary>',
+              '',
+              '```terraform',
+              process.env.PLAN,
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            // Update the existing comment instead of adding one per push.
+            const previos = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const mio = previos.find((c) => c.body && c.body.includes(marca));
+
+            if (mio) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mio.id, body: cuerpo });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: cuerpo });
+            }
