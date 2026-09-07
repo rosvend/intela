@@ -58,6 +58,20 @@ type Similitud interface {
 type Hasher interface {
 	Verificar(hash, clave string) bool
 	Hash(clave string) (string, error)
+
+	// EsHash dice si una cadena tiene la forma de un hash de ESTE hasher.
+	//
+	// Existe porque el nucleo tiene una regla que cumplir -- lo que se guarda
+	// en `usuarios.password_hash` tiene que ser verificable -- y no puede
+	// comprobarla por si mismo sin aprenderse el algoritmo, que es justo lo
+	// que este puerto oculta. Asi que pregunta.
+	//
+	// No es cosmetico: una clave EN CLARO de 20 caracteres o mas pasaba el
+	// unico control que habia (la longitud) y el CHECK del esquema, se
+	// guardaba tal cual, y a partir de ahi el login fallaba con la clave
+	// correcta y con cualquier otra. Sin ninguna via para arreglarlo, porque
+	// esta operacion se niega a correr dos veces.
+	EsHash(posible string) bool
 }
 
 // GeneradorTokens produce el identificador opaco de una sesion.
@@ -87,6 +101,21 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
+//
+// Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
+// usuarios en cada peticion autenticada, y esto se invoca UNA vez en la vida de
+// una instalacion. Juntarlos obligaria a todo doble de la afiliacion a
+// implementar una escritura que no usa.
+//
+// El contrato incluye la unicidad: la implementacion inserta solo si la tabla
+// esta vacia, EN LA MISMA SENTENCIA, y devuelve ErrYaHayUsuarios si no lo
+// estaba. Comprobarlo con un recuento previo deja una ventana entre el SELECT y
+// el INSERT por la que cabe una segunda cuenta de administrador.
+type RepositorioProvisionInicial interface {
+	CrearPrimerAdministrador(ctx context.Context, u Usuario, hash string) error
 }
 
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una
@@ -287,24 +316,60 @@ type BitacoraAuditoria interface {
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
+//
+// Los tres metodos son los que pide el issue #35; el detalle de por que la
+// cola es una tabla propia y no River esta en el ADR 0015.
+//
+// El contrato tiene una obligacion que no se ve en las firmas: Tomar reclama
+// en exclusiva. Dos workers que llamen a la vez tienen que recibir trabajos
+// distintos o ErrSinTrabajo, nunca el mismo. El adaptador de PostgreSQL lo
+// resuelve con SELECT ... FOR UPDATE SKIP LOCKED; cualquier otro tiene que
+// dar la misma garantia, porque el nucleo no la comprueba.
 type ColaTrabajos interface {
-	Encolar(ctx context.Context, tipo string, payload []byte) error
-	Tomar(ctx context.Context) (Trabajo, error)
-	Cerrar(ctx context.Context, id int64, errMsg string) error
+	// Encolar es IDEMPOTENTE por clave natural. Devuelve false, sin error,
+	// cuando el trabajo ya estaba encolado: reintentar el encolado no es un
+	// fallo, y duplicarlo pagaria un periodo dos veces.
+	Encolar(ctx context.Context, clave ClaveTrabajo, payload []byte) (encolado bool, err error)
+
+	// Tomar reclama el trabajo pendiente mas antiguo cuya espera de reintento
+	// ya vencio, lo marca en curso y suma uno a Intentos. Devuelve
+	// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a
+	// la vez para decir lo mismo.
+	//
+	// `ahora` entra por parametro y no de now() por lo mismo que en Sesiones:
+	// una espera de reintento que solo se puede probar esperando no se prueba.
+	Tomar(ctx context.Context, ahora time.Time) (Trabajo, error)
+
+	// Cerrar termina un trabajo EN CURSO. Cerrar uno que no lo esta devuelve
+	// ErrNoEncontrado: un cierre por duplicado es un defecto del worker, no
+	// algo que convenga tragarse.
+	Cerrar(ctx context.Context, id int64, c Cierre) error
 }
 
-// Trabajo es una unidad de trabajo tomada de la cola. Tomar devuelve
-// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a la
-// vez para decir lo mismo.
+// Trabajo es una unidad de trabajo tomada de la cola.
+//
+// Intentos es el numero de veces que se ha tomado ESTE trabajo, ya contando la
+// actual. Clave.Corrida es otra cosa: cual corrida logica del periodo es. Ver
+// [ClaveTrabajo].
 type Trabajo struct {
-	ID      int64
-	Tipo    string
-	Payload []byte
+	ID       int64
+	Clave    ClaveTrabajo
+	Payload  []byte
+	Intentos int
 }
 
 // Calendario dispara las corridas segun RD 10 y RD 12.
+//
+// Es dato que administra el Consejo Directivo, no configuracion de operacion
+// (ADR 0004): por eso las fechas se leen de aqui y no de un cron del sistema
+// operativo.
 type Calendario interface {
+	// Pendientes devuelve los periodos cuya fecha de apertura ya llego y que
+	// todavia no se han disparado.
 	Pendientes(ctx context.Context, hoy time.Time) ([]string, error)
+
+	// MarcarDisparado deja constancia de que el periodo ya se encolo.
+	// Devuelve ErrNoEncontrado si el periodo no esta en el calendario.
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 
