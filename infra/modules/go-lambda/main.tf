@@ -83,6 +83,16 @@ resource "aws_lambda_function" "this" {
     aws_cloudwatch_log_group.this,
     aws_iam_role_policy_attachment.execution,
   ]
+
+  lifecycle {
+    precondition {
+      # The comparison is the graph edge: this function is not updated until
+      # wait_for is known. The right-hand side is a character that no Lambda
+      # invocation id (and no empty default) will ever equal.
+      condition     = var.wait_for != "\t"
+      error_message = "wait_for is a graph token; a tab is not a valid value."
+    }
+  }
 }
 
 resource "aws_lambda_function_url" "this" {
