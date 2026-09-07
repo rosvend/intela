@@ -222,12 +222,15 @@ describe("Login", () => {
     expect(hijos.indexOf("MAIN")).toBeLessThan(hijos.indexOf("ASIDE"));
   });
 
-  it("el juego es decorativo y no roba el primer foco", () => {
-    montar();
-    const juego = screen.getByRole("img", {
-      name: /decorativo/i,
-    });
-    expect(juego.tagName).toBe("CANVAS");
+  it("el panel de marca no aparece para el lector de pantalla", () => {
+    const { container } = montar();
+    // Es decoracion no interactiva: se esconde en vez de anunciarse. Quien
+    // identifica la pantalla es el logo del formulario, que si tiene nombre.
+    const lienzo = container.querySelector(".acceso-marca canvas");
+    expect(lienzo?.getAttribute("aria-hidden")).toBe("true");
+    // El unico role=img sigue siendo la marca del formulario.
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "Intela" })).toBeTruthy();
   });
 
   it("el botón de recuperar clave esta deshabilitado: no hay pantalla detrás (M-8)", () => {

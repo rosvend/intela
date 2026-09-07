@@ -541,37 +541,12 @@ a {
   display: block;
   width: 100%;
   height: 100%;
-  touch-action: none; /* el puntero dirige; no arrastra la pagina */
-  cursor: crosshair;
-}
-
-.acceso-lienzo:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.7);
-  outline-offset: -4px;
-}
-
-.acceso-juego-pie {
-  position: absolute;
-  inset: auto 2rem 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-  pointer-events: none; /* el pie no se come los eventos del lienzo */
-  color: rgba(255, 255, 255, 0.75);
-  font-size: 0.82rem;
-}
-
-.acceso-juego-pie p {
-  margin: 0;
-}
-
-.acceso-puntos {
-  font-variant-numeric: tabular-nums;
-  color: #ffffff;
-  font-weight: 600;
-  /* Sin esto "1 punto" se partia en dos lineas en el panel del movil. */
-  white-space: nowrap;
+  /*
+   * Sin `cursor`, sin `touch-action` y sin anillo de foco: el lienzo dejo de
+   * dirigirse, asi que un cursor de puntería prometeria una interaccion que no
+   * existe, y bloquear el gesto tactil impediria hacer scroll con el dedo
+   * justo encima del panel, que en movil ocupa la mitad de abajo.
+   */
 }
 
 /* ---------- acceso: apilado ---------- */
@@ -597,17 +572,6 @@ a {
    */
   .acceso-marca {
     height: 20rem;
-  }
-
-  /*
-   * En columna: a 390 px el texto de ayuda ocupa dos lineas, y en fila la
-   * puntuacion quedaba apretada contra el borde.
-   */
-  .acceso-juego-pie {
-    inset: auto 1.5rem 1.25rem;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.35rem;
   }
 }
 

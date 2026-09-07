@@ -1,15 +1,24 @@
 /**
- * Logica del juego de la pantalla de acceso. Sin lienzo y sin DOM.
+ * Logica del adorno de la pantalla de acceso. Sin lienzo y sin DOM.
  *
- * Vive aparte de `SnakeCanvas` a proposito: `avanzar` es una funcion pura, asi
- * que se puede probar el movimiento, el giro y el crecimiento sin un
- * `CanvasRenderingContext2D` -que jsdom no implementa- y sin esperar un frame.
- * Lo que queda en el componente es pintar y escuchar eventos.
+ * Varias serpientes recorren trayectorias FIJAS. No se dirigen: no hay puntero
+ * ni teclado, asi que tampoco hay teclas que quitarle al formulario -- el
+ * riesgo que antes habia que vigilar desaparece por construccion, no por una
+ * guarda.
  *
- * No hay estado de derrota, y es una decision de producto: esto adorna un
- * formulario de acceso. Una pantalla que le dice "perdiste" a quien viene a
- * entrar a trabajar no ayuda a nadie, asi que la serpiente no choca contra si
- * misma y los bordes se cruzan de un lado al otro.
+ * Vive aparte de `SnakeCanvas` porque `avanzar` es una funcion pura: el
+ * movimiento y la colocacion del cuerpo se prueban sin un
+ * `CanvasRenderingContext2D` -- que jsdom no implementa -- y sin esperar un
+ * frame.
+ *
+ * # Por que trayectorias cerradas y no giros guionizados
+ *
+ * Una lista de giros con duraciones tambien seria "movimiento fijo", pero
+ * deriva: a los pocos ciclos las serpientes se salen del panel y hay que
+ * envolverlas por los bordes, que corta el cuerpo y se ve como una raya suelta.
+ * Una curva de Lissajous cerrada se queda dentro por definicion, no repite el
+ * mismo trazo de forma obvia, y con frecuencias distintas cada serpiente lleva
+ * su propio dibujo sin escribir ninguno a mano.
  */
 
 export interface Point {
@@ -17,268 +26,292 @@ export interface Point {
   y: number;
 }
 
-/** Un nodo del cuerpo, ya colocado sobre el camino que dejo la cabeza. */
+/** Un nodo del cuerpo, ya colocado sobre el rastro que dejo la cabeza. */
 export interface SnakeSegment extends Point {
-  /** Radio en px. Se estrecha hacia la cola. */
+  /**
+   * Grosor en px. CONSTANTE a lo largo del cuerpo: esto es una linea, no una
+   * cola.
+   *
+   * Hubo una version que lo estrechaba hacia el final. Dos motivos para
+   * quitarlo: le daba silueta de animal, que no es lo que se pide; y como cada
+   * tramo de grosor distinto hay que trazarlo aparte, los ultimos salian tan
+   * finos que se veian como puntos suelos en vez de una linea que termina. Con
+   * grosor constante el cuerpo es UN trazo con la punta redonda.
+   */
   radio: number;
 }
 
-export interface Comida extends Point {
-  radio: number;
+/**
+ * Una trayectoria de Lissajous, en fraccion del panel.
+ *
+ * `cx`/`cy` son el centro y `rx`/`ry` la amplitud, las cuatro entre 0 y 1, asi
+ * que la misma trayectoria vale para un panel de 720 px y para uno de 390 sin
+ * recalcular nada.
+ */
+export interface Trayectoria {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  /** Frecuencias. Su relacion es la que dibuja la figura. */
+  fx: number;
+  fy: number;
+  /** Desfase, en radianes. Separa dos serpientes con la misma figura. */
+  fase: number;
+  /** Velocidad, en radianes por segundo. */
+  omega: number;
 }
 
-/** Como se esta dirigiendo la serpiente en este momento. */
-export type Entrada =
-  | { tipo: "puntero"; objetivo: Point }
-  | { tipo: "rumbo"; angulo: number }
-  | { tipo: "ninguna" };
+export interface Serpiente {
+  trayectoria: Trayectoria;
+  /** Segundos transcurridos sobre la trayectoria. */
+  t: number;
+  /**
+   * Rastro de posiciones de la cabeza, de la mas reciente a la mas antigua.
+   *
+   * El cuerpo se coloca sobre este rastro y no se calcula de la formula: sobre
+   * una Lissajous la velocidad no es constante, asi que muestrear la formula a
+   * intervalos de tiempo iguales daria nodos mas juntos en las curvas y mas
+   * separados en las rectas. Sobre el rastro se mide ARCO, y la separacion sale
+   * igual en todo el recorrido.
+   */
+  rastro: Point[];
+  /** Nodos del cuerpo. */
+  nodos: number;
+  /** Grosor de la linea, en px. */
+  grosor: number;
+  /** Lado del logo de la cabeza, en px. */
+  cabeza: number;
+  /** Opacidad, para dar profundidad entre serpientes. */
+  alfa: number;
+}
 
 export interface GameState {
-  /** Posicion de la cabeza. */
-  cabeza: Point;
-  /** Rumbo en radianes. 0 apunta a la derecha. */
-  angulo: number;
-  /**
-   * Rastro de posiciones por las que paso la cabeza, de la mas reciente a la
-   * mas antigua. El cuerpo se coloca sobre este camino, no se simula: es lo
-   * que da el movimiento continuo de slither.io en vez de una rejilla.
-   */
-  camino: Point[];
-  comida: Comida[];
-  puntos: number;
+  serpientes: Serpiente[];
   ancho: number;
   alto: number;
 }
 
-/** Numeros del juego, juntos para poder afinarlos de un vistazo. */
 export const AJUSTES = {
-  /** px por segundo. */
-  velocidad: 190,
-  /** radianes por segundo. Limita el giro para que la curva sea suave. */
-  giroMaximo: 3.6,
-  radioCabeza: 17,
-  radioCola: 6,
-  /**
-   * Nodos del cuerpo sin comer nada.
-   *
-   * 18 * 9 px daba un cuerpo de 153 px, que en un panel de 720 px de ancho se
-   * veia rechoncho. 26 lo llevan a 225 px, con presencia en escritorio y sin
-   * pasarse en el panel de 390 px del movil.
-   */
-  nodosBase: 26,
-  /** Nodos que anade cada comida. */
-  nodosPorComida: 3,
-  nodosMaximos: 60,
-  /**
-   * Separacion entre nodos a lo largo del camino, en px.
-   *
-   * Menor que el diametro del nodo mas fino (radioCola * 2 = 12) a proposito:
-   * el cuerpo se pinta como circulos, y con separacion mayor se veria como un
-   * collar de cuentas suelto en vez de un cuerpo continuo.
-   */
-  separacion: 9,
-  radioComida: 6,
-  comidaEnPantalla: 5,
-  /** Margen para no generar comida pegada al borde. */
-  margenComida: 34,
+  /** Separacion entre nodos, en px. Fina: el cuerpo es una linea. */
+  separacion: 7,
 } as const;
 
-/** Cuantos nodos tiene el cuerpo con la puntuacion actual. */
-export function nodosDelCuerpo(puntos: number): number {
-  return Math.min(
-    AJUSTES.nodosMaximos,
-    AJUSTES.nodosBase + puntos * AJUSTES.nodosPorComida,
-  );
+/**
+ * Definicion relativa de cada serpiente, antes de ajustarla al panel.
+ *
+ * Todas centradas en 0.5/0.5: asi el recorte de amplitud que mantiene la cabeza
+ * dentro del panel es simetrico y se calcula con una resta. Lo que las
+ * distingue es la FIGURA (`fx`/`fy`), no el sitio.
+ */
+export interface DefinicionSerpiente {
+  trayectoria: Omit<Trayectoria, "cx" | "cy">;
+  nodos: number;
+  grosor: number;
+  cabeza: number;
+  alfa: number;
 }
 
 /**
- * Longitud de camino que hace falta guardar.
+ * Las tres serpientes de la escena.
  *
- * Se recorta a esto en cada paso: sin el recorte el array crece sin limite
- * mientras la pestana este abierta, que es una fuga de memoria lenta en una
- * pantalla que la gente deja abierta.
+ * Figuras distintas y no la misma desfasada: dos trazos iguales corriendo en
+ * paralelo se leen como un error de repeticion. Y en distinto grosor y
+ * opacidad, que es lo que da profundidad -- la mas gruesa y opaca manda, las
+ * otras acompanan.
  */
-function caminoNecesario(puntos: number): number {
-  return nodosDelCuerpo(puntos) * AJUSTES.separacion + AJUSTES.separacion * 2;
-}
+export const DEFINICIONES: readonly DefinicionSerpiente[] = [
+  {
+    trayectoria: { rx: 0.34, ry: 0.32, fx: 3, fy: 2, fase: 0, omega: 0.4 },
+    nodos: 44,
+    grosor: 9,
+    cabeza: 46,
+    alfa: 1,
+  },
+  {
+    trayectoria: {
+      rx: 0.38,
+      ry: 0.26,
+      fx: 2,
+      fy: 3,
+      fase: Math.PI / 3,
+      omega: 0.29,
+    },
+    nodos: 36,
+    grosor: 6,
+    cabeza: 32,
+    alfa: 0.5,
+  },
+  {
+    trayectoria: {
+      rx: 0.26,
+      ry: 0.36,
+      fx: 4,
+      fy: 3,
+      fase: Math.PI / 1.4,
+      omega: 0.23,
+    },
+    nodos: 28,
+    grosor: 4,
+    cabeza: 24,
+    alfa: 0.28,
+  },
+];
 
 /**
- * `aleatorio` entra por parametro en vez de llamar a Math.random aqui dentro.
+ * Ajusta una definicion al panel.
  *
- * Es lo mismo que hace el nucleo de Go con `PuertoReloj`: con la fuente de
- * azar inyectada, una prueba puede fijar donde aparece la comida y afirmar que
- * la serpiente crecio al comerla, en vez de perseguir un objetivo que se mueve.
+ * Dos cosas que el panel decide y la definicion no puede:
+ *
+ *  - **La escala.** El panel del movil mide 390x320 y el del escritorio
+ *    720x900. Con las medidas fijas, en movil el cuerpo salia tan largo como
+ *    alto el panel y la cabeza ocupaba un tercio del ancho.
+ *  - **El recorte de amplitud.** La cabeza es una imagen de lado `cabeza`, asi
+ *    que una amplitud de 0.34 la dejaba colgando fuera del borde -- se veia
+ *    cortada por abajo en la captura del movil. Se recorta para que el centro
+ *    de la cabeza nunca pase de medio logo mas un margen.
  */
-export type Aleatorio = () => number;
-
-export function comidaNueva(
+export function dimensionar(
+  def: DefinicionSerpiente,
   ancho: number,
   alto: number,
-  aleatorio: Aleatorio,
-): Comida {
-  const m = AJUSTES.margenComida;
+): Omit<Serpiente, "t" | "rastro"> {
+  // Sobre la DIAGONAL y no sobre el lado menor: el panel del movil es
+  // 390x320, y medir por el lado corto lo castigaba dos veces -- salian lineas
+  // de 2 px y cabezas de 20, que se leian como garabatos y no como un elemento
+  // de diseno. El suelo de 0.6 es lo que mantiene presencia ahi.
+  const escala = Math.min(
+    1.1,
+    Math.max(0.6, Math.hypot(ancho, alto) / Math.hypot(720, 900)),
+  );
+  const cabeza = def.cabeza * escala;
+  const margen = cabeza / 2 + 10;
+
   return {
-    x: m + aleatorio() * Math.max(1, ancho - m * 2),
-    y: m + aleatorio() * Math.max(1, alto - m * 2),
-    radio: AJUSTES.radioComida,
+    trayectoria: {
+      ...def.trayectoria,
+      cx: 0.5,
+      cy: 0.5,
+      rx: Math.max(0.05, Math.min(def.trayectoria.rx, 0.5 - margen / ancho)),
+      ry: Math.max(0.05, Math.min(def.trayectoria.ry, 0.5 - margen / alto)),
+    },
+    nodos: Math.max(12, Math.round(def.nodos * escala)),
+    grosor: Math.max(2, def.grosor * escala),
+    cabeza,
+    alfa: def.alfa,
   };
 }
 
-export function estadoInicial(
+/** Donde esta la cabeza en el instante `t`. */
+export function posicion(
+  tr: Trayectoria,
+  t: number,
   ancho: number,
   alto: number,
-  aleatorio: Aleatorio,
-): GameState {
-  const cabeza: Point = { x: ancho / 2, y: alto / 2 };
+): Point {
   return {
-    cabeza,
-    angulo: 0,
-    // El camino arranca con un solo punto: el cuerpo se despliega detras de la
-    // cabeza en los primeros frames, sin aparecer estirado de golpe.
-    camino: [cabeza],
-    comida: Array.from({ length: AJUSTES.comidaEnPantalla }, () =>
-      comidaNueva(ancho, alto, aleatorio),
-    ),
-    puntos: 0,
+    x: ancho * (tr.cx + tr.rx * Math.sin(tr.fx * tr.omega * t + tr.fase)),
+    y: alto * (tr.cy + tr.ry * Math.sin(tr.fy * tr.omega * t)),
+  };
+}
+
+/** Rumbo de la cabeza, para girar el logo hacia donde va. */
+export function rumbo(
+  tr: Trayectoria,
+  t: number,
+  ancho: number,
+  alto: number,
+): number {
+  // Derivada analitica y no la diferencia con el frame anterior: en el primer
+  // frame no hay anterior, y a dt pequeno la diferencia es ruido numerico que
+  // haria temblar el logo.
+  const dx =
+    ancho * tr.rx * tr.fx * tr.omega * Math.cos(tr.fx * tr.omega * t + tr.fase);
+  const dy = alto * tr.ry * tr.fy * tr.omega * Math.cos(tr.fy * tr.omega * t);
+  return Math.atan2(dy, dx);
+}
+
+export function estadoInicial(ancho: number, alto: number): GameState {
+  return {
     ancho,
     alto,
+    serpientes: DEFINICIONES.map((def) => {
+      const s = dimensionar(def, ancho, alto);
+      return { ...s, t: 0, rastro: [posicion(s.trayectoria, 0, ancho, alto)] };
+    }),
   };
 }
 
-/** Diferencia angular normalizada a (-PI, PI]. */
-export function diferenciaAngular(desde: number, hasta: number): number {
-  let d = (hasta - desde) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d <= -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-/** Rumbo que pide la entrada, o null si no pide ninguno. */
-function rumboPedido(estado: GameState, entrada: Entrada): number | null {
-  switch (entrada.tipo) {
-    case "puntero": {
-      const dx = entrada.objetivo.x - estado.cabeza.x;
-      const dy = entrada.objetivo.y - estado.cabeza.y;
-      // Con el puntero encima de la cabeza no hay direccion que calcular, y
-      // atan2(0,0) daria 0 -o sea, un tiron hacia la derecha.
-      if (Math.hypot(dx, dy) < 1) return null;
-      return Math.atan2(dy, dx);
-    }
-    case "rumbo":
-      return entrada.angulo;
-    case "ninguna":
-      return null;
-  }
-}
-
-/** Envuelve una coordenada por los bordes. */
-function envolver(v: number, limite: number): number {
-  if (limite <= 0) return v;
-  return ((v % limite) + limite) % limite;
+/** Cuanto rastro hace falta guardar para vestir el cuerpo. */
+function rastroNecesario(s: Serpiente): number {
+  return s.nodos * AJUSTES.separacion + AJUSTES.separacion * 2;
 }
 
 /**
  * Un paso de simulacion.
  *
- * `dt` en segundos. Se acota antes de entrar (ver `SnakeCanvas`): con la
- * pestana en segundo plano `requestAnimationFrame` deja de llamarse, y al
- * volver el primer dt vale varios segundos, que teletransportaria la cabeza al
- * otro lado del lienzo.
+ * `dt` en segundos, y quien llama lo acota (ver `SnakeCanvas`): al volver de
+ * una pestana en segundo plano el primer dt vale varios segundos, y la cabeza
+ * daria un salto que parte el rastro.
  */
-export function avanzar(
-  estado: GameState,
-  dt: number,
-  entrada: Entrada,
-  aleatorio: Aleatorio,
-): GameState {
-  const pedido = rumboPedido(estado, entrada);
-
-  let angulo = estado.angulo;
-  if (pedido !== null) {
-    const d = diferenciaAngular(angulo, pedido);
-    const maximo = AJUSTES.giroMaximo * dt;
-    angulo += Math.max(-maximo, Math.min(maximo, d));
-  }
-
-  const avance = AJUSTES.velocidad * dt;
-  const cabeza: Point = {
-    x: envolver(estado.cabeza.x + Math.cos(angulo) * avance, estado.ancho),
-    y: envolver(estado.cabeza.y + Math.sin(angulo) * avance, estado.alto),
-  };
-
-  // Al cruzar un borde se corta el camino en vez de continuarlo: si no, el
-  // cuerpo se dibujaria como una raya recta de un extremo al otro del lienzo.
-  const cruzo =
-    Math.abs(cabeza.x - estado.cabeza.x) > estado.ancho / 2 ||
-    Math.abs(cabeza.y - estado.cabeza.y) > estado.alto / 2;
-
-  const camino = cruzo ? [cabeza] : [cabeza, ...estado.camino];
-
-  let puntos = estado.puntos;
-  const comida: Comida[] = [];
-  for (const c of estado.comida) {
-    const alcanzada =
-      Math.hypot(c.x - cabeza.x, c.y - cabeza.y) <
-      c.radio + AJUSTES.radioCabeza * 0.7;
-    if (alcanzada) {
-      puntos += 1;
-      comida.push(comidaNueva(estado.ancho, estado.alto, aleatorio));
-    } else {
-      comida.push(c);
-    }
-  }
-
+export function avanzar(estado: GameState, dt: number): GameState {
   return {
     ...estado,
-    cabeza,
-    angulo,
-    camino: recortarCamino(camino, puntos),
-    comida,
-    puntos,
+    serpientes: estado.serpientes.map((s) => {
+      const t = s.t + dt;
+      const cabeza = posicion(s.trayectoria, t, estado.ancho, estado.alto);
+      return {
+        ...s,
+        t,
+        rastro: recortar([cabeza, ...s.rastro], rastroNecesario(s)),
+      };
+    }),
   };
-}
-
-function recortarCamino(camino: Point[], puntos: number): Point[] {
-  const necesario = caminoNecesario(puntos);
-  let acumulado = 0;
-  for (let i = 1; i < camino.length; i++) {
-    acumulado += Math.hypot(
-      camino[i].x - camino[i - 1].x,
-      camino[i].y - camino[i - 1].y,
-    );
-    if (acumulado >= necesario) return camino.slice(0, i + 1);
-  }
-  return camino;
 }
 
 /**
- * Coloca los nodos del cuerpo sobre el camino, separados por arco y no por
- * indice.
+ * Recorta el rastro a la longitud que viste el cuerpo.
  *
- * Por arco y no "un nodo cada N puntos del array" porque el array crece un
- * punto por frame: a 120 Hz los puntos estan a la mitad de distancia que a
- * 60 Hz, y el cuerpo saldria con la mitad de largo en un monitor rapido.
+ * Sin esto el array crece un punto por frame mientras la pestana este abierta
+ * -- 216 000 puntos por hora a 60 Hz --, que es una fuga lenta en una pantalla
+ * que la gente deja abierta.
  */
-export function segmentos(estado: GameState): SnakeSegment[] {
-  const total = nodosDelCuerpo(estado.puntos);
-  const salida: SnakeSegment[] = [];
+function recortar(rastro: Point[], necesario: number): Point[] {
+  let acumulado = 0;
+  for (let i = 1; i < rastro.length; i++) {
+    acumulado += Math.hypot(
+      rastro[i].x - rastro[i - 1].x,
+      rastro[i].y - rastro[i - 1].y,
+    );
+    if (acumulado >= necesario) return rastro.slice(0, i + 1);
+  }
+  return rastro;
+}
 
-  // `acumulado` es la distancia de la cabeza hasta camino[indice - 1], y NO se
-  // reinicia entre nodos. Reiniciarlo era el defecto de la primera version:
-  // cada nodo volvia a recorrer `objetivo` desde donde lo dejo el anterior, asi
-  // que la separacion crecia como 1+2+3... y a los cinco nodos ya iban a 50 px
-  // en vez de a 9. Se vio en una captura -- el cuerpo parecia un collar de
-  // cuentas suelto -- y no en las pruebas, porque la que habia comparaba 60 Hz
-  // contra 120 Hz: las dos salian igual de mal y la comparacion pasaba.
+/**
+ * Coloca los nodos del cuerpo sobre el rastro, separados por ARCO.
+ *
+ * Por arco y no "un nodo cada N puntos del array" por dos razones: el array
+ * crece un punto por frame, asi que a 120 Hz los puntos estan a la mitad de
+ * distancia que a 60 Hz; y sobre una Lissajous la velocidad no es constante,
+ * asi que ni siquiera a tasa fija los puntos estan repartidos.
+ *
+ * `acumulado` NO se reinicia entre nodos. Reiniciarlo era el defecto de la
+ * primera version: cada nodo volvia a recorrer `objetivo` desde donde lo dejo
+ * el anterior, asi que la separacion crecia como 1+2+3... y el cuerpo parecia
+ * un collar de cuentas suelto. Se vio en una captura, no en las pruebas.
+ */
+export function segmentos(s: Serpiente): SnakeSegment[] {
+  const salida: SnakeSegment[] = [];
   let indice = 1;
   let acumulado = 0;
 
-  for (let n = 0; n < total; n++) {
+  for (let n = 0; n < s.nodos; n++) {
     const objetivo = n * AJUSTES.separacion;
 
-    while (indice < estado.camino.length) {
-      const a = estado.camino[indice - 1];
-      const b = estado.camino[indice];
+    while (indice < s.rastro.length) {
+      const a = s.rastro[indice - 1];
+      const b = s.rastro[indice];
       const tramo = Math.hypot(b.x - a.x, b.y - a.y);
       if (acumulado + tramo >= objetivo) break;
       acumulado += tramo;
@@ -286,27 +319,20 @@ export function segmentos(estado: GameState): SnakeSegment[] {
     }
 
     let punto: Point;
-    if (indice < estado.camino.length) {
-      const a = estado.camino[indice - 1];
-      const b = estado.camino[indice];
+    if (indice < s.rastro.length) {
+      const a = s.rastro[indice - 1];
+      const b = s.rastro[indice];
       const tramo = Math.hypot(b.x - a.x, b.y - a.y);
       const t = tramo === 0 ? 0 : (objetivo - acumulado) / tramo;
       punto = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
     } else {
-      // El camino se acabo: el resto de nodos se apila en la cola. Pasa en los
-      // primeros frames y justo despues de cruzar un borde, y es lo que hace
-      // que el cuerpo se despliegue en vez de aparecer estirado de golpe.
-      punto = estado.camino[estado.camino.length - 1] ?? estado.cabeza;
+      // El rastro se acabo: el resto se apila en la cola. Pasa en los primeros
+      // segundos, y es lo que hace que el cuerpo se despliegue detras de la
+      // cabeza en vez de aparecer estirado de golpe.
+      punto = s.rastro[s.rastro.length - 1];
     }
 
-    // Se estrecha hacia la cola con una curva, no lineal: la lineal deja el
-    // cuerpo con pinta de cono y no de animal.
-    const t = total === 1 ? 0 : n / (total - 1);
-    const radio =
-      AJUSTES.radioCola +
-      (AJUSTES.radioCabeza - AJUSTES.radioCola) * Math.pow(1 - t, 0.65);
-
-    salida.push({ ...punto, radio });
+    salida.push({ ...punto, radio: s.grosor });
   }
 
   return salida;

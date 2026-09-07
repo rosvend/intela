@@ -1,69 +1,44 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import marca from "../marca-intela.png";
-import { esCampoDeTexto } from "./foco";
 import {
-  AJUSTES,
   avanzar,
+  DEFINICIONES,
+  dimensionar,
   estadoInicial,
+  posicion,
+  rumbo,
   segmentos,
-  type Entrada,
   type GameState,
-  type Point,
+  type Serpiente,
 } from "./snake";
 
 /**
- * El lienzo del panel derecho: la marca de Intela como cabeza de una serpiente
- * que se dirige con el raton o con el teclado.
+ * El panel derecho: tres marcas de Intela recorriendo trayectorias fijas.
  *
- * # Que hace y que no
+ * # Adorno, y nada mas
  *
- * Adorna, no informa. Nada de lo que pasa aqui cambia el estado de la sesion
- * ni se manda al servidor, asi que para quien usa lector de pantalla se anuncia
- * una vez -que hay un juego, y que se puede ignorar- y no se narra el
- * movimiento. La puntuacion no se guarda en ningun sitio.
+ * No se dirige. No hay puntero ni teclado, asi que no hay ninguna tecla que
+ * pueda pelearse con el formulario -- la guarda de foco que hacia falta cuando
+ * el juego era interactivo desaparece con el juego, no se queda como codigo
+ * muerto por si acaso.
+ *
+ * Por eso el lienzo va `aria-hidden` y sin `tabIndex`: no se puede hacer nada
+ * con el, asi que anunciarlo o darle una parada de tabulador seria mandar a
+ * quien navega con teclado o con lector de pantalla a un sitio sin salida. La
+ * marca ya la nombra el logo del formulario.
  *
  * # Por que la logica esta en otro fichero
  *
  * `snake.ts` no toca el DOM y `avanzar` es pura. Aqui queda lo que
- * necesariamente es efecto: medir el contenedor, escuchar eventos, pedir
- * frames y pintar.
- *
- * # El teclado no le quita las teclas al formulario
- *
- * Es el requisito que mas facil se rompe: un formulario de acceso y un juego
- * que escucha flechas en `window` se pelean por las mismas teclas. Dos
- * condiciones tienen que cumplirse para que una tecla mueva la serpiente:
- *
- *  1. Que el foco NO este en un campo de formulario. Escribir la contrasena
- *     con las flechas para corregir una letra no puede mover nada.
- *  2. Que el lienzo este enfocado o el puntero encima. Sin esto habria que
- *     llamar a preventDefault sobre las flechas en toda la pagina, y en el
- *     movil -donde el panel queda debajo del formulario- eso le quitaria a
- *     quien navega con teclado la forma de bajar por la pagina.
- *
- * WASD solo pide la primera: esas teclas no hacen scroll, asi que no hay nada
- * que robar.
+ * necesariamente es efecto: medir el contenedor, pedir frames y pintar.
  */
-
-const RUMBOS: Readonly<Record<string, number>> = {
-  ArrowRight: 0,
-  ArrowDown: Math.PI / 2,
-  ArrowLeft: Math.PI,
-  ArrowUp: -Math.PI / 2,
-  d: 0,
-  s: Math.PI / 2,
-  a: Math.PI,
-  w: -Math.PI / 2,
-};
-
-const FLECHAS = new Set(["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"]);
 
 /** Carga la imagen antes de arrancar el bucle. Resuelve a null si no carga. */
 function cargarMarca(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img: HTMLImageElement = new Image();
     img.onload = () => resolve(img);
-    // Sin la imagen el juego sigue: la cabeza se pinta como un circulo. Una
+    // Sin la imagen el bucle sigue: la cabeza se pinta como un circulo. Una
     // pantalla de acceso no se queda en blanco porque falle un PNG.
     img.onerror = () => resolve(null);
     img.src = src;
@@ -73,7 +48,6 @@ function cargarMarca(src: string): Promise<HTMLImageElement | null> {
 export default function SnakeCanvas() {
   const lienzoRef = useRef<HTMLCanvasElement | null>(null);
   const contenedorRef = useRef<HTMLDivElement | null>(null);
-  const [puntos, setPuntos] = useState(0);
 
   useEffect(() => {
     const lienzo = lienzoRef.current;
@@ -91,10 +65,7 @@ export default function SnakeCanvas() {
     let estado: GameState = estadoInicial(
       Math.max(1, contenedor.clientWidth),
       Math.max(1, contenedor.clientHeight),
-      Math.random,
     );
-    let entrada: Entrada = { tipo: "ninguna" };
-    let punteroDentro = false;
     let frame = 0;
     let anterior = 0;
     let vivo = true;
@@ -111,116 +82,95 @@ export default function SnakeCanvas() {
       lienzo!.height = Math.round(alto * dpr);
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+      if (ancho === estado.ancho && alto === estado.alto) return;
+
+      // Se rehace la geometria, no solo el rastro: el grosor, el largo y el
+      // tamano de la cabeza dependen del panel, y al pasar de escritorio a
+      // movil hay que reescalarlos. El instante se conserva, para que las
+      // serpientes no vuelvan al principio de su figura por un resize.
+      const tiempos = estado.serpientes.map((s) => s.t);
       estado = {
-        ...estado,
         ancho,
         alto,
-        // Al encogerse el panel la cabeza puede quedar fuera. Se trae dentro
-        // en vez de dejar que el envoltorio la haga aparecer por el otro lado.
-        cabeza: {
-          x: Math.min(estado.cabeza.x, ancho),
-          y: Math.min(estado.cabeza.y, alto),
-        },
+        serpientes: DEFINICIONES.map((def, i) => {
+          const s = dimensionar(def, ancho, alto);
+          const t = tiempos[i] ?? 0;
+          return { ...s, t, rastro: [posicion(s.trayectoria, t, ancho, alto)] };
+        }),
       };
     }
 
-    function pintar() {
+    /**
+     * Pinta una serpiente como UNA linea: un solo trazo por los centros de los
+     * nodos.
+     *
+     * Un trazo y no un circulo por nodo: con circulos el cuerpo se veia como un
+     * collar de cuentas en cuanto los nodos dejaban de solaparse. Y UNO y no
+     * varios tramos de distinto grosor: la version que estrechaba el final
+     * tenia que trazar cada tramo aparte, y los ultimos salian tan finos que se
+     * veian como puntos sueltos -- visible en la captura del movil. Con grosor
+     * constante basta `lineCap: "round"` para que la linea termine limpia.
+     */
+    function pintarSerpiente(s: Serpiente) {
       const c = ctx!;
-      c.clearRect(0, 0, estado.ancho, estado.alto);
+      const cuerpo = segmentos(s);
+      if (cuerpo.length < 2) return;
 
-      for (const comida of estado.comida) {
-        c.beginPath();
-        c.arc(comida.x, comida.y, comida.radio, 0, Math.PI * 2);
-        c.fillStyle = "rgba(255,255,255,0.34)";
-        c.fill();
-      }
-
-      // De la cola a la cabeza, para que los nodos de delante queden encima.
-      const cuerpo = segmentos(estado);
-      for (let i = cuerpo.length - 1; i >= 0; i--) {
-        const nodo = cuerpo[i];
-        c.beginPath();
-        c.arc(nodo.x, nodo.y, nodo.radio, 0, Math.PI * 2);
-        // Se aclara hacia la cabeza: da volumen sin una sombra por nodo, que a
-        // sesenta nodos por frame se nota en el rendimiento.
-        const t = cuerpo.length === 1 ? 0 : i / (cuerpo.length - 1);
-        c.fillStyle = `rgba(255,255,255,${(0.1 + 0.3 * (1 - t)).toFixed(3)})`;
-        c.fill();
-      }
-
-      const { cabeza, angulo } = estado;
-      const lado = AJUSTES.radioCabeza * 2.6;
       c.save();
+      c.globalAlpha = s.alfa;
+      c.strokeStyle = "#ffffff";
+      c.lineCap = "round";
+      c.lineJoin = "round";
+      c.lineWidth = s.grosor;
+
+      c.beginPath();
+      c.moveTo(cuerpo[0].x, cuerpo[0].y);
+      for (let i = 1; i < cuerpo.length; i++) {
+        c.lineTo(cuerpo[i].x, cuerpo[i].y);
+      }
+      c.stroke();
+
+      // La cabeza, girada hacia donde va.
+      const cabeza = posicion(s.trayectoria, s.t, estado.ancho, estado.alto);
+      const angulo = rumbo(s.trayectoria, s.t, estado.ancho, estado.alto);
       c.translate(cabeza.x, cabeza.y);
       c.rotate(angulo);
       if (imagen) {
-        c.drawImage(imagen, -lado / 2, -lado / 2, lado, lado);
+        c.drawImage(imagen, -s.cabeza / 2, -s.cabeza / 2, s.cabeza, s.cabeza);
       } else {
         c.beginPath();
-        c.arc(0, 0, AJUSTES.radioCabeza, 0, Math.PI * 2);
+        c.arc(0, 0, s.cabeza / 2.6, 0, Math.PI * 2);
         c.fillStyle = "#ffffff";
         c.fill();
       }
       c.restore();
     }
 
+    function pintar() {
+      ctx!.clearRect(0, 0, estado.ancho, estado.alto);
+      // De la mas tenue a la mas opaca, para que la principal quede encima.
+      for (let i = estado.serpientes.length - 1; i >= 0; i--) {
+        pintarSerpiente(estado.serpientes[i]);
+      }
+    }
+
     function bucle(ahora: number) {
       if (!vivo) return;
       // El primer frame no tiene anterior con el que comparar, y dt se acota:
       // al volver de una pestana en segundo plano vendria un salto de varios
-      // segundos que teletransportaria la cabeza.
+      // segundos que partiria el rastro.
       const dt = anterior === 0 ? 0 : Math.min((ahora - anterior) / 1000, 0.05);
       anterior = ahora;
 
-      const siguiente = avanzar(estado, dt, entrada, Math.random);
-      if (siguiente.puntos !== estado.puntos) setPuntos(siguiente.puntos);
-      estado = siguiente;
-
+      estado = avanzar(estado, dt);
       pintar();
       frame = window.requestAnimationFrame(bucle);
-    }
-
-    function alMover(e: PointerEvent) {
-      const caja = lienzo!.getBoundingClientRect();
-      const objetivo: Point = {
-        x: e.clientX - caja.left,
-        y: e.clientY - caja.top,
-      };
-      entrada = { tipo: "puntero", objetivo };
-    }
-
-    function alEntrar() {
-      punteroDentro = true;
-    }
-
-    function alSalir() {
-      punteroDentro = false;
-      // Se deja de perseguir el puntero, pero se conserva el rumbo: la
-      // serpiente sigue recta en vez de congelarse.
-      entrada = { tipo: "ninguna" };
-    }
-
-    function alPulsar(e: KeyboardEvent) {
-      // Condicion 1: nunca por encima de un campo de formulario.
-      if (esCampoDeTexto(document.activeElement)) return;
-
-      const rumbo = RUMBOS[e.key] ?? RUMBOS[e.key.toLowerCase()];
-      if (rumbo === undefined) return;
-
-      // Condicion 2, solo para las flechas: sin foco ni puntero en el lienzo,
-      // las flechas siguen siendo del scroll de la pagina.
-      const enfocado = document.activeElement === lienzo;
-      if (FLECHAS.has(e.key) && !enfocado && !punteroDentro) return;
-
-      if (FLECHAS.has(e.key)) e.preventDefault();
-      entrada = { tipo: "rumbo", angulo: rumbo };
     }
 
     // ResizeObserver es lo correcto -- mide el contenedor, no la ventana, asi
     // que tambien acierta cuando el panel cambia sin que cambie la ventana --
     // pero se usa con guarda: si no existe, se cae al evento `resize`. Una
-    // pantalla de acceso no puede quedarse en blanco por una API ausente, y
-    // asi tampoco hace falta un doble global para probar el resto.
+    // pantalla de acceso no puede quedarse en blanco por una API ausente.
     const hayObservador = typeof ResizeObserver !== "undefined";
     const observador = hayObservador ? new ResizeObserver(medir) : null;
     if (observador) {
@@ -230,21 +180,19 @@ export default function SnakeCanvas() {
     }
     medir();
 
-    lienzo.addEventListener("pointermove", alMover);
-    lienzo.addEventListener("pointerenter", alEntrar);
-    lienzo.addEventListener("pointerleave", alSalir);
-    window.addEventListener("keydown", alPulsar);
-
     void cargarMarca(marca).then((img) => {
       // Puede resolverse despues de desmontar: sin esta guarda se pintaria
       // sobre un lienzo que ya no esta en el documento.
       if (!vivo) return;
       imagen = img;
+      // Con movimiento reducido no hay bucle que la recoja, asi que se repinta
+      // el fotograma quieto en cuanto la imagen esta.
+      if (quietud?.matches) pintar();
     });
 
     if (quietud?.matches) {
-      // Con movimiento reducido se pinta un fotograma y se queda quieto: el
-      // panel no se ve vacio y nada se mueve sin que nadie lo pida.
+      // Un fotograma y quieto: el panel no se ve vacio y nada se mueve sin que
+      // nadie lo haya pedido.
       pintar();
     } else {
       frame = window.requestAnimationFrame(bucle);
@@ -258,30 +206,17 @@ export default function SnakeCanvas() {
       } else {
         window.removeEventListener("resize", medir);
       }
-      lienzo.removeEventListener("pointermove", alMover);
-      lienzo.removeEventListener("pointerenter", alEntrar);
-      lienzo.removeEventListener("pointerleave", alSalir);
-      window.removeEventListener("keydown", alPulsar);
     };
   }, []);
 
   return (
     <div className="acceso-juego" ref={contenedorRef}>
-      <canvas
-        ref={lienzoRef}
-        className="acceso-lienzo"
-        tabIndex={0}
-        role="img"
-        aria-label="Juego: la marca de Intela como serpiente. Se dirige moviendo el puntero sobre el panel, o con las flechas y WASD. Es decorativo y se puede ignorar."
-      />
-      <div className="acceso-juego-pie">
-        <p>Muévela sobre el panel, o usa las flechas y WASD.</p>
-        {/* aria-live para que la puntuacion se anuncie al cambiar, sin narrar
-            cada frame del movimiento. */}
-        <p className="acceso-puntos" aria-live="polite">
-          {puntos === 1 ? "1 punto" : `${puntos} puntos`}
-        </p>
-      </div>
+      {/*
+        `aria-hidden`: es decoracion con la que no se puede interactuar. Sin
+        `tabIndex`, por lo mismo -- una parada de tabulador que no lleva a
+        ninguna accion es una trampa. La marca la nombra el logo del formulario.
+      */}
+      <canvas ref={lienzoRef} className="acceso-lienzo" aria-hidden="true" />
     </div>
   );
 }

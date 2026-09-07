@@ -28,7 +28,15 @@ function contexto2DFalso() {
     translate: vi.fn(),
     rotate: vi.fn(),
     drawImage: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
     fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 0,
+    lineCap: "butt" as CanvasLineCap,
+    lineJoin: "miter" as CanvasLineJoin,
+    globalAlpha: 1,
   };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     ctx as unknown as CanvasRenderingContext2D,
@@ -37,25 +45,37 @@ function contexto2DFalso() {
 }
 
 describe("SnakeCanvas", () => {
-  it("se anuncia una vez y se puede ignorar", () => {
-    render(<SnakeCanvas />);
-    const lienzo = screen.getByRole("img");
-    // El nombre dice que hay un juego, como se dirige, y que es decorativo.
-    // Quien usa lector de pantalla no necesita el movimiento narrado.
-    expect(lienzo.getAttribute("aria-label")).toContain("decorativo");
-    expect(lienzo.getAttribute("aria-label")).toContain("flechas");
+  it("se esconde del lector de pantalla: no se puede hacer nada con el", () => {
+    const { container } = render(<SnakeCanvas />);
+    const lienzo = container.querySelector("canvas");
+    expect(lienzo?.getAttribute("aria-hidden")).toBe("true");
+    // Sin rol, porque no hay nada que anunciar.
+    expect(screen.queryByRole("img")).toBeNull();
   });
 
-  it("es alcanzable con el tabulador, para poder dirigirlo con el teclado", () => {
+  it("no es una parada de tabulador", () => {
+    // Una parada que no lleva a ninguna accion es una trampa para quien
+    // navega con teclado. Antes era enfocable porque se dirigia; ya no.
+    const { container } = render(<SnakeCanvas />);
+    expect(container.querySelector("canvas")?.hasAttribute("tabindex")).toBe(
+      false,
+    );
+  });
+
+  it("no escucha el teclado, asi que no puede robarle teclas al formulario", () => {
+    contexto2DFalso();
+    const poner = vi.spyOn(window, "addEventListener");
     render(<SnakeCanvas />);
-    expect(screen.getByRole("img").getAttribute("tabindex")).toBe("0");
+    // La guarda de foco existia porque habia un keydown en window. Al dejar de
+    // ser interactivo el riesgo desaparece por construccion: no hay escuchador.
+    expect(poner.mock.calls.some(([t]) => t === "keydown")).toBe(false);
   });
 
   it("no revienta sin contexto 2D", () => {
     // El navegador con el lienzo deshabilitado, y jsdom por defecto.
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-    expect(() => render(<SnakeCanvas />)).not.toThrow();
-    expect(screen.getByRole("img")).toBeTruthy();
+    const { container } = render(<SnakeCanvas />);
+    expect(container.querySelector("canvas")).toBeTruthy();
   });
 
   it("pide frames al montar y los cancela al desmontar", () => {
@@ -70,18 +90,6 @@ describe("SnakeCanvas", () => {
     // Sin esto el bucle sigue pintando sobre un lienzo que ya no esta en el
     // documento, que es la fuga que el requisito nombra.
     expect(cancelar).toHaveBeenCalled();
-  });
-
-  it("quita del window el escuchador de teclas al desmontar", () => {
-    contexto2DFalso();
-    const quitar = vi.spyOn(window, "removeEventListener");
-
-    const { unmount } = render(<SnakeCanvas />);
-    unmount();
-
-    // El `keydown` vive en window, no en el lienzo: si se quedara, seguiria
-    // robando flechas en la pantalla siguiente.
-    expect(quitar.mock.calls.some(([tipo]) => tipo === "keydown")).toBe(true);
   });
 
   it("deja de observar el tamano al desmontar", () => {
@@ -116,8 +124,48 @@ describe("SnakeCanvas", () => {
     expect(quitar.mock.calls.some(([t]) => t === "resize")).toBe(true);
   });
 
-  it("empieza en cero puntos", () => {
+  it("pinta las tres serpientes en cada frame", () => {
+    const ctx = contexto2DFalso();
+    // En un array y no en un `let`: asignar dentro del callback no lo ve el
+    // analisis de flujo de TypeScript, que despues estrecha la variable a
+    // `never` y no la deja llamar.
+    const pedidos: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      pedidos.push(cb);
+      return 1;
+    });
+
     render(<SnakeCanvas />);
-    expect(screen.getByText("0 puntos")).toBeTruthy();
+    ctx.stroke.mockClear();
+    ctx.drawImage.mockClear();
+    pedidos[0]?.(16);
+
+    // Un trazo por serpiente como minimo, y la cabeza de cada una. Sin imagen
+    // cargada todavia la cabeza es un circulo, asi que se cuenta `restore`,
+    // que se llama una vez por serpiente.
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(ctx.restore.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("usa trazos y no un circulo por nodo", () => {
+    const ctx = contexto2DFalso();
+    // En un array y no en un `let`: asignar dentro del callback no lo ve el
+    // analisis de flujo de TypeScript, que despues estrecha la variable a
+    // `never` y no la deja llamar.
+    const pedidos: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      pedidos.push(cb);
+      return 1;
+    });
+
+    render(<SnakeCanvas />);
+    ctx.arc.mockClear();
+    ctx.stroke.mockClear();
+    pedidos[0]?.(16);
+
+    // Con circulos el cuerpo se veia como un collar de cuentas. Ahora el cuerpo
+    // es `stroke`; los `arc` que queden son solo las cabezas sin imagen.
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThan(0);
+    expect(ctx.arc.mock.calls.length).toBeLessThanOrEqual(3);
   });
 });

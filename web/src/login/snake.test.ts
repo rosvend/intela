@@ -2,238 +2,217 @@ import { describe, expect, it } from "vitest";
 import {
   AJUSTES,
   avanzar,
-  comidaNueva,
-  diferenciaAngular,
   estadoInicial,
-  nodosDelCuerpo,
+  posicion,
+  rumbo,
   segmentos,
-  type Entrada,
+  DEFINICIONES,
+  dimensionar,
   type GameState,
 } from "./snake";
 
-/** Azar fijo: la comida siempre cae en el mismo sitio. */
-const fijo = (v: number) => () => v;
+const ANCHO = 720;
+const ALTO = 900;
 
-/** Estado sin comida, para probar el movimiento sin que crezca por el camino. */
-function sinComida(ancho = 400, alto = 400): GameState {
-  return { ...estadoInicial(ancho, alto, fijo(0.5)), comida: [] };
+function correr(segundos: number, hz = 60): GameState {
+  let e = estadoInicial(ANCHO, ALTO);
+  const dt = 1 / hz;
+  for (let i = 0; i < segundos * hz; i++) e = avanzar(e, dt);
+  return e;
 }
 
-describe("diferenciaAngular", () => {
-  it("toma el camino corto por encima de PI", () => {
-    // De 170 a -170 grados son 20 grados por el lado corto, no 340 por el largo.
-    const d = diferenciaAngular((170 * Math.PI) / 180, (-170 * Math.PI) / 180);
-    expect(d).toBeGreaterThan(0);
-    expect(Math.abs(d)).toBeLessThan(Math.PI / 4);
+describe("la escena", () => {
+  it("trae varias serpientes, con figuras distintas", () => {
+    const e = estadoInicial(ANCHO, ALTO);
+    expect(e.serpientes.length).toBeGreaterThan(1);
+
+    // Figuras y no la misma desfasada: dos trazos iguales en paralelo se leen
+    // como un error de repeticion.
+    const figuras = new Set(
+      e.serpientes.map((s) => `${s.trayectoria.fx}:${s.trayectoria.fy}`),
+    );
+    expect(figuras.size).toBe(e.serpientes.length);
   });
 
-  it("es cero contra si mismo", () => {
-    expect(diferenciaAngular(1.2, 1.2)).toBeCloseTo(0);
+  it("las diferencia por grosor y opacidad, para dar profundidad", () => {
+    const e = estadoInicial(ANCHO, ALTO);
+    expect(new Set(e.serpientes.map((s) => s.grosor)).size).toBe(
+      e.serpientes.length,
+    );
+    expect(new Set(e.serpientes.map((s) => s.alfa)).size).toBe(
+      e.serpientes.length,
+    );
   });
 });
 
-describe("avanzar", () => {
-  it("mueve la cabeza segun el rumbo y el tiempo", () => {
-    const e = sinComida();
-    const d = avanzar(e, 0.5, { tipo: "ninguna" }, fijo(0.5));
-    // angulo 0 apunta a la derecha, asi que solo cambia x.
-    expect(d.cabeza.x).toBeCloseTo(e.cabeza.x + AJUSTES.velocidad * 0.5);
-    expect(d.cabeza.y).toBeCloseTo(e.cabeza.y);
-  });
-
-  it("gira hacia el puntero, pero no mas de lo que permite el giro maximo", () => {
-    const e = sinComida();
-    // Objetivo justo detras: pide media vuelta, que es mas de lo que cabe en
-    // un frame. Ahi esta la suavidad de la curva.
-    const entrada: Entrada = {
-      tipo: "puntero",
-      objetivo: { x: e.cabeza.x - 100, y: e.cabeza.y },
-    };
-    const dt = 0.1;
-    const d = avanzar(e, dt, entrada, fijo(0.5));
-
-    expect(Math.abs(d.angulo)).toBeLessThanOrEqual(
-      AJUSTES.giroMaximo * dt + 1e-9,
-    );
-    expect(Math.abs(d.angulo)).toBeGreaterThan(0);
-  });
-
-  it("ignora un puntero encima de la cabeza en vez de tirar a la derecha", () => {
-    // atan2(0,0) devuelve 0: sin la guarda, poner el raton sobre la cabeza
-    // enderezaria la serpiente hacia la derecha de golpe.
-    const e = { ...sinComida(), angulo: Math.PI / 2 };
-    const d = avanzar(
-      e,
-      0.1,
-      { tipo: "puntero", objetivo: { ...e.cabeza } },
-      fijo(0.5),
-    );
-    expect(d.angulo).toBeCloseTo(Math.PI / 2);
-  });
-
-  it("cruza los bordes en vez de detenerse", () => {
-    const e: GameState = { ...sinComida(200, 200), cabeza: { x: 195, y: 100 } };
-    const d = avanzar(e, 0.2, { tipo: "ninguna" }, fijo(0.5));
-    expect(d.cabeza.x).toBeGreaterThanOrEqual(0);
-    expect(d.cabeza.x).toBeLessThan(200);
-    // Y reaparece por la izquierda, no se queda pegado al borde derecho.
-    expect(d.cabeza.x).toBeLessThan(195);
-  });
-
-  it("corta el camino al cruzar, para no dibujar una raya de lado a lado", () => {
-    const e: GameState = {
-      ...sinComida(200, 200),
-      cabeza: { x: 195, y: 100 },
-      camino: [
-        { x: 195, y: 100 },
-        { x: 180, y: 100 },
-        { x: 165, y: 100 },
-      ],
-    };
-    const d = avanzar(e, 0.2, { tipo: "ninguna" }, fijo(0.5));
-    expect(d.camino).toHaveLength(1);
-  });
-
-  it("suma un punto y crece al comer", () => {
-    const e = sinComida();
-    const conComida: GameState = {
-      ...e,
-      comida: [
-        { x: e.cabeza.x + 4, y: e.cabeza.y, radio: AJUSTES.radioComida },
-      ],
-    };
-    const antes = nodosDelCuerpo(conComida.puntos);
-
-    const d = avanzar(conComida, 0.016, { tipo: "ninguna" }, fijo(0.5));
-
-    expect(d.puntos).toBe(1);
-    expect(nodosDelCuerpo(d.puntos)).toBeGreaterThan(antes);
-    // La comida no desaparece: se repone, para que el lienzo no se vacie.
-    expect(d.comida).toHaveLength(1);
-  });
-
-  it("no crece sin limite", () => {
-    expect(nodosDelCuerpo(10_000)).toBe(AJUSTES.nodosMaximos);
-  });
-
-  it("no deja crecer el camino sin limite", () => {
-    // La fuga lenta: la pantalla de acceso se queda abierta, y un punto por
-    // frame a 60 Hz son 216 000 puntos por hora si nadie los recorta.
-    let e = sinComida();
-    for (let i = 0; i < 3000; i++) {
-      e = avanzar(e, 1 / 60, { tipo: "ninguna" }, fijo(0.5));
+describe("las trayectorias son fijas", () => {
+  it("no dependen de nada mas que del instante", () => {
+    // Es lo que hace que el movimiento sea "un conjunto de movimientos fijos":
+    // sin azar y sin entrada, el mismo t da siempre el mismo punto.
+    for (const def of DEFINICIONES) {
+      const s = dimensionar(def, ANCHO, ALTO);
+      const a = posicion(s.trayectoria, 3.5, ANCHO, ALTO);
+      const b = posicion(s.trayectoria, 3.5, ANCHO, ALTO);
+      expect(a).toEqual(b);
     }
-    const tope = nodosDelCuerpo(e.puntos) * AJUSTES.separacion;
-    // Con el recorte, el camino guardado cubre el largo del cuerpo y poco mas.
-    expect(e.camino.length).toBeLessThan(tope);
+  });
+
+  it("dos corridas de la misma duracion acaban igual", () => {
+    const a = correr(4);
+    const b = correr(4);
+    expect(a.serpientes.map((s) => s.t)).toEqual(b.serpientes.map((s) => s.t));
+    expect(a.serpientes[0].rastro[0]).toEqual(b.serpientes[0].rastro[0]);
+  });
+
+  it("se quedan dentro del panel", () => {
+    // La razon de elegir una curva cerrada y no una lista de giros: los giros
+    // derivan y hay que envolver por los bordes, que corta el cuerpo.
+    const e = correr(30);
+    for (const s of e.serpientes) {
+      for (const p of s.rastro) {
+        expect(p.x).toBeGreaterThanOrEqual(0);
+        expect(p.x).toBeLessThanOrEqual(ANCHO);
+        expect(p.y).toBeGreaterThanOrEqual(0);
+        expect(p.y).toBeLessThanOrEqual(ALTO);
+      }
+    }
+  });
+
+  it("recorren la figura entera, no un trozo", () => {
+    const e = correr(60);
+    const s = e.serpientes[0];
+    const puntos = Array.from({ length: 400 }, (_, i) =>
+      posicion(s.trayectoria, (i / 400) * 60, ANCHO, ALTO),
+    );
+    const xs = puntos.map((p) => p.x);
+    const ys = puntos.map((p) => p.y);
+    // Cubre la mayor parte de la amplitud que declara la trayectoria.
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(
+      ANCHO * s.trayectoria.rx * 1.5,
+    );
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(
+      ALTO * s.trayectoria.ry * 1.5,
+    );
+  });
+
+  it("el rumbo apunta hacia donde se mueve la cabeza", () => {
+    const s = dimensionar(DEFINICIONES[0], ANCHO, ALTO);
+    const t = 2.2;
+    const ahora = posicion(s.trayectoria, t, ANCHO, ALTO);
+    const luego = posicion(s.trayectoria, t + 0.01, ANCHO, ALTO);
+    const observado = Math.atan2(luego.y - ahora.y, luego.x - ahora.x);
+    const calculado = rumbo(s.trayectoria, t, ANCHO, ALTO);
+
+    const d = Math.abs(
+      Math.atan2(
+        Math.sin(observado - calculado),
+        Math.cos(observado - calculado),
+      ),
+    );
+    expect(d).toBeLessThan(0.05);
   });
 });
 
-describe("segmentos", () => {
-  it("separa los nodos por distancia recorrida, no por indice del array", () => {
-    // Es lo que hace que el cuerpo mida lo mismo a 60 y a 120 Hz.
-    const lento = (() => {
-      let e = sinComida();
-      for (let i = 0; i < 400; i++)
-        e = avanzar(e, 1 / 60, { tipo: "ninguna" }, fijo(0.5));
-      return segmentos(e);
-    })();
-    const rapido = (() => {
-      let e = sinComida();
-      for (let i = 0; i < 800; i++)
-        e = avanzar(e, 1 / 120, { tipo: "ninguna" }, fijo(0.5));
-      return segmentos(e);
-    })();
+describe("el cuerpo", () => {
+  it("separa los nodos exactamente la distancia configurada", () => {
+    // LA prueba que faltaba en la primera version: la que habia comparaba
+    // 60 Hz contra 120 Hz y las dos salian igual de mal, porque el acumulado
+    // se reiniciaba en cada nodo y la separacion crecia como 1+2+3...
+    const e = correr(8);
+    for (const s of e.serpientes) {
+      const cuerpo = segmentos(s);
+      for (let i = 1; i < cuerpo.length; i++) {
+        const d = Math.hypot(
+          cuerpo[i].x - cuerpo[i - 1].x,
+          cuerpo[i].y - cuerpo[i - 1].y,
+        );
+        expect(d).toBeCloseTo(AJUSTES.separacion, 1);
+      }
+    }
+  });
 
-    expect(lento).toHaveLength(rapido.length);
-
-    const largo = (s: typeof lento) =>
-      Math.hypot(s[0].x - s[s.length - 1].x, s[0].y - s[s.length - 1].y);
-    // Mismo largo fisico con el doble de frames: la diferencia queda en el
-    // ruido de un paso, no en la mitad.
-    expect(Math.abs(largo(lento) - largo(rapido))).toBeLessThan(
+  it("mide lo mismo a 60 y a 120 Hz", () => {
+    const largo = (e: GameState) => {
+      const c = segmentos(e.serpientes[0]);
+      return Math.hypot(c[0].x - c[c.length - 1].x, c[0].y - c[c.length - 1].y);
+    };
+    expect(Math.abs(largo(correr(8, 60)) - largo(correr(8, 120)))).toBeLessThan(
       AJUSTES.separacion,
     );
   });
 
-  it("separa los nodos exactamente la distancia configurada", () => {
-    // LA prueba que faltaba. La version anterior comparaba 60 Hz contra 120 Hz,
-    // y las dos salian igual de mal: la separacion crecia como 1+2+3... porque
-    // el acumulado se reiniciaba en cada nodo. Una comparacion relativa no ve
-    // un defecto que afecta a los dos lados por igual; hay que fijar el valor.
-    let e = sinComida(2000, 2000);
-    // En linea recta, para que la distancia entre nodos sea la del arco.
-    for (let i = 0; i < 300; i++) {
-      e = avanzar(e, 1 / 60, { tipo: "ninguna" }, fijo(0.5));
-    }
-    const s = segmentos(e);
-
-    for (let i = 1; i < s.length; i++) {
-      const d = Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y);
-      expect(d).toBeCloseTo(AJUSTES.separacion, 1);
+  it("es una LINEA: el grosor es el mismo de punta a punta", () => {
+    // Lo pedido explicitamente. La version anterior lo estrechaba hacia el
+    // final: le daba silueta de animal, y como cada tramo de grosor distinto
+    // hay que trazarlo aparte, los mas finos se veian como puntos sueltos.
+    for (const s of correr(8).serpientes) {
+      const cuerpo = segmentos(s);
+      for (const n of cuerpo) {
+        expect(n.radio).toBe(s.grosor);
+      }
     }
   });
 
-  it("mantiene el cuerpo mas corto que el camino guardado", () => {
-    // Con la separacion desbocada el cuerpo se salia del camino y los ultimos
-    // nodos se apilaban en la cola: el sintoma visible era un cuerpo corto con
-    // un amasijo al final.
-    let e = sinComida(2000, 2000);
-    for (let i = 0; i < 300; i++) {
-      e = avanzar(e, 1 / 60, { tipo: "ninguna" }, fijo(0.5));
-    }
-    const s = segmentos(e);
-    const largoCuerpo = Math.hypot(
-      s[0].x - s[s.length - 1].x,
-      s[0].y - s[s.length - 1].y,
-    );
-    expect(largoCuerpo).toBeCloseTo(
-      (nodosDelCuerpo(e.puntos) - 1) * AJUSTES.separacion,
-      0,
-    );
-  });
-
-  it("se estrecha de la cabeza a la cola", () => {
-    let e = sinComida();
-    for (let i = 0; i < 200; i++)
-      e = avanzar(e, 1 / 60, { tipo: "ninguna" }, fijo(0.5));
-    const s = segmentos(e);
-
-    expect(s[0].radio).toBeCloseTo(AJUSTES.radioCabeza);
-    expect(s[s.length - 1].radio).toBeCloseTo(AJUSTES.radioCola);
-    for (let i = 1; i < s.length; i++) {
-      expect(s[i].radio).toBeLessThanOrEqual(s[i - 1].radio + 1e-9);
+  it("no revienta con un rastro de un solo punto", () => {
+    // El primer frame, antes de que la cabeza haya dejado rastro.
+    const e = estadoInicial(ANCHO, ALTO);
+    for (const s of e.serpientes) {
+      const cuerpo = segmentos(s);
+      expect(cuerpo).toHaveLength(s.nodos);
+      for (const n of cuerpo) {
+        expect(Number.isFinite(n.x)).toBe(true);
+        expect(Number.isFinite(n.y)).toBe(true);
+      }
     }
   });
 
-  it("no revienta con un camino de un solo punto", () => {
-    // Es el primer frame, antes de que la cabeza haya dejado rastro.
-    const s = segmentos(sinComida());
-    expect(s).toHaveLength(AJUSTES.nodosBase);
-    for (const nodo of s) {
-      expect(Number.isFinite(nodo.x)).toBe(true);
-      expect(Number.isFinite(nodo.y)).toBe(true);
+  it("no deja crecer el rastro sin limite", () => {
+    // La fuga lenta: un punto por frame son 216 000 por hora en una pantalla
+    // que la gente deja abierta.
+    const e = correr(60);
+    for (const s of e.serpientes) {
+      expect(s.rastro.length).toBeLessThan(s.nodos * AJUSTES.separacion);
     }
   });
 });
 
-describe("comidaNueva", () => {
-  it("deja margen con el borde", () => {
-    const c = comidaNueva(300, 300, fijo(0));
-    expect(c.x).toBeGreaterThanOrEqual(AJUSTES.margenComida);
-    expect(c.y).toBeGreaterThanOrEqual(AJUSTES.margenComida);
+describe("dimensionar", () => {
+  it("encoge la escena en un panel pequeno", () => {
+    const grande = dimensionar(DEFINICIONES[0], 720, 900);
+    const chico = dimensionar(DEFINICIONES[0], 390, 320);
+
+    // Con las medidas fijas, en el panel del movil el cuerpo salia tan largo
+    // como alto el panel y la cabeza ocupaba un tercio del ancho.
+    expect(chico.cabeza).toBeLessThan(grande.cabeza);
+    expect(chico.grosor).toBeLessThan(grande.grosor);
+    expect(chico.nodos).toBeLessThan(grande.nodos);
   });
 
-  it("no sale del lienzo con el azar al maximo", () => {
-    const c = comidaNueva(300, 300, fijo(1));
-    expect(c.x).toBeLessThanOrEqual(300 - AJUSTES.margenComida);
-    expect(c.y).toBeLessThanOrEqual(300 - AJUSTES.margenComida);
+  it("recorta la amplitud para que la cabeza no se salga", () => {
+    // Se veia cortada por abajo en la captura del movil.
+    for (const [ancho, alto] of [
+      [720, 900],
+      [390, 320],
+      [200, 140],
+    ]) {
+      for (const def of DEFINICIONES) {
+        const s = dimensionar(def, ancho, alto);
+        for (let t = 0; t < 40; t += 0.1) {
+          const p = posicion(s.trayectoria, t, ancho, alto);
+          expect(p.x - s.cabeza / 2).toBeGreaterThanOrEqual(0);
+          expect(p.x + s.cabeza / 2).toBeLessThanOrEqual(ancho);
+          expect(p.y - s.cabeza / 2).toBeGreaterThanOrEqual(0);
+          expect(p.y + s.cabeza / 2).toBeLessThanOrEqual(alto);
+        }
+      }
+    }
   });
 
-  it("aguanta un lienzo mas estrecho que los margenes", () => {
-    // El panel colapsado en un movil muy pequeno: no debe dar NaN.
-    const c = comidaNueva(20, 20, fijo(0.5));
-    expect(Number.isFinite(c.x)).toBe(true);
-    expect(Number.isFinite(c.y)).toBe(true);
+  it("nunca deja una amplitud negativa, ni en un panel diminuto", () => {
+    const s = dimensionar(DEFINICIONES[0], 30, 20);
+    expect(s.trayectoria.rx).toBeGreaterThan(0);
+    expect(s.trayectoria.ry).toBeGreaterThan(0);
+    expect(s.nodos).toBeGreaterThan(0);
+    expect(s.grosor).toBeGreaterThan(0);
   });
 });
