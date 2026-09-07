@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -73,8 +74,18 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 		if err != nil {
 			return fmt.Errorf("guardar reporte %q: %w", r.Fuente, err)
 		}
-		if _, err := ingesta.GuardarUsos(ctx, rep, r.Usos); err != nil {
+		// H5: GuardarUsos rechaza cualquier obra_id. La identificacion
+		// sintetica va despues, en SQL, para que las demos no queden en ONI.
+		rechazados, err := ingesta.GuardarUsos(ctx, rep, usosCrudos(r.Usos))
+		if err != nil {
 			return fmt.Errorf("guardar usos de %q: %w", r.Fuente, err)
+		}
+		if len(rechazados) > 0 {
+			return fmt.Errorf("guardar usos de %q: %d filas rechazadas (%s)",
+				r.Fuente, len(rechazados), rechazados[0].RechazoMotivo)
+		}
+		if err := identificar(ctx, pool, rep.ID, r.Usos); err != nil {
+			return fmt.Errorf("identificar usos de %q: %w", r.Fuente, err)
 		}
 		log.Info("reporte sembrado",
 			slog.String("fuente", r.Fuente),
@@ -138,6 +149,7 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool) error {
 		"usos",
 		"reportes",
 		"alias_obra",
+		"obra_coautores",
 		"declaraciones",
 		"bolsas",
 		"parametros",
@@ -213,9 +225,9 @@ func insertarPadron(ctx context.Context, pool *pgxpool.Pool, d Dataset, hashes m
 
 	for _, o := range d.Obras {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO obras (id, titulo, ida, eidr, imdb, tipo)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-			o.ID, o.Titulo, o.IDA, o.EIDR, o.IMDB, o.Tipo); err != nil {
+			INSERT INTO obras (id, titulo, ida, eidr, imdb, tipo, genero, anio)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			o.ID, o.Titulo, o.IDA, o.EIDR, o.IMDB, o.Tipo, o.Genero, o.Anio); err != nil {
 			return fmt.Errorf("insertar obra %s: %w", o.ID, err)
 		}
 	}
@@ -252,6 +264,44 @@ func insertarPadron(ctx context.Context, pool *pgxpool.Pool, d Dataset, hashes m
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("confirmar padron: %w", err)
+	}
+	return nil
+}
+
+// usosCrudos quita la identificacion del dataset para que pase H5: la
+// cascada (ADR 0007) es el unico camino a obra_id por GuardarUsos.
+func usosCrudos(usos []aplicacion.UsoPersistido) []aplicacion.UsoPersistido {
+	out := make([]aplicacion.UsoPersistido, len(usos))
+	for i, u := range usos {
+		u.ObraID = ""
+		u.Escalon = ""
+		u.Evidencia = ""
+		u.ONI = false
+		out[i] = u
+	}
+	return out
+}
+
+// identificar aplica el match sintetico DESPUES de la ingesta. El id de
+// cada fila es el que GuardarUsos deriva (reporte + posicion en el lote).
+func identificar(ctx context.Context, pool *pgxpool.Pool, reporteID string, usos []aplicacion.UsoPersistido) error {
+	for n, u := range usos {
+		id := reporteID + "-" + strconv.Itoa(n)
+		tag, err := pool.Exec(ctx, `
+			UPDATE usos
+			   SET obra_id = $2,
+			       oni = false,
+			       escalon = 'alias',
+			       evidencia = $3,
+			       puntaje = 1
+			 WHERE id = $1`,
+			id, u.ObraID, u.Evidencia)
+		if err != nil {
+			return fmt.Errorf("uso %s: %w", id, err)
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("uso %s: no estaba en usos", id)
+		}
 	}
 	return nil
 }

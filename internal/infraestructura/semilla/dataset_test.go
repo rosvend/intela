@@ -153,6 +153,14 @@ func TestBolsasPorUsuarioPeriodoCircuito(t *testing.T) {
 	}
 }
 
+func TestObrasTraenGeneroYAnio(t *testing.T) {
+	for _, o := range Construir().Obras {
+		if o.Genero == "" || o.Anio <= 0 {
+			t.Fatalf("obra %s: genero=%q anio=%d (00002 exige ambos)", o.ID, o.Genero, o.Anio)
+		}
+	}
+}
+
 func TestTitularesNaturalesTienenIPI(t *testing.T) {
 	for _, tit := range Construir().Titulares {
 		if tit.PersonaNatural && tit.IPI == "" {

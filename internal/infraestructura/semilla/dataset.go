@@ -59,11 +59,24 @@ type Dataset struct {
 	Periodo       string
 	Titulares     []Titular
 	Usuarios      []Usuario
-	Obras         []aplicacion.Obra
+	Obras         []Obra
 	Declaraciones []repertorio.Declaracion
 	Reportes      []Reporte
 	Bolsas        []aplicacion.BolsaPersistida
 	Parametros    []Parametro
+}
+
+// Obra es la fila del catalogo que siembra el seed. Lleva genero y anio
+// porque 00002 los exige; no usa aplicacion.Obra, que todavia no los tiene.
+type Obra struct {
+	ID     string
+	Titulo string
+	IDA    string
+	EIDR   string
+	IMDB   string
+	Tipo   string
+	Genero string
+	Anio   int
 }
 
 type Titular struct {
@@ -130,11 +143,11 @@ func (d *Dataset) usuarios() {
 }
 
 func (d *Dataset) obrasYDeclaraciones() {
-	d.Obras = []aplicacion.Obra{
-		{ID: ObraCine, Titulo: "Pelicula X", IDA: "IDA-PX", EIDR: "EIDR-PX", IMDB: "tt0001", Tipo: "cinematografica"},
-		{ID: ObraUnitario, Titulo: "El Tercer Acto", IDA: "IDA-ETA", Tipo: "unitario"},
-		{ID: ObraSerie, Titulo: "Serie Y", IDA: "IDA-SY", Tipo: "serie"},
-		{ID: ObraSketch, Titulo: "Minuto Comico", Tipo: "sketches"},
+	d.Obras = []Obra{
+		{ID: ObraCine, Titulo: "Pelicula X", IDA: "IDA-PX", EIDR: "EIDR-PX", IMDB: "tt0001", Tipo: "cinematografica", Genero: "Drama", Anio: 2023},
+		{ID: ObraUnitario, Titulo: "El Tercer Acto", IDA: "IDA-ETA", Tipo: "unitario", Genero: "Drama", Anio: 2024},
+		{ID: ObraSerie, Titulo: "Serie Y", IDA: "IDA-SY", Tipo: "serie", Genero: "Drama", Anio: 2024},
+		{ID: ObraSketch, Titulo: "Minuto Comico", Tipo: "sketches", Genero: "Comedia", Anio: 2024},
 	}
 
 	pct := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
