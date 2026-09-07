@@ -16,6 +16,7 @@
   --texto-suave: #8a8a9a;
   --acento: #7d1a35; /* vinotinto Intela: unico color de marca */
   --acento-activo: #fdf0f3; /* tinte del item activo del sidebar */
+  --acento-hondo: #5c1226; /* vinotinto mas hondo: hover del boton primario */
   --ok: #2f7d4f;
   --alerta: #b45309;
   --radio: 8px;
@@ -269,124 +270,17 @@ a {
   color: var(--acento);
 }
 
-.login-aviso {
-  margin: 0 0 1rem;
-  padding: 0.7rem 0.8rem;
-  border-radius: var(--radio);
-  background: #fdf3e7;
-  color: #7a4a10;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
 .contenido {
   padding: 2rem 2.5rem;
 }
 
-/* ---------- login (Login.tsx) ---------- */
+/* ---------- controles compartidos ---------- */
 
 /*
- * Columna centrada: logo, tarjeta y pie. El logo va FUERA de la tarjeta,
- * sobre el lienzo, como en docs/mockups/figma-login.png.
+ * `boton-primario` y `enlace-tenue` los usa tambien tablero/, asi que viven
+ * aqui y no dentro del bloque de acceso: metidos ahi, borrar esa pantalla se
+ * llevaria por delante el boton del tablero.
  */
-.login {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2rem;
-  background: var(--fondo);
-  padding: 1.5rem;
-}
-
-/* Misma tecnica que el spinner: mascara pintada con el token de marca. */
-.login-logo {
-  display: block;
-  width: 200px;
-  height: 63px; /* 200 / 3.179, el aspecto real del activo */
-  background-color: var(--acento);
-  mask-repeat: no-repeat;
-  mask-position: center;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  -webkit-mask-size: contain;
-}
-
-.login-pie {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--texto-suave);
-  text-align: center;
-}
-
-.login-tarjeta {
-  width: 100%;
-  max-width: 400px;
-  background: var(--superficie);
-  border: 1px solid var(--borde);
-  border-radius: 16px;
-  padding: 2rem;
-}
-
-/*
- * Solo el titulo y el subtitulo se centran, como en el mockup
- * (docs/mockups/figma-login.png). Los campos y sus etiquetas se quedan a la
- * izquierda -el mockup los deja asi- asi que no se centra la tarjeta entera.
- */
-.login-tarjeta h1,
-.login-tarjeta > p.muted:not(.login-demo) {
-  text-align: center;
-}
-
-.login-tarjeta h1 {
-  margin: 0 0 0.35rem;
-  font-size: 1.5rem;
-}
-
-.login-tarjeta form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-top: 1.5rem;
-}
-
-.login-tarjeta label {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.login-tarjeta input {
-  font: inherit;
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  margin-bottom: 0.75rem;
-}
-
-.login-fila-clave {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.enlace-tenue {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-size: 0.78rem;
-  color: var(--texto-suave);
-  cursor: not-allowed;
-}
-
-.login-error {
-  color: #b91c1c;
-  font-size: 0.85rem;
-  margin: 0 0 0.75rem;
-}
-
 .boton-primario {
   font: inherit;
   font-weight: 600;
@@ -403,10 +297,324 @@ a {
   cursor: default;
 }
 
-.login-demo {
-  margin-top: 1.5rem;
-  text-align: center;
+.boton-primario:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* Deshabilitado a proposito: se muestra lo que existira y se dice que aun no. */
+.enlace-tenue {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
   font-size: 0.78rem;
+  color: var(--texto-suave);
+  cursor: not-allowed;
+}
+
+/* ---------- acceso (Login.tsx) ---------- */
+
+/*
+ * Dos columnas: el formulario a la izquierda sobre blanco, la marca y el juego
+ * a la derecha sobre el vinotinto. En movil se apilan, y el formulario queda
+ * arriba -- se viene aqui a entrar, no a jugar.
+ *
+ * El orden del DOM es formulario -> panel, asi que el tabulador llega primero
+ * al campo de correo en las dos disposiciones. No hay `order` que los cruce.
+ */
+.acceso {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--superficie);
+}
+
+.acceso-formulario {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+}
+
+/* Ancho de linea contenido: el formulario no se estira con el panel. */
+.acceso-columna {
+  width: 100%;
+  max-width: 25rem;
+}
+
+/* Mascara pintada con el token de marca: la forma esta en el canal alfa. */
+.acceso-logo {
+  display: block;
+  width: 132px;
+  height: 42px; /* 132 / 3.179, el aspecto real del activo */
+  margin-bottom: 3rem;
+  background-color: var(--acento);
+  mask-repeat: no-repeat;
+  mask-position: left center;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  -webkit-mask-size: contain;
+}
+
+.acceso-titulo {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.acceso-entradilla {
+  margin: 0 0 2rem;
+  max-width: 22rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--texto-suave);
+}
+
+.acceso-aviso,
+.acceso-nota {
+  margin: 0 0 1.25rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radio);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.acceso-aviso {
+  background: #fdf3e7;
+  color: #7a4a10;
+}
+
+/* La nota del alta no es una alerta: informa de lo que todavia no existe. */
+.acceso-nota {
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.acceso-formulario form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.acceso-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.acceso-campo label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.acceso-campo input {
+  font: inherit;
+  font-size: 0.95rem;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.acceso-campo input::placeholder {
+  color: var(--texto-suave);
+}
+
+.acceso-campo input:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+  background: var(--superficie);
+}
+
+.acceso-fila-clave {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+/* El ojo va dentro del campo, asi que el input reserva sitio a su derecha. */
+.acceso-clave {
+  position: relative;
+  display: flex;
+}
+
+.acceso-clave input {
+  padding-right: 2.9rem;
+}
+
+.acceso-ojo {
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radio);
+  background: none;
+  color: var(--texto-suave);
+  cursor: pointer;
+}
+
+.acceso-ojo:hover,
+.acceso-ojo[aria-pressed="true"] {
+  color: var(--acento);
+}
+
+.acceso-ojo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.acceso-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.acceso-formulario .boton-primario {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  transition: background-color 120ms ease;
+}
+
+.acceso-formulario .boton-primario:hover:not(:disabled) {
+  background: var(--acento-hondo);
+}
+
+.acceso-cambio {
+  margin: 1.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.enlace {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--acento);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.enlace:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.acceso-demo {
+  margin-top: 2rem;
+  font-size: 0.78rem;
+}
+
+/* ---------- panel de marca y juego ---------- */
+
+.acceso-marca {
+  position: relative;
+  background: var(--acento);
+  overflow: hidden;
+}
+
+.acceso-juego {
+  position: absolute;
+  inset: 0;
+}
+
+/*
+ * `display: block` quita la linea base que un elemento en linea le anade
+ * debajo, que dejaba una franja del panel visible bajo el lienzo.
+ */
+.acceso-lienzo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* el puntero dirige; no arrastra la pagina */
+  cursor: crosshair;
+}
+
+.acceso-lienzo:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: -4px;
+}
+
+.acceso-juego-pie {
+  position: absolute;
+  inset: auto 2rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  pointer-events: none; /* el pie no se come los eventos del lienzo */
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.82rem;
+}
+
+.acceso-juego-pie p {
+  margin: 0;
+}
+
+.acceso-puntos {
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  font-weight: 600;
+  /* Sin esto "1 punto" se partia en dos lineas en el panel del movil. */
+  white-space: nowrap;
+}
+
+/* ---------- acceso: apilado ---------- */
+
+@media (max-width: 900px) {
+  .acceso {
+    grid-template-columns: 1fr;
+    min-height: 100dvh;
+  }
+
+  .acceso-formulario {
+    padding: 2.5rem 1.5rem;
+  }
+
+  .acceso-logo {
+    margin-bottom: 2rem;
+  }
+
+  /*
+   * Alto fijo y no un porcentaje: en movil el panel va debajo del formulario,
+   * y con `1fr` se estiraria a lo que sobre -- que con el teclado abierto es
+   * casi nada, y sin teclado media pantalla de rojo.
+   */
+  .acceso-marca {
+    height: 20rem;
+  }
+
+  /*
+   * En columna: a 390 px el texto de ayuda ocupa dos lineas, y en fila la
+   * puntuacion quedaba apretada contra el borde.
+   */
+  .acceso-juego-pie {
+    inset: auto 1.5rem 1.25rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acceso-formulario .boton-primario {
+    transition: none;
+  }
 }
 
 /* ---------- tablas (pantallas de Sprint 3-5) ---------- */

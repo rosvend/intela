@@ -203,19 +203,31 @@ describe("Login", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("muestra el logo encima de la tarjeta, como el mockup", () => {
-    const { container } = montar();
-
-    // Accesible por nombre: quien no ve la imagen igual sabe de que marca es.
+  it("identifica la marca por nombre accesible", () => {
+    montar();
+    // Quien no ve la imagen igual sabe de que sistema es esta pantalla: sin
+    // esto se quedaria solo con "Iniciar sesion", que no dice de que.
     expect(screen.getByRole("img", { name: "Intela" })).toBeTruthy();
+  });
 
-    // Fuera de la tarjeta y antes de ella: en el mockup va sobre el lienzo.
-    const columna = [...container.querySelectorAll(".login > *")].map(
-      (n) => n.className,
-    );
-    expect(columna.indexOf("login-logo")).toBeLessThan(
-      columna.indexOf("login-tarjeta"),
-    );
+  it("pone el formulario antes del panel de marca en el DOM", () => {
+    const { container } = montar();
+    const acceso = container.querySelector(".acceso");
+    const hijos = [...(acceso?.children ?? [])].map((n) => n.tagName);
+
+    // El orden del DOM manda en el tabulador y en el lector de pantalla. En
+    // pantalla ancha el panel se ve a la derecha por rejilla, no por `order`:
+    // asi la primera parada del tabulador es el correo y no el juego, en las
+    // dos disposiciones.
+    expect(hijos.indexOf("MAIN")).toBeLessThan(hijos.indexOf("ASIDE"));
+  });
+
+  it("el juego es decorativo y no roba el primer foco", () => {
+    montar();
+    const juego = screen.getByRole("img", {
+      name: /decorativo/i,
+    });
+    expect(juego.tagName).toBe("CANVAS");
   });
 
   it("el botón de recuperar clave esta deshabilitado: no hay pantalla detrás (M-8)", () => {
@@ -224,5 +236,60 @@ describe("Login", () => {
       name: "¿Olvidaste tu contraseña?",
     }) as HTMLButtonElement;
     expect(boton.disabled).toBe(true);
+  });
+  it("la contraseña se puede mostrar y volver a ocultar", () => {
+    montar();
+    const campo = screen.getByLabelText("Contraseña") as HTMLInputElement;
+    const ojo = screen.getByRole("button", { name: "Mostrar la contraseña" });
+
+    expect(campo.type).toBe("password");
+    expect(ojo.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(ojo);
+    expect(campo.type).toBe("text");
+    // El estado va en aria-pressed y el nombre se queda quieto: si cambiara,
+    // el lector de pantalla anunciaria otro control cada vez.
+    expect(ojo.getAttribute("aria-pressed")).toBe("true");
+    expect(ojo.getAttribute("aria-label")).toBe("Mostrar la contraseña");
+
+    fireEvent.click(ojo);
+    expect(campo.type).toBe("password");
+  });
+
+  it("cambia a crear cuenta y pide el nombre", () => {
+    montar();
+    expect(screen.queryByLabelText("Nombre")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Crear una cuenta" }));
+
+    expect(screen.getByLabelText("Nombre")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Crear una cuenta" }),
+    ).toBeTruthy();
+  });
+
+  it("el alta no finge: el botón está deshabilitado porque no hay endpoint", () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Crear una cuenta" }));
+
+    // `POST /afiliaciones` llega con el issue #50. Un formulario que acepta
+    // datos y no crea nada es peor que uno que avisa, asi que el motivo esta a
+    // la vista y el boton no manda nada.
+    const boton = screen.getByRole("button", {
+      name: "Crear cuenta",
+    }) as HTMLButtonElement;
+    expect(boton.disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain(
+      "todavía no está abierta",
+    );
+  });
+
+  it("volver a iniciar sesión quita el campo de nombre", () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Crear una cuenta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+
+    expect(screen.queryByLabelText("Nombre")).toBeNull();
+    expect(screen.getByRole("button", { name: "Ingresar" })).toBeTruthy();
   });
 });
