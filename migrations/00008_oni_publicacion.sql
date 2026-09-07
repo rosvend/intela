@@ -5,6 +5,21 @@
 -- publicado: resolver un ONI despues lo haria desaparecer, y no habia fecha
 -- de proceso ni direcciones. Esta migracion congela la instantanea y redefine
 -- la vista sobre lo publicado. Sigue sin una sola columna de dinero.
+--
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00003. Ese numero ya no
+-- se puede usar. El PR #85 dejo produccion en la version 5; #72 entro como
+-- 00006 y #80 (`liquidacion`) toma el 00007. goose corre con
+-- `allowMissing = false`, asi que un numero LIBRE por debajo de la version
+-- ya aplicada aborta con
+--
+--     found 1 missing migrations before current version N
+--
+-- y el despliegue condiciona el rollout a que goose termine bien.
+--
+-- Se toma el 00008: el 2026-09-07 el mayor en `main` y en TODAS las ramas
+-- abiertas era 00007. #88 (`afiliaciones`) sigue en 00003 y tendra que subir
+-- por encima de este numero, no rellenar el hueco. Un ADR admite huecos;
+-- una migracion no.
 
 -- +goose Up
 
