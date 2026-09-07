@@ -27,6 +27,27 @@ proposito.
 | [0013 La sesion es un token opaco en tabla, no un JWT](0013-sesiones-opacas-en-tabla.md) | Vigente |
 | [0014 La infraestructura de ejecucion es AWS serverless, descrita en Terraform](0014-infraestructura-serverless-en-aws.md) | Vigente |
 | [0015 La cola de trabajos es una tabla propia, no River](0015-cola-de-trabajos-en-tabla-propia.md) | Vigente |
+| [0016 El log de rechazos de la ingesta vive en una tabla aparte](0016-log-de-rechazos-en-tabla-aparte.md) | Vigente |
+
+Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
+nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico
+sintoma es esta tabla. Es peor que un conflicto normal, que al menos bloquea. El numero libre se
+busca sobre `main` y sobre las ramas abiertas:
+
+```
+git fetch origin --prune
+for b in $(git branch -r --format='%(refname:short)' | grep -v HEAD); do
+  git ls-tree "$b" --name-only -- docs/decisiones/
+done | sed 's|.*/||' | sort -u
+```
+
+Es la misma politica que la de las migraciones de `goose` (cabecera de
+`migrations/00002_catalogo_obras.sql`), pero alli el error es mas duro y de otra forma: `goose`
+corre con `allowMissing = false`, asi que **no solo falla un numero repetido, tambien falla un
+numero LIBRE por debajo de la version ya aplicada**. Reservar un hueco para una rama que aun no ha
+entrado no funciona: en cuanto se despliega una version mayor, ese hueco ya no se puede rellenar y
+la migracion que lo ocupe rompe el despliegue. Un ADR admite huecos; una migracion no. Para una
+migracion nueva, el numero se toma SIEMPRE por encima del mayor que exista, nunca en un hueco.
 
 El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.
 Documenta la intencion; lo que `0002` y `0003` prometen se hace cumplir sobre el codigo con

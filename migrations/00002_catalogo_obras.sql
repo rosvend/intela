@@ -8,8 +8,11 @@
 -- El numero 00002 lo asigna la revision: varios PRs abiertos reclamaban esa
 -- version a la vez y el orden de merge decide cual se la queda. Dos ficheros
 -- con la MISMA version son un error duro de goose en cada arranque, incluido
--- el contenedor de pruebas; un hueco entre versiones no lo es. Quien merguee
--- despues renumera con un `git mv`.
+-- el contenedor de pruebas. Quien merguee despues renumera con un `git mv`, y
+-- SIEMPRE hacia arriba: goose corre con `allowMissing = false`, asi que un
+-- numero libre por debajo de la version ya desplegada tampoco vale -- para el
+-- `goose up` en seco y con el, el despliegue. El detalle esta en la cabecera de
+-- `migrations/00006_log_de_rechazos.sql`, que es la que lo pago.
 
 -- +goose Up
 
