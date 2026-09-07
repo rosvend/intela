@@ -90,3 +90,15 @@ variable "architecture" {
   type        = string
   default     = "arm64"
 }
+
+# Graph token, not configuration. A module-level `depends_on` defers every data
+# source inside the module until apply, which makes policy_arn unknown and
+# ForceNew-replaces aws_iam_role_policy_attachment on every plan
+# (hashicorp/terraform-provider-aws#32529). Referencing this value from the
+# function itself sequences goose before the new code without that deferral.
+# Empty means no extra edge.
+variable "wait_for" {
+  description = "Opaque token from an upstream resource. The function is not updated until this value is known."
+  type        = string
+  default     = ""
+}

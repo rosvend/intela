@@ -15,6 +15,7 @@ module "function" {
 
   create_function_url    = true
   function_url_auth_type = var.function_url_auth_type
+  wait_for               = var.wait_for
 
   # ADDR, HTTP_*_TIMEOUT and SHUTDOWN_TIMEOUT are deliberately absent. Lambda
   # owns the socket and the lifecycle, so setting them would be configuration

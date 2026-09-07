@@ -12,8 +12,10 @@
 # ORDERING. docs/cd.md requires migrations to land before the new code serves
 # traffic, and ADR 0008 explains why: a reparto run in flight during a deploy
 # must not meet a schema its code does not know. That ordering is expressed in
-# the root module as `depends_on = [module.migrations]` on module.api -- visible
-# at the composition point rather than buried in here.
+# the root as `wait_for = module.migrations.invocation_id` on module.api -- an
+# attribute reference, not a module-level depends_on, because the latter defers
+# data sources inside api/go-lambda and ForceNew-replaces the IAM attachment
+# on every plan (hashicorp/terraform-provider-aws#32529).
 
 variable "name_prefix" {
   description = "Prefix for every resource name."
