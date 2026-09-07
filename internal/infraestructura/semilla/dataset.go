@@ -66,17 +66,29 @@ type Dataset struct {
 	Parametros    []Parametro
 }
 
-// Obra es la fila del catalogo que siembra el seed. Lleva genero y anio
-// porque 00002 los exige; no usa aplicacion.Obra, que todavia no los tiene.
+// Obra es la entrada del catalogo que siembra el seed.
+//
+// Lleva genero y anio porque 00002 los exige, y no usa aplicacion.Obra, que
+// todavia no los tiene. Los campos son los mismos que [repertorio.Metadatos]
+// porque su unico destino es construir una: el seed no escribe `obras` con
+// SQL propio, pasa por el constructor del dominio (ver registrarObras).
+//
+// Coautores no es opcional. Una obra del catalogo sin coautor con IPI no la
+// reconstruye [repertorio.NuevaObra], asi que quedaria escrita y no se podria
+// leer: es el 500 en GET /obras que este campo existe para hacer imposible.
+// NO llevan porcentaje y no lo van a llevar: el catalogo es identidad, el
+// reparto sale de la Declaracion de Obra y de ningun otro sitio (`R-02`,
+// `R-03`).
 type Obra struct {
-	ID     string
-	Titulo string
-	IDA    string
-	EIDR   string
-	IMDB   string
-	Tipo   string
-	Genero string
-	Anio   int
+	ID        string
+	Titulo    string
+	IDA       string
+	EIDR      string
+	IMDB      string
+	Tipo      repertorio.TipoObra
+	Genero    string
+	Anio      int
+	Coautores []repertorio.Coautor
 }
 
 type Titular struct {
@@ -144,10 +156,43 @@ func (d *Dataset) usuarios() {
 
 func (d *Dataset) obrasYDeclaraciones() {
 	d.Obras = []Obra{
-		{ID: ObraCine, Titulo: "Pelicula X", IDA: "IDA-PX", EIDR: "EIDR-PX", IMDB: "tt0001", Tipo: "cinematografica", Genero: "Drama", Anio: 2023},
-		{ID: ObraUnitario, Titulo: "El Tercer Acto", IDA: "IDA-ETA", Tipo: "unitario", Genero: "Drama", Anio: 2024},
-		{ID: ObraSerie, Titulo: "Serie Y", IDA: "IDA-SY", Tipo: "serie", Genero: "Drama", Anio: 2024},
-		{ID: ObraSketch, Titulo: "Minuto Comico", Tipo: "sketches", Genero: "Comedia", Anio: 2024},
+		{
+			ID: ObraCine, Titulo: "Pelicula X", IDA: "IDA-PX", EIDR: "EIDR-PX", IMDB: "tt0001",
+			Tipo: repertorio.TipoCinematografica, Genero: "Drama", Anio: 2023,
+			Coautores: []repertorio.Coautor{
+				d.coautor(TitularAna, repertorio.RolGuionista),
+				d.coautor(TitularBeto, repertorio.RolAdaptador),
+			},
+		},
+		{
+			ID: ObraUnitario, Titulo: "El Tercer Acto", IDA: "IDA-ETA",
+			Tipo: repertorio.TipoUnitario, Genero: "Drama", Anio: 2024,
+			Coautores: []repertorio.Coautor{
+				d.coautor(TitularAna, repertorio.RolGuionista),
+				d.coautor(TitularBeto, repertorio.RolLibretista),
+				d.coautor(TitularCarla, repertorio.RolArgumentista),
+			},
+		},
+		{
+			ID: ObraSerie, Titulo: "Serie Y", IDA: "IDA-SY",
+			Tipo: repertorio.TipoSerie, Genero: "Drama", Anio: 2024,
+			// DOS coautores en el catalogo y una sola parte declarada, abajo.
+			// Es lo que hace explicable el caso del 60%: la obra la
+			// escribieron dos, y el 40% de Beto no esta declarado. Por eso no
+			// se reparte nada de esta obra (`R-04`, `RD 13.1.3`), y por eso el
+			// arreglo no es repartir el 60% sino pedirle a Beto que declare.
+			Coautores: []repertorio.Coautor{
+				d.coautor(TitularAna, repertorio.RolGuionista),
+				d.coautor(TitularBeto, repertorio.RolLibretista),
+			},
+		},
+		{
+			ID: ObraSketch, Titulo: "Minuto Comico",
+			Tipo: repertorio.TipoSketches, Genero: "Comedia", Anio: 2024,
+			Coautores: []repertorio.Coautor{
+				d.coautor(TitularAna, repertorio.RolGuionista),
+			},
+		},
 	}
 
 	pct := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
@@ -185,6 +230,27 @@ func (d *Dataset) obrasYDeclaraciones() {
 			},
 		},
 	}
+}
+
+// coautor arma un coautor del catalogo a partir del padron de titulares.
+//
+// El IPI se busca en d.Titulares en vez de repetirse en la lista de obras: es
+// la MISMA persona que la declaracion nombra por su titular_id, y escribir el
+// identificador dos veces es la forma de que un dia digan cosas distintas. El
+// catalogo se busca por IPI (`RD 3`), asi que un IPI que no case con el del
+// padron es una obra que no encuentra a su autor.
+//
+// Entra en panico si el titular no esta, igual que decimal.RequireFromString
+// mas abajo: el dataset es una constante del binario, y un id que no existe es
+// un error de programacion que tiene que salir en la primera prueba, no una
+// obra sin coautor que se descubre leyendo el catalogo.
+func (d *Dataset) coautor(titularID string, rol repertorio.RolAutoral) repertorio.Coautor {
+	for _, t := range d.Titulares {
+		if t.ID == titularID {
+			return repertorio.Coautor{Nombre: t.Nombre, IPI: t.IPI, Rol: rol}
+		}
+	}
+	panic("semilla: no hay titular " + titularID + " en el padron del dataset")
 }
 
 func (d *Dataset) reportes() {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -135,6 +136,74 @@ func TestCargarResetRechazaSiHayAsientos(t *testing.T) {
 	if !errors.Is(err, ErrBitacoraNoVacia) {
 		t.Fatalf("se esperaba ErrBitacoraNoVacia, se obtuvo %v", err)
 	}
+}
+
+// TestCargarDejaElCatalogoLegible cruza las dos mitades que nadie cruzaba: el
+// seed ESCRIBE el catalogo y el caso de uso lo LEE.
+//
+// Sin el cruce, el seed pasaba verde escribiendo `obras` sin `obra_coautores`
+// y GET /obras devolvia 500 en las cuatro obras -"una obra del catalogo
+// necesita al menos un coautor con IPI"-, porque la lectura reconstruye la
+// entidad por el mismo constructor que la crea. Las pruebas de este paquete
+// solo miraban que el dataset cargara, y las de postgres/catalogo_test.go solo
+// el adaptador con sus propios fixtures.
+func TestCargarDejaElCatalogoLegible(t *testing.T) {
+	store, _ := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	catalogo := aplicacion.Catalogo{Obras: store}
+
+	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
+	if err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	esperadas := []string{ObraCine, ObraSerie, ObraSketch, ObraUnitario} // ORDER BY id
+	if len(obras) != len(esperadas) {
+		t.Fatalf("BuscarObras devolvio %d obras, se esperaban %d", len(obras), len(esperadas))
+	}
+	for i, id := range esperadas {
+		if obras[i].ID() != id {
+			t.Fatalf("obra %d: %q, se esperaba %q", i, obras[i].ID(), id)
+		}
+	}
+
+	// Cada obra tambien por su propia ruta, que es el GET /obras/{id}.
+	for _, id := range esperadas {
+		obra, err := catalogo.ObraPorID(ctx, id)
+		if err != nil {
+			t.Fatalf("ObraPorID(%q): %v", id, err)
+		}
+		coautores := obra.Coautores()
+		if len(coautores) == 0 {
+			t.Fatalf("obra %q sin coautores: el dominio la rechaza al leerla", id)
+		}
+		for _, c := range coautores {
+			if c.IPI == "" {
+				t.Fatalf("obra %q: coautor %q sin IPI", id, c.Nombre)
+			}
+		}
+	}
+
+	// El filtro por IPI resuelve contra obra_coautores: es la comprobacion de
+	// que las filas estan ahi y no solo de que la lectura no revienta.
+	deCarla, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{IPI: "IPI-00000003"})
+	if err != nil {
+		t.Fatalf("BuscarObras por IPI: %v", err)
+	}
+	if len(deCarla) != 1 || deCarla[0].ID() != ObraUnitario {
+		t.Fatalf("obras de IPI-00000003 = %v, se esperaba solo %s", ids(deCarla), ObraUnitario)
+	}
+}
+
+func ids(obras []repertorio.Obra) []string {
+	out := make([]string, len(obras))
+	for i, o := range obras {
+		out[i] = o.ID()
+	}
+	return out
 }
 
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
 
@@ -64,7 +65,7 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 		return err
 	}
 
-	if err := insertarPadron(ctx, pool, d, hashes); err != nil {
+	if err := insertarPadron(ctx, store, d, hashes); err != nil {
 		return err
 	}
 
@@ -190,7 +191,16 @@ func hashear(hasher aplicacion.Hasher, c Claves) (map[string]string, error) {
 	return out, nil
 }
 
-func insertarPadron(ctx context.Context, pool *pgxpool.Pool, d Dataset, hashes map[string]string) error {
+func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashes map[string]string) error {
+	// Las obras van PRIMERO y por el adaptador del catalogo, no por el SQL de
+	// abajo. Ver registrarObras: es lo que hace que una obra sin coautores no
+	// se pueda sembrar. Van antes porque `declaraciones` y `alias_obra`
+	// referencian `obras`, y esta transaccion las escribe.
+	if err := registrarObras(ctx, store, d.Obras); err != nil {
+		return err
+	}
+
+	pool := store.Pool()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("abrir transaccion del padron: %w", err)
@@ -220,15 +230,6 @@ func insertarPadron(ctx context.Context, pool *pgxpool.Pool, d Dataset, hashes m
 			VALUES ($1, $2, $3, $4, $5, $6)`,
 			u.ID, u.Email, u.Nombre, string(u.Rol), titular, hash); err != nil {
 			return fmt.Errorf("insertar usuario %s: %w", u.ID, err)
-		}
-	}
-
-	for _, o := range d.Obras {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO obras (id, titulo, ida, eidr, imdb, tipo, genero, anio)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			o.ID, o.Titulo, o.IDA, o.EIDR, o.IMDB, o.Tipo, o.Genero, o.Anio); err != nil {
-			return fmt.Errorf("insertar obra %s: %w", o.ID, err)
 		}
 	}
 
@@ -264,6 +265,47 @@ func insertarPadron(ctx context.Context, pool *pgxpool.Pool, d Dataset, hashes m
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("confirmar padron: %w", err)
+	}
+	return nil
+}
+
+// registrarObras da de alta el catalogo por el MISMO camino que la API.
+//
+// Cada obra se construye con [repertorio.NuevaObra] y se escribe con
+// Store.Registrar, que mete `obras` y `obra_coautores` en una transaccion. Es
+// lo que impide de raiz el fallo que tenia el seed: escribia `obras` con un
+// INSERT propio y no tocaba `obra_coautores`, asi que las cuatro obras
+// quedaban escritas y NINGUNA se podia leer -la lectura reconstruye la entidad
+// por el mismo constructor, que exige al menos un coautor con IPI-. GET /obras
+// devolvia 500 en todas.
+//
+// Con el adaptador, un dataset sin coautores falla AL SEMBRAR y nombrando la
+// obra, en vez de mas tarde y en la cara de quien lee el catalogo. Es la misma
+// razon por la que la lectura falla en vez de servir la fila: contra este
+// catalogo resuelve todo el matching.
+//
+// El resto del padron sigue por Store.Pool(): `titulares`, `usuarios`,
+// `declaraciones`, `bolsas` y `parametros` no tienen todavia adaptador de
+// escritura, y inventarle un puerto al sembrador para taparlo seria
+// indireccion sin requisito.
+func registrarObras(ctx context.Context, store *postgres.Store, obras []Obra) error {
+	for _, o := range obras {
+		obra, err := repertorio.NuevaObra(o.ID, repertorio.Metadatos{
+			Titulo:    o.Titulo,
+			Genero:    o.Genero,
+			Anio:      o.Anio,
+			Tipo:      o.Tipo,
+			IDA:       o.IDA,
+			EIDR:      o.EIDR,
+			IMDB:      o.IMDB,
+			Coautores: o.Coautores,
+		})
+		if err != nil {
+			return fmt.Errorf("la obra %s del dataset no es una obra valida: %w", o.ID, err)
+		}
+		if err := store.Registrar(ctx, obra); err != nil {
+			return fmt.Errorf("registrar obra %s: %w", o.ID, err)
+		}
 	}
 	return nil
 }

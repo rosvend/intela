@@ -168,3 +168,41 @@ func TestTitularesNaturalesTienenIPI(t *testing.T) {
 		}
 	}
 }
+
+// TestObrasDelDatasetSonObrasValidas es la misma comprobacion que hace el seed
+// al sembrar, pero sin Docker: entra en `go test -short`, asi que una obra sin
+// coautores se cae en el bucle rapido y no varias capas mas tarde, leyendo el
+// catalogo contra una base de verdad.
+func TestObrasDelDatasetSonObrasValidas(t *testing.T) {
+	for _, o := range Construir().Obras {
+		obra, err := repertorio.NuevaObra(o.ID, repertorio.Metadatos{
+			Titulo:    o.Titulo,
+			Genero:    o.Genero,
+			Anio:      o.Anio,
+			Tipo:      o.Tipo,
+			IDA:       o.IDA,
+			EIDR:      o.EIDR,
+			IMDB:      o.IMDB,
+			Coautores: o.Coautores,
+		})
+		if err != nil {
+			t.Fatalf("obra %s: %v", o.ID, err)
+		}
+		// El IPI de cada coautor tiene que ser el del padron: el catalogo se
+		// busca por IPI (`RD 3`), y uno que no case es una obra que no
+		// encuentra a su autor.
+		for _, c := range obra.Coautores() {
+			var enPadron bool
+			for _, tit := range Construir().Titulares {
+				if tit.IPI == c.IPI {
+					enPadron = true
+					break
+				}
+			}
+			if !enPadron {
+				t.Fatalf("obra %s: el coautor %q trae el IPI %q, que no esta en el padron",
+					o.ID, c.Nombre, c.IPI)
+			}
+		}
+	}
+}
