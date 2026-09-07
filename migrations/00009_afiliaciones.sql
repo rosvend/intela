@@ -8,6 +8,19 @@
 -- existe para no dejarlos para despues. La exclusividad (R-28) se expresa
 -- como CHECK: si declara pertenecer a otra SGC, tiene que haber evidencia
 -- de renuncia, no solo el booleano.
+--
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00003. Ese numero ya no
+-- se puede usar. El PR #85 dejo produccion en la version 5; #72 entro como
+-- 00006, #80 (`liquidacion`) toma el 00007 y #87 (`oni_publicacion`) el
+-- 00008. goose corre con `allowMissing = false`, asi que un numero LIBRE
+-- por debajo de la version ya aplicada aborta con
+--
+--     found 1 missing migrations before current version N
+--
+-- y el despliegue condiciona el rollout a que goose termine bien.
+--
+-- Se toma el 00009: el 2026-09-07 el mayor en `main` y en TODAS las ramas
+-- abiertas era 00008. Un ADR admite huecos; una migracion no.
 
 -- +goose Up
 -- +goose StatementBegin
