@@ -195,6 +195,35 @@ func TestResolverUsosResuelvePorIDGlobalYAprendeAntesDelMatch(t *testing.T) {
 	}
 }
 
+// Regresion: una fila que solo trae un identificador global (sin par local)
+// resuelve igual por escalon 2 y no intenta aprender un alias que no tiene id
+// de fuente al que asociar. Antes de este fix, GuardarAlias se llamaba con
+// valor="" -el adaptador lo rechaza por el CHECK de alias_obra- y ese error
+// abortaba la corrida entera (D8), dejando sin procesar tambien las filas
+// siguientes del lote.
+func TestResolverUsosPorIDGlobalSinParLocalNoAprendeAlias(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{
+		porIDGlobal: map[string]string{"||tt0100001": "obra-45"},
+	}
+
+	u := usoPendiente("u-1", "caracol", "imdb=tt0100001")
+	n, err := correr(t, ing, idf, nil, u)
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1", n)
+	}
+	if len(idf.guardadosAlias) != 0 {
+		t.Fatalf("no hay par local que aprender, pero se guardaron %d alias: %+v",
+			len(idf.guardadosAlias), idf.guardadosAlias)
+	}
+	if len(idf.guardadosMatch) != 1 || idf.guardadosMatch[0].R.Escalon != identificacion.EscalonIDGlobal {
+		t.Fatalf("match mal armado: %+v", idf.guardadosMatch)
+	}
+}
+
 func TestResolverUsosConAliasYaAprendidoNoSondeaIDGlobal(t *testing.T) {
 	ing := &ingestaFalsa{}
 	idf := &identificacionFalsa{

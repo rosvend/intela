@@ -73,7 +73,15 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		// muere entre los dos, el reintento re-resuelve la fila por escalon 1
 		// -el alias ya quedo- y converge; al reves, la fila quedaria resuelta
 		// sin que el conocimiento se aprendiera nunca.
-		if res.Escalon == identificacion.EscalonIDGlobal {
+		//
+		// Sin par local (e.TipoID/e.ValorID vacios) no hay nada que aprender:
+		// una fila que solo trae un identificador global no tiene id de
+		// fuente al que asociar el alias. Sin este chequeo, GuardarAlias se
+		// llamaria con valor="" -el CHECK btrim(valor) <> '' de alias_obra lo
+		// rechaza- y ese error, al no ser ErrNoEncontrado, abortaria la
+		// corrida entera (D8): ni esta fila ni las siguientes del lote se
+		// procesarian, aunque esta si se hubiera identificado bien.
+		if res.Escalon == identificacion.EscalonIDGlobal && e.TipoID != "" && e.ValorID != "" {
 			if err := r.Identificacion.GuardarAlias(ctx, e.Fuente, e.TipoID, e.ValorID, res.ObraID, quienCascada); err != nil {
 				return resueltas, fmt.Errorf("aprender alias de %q: %w", u.ID, err)
 			}
