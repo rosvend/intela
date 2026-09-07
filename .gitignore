@@ -252,3 +252,8 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Boveda local de reportes crudos. La escribe `make seed` con el OBJECT_DIR por
+# defecto (./data/objetos): es evidencia GENERADA por el dataset sintetico, no
+# los archivos del cliente, que si van versionados en data/files/.
+/data/objetos/
