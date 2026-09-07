@@ -26,6 +26,21 @@ var (
 	// No se inventa un valor por defecto: se falla (ADR 0004).
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
+	// ErrUsuarioInvalido: los datos de una cuenta nueva no cumplen el esquema.
+	//
+	// Se envuelve siempre con el campo concreto que falla, por la misma razon
+	// que ErrReporteInvalido: quien provisiona una instalacion lo hace desde
+	// una terminal y no tiene un formulario que le marque el campo.
+	ErrUsuarioInvalido = errors.New("usuario invalido")
+
+	// ErrYaHayUsuarios: la instalacion ya estaba provisionada.
+	//
+	// No es un fallo de escritura y no es un dato invalido: la operacion es de
+	// una sola vez y ya se hizo. Distinguirlo es lo que permite invocarla sin
+	// miedo -- una segunda invocacion no hace nada -- y lo que evita que un
+	// reintento cree una segunda cuenta de administrador que nadie pidio.
+	ErrYaHayUsuarios = errors.New("ya hay usuarios: la instalacion ya estaba provisionada")
+
 	// ErrObraDuplicada: ya hay una obra con ese identificador en el catalogo.
 	//
 	// No es "no se pudo escribir" y no es "los datos son invalidos": el alta
