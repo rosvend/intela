@@ -37,6 +37,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
+	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
@@ -138,9 +139,14 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 // convertiria un reintento inocuo en una alarma. Se responde con estado
 // "ya provisionada" y se registra.
 func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, error) {
-	// Se compone y valida sin tocar la base. Si algo falta, el error nombra el
-	// campo y la conexion no se abre.
-	if err := aplicacion.ValidarPrimerAdministrador(p.ID, p.Email, p.Nombre, p.Hash); err != nil {
+	// Se valida sin tocar la base. Si algo falta, el error nombra el campo --
+	// nunca su valor -- y la conexion no se abre.
+	//
+	// cripto.Bcrypt se construye aqui y no despues porque la comprobacion que
+	// de verdad importa es la de la FORMA del hash, y esa la contesta el
+	// adaptador. Construirlo no cuesta nada: no tiene estado ni E/S.
+	provision := aplicacion.Provision{Claves: cripto.Bcrypt{}}
+	if err := provision.Validar(p.ID, p.Email, p.Nombre, p.Hash); err != nil {
 		log.Error("provision rechazada", slog.Any("error", err))
 		return respuesta{}, err
 	}
@@ -156,8 +162,8 @@ func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, 
 	}
 	defer store.CerrarPool()
 
-	u, err := aplicacion.Provision{Usuarios: store}.
-		CrearPrimerAdministrador(ctx, p.ID, p.Email, p.Nombre, p.Hash)
+	provision.Usuarios = store
+	u, err := provision.CrearPrimerAdministrador(ctx, p.ID, p.Email, p.Nombre, p.Hash)
 	switch {
 	case errors.Is(err, aplicacion.ErrYaHayUsuarios):
 		log.Info("la instalacion ya estaba provisionada; no se crea nada")

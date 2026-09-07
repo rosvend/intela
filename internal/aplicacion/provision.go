@@ -45,6 +45,10 @@ import (
 // nunca ve una credencial, solo su hash.
 type Provision struct {
 	Usuarios RepositorioProvisionInicial
+
+	// Claves comprueba que lo que llega sea un hash de verdad. El nucleo no
+	// sabe cual es el algoritmo -- por eso lo pregunta al puerto.
+	Claves Hasher
 }
 
 // CrearPrimerAdministrador compone el usuario y lo manda al puerto.
@@ -58,7 +62,7 @@ type Provision struct {
 // del formulario de login, que viene limpio. El sintoma no seria un error sino
 // una cuenta que existe y con la que no se puede entrar.
 func (p Provision) CrearPrimerAdministrador(ctx context.Context, id, email, nombre, hash string) (Usuario, error) {
-	if err := ValidarPrimerAdministrador(id, email, nombre, hash); err != nil {
+	if err := p.Validar(id, email, nombre, hash); err != nil {
 		return Usuario{}, err
 	}
 
@@ -69,27 +73,35 @@ func (p Provision) CrearPrimerAdministrador(ctx context.Context, id, email, nomb
 		Rol:    RolAdministrador,
 	}
 	if err := p.Usuarios.CrearPrimerAdministrador(ctx, u, strings.TrimSpace(hash)); err != nil {
-		return Usuario{}, fmt.Errorf("crear el primer administrador %q: %w", u.Email, err)
+		// Sin el email: este error se registra Y se devuelve desde la Lambda,
+		// asi que la plataforma lo guarda una segunda vez por su cuenta.
+		return Usuario{}, fmt.Errorf("crear el primer administrador: %w", err)
 	}
 	return u, nil
 }
 
-// ValidarPrimerAdministrador comprueba los datos sin tocar nada.
+// Validar comprueba los datos sin tocar la base.
 //
-// Exportada, y no un detalle privado de [Provision.CrearPrimerAdministrador],
+// Metodo y no funcion suelta porque necesita el Hasher: la regla "el hash tiene
+// que ser verificable" solo la puede contestar el adaptador que lo produce.
+//
+// Publico, y no un detalle privado de [Provision.CrearPrimerAdministrador],
 // porque quien invoca esto vive dentro de la VPC y tiene que poder rechazar una
 // peticion mal formada ANTES de abrir un pool contra la base. Es la misma
 // propiedad que la lista de ordenes de cmd/lambda-migrate: lo que no va a
-// ejecutarse no debe llegar a conectar.
+// ejecutarse no debe llegar a conectar. CrearPrimerAdministrador lo llama
+// tambien, asi que la regla vive en un solo sitio y no pueden discrepar.
 //
-// El metodo la llama tambien, asi que la regla vive en un solo sitio y no
-// pueden discrepar.
+// Ningun mensaje lleva el VALOR del email, solo el nombre del campo. El camino
+// feliz ya se cuida de no registrarlo, y estos errores se registran y ademas se
+// devuelven desde la Lambda, asi que la plataforma los guarda otra vez por su
+// cuenta.
 //
 // Recorta los blancos para decidir, por la misma razon que
 // [Ingesta.GuardarUsos]: un email de solo espacios no es "" para una
 // comparacion ingenua, entra en la base sin ruido -- el CHECK solo pide que
 // contenga '@' -- y despues no casa con el que llega del formulario de login.
-func ValidarPrimerAdministrador(id, email, nombre, hash string) error {
+func (p Provision) Validar(id, email, nombre, hash string) error {
 	id = strings.TrimSpace(id)
 	email = strings.TrimSpace(email)
 	nombre = strings.TrimSpace(nombre)
@@ -105,22 +117,25 @@ func ValidarPrimerAdministrador(id, email, nombre, hash string) error {
 	case email == "":
 		return fmt.Errorf("%w: falta el email", ErrUsuarioInvalido)
 	case !strings.Contains(email, "@"):
-		return fmt.Errorf("%w: el email %q no tiene arroba", ErrUsuarioInvalido, email)
+		return fmt.Errorf("%w: el email no tiene arroba", ErrUsuarioInvalido)
 	case nombre == "":
 		return fmt.Errorf("%w: falta el nombre", ErrUsuarioInvalido)
 	case hash == "":
 		return fmt.Errorf("%w: falta el hash de la clave", ErrUsuarioInvalido)
-	case len(hash) < hashMinimo:
-		// El CHECK del esquema es length(password_hash) >= 20. Un hash mas
-		// corto no es un hash: es una clave en claro que alguien mando por
-		// error, y conviene rechazarla antes de escribirla.
+	case p.Claves == nil:
+		// Sin Hasher no se puede comprobar la forma, y dejar pasar el hash
+		// seria peor que fallar: es el camino que dejaba la instalacion
+		// cerrada para siempre.
+		return fmt.Errorf("%w: falta el Hasher con el que comprobar el hash", ErrUsuarioInvalido)
+	case !p.Claves.EsHash(hash):
+		// LA comprobacion que importa. La longitud sola no basta: una clave en
+		// claro de 20 caracteres o mas la pasaba, se guardaba tal cual, y el
+		// login fallaba despues con la clave correcta -- sin arreglo posible,
+		// porque esta operacion no corre dos veces y ninguna ruta HTTP crea
+		// usuarios ni resetea claves.
 		return fmt.Errorf(
-			"%w: el hash de la clave tiene %d caracteres y el minimo es %d; se espera un hash, no la clave en claro",
-			ErrUsuarioInvalido, len(hash), hashMinimo)
+			"%w: el valor de %d caracteres no tiene forma de hash; se espera un hash, no la clave en claro (vease el runbook)",
+			ErrUsuarioInvalido, len(hash))
 	}
 	return nil
 }
-
-// hashMinimo es el length(password_hash) >= 20 del esquema. Un bcrypt real
-// mide 60; el minimo esta puesto para que no entre una clave en claro corta.
-const hashMinimo = 20

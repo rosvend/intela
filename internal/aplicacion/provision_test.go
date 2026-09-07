@@ -26,9 +26,21 @@ func (r *repoProvision) CrearPrimerAdministrador(_ context.Context, u Usuario, h
 
 const hashValido = "$2a$10$0123456789012345678901234567890123456789012345678901"
 
+// hasherDeForma es el doble del Hasher para estas pruebas. Solo contesta a la
+// pregunta que este caso de uso le hace: "esto tiene forma de hash tuyo".
+//
+// Un doble y no cripto.Bcrypt porque lo que se prueba aqui es que el nucleo
+// PREGUNTA y obedece; que la respuesta sea correcta para bcrypt de verdad lo
+// prueba TestEsHashRechazaUnaClaveEnClaro, en el adaptador.
+type hasherDeForma struct{ niega bool }
+
+func (h hasherDeForma) Verificar(string, string) bool { return true }
+func (h hasherDeForma) Hash(c string) (string, error) { return c, nil }
+func (h hasherDeForma) EsHash(posible string) bool    { return !h.niega && posible == hashValido }
+
 func TestPrimerAdministradorSiempreEsAdministrador(t *testing.T) {
 	repo := &repoProvision{}
-	p := Provision{Usuarios: repo}
+	p := Provision{Usuarios: repo, Claves: hasherDeForma{}}
 
 	u, err := p.CrearPrimerAdministrador(context.Background(),
 		"usr-admin", "admin@redes.co", "Admin", hashValido)
@@ -58,7 +70,7 @@ func TestPrimerAdministradorSiempreEsAdministrador(t *testing.T) {
 
 func TestPrimerAdministradorRecortaLosBlancos(t *testing.T) {
 	repo := &repoProvision{}
-	p := Provision{Usuarios: repo}
+	p := Provision{Usuarios: repo, Claves: hasherDeForma{}}
 
 	if _, err := p.CrearPrimerAdministrador(context.Background(),
 		"  usr-admin  ", "  admin@redes.co  ", "  Admin  ", "  "+hashValido+"  "); err != nil {
@@ -90,16 +102,21 @@ func TestPrimerAdministradorExigeLosCuatroCampos(t *testing.T) {
 		"sin hash":     {"usr-admin", "admin@redes.co", "Admin", ""},
 		"id en blanco": {"   ", "admin@redes.co", "Admin", hashValido},
 		"email sin @":  {"usr-admin", "admin.redes.co", "Admin", hashValido},
-		// El CHECK del esquema exige length(password_hash) >= 20. Comprobarlo
-		// aqui convierte un 23514 que aborta la invocacion en un error que
-		// dice que campo esta mal.
-		"hash corto": {"usr-admin", "admin@redes.co", "Admin", "$2a$10$corto"},
+		"hash corto":   {"usr-admin", "admin@redes.co", "Admin", "$2a$10$corto"},
+		// EL caso que dejaba produccion cerrada para siempre: una clave EN
+		// CLARO de 20 caracteres o mas pasaba el control de longitud y el
+		// CHECK del esquema, se guardaba tal cual, y el login fallaba despues
+		// con la clave correcta. La longitud no era el control que hacia falta.
+		"clave en claro larga": {
+			"usr-admin", "admin@redes.co", "Admin",
+			"esta-clave-tiene-mas-de-veinte-caracteres",
+		},
 	}
 
 	for nombre, c := range casos {
 		t.Run(nombre, func(t *testing.T) {
 			repo := &repoProvision{}
-			p := Provision{Usuarios: repo}
+			p := Provision{Usuarios: repo, Claves: hasherDeForma{}}
 
 			_, err := p.CrearPrimerAdministrador(context.Background(), c.id, c.email, c.nombre, c.hash)
 			if !errors.Is(err, ErrUsuarioInvalido) {
@@ -115,7 +132,7 @@ func TestPrimerAdministradorExigeLosCuatroCampos(t *testing.T) {
 
 func TestPrimerAdministradorNombraElCampoQueFalla(t *testing.T) {
 	repo := &repoProvision{}
-	p := Provision{Usuarios: repo}
+	p := Provision{Usuarios: repo, Claves: hasherDeForma{}}
 
 	_, err := p.CrearPrimerAdministrador(context.Background(),
 		"usr-admin", "admin.redes.co", "Admin", hashValido)
@@ -132,7 +149,7 @@ func TestPrimerAdministradorNombraElCampoQueFalla(t *testing.T) {
 
 func TestPrimerAdministradorPropagaQueYaHabiaUsuarios(t *testing.T) {
 	repo := &repoProvision{err: ErrYaHayUsuarios}
-	p := Provision{Usuarios: repo}
+	p := Provision{Usuarios: repo, Claves: hasherDeForma{}}
 
 	_, err := p.CrearPrimerAdministrador(context.Background(),
 		"usr-admin", "admin@redes.co", "Admin", hashValido)
@@ -141,5 +158,63 @@ func TestPrimerAdministradorPropagaQueYaHabiaUsuarios(t *testing.T) {
 	// escribir".
 	if !errors.Is(err, ErrYaHayUsuarios) {
 		t.Fatalf("err = %v, se esperaba ErrYaHayUsuarios", err)
+	}
+}
+
+// El nucleo no decide que es un hash: se lo pregunta al puerto y obedece. Sin
+// esto, la regla volveria a ser una comprobacion de longitud escrita aqui, que
+// es exactamente la que acepto una clave en claro.
+func TestPrimerAdministradorPreguntaAlHasherPorLaForma(t *testing.T) {
+	repo := &repoProvision{}
+	p := Provision{Usuarios: repo, Claves: hasherDeForma{niega: true}}
+
+	_, err := p.CrearPrimerAdministrador(context.Background(),
+		"usr-admin", "admin@redes.co", "Admin", hashValido)
+	if !errors.Is(err, ErrUsuarioInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrUsuarioInvalido cuando el Hasher niega la forma", err)
+	}
+	if repo.llamadas != 0 {
+		t.Errorf("llamadas = %d, se esperaba 0: no se escribe un hash que el Hasher no reconoce", repo.llamadas)
+	}
+}
+
+// Sin Hasher no se puede comprobar la forma, y dejar pasar el hash seria peor
+// que fallar: es el camino que dejaba la instalacion cerrada para siempre.
+func TestPrimerAdministradorSinHasherNoProvisiona(t *testing.T) {
+	repo := &repoProvision{}
+	_, err := Provision{Usuarios: repo}.CrearPrimerAdministrador(context.Background(),
+		"usr-admin", "admin@redes.co", "Admin", hashValido)
+	if !errors.Is(err, ErrUsuarioInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrUsuarioInvalido", err)
+	}
+	if repo.llamadas != 0 {
+		t.Errorf("llamadas = %d, se esperaba 0", repo.llamadas)
+	}
+}
+
+// Ningun mensaje lleva el VALOR del email. Estos errores se registran y ademas
+// se devuelven desde la Lambda, asi que la plataforma los guarda otra vez.
+func TestErroresDeProvisionNoLlevanElEmail(t *testing.T) {
+	const email = "admin@redes.co"
+	p := Provision{Usuarios: &repoProvision{err: ErrYaHayUsuarios}, Claves: hasherDeForma{}}
+
+	_, err := p.CrearPrimerAdministrador(context.Background(), "usr-admin", email, "Admin", hashValido)
+	if err == nil {
+		t.Fatal("se esperaba error")
+	}
+	if strings.Contains(err.Error(), email) {
+		t.Errorf("el error lleva el email: %q", err.Error())
+	}
+
+	// Y el de forma del email tampoco lo lleva, aunque sea el campo que falla.
+	_, err = p.CrearPrimerAdministrador(context.Background(), "usr-admin", "admin.redes.co", "Admin", hashValido)
+	if err == nil {
+		t.Fatal("se esperaba error")
+	}
+	if strings.Contains(err.Error(), "admin.redes.co") {
+		t.Errorf("el error lleva el email: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Errorf("el error deberia nombrar el campo: %q", err.Error())
 	}
 }

@@ -3,10 +3,15 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 // TestMain apaga el contenedor cuando termina el binario de pruebas. Mismo
@@ -79,5 +84,76 @@ func TestProvisionarDeExtremoAExtremo(t *testing.T) {
 	}
 	if total != 1 {
 		t.Errorf("usuarios = %d, se esperaba 1", total)
+	}
+}
+
+// LA propiedad que da nombre al comando: la cuenta creada SIRVE PARA ENTRAR.
+//
+// La primera version del PR no la probaba. Sus pruebas leian el hash de vuelta
+// y lo comparaban con el que se habia mandado (`if hash != p.Hash`), que es
+// cierto tambien cuando lo que se guardo es una clave en claro -- el caso que
+// dejaba la instalacion cerrada para siempre, porque desde ahi el login falla
+// con la clave correcta y no hay ninguna via de arreglo.
+//
+// Asi que aqui se hashea con el hasher de verdad, se provisiona por la Lambda,
+// y despues se INICIA SESION por el mismo caso de uso que usa la API. Nada de
+// comparar cadenas.
+func TestLaCuentaProvisionadaPuedeIniciarSesion(t *testing.T) {
+	const clave = "una-clave-de-operador-larga"
+
+	cadena := testhelp.DSN(t)
+	t.Setenv("DATABASE_URL", cadena)
+
+	hasher := cripto.Bcrypt{}
+	hash, err := hasher.Hash(clave)
+	if err != nil {
+		t.Fatalf("hashear: %v", err)
+	}
+
+	r, err := atender(mudo())(t.Context(), peticion{
+		Orden:  ordenPrimerAdministrador,
+		ID:     "usr-admin",
+		Email:  "admin@redes.co",
+		Nombre: "Administrador",
+		Hash:   hash,
+	})
+	if err != nil {
+		t.Fatalf("provisionar: %v", err)
+	}
+	if r.Estado != "creado" {
+		t.Fatalf("estado = %q, se esperaba \"creado\"", r.Estado)
+	}
+
+	store, err := postgres.Abrir(t.Context(), cadena)
+	if err != nil {
+		t.Fatalf("abrir store: %v", err)
+	}
+	t.Cleanup(store.CerrarPool)
+
+	// El mismo cableado que cmd/lambda: si esto entra, la cuenta sirve.
+	autenticacion := aplicacion.Autenticacion{
+		Usuarios: store,
+		Claves:   hasher,
+		Sesiones: store,
+		Reloj:    reloj.Sistema{},
+		Tokens:   cripto.TokensAleatorios{},
+		TTL:      time.Hour,
+	}
+
+	sesion, err := autenticacion.IniciarSesion(t.Context(), "admin@redes.co", clave)
+	if err != nil {
+		t.Fatalf("iniciar sesion con la clave correcta: %v", err)
+	}
+	if sesion.Usuario.Rol != aplicacion.RolAdministrador {
+		t.Errorf("rol = %q, se esperaba %q", sesion.Usuario.Rol, aplicacion.RolAdministrador)
+	}
+	if sesion.Token == "" {
+		t.Error("token vacio")
+	}
+
+	// Y la clave equivocada no entra: sin esto, un verificador que dijera
+	// siempre "si" pasaria la mitad de arriba.
+	if _, err := autenticacion.IniciarSesion(t.Context(), "admin@redes.co", "otra-clave"); err == nil {
+		t.Error("se inicio sesion con una clave equivocada")
 	}
 }

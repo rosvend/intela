@@ -2,7 +2,11 @@ package postgres
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
@@ -134,3 +138,98 @@ func TestCrearPrimerAdministradorCuentaCualquierRol(t *testing.T) {
 // el fichero de produccion no cargue con una declaracion que solo existe para
 // que el compilador avise.
 var _ aplicacion.RepositorioProvisionInicial = (*Store)(nil)
+
+// La invariante bajo CONCURRENCIA, que es donde la primera version fallaba.
+//
+// El WHERE NOT EXISTS por si solo no es exclusion mutua: bajo READ COMMITTED
+// -- el nivel por defecto -- la subconsulta no ve las filas insertadas y aun no
+// confirmadas por otra transaccion, asi que dos invocaciones simultaneas contra
+// una tabla vacia ven las dos una tabla vacia y las dos insertan. Medido antes
+// del arreglo: cuatro conexiones, dos ganadoras, dos filas.
+//
+// Conexiones INDEPENDIENTES y no goroutines sobre el mismo pool: lo que se
+// prueba es la exclusion entre transacciones distintas, y un pool podria
+// servirlas por turnos y esconder el fallo. La barrera las suelta a la vez.
+//
+// El escenario no es teorico: este comando se diseña para el reintento de un
+// operador que no sabe si la primera invocacion llego, y una invocacion
+// asincrona de Lambda reintenta sola.
+func TestCrearPrimerAdministradorEsExclusivoBajoConcurrencia(t *testing.T) {
+	dsn := testhelp.DSN(t)
+	const n = 4
+
+	stores := make([]*Store, n)
+	for i := range stores {
+		pool, err := pgxpool.New(t.Context(), dsn)
+		if err != nil {
+			t.Fatalf("abrir pool %d: %v", i, err)
+		}
+		t.Cleanup(pool.Close)
+		// La conexion se establece AQUI, antes de la barrera. pgxpool.New es
+		// perezoso: sin este Ping, el primer Exec de cada goroutine incluye el
+		// saludo TCP y el arranque de la sesion, y eso las serializa lo
+		// suficiente para que la carrera no se reproduzca. Con el pool en
+		// frio, esta prueba pasaba INCLUSO SIN el lock.
+		if err := pool.Ping(t.Context()); err != nil {
+			t.Fatalf("calentar pool %d: %v", i, err)
+		}
+		stores[i] = &Store{pool: pool}
+	}
+
+	var (
+		barrera   = make(chan struct{})
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		ganadoras int
+		yaHabia   int
+		otros     []error
+	)
+
+	for i := range stores {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			u := aplicacion.Usuario{
+				ID:     fmt.Sprintf("usr-%d", i),
+				Email:  fmt.Sprintf("admin%d@redes.co", i),
+				Nombre: "Administrador",
+				Rol:    aplicacion.RolAdministrador,
+			}
+			<-barrera
+			err := stores[i].CrearPrimerAdministrador(t.Context(), u, hashBcrypt)
+
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				ganadoras++
+			case errors.Is(err, aplicacion.ErrYaHayUsuarios):
+				yaHabia++
+			default:
+				otros = append(otros, err)
+			}
+		}(i)
+	}
+	close(barrera)
+	wg.Wait()
+
+	for _, err := range otros {
+		t.Errorf("error inesperado: %v", err)
+	}
+	if ganadoras != 1 {
+		t.Errorf("ganadoras = %d, se esperaba 1", ganadoras)
+	}
+	// Las perdedoras reciben el centinela, no un fallo de serializacion: la
+	// operacion ya se hizo, y para quien reintenta eso no es un error.
+	if yaHabia != n-1 {
+		t.Errorf("con ErrYaHayUsuarios = %d, se esperaban %d", yaHabia, n-1)
+	}
+
+	var total int
+	if err := stores[0].pool.QueryRow(t.Context(), `SELECT count(*) FROM usuarios`).Scan(&total); err != nil {
+		t.Fatalf("contar: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("usuarios = %d, se esperaba exactamente 1", total)
+	}
+}

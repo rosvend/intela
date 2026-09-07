@@ -55,6 +55,20 @@ type Similitud interface {
 type Hasher interface {
 	Verificar(hash, clave string) bool
 	Hash(clave string) (string, error)
+
+	// EsHash dice si una cadena tiene la forma de un hash de ESTE hasher.
+	//
+	// Existe porque el nucleo tiene una regla que cumplir -- lo que se guarda
+	// en `usuarios.password_hash` tiene que ser verificable -- y no puede
+	// comprobarla por si mismo sin aprenderse el algoritmo, que es justo lo
+	// que este puerto oculta. Asi que pregunta.
+	//
+	// No es cosmetico: una clave EN CLARO de 20 caracteres o mas pasaba el
+	// unico control que habia (la longitud) y el CHECK del esquema, se
+	// guardaba tal cual, y a partir de ahi el login fallaba con la clave
+	// correcta y con cualquier otra. Sin ninguna via para arreglarlo, porque
+	// esta operacion se niega a correr dos veces.
+	EsHash(posible string) bool
 }
 
 // GeneradorTokens produce el identificador opaco de una sesion.
