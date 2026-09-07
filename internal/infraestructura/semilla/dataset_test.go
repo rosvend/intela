@@ -2,6 +2,8 @@ package semilla
 
 import (
 	"bytes"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -101,24 +103,48 @@ func TestUsosCubrenTVCineOTTYPonderacion(t *testing.T) {
 	}
 }
 
+// TestParametrosSinteticosVanEtiquetados comprueba el conjunto ENTERO, no solo
+// Wa/Wb/Wc.
+//
+// La version anterior miraba tres claves por su nombre, asi que los otros
+// cuatro valores inventados podian llevar el nombre de un organo de gobierno
+// -"Asamblea General", "Consejo Directivo"- y la prueba pasaba. El reglamento
+// fija TECHOS ("hasta 20%", "hasta 10%", "hasta 5%"): escribir el techo como
+// si fuera la tarifa que la Asamblea resolvio inventa una resolucion. La
+// consulta con la que un auditor pregunta "ensename solo lo que aprobo un
+// organo" es `WHERE reglamento <> 'RD-IX-seed-sintetico'`, y tiene que
+// devolver unicamente lo que este publicado de verdad.
 func TestParametrosSinteticosVanEtiquetados(t *testing.T) {
-	d := Construir()
+	sinteticosEsperados := map[string]bool{
+		// Techos del reglamento, no tasas aprobadas (R-06, R-07).
+		"deduccion.administrativa": true,
+		"deduccion.social":         true,
+		"reserva.errores_tecnicos": true,
+		// Umbral de ingenieria: un ADR no es un reglamento (ADR 0007).
+		"matching.umbral": true,
+		// No publicados (RD 9.7, ADR 0004).
+		"ott.wa": true, "ott.wb": true, "ott.wc": true,
+	}
 
 	sinteticos := map[string]bool{}
-	for _, p := range d.Parametros {
-		if p.Clave == "ott.wa" || p.Clave == "ott.wb" || p.Clave == "ott.wc" {
-			if p.Reglamento != ReglamentoSintetico || p.Organo != OrganoSintetico {
-				t.Fatalf("%s: reglamento=%q organo=%q, se esperaba %s / %s",
-					p.Clave, p.Reglamento, p.Organo, ReglamentoSintetico, OrganoSintetico)
-			}
-			sinteticos[p.Clave] = true
-		}
+	for _, p := range Construir().Parametros {
 		if p.VigenteDesde == "" || p.Organo == "" || p.Reglamento == "" {
 			t.Fatalf("%s sin procedencia: no es un parametro, es una constante disfrazada (ADR 0004)", p.Clave)
 		}
+		// Las dos columnas van juntas o no dicen nada: un reglamento sintetico
+		// con un organo de gobierno sigue citando una resolucion inexistente.
+		if (p.Reglamento == ReglamentoSintetico) != (p.Organo == OrganoSintetico) {
+			t.Fatalf("%s: reglamento=%q con organo=%q, las dos columnas van juntas",
+				p.Clave, p.Reglamento, p.Organo)
+		}
+		if p.Reglamento == ReglamentoSintetico {
+			sinteticos[p.Clave] = true
+		}
 	}
-	if len(sinteticos) != 3 {
-		t.Fatalf("faltan coeficientes OTT sinteticos: %v", sinteticos)
+
+	if !maps.Equal(sinteticos, sinteticosEsperados) {
+		t.Fatalf("parametros sinteticos = %v, se esperaban %v",
+			slices.Sorted(maps.Keys(sinteticos)), slices.Sorted(maps.Keys(sinteticosEsperados)))
 	}
 }
 

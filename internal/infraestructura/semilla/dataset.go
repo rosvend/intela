@@ -306,14 +306,34 @@ func (d *Dataset) parametros() {
 	}
 
 	d.Parametros = []Parametro{
-		publicado("deduccion.administrativa", "0.20", "Asamblea General", "R-06 Ley 44/1993 Art. 21"),
-		publicado("deduccion.social", "0.10", "Asamblea General", "R-06 Ley 44/1993 Art. 21"),
-		publicado("reserva.errores_tecnicos", "0.05", "Asamblea General", "R-07 RD 14.5.1"),
+		// Las cuatro ponderaciones son lo UNICO que aqui esta publicado de
+		// verdad: la tabla de RD 9.1.1, verificada contra formulas.md.
 		publicado("ponderacion.cinematografica", "5.0", "Consejo Directivo", "RD 9.1.1"),
 		publicado("ponderacion.unitario", "2.8", "Consejo Directivo", "RD 9.1.1"),
 		publicado("ponderacion.serie", "1.3", "Consejo Directivo", "RD 9.1.1"),
 		publicado("ponderacion.sketches", "0.8", "Consejo Directivo", "RD 9.1.1"),
-		publicado("matching.umbral", "0.60", "Consejo Directivo", "ADR 0007"),
+
+		// El reglamento fija un TECHO, no la tasa. `R-06` dice "hasta 20% para
+		// gastos administrativos" y "hasta 10% para programas de inversion
+		// social" (Ley 44/1993 Art. 21); `R-07`, "se puede retener hasta 5% ...
+		// El porcentaje lo aprueba la Asamblea General" (RD 14.5.1).
+		//
+		// Escribir el techo con "Asamblea General" en la columna del organo
+		// convierte el limite legal en una resolucion que nadie tomo. Y no es
+		// una etiqueta cosmetica: un reparto calculado con un 20% de deduccion
+		// se defenderia en auditoria citando un acta que no existe. Van
+		// sinteticos hasta que llegue el acta de la Asamblea con la tasa real,
+		// que es una de las preguntas abiertas de reglas-negocio.md.
+		sintetico("deduccion.administrativa", "0.20"),
+		sintetico("deduccion.social", "0.10"),
+		sintetico("reserva.errores_tecnicos", "0.05"),
+
+		// El umbral de similitud es una decision de INGENIERIA (ADR 0007). Un
+		// ADR no es un reglamento y el Consejo Directivo nunca aprobo 0.6: es
+		// el corte con el que la muestra no produce ni un candidato
+		// (identificadores.md), calibrable, y por tanto no es normativo.
+		sintetico("matching.umbral", "0.60"),
+
 		// Wa/Wb/Wc no estan publicados (RD 9.7, ADR 0004). Cifras redondas a
 		// proposito: nadie las confunde con un valor aprobado. Suman 1.
 		sintetico("ott.wa", "0.50"),
