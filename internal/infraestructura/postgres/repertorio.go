@@ -11,13 +11,18 @@ var _ aplicacion.RepositorioRepertorio = (*Store)(nil)
 
 const columnasObra = `id, titulo, ida, eidr, imdb, tipo`
 
-// declaraciones.version existe pero NO esta en la clave primaria
-// (PRIMARY KEY (obra_id, titular_id)), asi que hoy hay exactamente una fila
-// por par y la lectura no filtra por version. Es deliberado: elegir que
-// version vigente uso una corrida es el trabajo de #23, y ese PR cambia la
-// clave. Filtrar aqui por MAX(version) fingiria un versionado que el esquema
-// todavia no soporta.
+// Estas dos lecturas sirven al motor de reparto y al estado del catalogo, y
+// las dos quieren la declaracion VIGENTE, sin versiones visibles -eso lo
+// resuelve [Store.Guardar] y [Store.Historial] en declaraciones.go, para el
+// consumidor que si necesita hablar en versiones-. Por eso el JOIN filtra
+// vigente_hasta IS NULL: desde la migracion 00007, `declaraciones` puede tener
+// varias filas por (obra_id, titular_id), una por version, y sin este filtro
+// se mezclarian partes de versiones historicas con las de la vigente.
 const columnasParte = `titular_id, ipi, porcentaje`
+
+const clausulaVigente = `
+	  JOIN declaracion_versiones dv
+	    ON dv.obra_id = d.obra_id AND dv.version = d.version AND dv.vigente_hasta IS NULL`
 
 // ListarObras devuelve el catalogo con el estado de cada declaracion.
 //
@@ -121,7 +126,8 @@ func (s *Store) DeclaracionDeObra(ctx context.Context, obraID string) (repertori
 // ListarObras: reproducibilidad (ADR 0005).
 func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.Parte, error) {
 	filas, err := s.pool.Query(ctx,
-		`SELECT `+columnasParte+` FROM declaraciones WHERE obra_id = $1 ORDER BY titular_id`,
+		`SELECT `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+		  WHERE d.obra_id = $1 ORDER BY d.titular_id`,
 		obraID)
 	if err != nil {
 		return nil, traducirError(err, "partes de obra %q", obraID)
@@ -149,7 +155,8 @@ func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.P
 // obra. Es la mitad que evita el N+1 de ListarObras y Declaraciones.
 func (s *Store) todasLasPartes(ctx context.Context) (map[string][]repertorio.Parte, error) {
 	filas, err := s.pool.Query(ctx,
-		`SELECT obra_id, `+columnasParte+` FROM declaraciones ORDER BY obra_id, titular_id`)
+		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+		  ORDER BY d.obra_id, d.titular_id`)
 	if err != nil {
 		return nil, traducirError(err, "listar declaraciones")
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 // Rol de un actor. La autorizacion de cada caso de uso se decide contra esto,
@@ -53,6 +54,25 @@ type Obra struct {
 	IMDB       string
 	Tipo       string
 	EstadoDecl string
+}
+
+// VersionDeclaracion es una Declaracion de Obra con su ventana de vigencia.
+//
+// La vigencia vive aqui y no en [repertorio.Declaracion] porque depguard
+// deniega el paquete `time` entero dentro de internal/dominio (regla
+// dominio-sin-reloj-ni-azar de .golangci.yml), sin excepcion para "solo el
+// tipo del parametro". Es el mismo motivo por el que [FilaParametro] -que
+// tiene el mismo problema, un valor con vigencia- vive en esta capa y no en el
+// dominio. [repertorio.Declaracion] se queda pura: solo las partes y el
+// calculo de si suman 100.
+//
+// VigenteHasta en nil quiere decir que esta es la version abierta, la vigente
+// ahora mismo -la unica que puede tener otro EditarSplits por encima-.
+type VersionDeclaracion struct {
+	Version      int
+	VigenteDesde time.Time
+	VigenteHasta *time.Time
+	Declaracion  repertorio.Declaracion
 }
 
 // Reporte es el acuse de una entrega recibida.
