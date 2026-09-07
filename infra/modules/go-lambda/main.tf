@@ -3,23 +3,36 @@ locals {
 
   # AWSLambdaVPCAccessExecutionRole is a superset of the basic one: it carries
   # the CloudWatch Logs permissions too, so it is never both.
-  execution_policy = local.in_vpc ? "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole" : "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
+  execution_policy = local.in_vpc ? "arn:${var.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole" : "arn:${var.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 
-# The partition is read rather than hardcoded as "aws" so the module also works
-# in GovCloud or China without an edit. Same reason we never write an account id.
-data "aws_partition" "current" {}
-
-data "aws_iam_policy_document" "assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
+  # NO `data` BLOCKS IN THIS MODULE, and that is a hard requirement rather than
+  # a style preference.
+  #
+  # A module carrying `depends_on` has EVERY data source inside it deferred to
+  # apply time whenever the thing it depends on has a pending change --
+  # Terraform names the reason `read_because_dependency_pending`. envs/*/main.tf
+  # gives module.api a `depends_on = [module.migrations]` to keep "migrate
+  # before the API serves" in the graph, and module.migrations replaces its
+  # aws_lambda_invocation on EVERY push, because the commit SHA is its trigger.
+  #
+  # So on every push these values became unknown at plan time, which forced the
+  # role to be updated and its policy attachment to be REPLACED -- policy_arn
+  # is ForceNew. A replacement is a delete, so the destroy guard refused the
+  # plan, and the deploy blocked itself. Exempting aws_lambda_invocation from
+  # the guard was necessary but not sufficient: its replacement cascades.
+  #
+  # Both values are static, so neither needs a lookup. The partition arrives as
+  # a variable, read once at the environment root where nothing defers it, and
+  # the trust policy is written out directly. Adding a `data` block back here
+  # reintroduces the block on every deploy.
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
 }
 
 # One role per function, not one shared role. They happen to need the same
@@ -27,7 +40,7 @@ data "aws_iam_policy_document" "assume" {
 # will eventually need rights the request path must never have.
 resource "aws_iam_role" "this" {
   name               = "${var.name}-exec"
-  assume_role_policy = data.aws_iam_policy_document.assume.json
+  assume_role_policy = local.assume_role_policy
 }
 
 resource "aws_iam_role_policy_attachment" "execution" {
