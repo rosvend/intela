@@ -1,4 +1,4 @@
-.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api lambda tf-fmt plan aplicar
+.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api seed lambda tf-fmt plan aplicar
 
 # La puerta que pide la revision de #6: lo mismo que corre CI, en local.
 verificar: tidy build vet fmt-check test
@@ -36,6 +36,9 @@ prueba-rapida:
 
 api:
 	go run ./cmd/api
+
+seed:
+	go run ./cmd/seed
 
 # --- Despliegue -------------------------------------------------------------
 

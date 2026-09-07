@@ -74,7 +74,19 @@ func Pool(t *testing.T) *pgxpool.Pool {
 
 	d := DSN(t)
 
-	pool, err := pgxpool.New(t.Context(), d)
+	// pool_max_conns acotado a proposito. pgxpool sin configurar abre hasta
+	// max(4, NumCPU) conexiones, y hay pruebas -las de blancos por celda- que
+	// piden un pool por subprueba: quince pools de ese tamano contra el
+	// max_connections de un contenedor agotan el servidor, y la victima no es
+	// quien lo agota sino la siguiente prueba del binario. Salio asi en CI,
+	// como `too many clients already (SQLSTATE 53300)` en sesiones_test.go.
+	//
+	// Dos bastan: ninguna prueba de este paquete usa concurrencia contra su
+	// propio pool -las que tocan Pool no pueden llamar a t.Parallel()-, y
+	// acotarlo aqui lo arregla para todas de una vez en vez de pedirle a cada
+	// prueba que se acuerde. Ademas hace mas fiable el DROP DATABASE de
+	// Restore, que no convive con conexiones vivas.
+	pool, err := pgxpool.New(t.Context(), d+"&pool_max_conns=2")
 	if err != nil {
 		t.Fatalf("abrir pool: %v", err)
 	}

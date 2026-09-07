@@ -28,7 +28,26 @@ func Abrir(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return Nuevo(pool), nil
+}
+
+// Nuevo envuelve un pool ya abierto. Lo usan las pruebas y cmd/seed, que
+// llegan con el pool de testhelp o con uno que acabamos de pinguear.
+func Nuevo(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
+}
+
+// Pool expone el pool. cmd/seed escribe con SQL directo las tablas cuyo puerto
+// todavia es de solo lectura -RepositorioRepertorio, RepositorioRecaudo y
+// ParametrosNormativos-; el Store sigue siendo el dueno de la conexion.
+//
+// Las `obras` NO son de esas: tienen adaptador de escritura -[Store.Registrar],
+// que mete la obra y sus coautores en una transaccion- y el seed pasa por el,
+// no por aqui. Una obra escrita con SQL directo se queda sin coautores y
+// entonces no la puede leer nadie, porque la lectura la reconstruye con el
+// mismo constructor del dominio que la crea.
+func (s *Store) Pool() *pgxpool.Pool {
+	return s.pool
 }
 
 // Ping comprueba la conexion. Lo usa el handler de salud.
