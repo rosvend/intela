@@ -86,6 +86,21 @@ type RepositorioAfiliacion interface {
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
 }
 
+// RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
+//
+// Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
+// usuarios en cada peticion autenticada, y esto se invoca UNA vez en la vida de
+// una instalacion. Juntarlos obligaria a todo doble de la afiliacion a
+// implementar una escritura que no usa.
+//
+// El contrato incluye la unicidad: la implementacion inserta solo si la tabla
+// esta vacia, EN LA MISMA SENTENCIA, y devuelve ErrYaHayUsuarios si no lo
+// estaba. Comprobarlo con un recuento previo deja una ventana entre el SELECT y
+// el INSERT por la que cabe una segunda cuenta de administrador.
+type RepositorioProvisionInicial interface {
+	CrearPrimerAdministrador(ctx context.Context, u Usuario, hash string) error
+}
+
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una
 // credencial permanente que nadie puede revocar.
 type Sesiones interface {
