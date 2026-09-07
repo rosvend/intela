@@ -110,8 +110,33 @@ func idReporte(fuente, sha string) string {
 // sobrescribe, asi que una resubida de los mismos bytes deja el objeto
 // literalmente sin cambios y despues se rechaza con ErrReporteDuplicado.
 func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, datos []byte) (Reporte, error) {
+	// UNA sola normalizacion de la fuente, y ANTES de la validacion, por lo
+	// mismo que la de obra_id en GuardarUsos: la fuente se validaba recortada
+	// y se usaba CRUDA en los tres sitios que vienen despues -la fila de
+	// `reportes`, la derivacion del id de la entrega, y la fuente que
+	// GuardarUsos estampa en cada uso-.
+	//
+	// El dano no es cosmetico, y el mas caro es el del id. idReporte deriva de
+	// (fuente, huella), asi que "caracol" y " caracol " dan DOS ids distintos
+	// para los mismos bytes; y el UNIQUE (sha256, fuente) tampoco los junta,
+	// porque la fuente difiere. O sea: dos filas de `reportes` apuntando al
+	// MISMO objeto de la boveda -la clave del objeto es solo la huella-,
+	// ErrReporteDuplicado que no salta, y los dos juegos de filas ponderando la
+	// bolsa. Cada obra de ese archivo puntua DOS VECES. Es el invariante 1 del
+	// sistema roto por un espacio de un formulario.
+	//
+	// Y el silencioso: RepositorioIdentificacion.Alias indexa por fuente, asi
+	// que la variante con espacios no casa con ningun alias NUNCA y todas sus
+	// filas caen a ONI. El sintoma no es un error, es un catalogo que parece
+	// incompleto.
+	//
+	// TrimSpace y no un recorte propio, por lo mismo que alli: su definicion de
+	// blanco es unicode.IsSpace, que incluye el NBSP (U+00A0) de los exports de
+	// Excel.
+	fuente = strings.TrimSpace(fuente)
+
 	switch {
-	case strings.TrimSpace(fuente) == "":
+	case fuente == "":
 		return Reporte{}, fmt.Errorf("%w: falta la fuente", ErrReporteInvalido)
 	// periodoValido vive en trabajos.go, una sola vez para el paquete. Se
 	// comprueba aqui y no solo en la base porque GuardarReporte escribe la

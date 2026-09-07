@@ -1077,6 +1077,64 @@ func TestIngestaNoPierdeElLotePorUnBlancoEnUnaFila(t *testing.T) {
 	})
 }
 
+// Item 3 contra la base: una fuente con espacios NO es otra fuente.
+//
+// `idReporte` deriva de (fuente, huella) y el UNIQUE es sobre (sha256, fuente),
+// asi que sin normalizar, " caracol " entrega los MISMOS bytes bajo un id
+// distinto y sin chocar con nada: dos filas de `reportes` apuntando al mismo
+// objeto de la boveda -la clave del objeto es solo la huella-,
+// ErrReporteDuplicado que no salta, y los dos juegos de filas ponderando la
+// bolsa. Cada obra de ese archivo puntuaria DOS VECES, que es el invariante
+// numero uno del sistema roto por un espacio de un formulario.
+func TestGuardarReporteNoAdmiteLaMismaFuenteConEspacios(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	almacen := objetos.Disco{Dir: t.TempDir()}
+	ingesta := aplicacion.Ingesta{Reportes: s, Almacen: almacen}
+	fixture := []byte("Titulo,ID_Ficha,Duracion\nLa Casa de las Dos Palmas,1234,52\n")
+
+	primera, err := ingesta.GuardarReporte(ctx, "caracol-espacios", "2026-01", fixture)
+	if err != nil {
+		t.Fatalf("GuardarReporte: %v", err)
+	}
+
+	// El NBSP (U+00A0) va explicito y no como caracter suelto: es con lo que
+	// Excel rellena las celdas, sobrevive a un copiar y pegar en un formulario
+	// web, y es el que separa un recorte hecho a mano de strings.TrimSpace.
+	for _, conBlancos := range []string{
+		" caracol-espacios",
+		"caracol-espacios ",
+		"\tcaracol-espacios\n",
+		"\u00a0caracol-espacios\u00a0",
+	} {
+		segunda, err := ingesta.GuardarReporte(ctx, conBlancos, "2026-01", fixture)
+		if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
+			t.Fatalf("%q es la misma entrega que %q: se esperaba ErrReporteDuplicado, "+
+				"se obtuvo err = %v e id = %q", conBlancos, primera.Fuente, err, segunda.ID)
+		}
+	}
+
+	// Una sola fila, y con la fuente recortada: Alias() indexa por fuente, y
+	// " caracol " no casaria con ningun alias nunca.
+	var (
+		filas  int
+		fuente string
+	)
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*), max(fuente) FROM reportes WHERE clave_objeto = $1`,
+		primera.ClaveObjeto).Scan(&filas, &fuente); err != nil {
+		t.Fatalf("contar los acuses del objeto: %v", err)
+	}
+	if filas != 1 {
+		t.Fatalf("hay %d acuses para el mismo objeto de la boveda: cada obra del "+
+			"archivo ponderaria %d veces", filas, filas)
+	}
+	if fuente != "caracol-espacios" {
+		t.Errorf("fuente = %q, se esperaba %q", fuente, "caracol-espacios")
+	}
+}
+
 // contar comprueba de una vez las dos mitades de un lote: las filas canonicas
 // de `usos` y las del log de rechazos. Es la asercion que distingue "se aparto
 // una fila" de "se perdio la entrega", y se repite en cada prueba de lote.
