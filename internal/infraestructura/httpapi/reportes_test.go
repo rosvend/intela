@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -289,6 +290,100 @@ func TestSubirReporteConCuerpoQueNoEsMultipartEs400(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/reportes", `{"fuente":"caracol"}`, "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// relleno produce n bytes sin materializarlos. Un cuerpo de prueba de 128 MiB
+// dentro de un []byte serian 128 MiB de RAM por corrida, y lo que hay que
+// comprobar es justamente que el servidor NO los lee.
+type relleno struct{ quedan int64 }
+
+func (r *relleno) Read(p []byte) (int, error) {
+	if r.quedan <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.quedan {
+		p = p[:r.quedan]
+	}
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.quedan -= int64(len(p))
+	return len(p), nil
+}
+
+// contador anota cuanto del cuerpo llego a leer el servidor. Es la unica forma
+// de ver la diferencia entre cortar la entrada y tragarsela entera para
+// rechazarla despues: el codigo de respuesta es el mismo en los dos casos.
+type contador struct {
+	r      io.Reader
+	leidos int64
+}
+
+func (c *contador) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.leidos += int64(n)
+	return n, err
+}
+
+// El tope de la subida tiene que aplicarse EN LA ENTRADA, no despues de haber
+// recibido el archivo.
+//
+// Medido antes del arreglo: una peticion de 40 MiB hacia que ParseMultipartForm
+// derramara ~40 MB a disco, y una de 4 GB los habria derramado igual. La
+// comprobacion de `len(datos) > tamanoMaximoEntrega` que habia contestaba 413,
+// pero solo cuando el archivo ya estaba escrito: es una regla de negocio sobre
+// algo que ya llego, no una defensa.
+//
+// Por eso la asercion que carga con la prueba es la de bytes leidos y no la del
+// codigo: sin MaxBytesReader el codigo sigue siendo 413.
+func TestSubirReporteCortaElCuerpoQueSePasaSinLeerloEntero(t *testing.T) {
+	const frontera = "FRONTERA"
+	cabecera := "--" + frontera + "\r\n" +
+		"Content-Disposition: form-data; name=\"fuente\"\r\n\r\ncaracol\r\n" +
+		"--" + frontera + "\r\n" +
+		"Content-Disposition: form-data; name=\"periodo\"\r\n\r\n2026-01\r\n" +
+		"--" + frontera + "\r\n" +
+		"Content-Disposition: form-data; name=\"archivo\"; filename=\"gigante.csv\"\r\n" +
+		"Content-Type: application/octet-stream\r\n\r\n"
+	pie := "\r\n--" + frontera + "--\r\n"
+
+	// Cuatro veces el tope. El numero no importa mientras sea mucho mayor: lo
+	// que se comprueba es que lo leido NO crece con el.
+	cuerpo := &contador{r: io.MultiReader(
+		strings.NewReader(cabecera),
+		&relleno{quedan: 4 * tamanoMaximoCuerpo},
+		strings.NewReader(pie),
+	)}
+
+	ing := &ingestaFalsa{rec: recepcionDePrueba()}
+	h := servidorConIngesta(t, ing)
+
+	req := httptest.NewRequest(http.MethodPost, "/reportes", cuerpo)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+frontera)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	// Y con 413 y no con el 400 de "esto no es multipart", que es lo que
+	// contestaria un ParseMultipartForm cuyo error no se distingue: quien sube
+	// leeria que mande un multipart habiendo mandado uno.
+	if !strings.Contains(rec.Body.String(), "pasa de") {
+		t.Errorf("el cuerpo no dice que se paso del tope: %s", rec.Body)
+	}
+	// Nada de esto llego al nucleo, asi que no hay huella que quemar ni objeto
+	// que escribir en la boveda.
+	if ing.datos != nil {
+		t.Errorf("la entrega llego al nucleo: %d bytes", len(ing.datos))
+	}
+	// El margen sobre el tope es el bufer con el que el parseo lee: se corta EN
+	// el limite, no en el byte exacto.
+	if tope := int64(tamanoMaximoCuerpo) + 1<<20; cuerpo.leidos > tope {
+		t.Errorf("se leyeron %d bytes del cuerpo con un tope de %d: el limite no corta la entrada",
+			cuerpo.leidos, tamanoMaximoCuerpo)
 	}
 }
 

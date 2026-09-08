@@ -37,6 +37,40 @@ import (
 type Tabla struct {
 	Columnas []string
 	Filas    [][]string
+
+	// Lineas es, para cada elemento de Filas, el numero de fila DEL ARCHIVO del
+	// que salio, con la cabecera como 1.
+	//
+	// Existe porque Filas ya no es el archivo: [desdeFilas] descarta las filas
+	// enteras en blanco, que son relleno del export y no registros. Sin esta
+	// correspondencia, el unico numero disponible aguas arriba es la posicion en
+	// la lista YA FILTRADA, y entonces cada blanco corre la numeracion de todo lo
+	// que viene detras: la fila mala de la linea 4 de la hoja se reporta como
+	// "fila 3" con un blanco delante, y como "fila 2" con dos.
+	//
+	// No es cosmetico. El motivo de rechazo existe para pedirle al cliente LA
+	// LINEA EXACTA que hay que arreglar, y un numero corrido lo manda a mirar una
+	// fila que esta bien -- o peor, justo a la que se salto por venir vacia.
+	//
+	// Es una lista paralela a Filas y no un campo por fila porque una `Tabla` es
+	// la frontera entre el formato y el mapa, y ese contrato es "cabecera y
+	// celdas, todo texto": meter un numero dentro de la fila obligaria a todo el
+	// mapeo a distinguir la celda de la anotacion. Se lee por [Tabla.Linea], que
+	// es lo unico que la consulta.
+	Lineas []int
+}
+
+// Linea devuelve el numero de fila del archivo del que salio Filas[n].
+//
+// Una tabla sin numeracion -- las que se componen a mano en las pruebas -- cae a
+// la posicion, que es lo que hay: la cabecera es la 1 y los datos empiezan en la
+// 2. Los tres lectores de formato de este fichero SI la rellenan, asi que por el
+// camino real nunca se usa esa salida.
+func (t Tabla) Linea(n int) int {
+	if n >= 0 && n < len(t.Lineas) {
+		return t.Lineas[n]
+	}
+	return n + 2
 }
 
 // ErrFormato: los bytes no son del formato que se esperaba.
@@ -164,14 +198,20 @@ func TablaJSON(datos []byte) (Tabla, error) {
 	slices.Sort(columnas)
 
 	filas := make([][]string, 0, len(registros))
-	for _, r := range registros {
+	lineas := make([]int, 0, len(registros))
+	for n, r := range registros {
 		fila := make([]string, len(columnas))
 		for i, c := range columnas {
 			fila[i] = textoJSON(r[c])
 		}
 		filas = append(filas, fila)
+		// Un array JSON no tiene cabecera, pero el registro n-esimo se numera
+		// como la fila n-esima de una tabla que si la tiene: aqui no se descarta
+		// ningun registro, asi que la correspondencia es directa, y mantenerla
+		// deja UN solo formato de motivo para los tres formatos.
+		lineas = append(lineas, n+2)
 	}
-	return Tabla{Columnas: columnas, Filas: filas}, nil
+	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas}, nil
 }
 
 // textoJSON reduce un valor JSON a su texto de celda.
@@ -220,7 +260,8 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 	}
 
 	cuerpo := make([][]string, 0, len(filas)-1)
-	for _, f := range filas[1:] {
+	lineas := make([]int, 0, len(filas)-1)
+	for i, f := range filas[1:] {
 		if vacia(f) {
 			// Una fila entera en blanco es relleno del export, no un registro.
 			// Mandarla al log de rechazos llenaria el log de ruido y taparia
@@ -231,8 +272,14 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 		fila := make([]string, len(columnas))
 		copy(fila, f)
 		cuerpo = append(cuerpo, fila)
+		// El numero que ve el cliente en su hoja: `filas` incluye la cabecera,
+		// asi que el primer registro del archivo es la linea 2. Se anota AQUI,
+		// que es el unico sitio donde todavia se sabe de que linea salio: a
+		// partir de este return la fila descartada ya no existe y la posicion en
+		// `cuerpo` esta corrida.
+		lineas = append(lineas, i+2)
 	}
-	return Tabla{Columnas: columnas, Filas: cuerpo}, nil
+	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas}, nil
 }
 
 func vacia(fila []string) bool {

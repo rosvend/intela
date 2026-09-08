@@ -93,6 +93,25 @@ func (r *repoIngestaMemoria) GuardarUsos(_ context.Context, usos []UsoPersistido
 	return nil
 }
 
+// GuardarEntrega imita lo que da la transaccion del adaptador real: si las
+// filas no entran, el acuse TAMPOCO queda, y la huella no se gasta.
+//
+// El orden de este doble es lo que lo hace un doble honesto. Comprobar errUsos
+// al final -- guardando el acuse primero y fallando despues -- seria imitar la
+// version SIN transaccion, y entonces la prueba de la huella quemada pasaria por
+// el motivo equivocado.
+func (r *repoIngestaMemoria) GuardarEntrega(ctx context.Context, rep Reporte, usos []UsoPersistido) error {
+	if r.errUsos != nil {
+		return r.errUsos
+	}
+	if err := r.GuardarReporte(
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+	); err != nil {
+		return err
+	}
+	return r.GuardarUsos(ctx, usos)
+}
+
 func (r *repoIngestaMemoria) UsosSinResolver(context.Context) ([]UsoPersistido, error) {
 	return r.canonicos(), nil
 }
@@ -1624,6 +1643,55 @@ func TestIngerirReporteRechazaLaResubidaSinVolverAParsear(t *testing.T) {
 	// evita que alguien "optimice" moviendo el parseo detras del acuse.
 	if lec.lecturas != 2 {
 		t.Errorf("lecturas = %d, se esperaban 2", lec.lecturas)
+	}
+}
+
+// La huella no se puede quemar por un fallo de escritura, que es la otra puerta
+// del mismo agujero que el orden de IngerirReporte cierra.
+//
+// El orden -parsear antes de tocar la boveda- cubre el archivo ROTO. Este caso
+// es el contrario: el archivo esta bien, se parsea bien, y lo que falla es
+// guardar las filas. Con el acuse y el lote en dos escrituras separadas queda
+// una entrega registrada con CERO usos y la huella gastada para esa fuente,
+// porque el duplicado lo decide el UNIQUE (sha256, fuente). A partir de ahi el
+// cliente reenvia el mismo archivo -que es exactamente lo que hace cuando le
+// dicen que su carga fallo- y se lleva ErrReporteDuplicado para siempre, sin un
+// solo uso registrado y sin forma de arreglarlo fuera de la base.
+func TestIngerirReporteNoQuemaLaHuellaSiLasFilasNoEntran(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde"), usoBueno("La Casa")}}
+	ingesta, repo, almacen := ingestaConLector(lec)
+	datos := []byte("xlsx")
+
+	repo.errUsos = errors.New("la base se cayo a mitad del lote")
+	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos); err == nil {
+		t.Fatal("se esperaba error: el lote no se pudo guardar")
+	}
+	// Ni acuse ni filas: la entrega no ocurrio.
+	if len(repo.reportes) != 0 || len(repo.usos) != 0 {
+		t.Fatalf("quedo media entrega: %d reportes, %d usos", len(repo.reportes), len(repo.usos))
+	}
+	// El objeto de la boveda SI queda, y esta bien que quede: de un fichero
+	// escrito no se hace rollback, y un objeto sin acuse es evidencia inerte que
+	// la resubida vuelve a poner bajo la misma clave -que es su contenido- sin
+	// cambiar nada.
+	if len(almacen.objetos) != 1 {
+		t.Errorf("objetos en la boveda = %d, se esperaba 1", len(almacen.objetos))
+	}
+
+	// El cliente reenvia el MISMO archivo, byte a byte.
+	repo.errUsos = nil
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos)
+	if errors.Is(err, ErrReporteDuplicado) {
+		t.Fatal("la huella quedo quemada: la reentrega del mismo archivo choca con el duplicado")
+	}
+	if err != nil {
+		t.Fatalf("reentrega: %v", err)
+	}
+	if rec.Aceptados != 2 {
+		t.Errorf("aceptados = %d, se esperaban 2", rec.Aceptados)
+	}
+	if len(repo.usos) != 2 {
+		t.Errorf("usos guardados = %d, se esperaban 2", len(repo.usos))
 	}
 }
 

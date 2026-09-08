@@ -194,6 +194,41 @@ type RepositorioIdentificacion interface {
 type RepositorioIngesta interface {
 	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
+
+	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
+	// hecho: o entran los dos o no entra ninguno.
+	//
+	// # Por que no basta con llamar a los dos metodos de arriba
+	//
+	// Porque el acuse QUEMA la huella. El duplicado lo decide el
+	// UNIQUE (sha256, fuente), asi que una fila de `reportes` escrita y un lote
+	// que falla despues dejan una entrega registrada con CERO filas y la huella
+	// gastada: el cliente vuelve a mandar el mismo archivo -- que es exactamente
+	// lo que hace cuando le dicen que su carga fallo -- y se lleva un
+	// [ErrReporteDuplicado] para siempre. La entrega no se recupera sin cirugia
+	// en la base, y de la boveda no se borra (ADR 0006).
+	//
+	// Es el mismo agujero que [Ingesta.IngerirReporte] evita parseando antes de
+	// tocar nada, por la otra puerta: alli el archivo esta roto, aqui el archivo
+	// esta bien y lo que falla es la escritura.
+	//
+	// # Por que es un metodo del puerto y no una transaccion del caso de uso
+	//
+	// Por lo mismo que la atomicidad del lote en GuardarUsos: el nucleo no puede
+	// abrir una transaccion sin aprenderse el driver, que es justo lo que este
+	// puerto oculta -- y depguard deniega `pgx` en esta capa --. Lo que el caso de
+	// uso SI decide es el limite, y lo declara eligiendo esta llamada en vez de
+	// las otras dos. Es la misma forma que [CatalogoObras.Registrar], que mete la
+	// obra y sus coautores juntas, y que [RepositorioResultados.Guardar].
+	//
+	// La boveda se queda FUERA, y no puede ser de otra manera: de un fichero
+	// escrito no se hace rollback. El resto que eso deja -- un objeto sin acuse --
+	// es inerte y se recupera solo, porque la clave del objeto es su contenido
+	// (ver [Ingesta.GuardarReporte]).
+	//
+	// Devuelve [ErrReporteDuplicado] si esa fuente ya entrego esos mismos bytes.
+	GuardarEntrega(ctx context.Context, rep Reporte, usos []UsoPersistido) error
+
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)

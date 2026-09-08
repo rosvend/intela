@@ -23,13 +23,37 @@ type Ingesta interface {
 	Cargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error)
 }
 
-// tamanoMaximoEntrega es el tope de una subida.
+// tamanoMaximoEntrega es el tope del ARCHIVO de una subida.
 //
 // La muestra del cliente son 21 KB y 16 KB. 32 MiB deja sitio de sobra para
 // parrillas de un ano y sigue siendo un tope: sin el, `multipart.Reader`
 // escribe en disco lo que le manden y una subida basta para llenar el volumen.
 // El streaming de archivos grandes de verdad es el issue #46.
 const tamanoMaximoEntrega = 32 << 20
+
+// tamanoMaximoCuerpo es el tope de la PETICION entera, que es donde el limite
+// se puede aplicar de verdad.
+//
+// Son dos topes y no uno porque se comprueban en dos momentos que no se pueden
+// juntar. `tamanoMaximoEntrega` mide el archivo, y para medirlo hay que haberlo
+// recibido ya: cuando esa comprobacion se ejecuta, `ParseMultipartForm` lleva
+// rato escribiendo en disco lo que le manden. Medido: una peticion de 40 MiB
+// derrama ~40 MB antes de que nada la pueda frenar, y una de 4 GB los derrama
+// tambien. El tope del archivo no es una defensa de entrada; es una regla de
+// negocio sobre algo que ya llego.
+//
+// Este otro si es de entrada: va en un [http.MaxBytesReader] alrededor del
+// Body, ANTES del parseo, y corta la lectura en cuanto se pasa. Lo que se llega
+// a derramar deja de depender de lo que mande quien sube.
+//
+// El margen sobre el tope del archivo es la envoltura multipart -- los campos
+// `fuente`, `periodo` y `formato`, las cabeceras de cada parte y las lineas de
+// frontera --, que viaja en el mismo cuerpo. Sin el, un archivo de exactamente
+// 32 MiB se rechazaria por el peso del sobre y el tope documentado seria mentira
+// por unos cientos de bytes. 1 MiB es holgado a proposito: la envoltura real son
+// unos cientos de bytes, y aqui lo que importa es que el maximo este ACOTADO, no
+// que sea exacto.
+const tamanoMaximoCuerpo = tamanoMaximoEntrega + 1<<20
 
 // entregaJSON es el acuse que devuelve una subida.
 //
@@ -91,7 +115,25 @@ type cargaJSON struct {
 // contenido, no del nombre, asi que no hay forma de que un nombre hostil llegue
 // al sistema de ficheros.
 func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
+	// ANTES del parseo, que es lo unico que hace que el tope sea un tope. El
+	// argumento de ParseMultipartForm limita lo que se guarda EN MEMORIA y no lo
+	// que se lee: pasado ese numero, `multipart.Reader` sigue leyendo y va
+	// derramando a disco todo lo que le manden. Con MaxBytesReader la lectura se
+	// corta en el limite y el resto del cuerpo no llega a existir en ningun
+	// lado.
+	r.Body = http.MaxBytesReader(w, r.Body, tamanoMaximoCuerpo)
+
 	if err := r.ParseMultipartForm(tamanoMaximoEntrega); err != nil {
+		// Pasarse del tope no es una peticion mal formada, asi que no puede
+		// contestarse con el mismo 400 que un cuerpo que no es multipart: quien
+		// sube leeria "manda un multipart" habiendo mandado uno. MaxBytesReader
+		// devuelve *http.MaxBytesError, y viaja envuelto en el error del parseo.
+		var excede *http.MaxBytesError
+		if errors.As(err, &excede) {
+			escribirError(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("la entrega pasa de %d MiB", tamanoMaximoEntrega>>20))
+			return
+		}
 		escribirError(w, http.StatusBadRequest,
 			"la entrega tiene que llegar como multipart/form-data con los campos fuente, periodo y archivo")
 		return
@@ -118,9 +160,13 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		formato = ingesta.FormatoDeNombre(cabecera.Filename)
 	}
 
-	// LimitReader ademas de ParseMultipartForm: el tope del formulario limita
-	// lo que se guarda EN MEMORIA, no lo que llega. Sin este, un `archivo` de
-	// 4 GB se lee entero a un []byte.
+	// El tope DEL ARCHIVO, que es otra pregunta que la del cuerpo: el
+	// MaxBytesReader de arriba acota la peticion entera -- envoltura incluida --
+	// y esto acota la parte `archivo` sola. Dentro de un cuerpo permitido cabe un
+	// archivo que se pasa, y es el que hay que nombrar en la respuesta.
+	//
+	// El +1 es para poder distinguir "justo el tope" de "se paso": LimitReader no
+	// avisa, se queda callado en el limite.
 	datos, err := io.ReadAll(io.LimitReader(archivo, tamanoMaximoEntrega+1))
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "fallo al leer la subida", slog.Any("error", err))

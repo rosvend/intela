@@ -217,6 +217,58 @@ func TestAplicarNumeraLasFilasComoLasVeElCliente(t *testing.T) {
 	}
 }
 
+// La numeracion tiene que ser la del ARCHIVO, no la de la lista que llega a
+// Aplicar: el lector de formato descarta las filas enteras en blanco -- relleno
+// del export, no registros -- y cada una de ellas corre la posicion de todo lo
+// que viene detras.
+//
+// Con la numeracion sacada de la posicion, la fila mala de la linea 5 se
+// reportaba como "fila 3": dos blancos delante, dos lineas de menos. El motivo
+// existe para pedirle al cliente LA LINEA EXACTA que hay que arreglar, asi que
+// un numero corrido lo manda a mirar una fila que esta bien -- o a la que se
+// salto justamente por venir vacia.
+//
+// Va por TablaCSV y no por una Tabla escrita a mano a proposito: el descarte de
+// blancos es lo que produce el desfase, y una tabla compuesta a mano no lo
+// tiene.
+func TestAplicarNumeraLaFilaDelArchivoYNoLaPosicionTrasDescartarBlancos(t *testing.T) {
+	t.Parallel()
+
+	// linea 1: cabecera
+	// linea 2: buena
+	// linea 3: en blanco -- Excel escribe las filas vacias de su rango asi
+	// linea 4: en blanco
+	// linea 5: mala
+	tabla, err := TablaCSV([]byte("titulo,duracion\nbuena,10\n,\n,\nmala,x\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	// El mecanismo, antes del mensaje: las dos filas que sobreviven vienen de las
+	// lineas 2 y 5, y esa correspondencia solo se puede anotar donde se descarta.
+	if len(tabla.Filas) != 2 || tabla.Linea(0) != 2 || tabla.Linea(1) != 5 {
+		t.Fatalf("lineas = %v con %d filas, se esperaban [2 5]", tabla.Lineas, len(tabla.Filas))
+	}
+
+	usos, err := mapaMinimo().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if len(usos) != 2 {
+		t.Fatalf("usos = %d, se esperaban 2", len(usos))
+	}
+	if usos[0].RechazoMotivo != "" {
+		t.Fatalf("la primera fila esta bien: %s", usos[0].RechazoMotivo)
+	}
+	if !strings.Contains(usos[1].RechazoMotivo, "fila 5") {
+		t.Errorf("el motivo no cita la linea del archivo: %s", usos[1].RechazoMotivo)
+	}
+	// Y no la posicion en la lista ya filtrada, que es el numero equivocado que
+	// se leia antes.
+	if strings.Contains(usos[1].RechazoMotivo, "fila 3") {
+		t.Errorf("el motivo numera sobre la lista filtrada: %s", usos[1].RechazoMotivo)
+	}
+}
+
 func TestAplicarAceptaLosPlaceholdersComoHuecoDeclarado(t *testing.T) {
 	t.Parallel()
 

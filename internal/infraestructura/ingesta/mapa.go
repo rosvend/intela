@@ -233,7 +233,15 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		// cabecera es la 1 y los datos empiezan en la 2. Un motivo que diga
 		// "fila 0" obliga a quien lo lee a traducirlo, y es la clase de detalle
 		// que se traduce mal.
-		linea := n + 2
+		//
+		// Se lo pregunta a la tabla y NO se calcula como `n + 2`. La diferencia
+		// es que `t.Filas` no es el archivo: el lector de formato ya descarto las
+		// filas enteras en blanco, asi que `n` es la posicion en la lista
+		// FILTRADA y cada blanco corre la numeracion de todo lo que viene detras.
+		// Con `n + 2`, la fila mala de la linea 4 de la hoja se reporta como
+		// "fila 3" si tenia un blanco delante y como "fila 2" si tenia dos, que
+		// es mandar al cliente a arreglar una fila que esta bien.
+		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea)
 		if motivo == "" && len(clave) > 0 {

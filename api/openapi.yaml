@@ -843,7 +843,11 @@ paths:
               example:
                 error: esa fuente ya entrego exactamente ese archivo
         "413":
-          description: El archivo pasa del tope de 32 MiB.
+          description: |
+            El archivo pasa del tope de 32 MiB. El cuerpo de la peticion se
+            corta en el tope mas el margen de la envoltura multipart, asi que
+            una subida mayor deja de leerse en cuanto se pasa en vez de
+            recibirse entera para rechazarla despues.
           content:
             application/json:
               schema:
