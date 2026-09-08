@@ -197,6 +197,78 @@ type RepositorioIngesta interface {
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
+
+	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
+	// mas antigua. Un periodo vacio NO filtra.
+	//
+	// Devuelve tambien los dos recuentos porque separados no significan nada:
+	// una carga de la que solo se sabe que llego no dice si entro entera, y
+	// "entro entera" es justamente lo que hay que poder mirar para saber si
+	// falta pedirle algo al cliente.
+	ListarCargas(ctx context.Context, periodo string) ([]CargaReporte, error)
+}
+
+// Formatos en los que puede llegar una entrega. Son la mitad de la clave con
+// la que se elige el adaptador que sabe leerla.
+//
+// Viven en el nucleo y no en el adaptador aunque nombren formatos de archivo:
+// lo que el nucleo necesita saber es que una misma fuente puede entregar lo
+// mismo de varias maneras, no como se parsea ninguna de ellas. Que detras del
+// XLSX haya excelize y detras del CSV encoding/csv no se sabe desde aqui, y
+// depguard lo deja por escrito denegando los dos paquetes en esta capa.
+const (
+	FormatoXLSX = "xlsx"
+	FormatoCSV  = "csv"
+	FormatoJSON = "json"
+)
+
+// ClaveLector identifica al adaptador de formato de una entrega.
+//
+// Es el PAR (fuente, formato) y no la fuente sola porque son dos ejes
+// independientes y los dos varian de verdad: la parrilla de Caracol y el
+// reporte de Netflix traen columnas distintas -- no comparten ni un nombre de
+// columna, esta medido en `docs/dominio/fuentes-datos.md` --, y una misma
+// fuente puede entregar su mismo contenido en .xlsx hoy y en CSV manana sin
+// que su mapa de columnas cambie una linea.
+//
+// Con la fuente sola como clave, dar de alta el CSV de Caracol obligaria a
+// inventarse una fuente "caracol-csv", y a partir de ahi la fuente dejaria de
+// significar quien entrego -- que es lo que indexa `alias_obra` y lo que ata
+// una fila a su usuario del `RD 8` --, para significar quien entrego y como.
+type ClaveLector struct {
+	Fuente  string
+	Formato string
+}
+
+// LectorReporte convierte los bytes de una entrega en filas del esquema
+// canonico.
+//
+// Es el puerto de los adaptadores de formato. Lo satisface un adaptador por
+// PAR (fuente, formato); ver [ClaveLector].
+//
+// # Por que devuelve las rechazadas mezcladas con las buenas
+//
+// Una fila que no se puede normalizar NO se descarta: viaja en el mismo
+// resultado con su [UsoPersistido.RechazoMotivo] puesto, y es
+// [Ingesta.GuardarUsos] quien la encamina al log de rechazos. Devolver dos
+// slices dejaria al adaptador decidir que es un rechazo y que es una perdida,
+// y la unica forma de perder una fila en silencio es que alguien pueda no
+// devolverla.
+//
+// El motivo lo escribe el adaptador porque ve cosas que aguas arriba ya no se
+// ven: que celda no se pudo convertir, que placeholder traia -- el `--` de
+// `episode_nbr` --, en que fila del archivo estaba. GuardarUsos respeta el
+// motivo que ya viene puesto justamente para no perderlo.
+//
+// # Y por que el error es otra cosa
+//
+// El error es el fallo ESTRUCTURAL: el archivo no se puede abrir, la hoja no
+// esta, falta una columna requerida. Ahi no hay filas buenas que salvar, y el
+// contrato es que no se persiste NADA -- ni la boveda --. Se devuelve envuelto
+// en [ErrReporteInvalido] y nombrando el campo, que es lo que permite volver a
+// pedirle al cliente exactamente eso.
+type LectorReporte interface {
+	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
 // RepositorioONI es la cola manual. Separado de identificacion porque son dos

@@ -73,6 +73,58 @@ func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, cl
 	return traducirError(err, "guardar reporte de %q, periodo %q", fuente, periodo)
 }
 
+// ListarCargas devuelve las entregas recibidas con sus dos recuentos.
+//
+// # Por que subconsultas escalares y no dos LEFT JOIN
+//
+// `usos` y `usos_rechazados` son dos tablas distintas colgando del mismo
+// reporte. Unirlas las dos a la vez con JOIN multiplica las filas -- 3 usos y
+// 2 rechazos dan 6 combinaciones -- y a partir de ahi los dos COUNT salen
+// inflados sin que nada falle. Se puede arreglar con COUNT(DISTINCT ...), pero
+// entonces la correccion del recuento depende de que nadie quite ese DISTINCT
+// mas adelante. Con una subconsulta por tabla cada COUNT cuenta lo suyo y no
+// hay forma de que se contaminen; las dos van por `usos_reporte` y
+// `usos_rechazados_reporte`, que son indices que ya existen.
+//
+// El periodo se filtra con un parametro que puede ser vacio, no concatenando
+// otro WHERE: una sola sentencia, un solo plan, y ningun camino en el que el
+// texto del SQL dependa de la entrada.
+//
+// El orden es por `creado` descendente y desempata por id. Sin el desempate,
+// dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
+// produccion -- salen en orden arbitrario y el listado cambia entre lecturas.
+func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
+	filas, err := s.pool.Query(ctx, `
+		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
+		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
+		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
+		  FROM reportes r
+		 WHERE $1 = '' OR r.periodo = $1
+		 ORDER BY r.creado DESC, r.id`, periodo)
+	if err != nil {
+		return nil, traducirError(err, "listar cargas del periodo %q", periodo)
+	}
+	defer filas.Close()
+
+	var cargas []aplicacion.CargaReporte
+	for filas.Next() {
+		var c aplicacion.CargaReporte
+		if err := filas.Scan(
+			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.Recibido,
+			&c.Aceptados, &c.Rechazados,
+		); err != nil {
+			return nil, traducirError(err, "escanear carga")
+		}
+		cargas = append(cargas, c)
+	}
+	// Igual que en consultarUsos: sin esto una lista TRUNCADA por un fallo a
+	// mitad de stream se devuelve como lista completa.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar cargas del periodo %q", periodo)
+	}
+	return cargas, nil
+}
+
 // GuardarUsos escribe un lote de filas, canonicas y rechazadas.
 //
 // # Es transaccional por contrato

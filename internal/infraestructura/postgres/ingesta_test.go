@@ -1255,3 +1255,134 @@ func contar(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reporteID str
 			hayCanonicos, hayRechazos, canonicos, rechazos)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ListarCargas: el listado de cargas hechas
+// ---------------------------------------------------------------------------
+
+func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Tres canonicas y dos rechazadas en la MISMA entrega. Es la forma que
+	// rompe el listado si los dos recuentos salen de un JOIN doble: 3 x 2 da
+	// seis combinaciones, y los dos COUNT devuelven 6 y 6 sin que nada falle.
+	mala1 := usoPendiente("uso-mala-1", reporteEnero, "Radio Novela")
+	mala1.Modalidad = "radio"
+	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala2 := usoPendiente("uso-mala-2", reporteEnero, "Sin duracion")
+	mala2.RechazoMotivo = `duracion_min: "cuarenta y cinco" no es un numero`
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		usoPendiente("uso-1", reporteEnero, "La Casa"),
+		usoPendiente("uso-2", reporteEnero, "Cronica"),
+		usoPendiente("uso-3", reporteEnero, "Rebelde"),
+		mala1,
+		mala2,
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "")
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	if len(cargas) != 2 {
+		t.Fatalf("cargas = %d, se esperaban 2", len(cargas))
+	}
+
+	enero := cargaPorID(t, cargas, reporteEnero)
+	if enero.Aceptados != 3 || enero.Rechazados != 2 {
+		t.Errorf("enero: aceptados/rechazados = %d/%d, se esperaba 3/2",
+			enero.Aceptados, enero.Rechazados)
+	}
+	// La entrega sin filas cuenta cero, no desaparece del listado: una carga
+	// que no dejo ni una fila es justamente la que hay que poder ver.
+	febrero := cargaPorID(t, cargas, reporteFebrero)
+	if febrero.Aceptados != 0 || febrero.Rechazados != 0 {
+		t.Errorf("febrero: aceptados/rechazados = %d/%d, se esperaba 0/0",
+			febrero.Aceptados, febrero.Rechazados)
+	}
+
+	// El acuse completo viaja en la proyeccion: sin la huella y la clave del
+	// objeto, el listado no sirve para volver a la evidencia (ADR 0006).
+	if enero.SHA256 != shaParrilla || enero.ClaveObjeto != "reportes/"+shaParrilla {
+		t.Errorf("enero no trae su evidencia: %+v", enero.Reporte)
+	}
+	if enero.NBytes != 128 || enero.Fuente != "caracol" || enero.Periodo != "2026-01" {
+		t.Errorf("enero: acuse incompleto: %+v", enero.Reporte)
+	}
+	if enero.Recibido.IsZero() {
+		t.Errorf("enero no trae el instante de recepcion")
+	}
+	_ = pool
+}
+
+func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	enero, err := s.ListarCargas(ctx, "2026-01")
+	if err != nil {
+		t.Fatalf("ListarCargas(2026-01): %v", err)
+	}
+	if len(enero) != 1 || enero[0].ID != reporteEnero {
+		t.Fatalf("cargas de enero = %+v", enero)
+	}
+
+	// El filtro va como parametro y el vacio significa "todas". Es lo que
+	// permite una sola sentencia y un solo plan.
+	todas, err := s.ListarCargas(ctx, "")
+	if err != nil {
+		t.Fatalf("ListarCargas(): %v", err)
+	}
+	if len(todas) != 2 {
+		t.Fatalf("cargas = %d, se esperaban 2", len(todas))
+	}
+
+	// Un periodo sin cargas es lista vacia, no error.
+	ninguna, err := s.ListarCargas(ctx, "2025-12")
+	if err != nil {
+		t.Fatalf("ListarCargas(2025-12): %v", err)
+	}
+	if len(ninguna) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba ninguna", ninguna)
+	}
+}
+
+func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Las dos entregas se escriben con microsegundos de diferencia, asi que el
+	// orden se fija a mano: sin instantes distintos esta prueba comprobaria el
+	// desempate por id y no el orden que interesa.
+	if _, err := pool.Exec(ctx,
+		`UPDATE reportes SET creado = '2026-01-05T10:00:00Z' WHERE id = $1`, reporteEnero); err != nil {
+		t.Fatalf("fijar creado de enero: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE reportes SET creado = '2026-02-05T10:00:00Z' WHERE id = $1`, reporteFebrero); err != nil {
+		t.Fatalf("fijar creado de febrero: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "")
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	if cargas[0].ID != reporteFebrero || cargas[1].ID != reporteEnero {
+		t.Fatalf("orden = %s, %s; se esperaba la mas reciente primero",
+			cargas[0].ID, cargas[1].ID)
+	}
+}
+
+func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {
+	t.Helper()
+	for _, c := range cargas {
+		if c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("no esta la carga %q en %+v", id, cargas)
+	return aplicacion.CargaReporte{}
+}

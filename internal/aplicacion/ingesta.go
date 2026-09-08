@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -27,14 +28,146 @@ import (
 //
 // # Que NO decide
 //
-// Como se lee un .xlsx o un CSV: eso es un adaptador de formato (#25). Aqui
-// llegan bytes y filas ya mapeadas al esquema canonico.
+// Como se lee un .xlsx o un CSV: eso es un adaptador de formato, y entra por
+// el puerto [LectorReporte]. Aqui se elige CUAL adaptador atiende la entrega
+// -por el par (fuente, formato)- y se orquesta lo que pasa antes y despues,
+// pero de este paquete no sale una sola linea que sepa lo que es una hoja de
+// calculo. depguard lo deja por escrito denegando `encoding/csv` y `excelize`
+// en esta capa.
 //
 // Y a que obra corresponde cada fila: la cascada de identificacion es otro
 // modulo (ADR 0007). Todo lo que entra por aqui sale con escalon "pendiente".
 type Ingesta struct {
 	Reportes RepositorioIngesta
 	Almacen  AlmacenObjetos
+
+	// Lectores es el catalogo de adaptadores de formato, indexado por el par
+	// (fuente, formato).
+	//
+	// Es un mapa y no una lista de casos porque dar de alta una fuente nueva
+	// tiene que ser una entrada de configuracion, no una rama mas en un
+	// switch de este fichero: el issue #25 lo pide explicitamente y es lo que
+	// permite que el mapa de columnas viva como DATO en el adaptador.
+	//
+	// Puede venir vacio. Ingesta sigue sirviendo GuardarReporte y GuardarUsos
+	// -- el seed los usa asi, con las filas ya construidas en Go --; lo unico
+	// que no se puede es ingerir un archivo, y eso lo dice IngerirReporte con
+	// su nombre y con la lista de lo que si sabe leer.
+	Lectores map[ClaveLector]LectorReporte
+}
+
+// IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
+// la evidencia y persiste las filas.
+//
+// Es el camino que usa la subida manual, que el criterio de aceptacion de OE-1
+// declara "fallback permanente": la adquisicion autonoma es otro issue.
+//
+// # El orden, que es lo unico que hay que entender de este metodo
+//
+// Se parsea ANTES de tocar la boveda. Al reves parece mas natural -congela lo
+// que llego, pase lo que pase- y es un error caro, por dos razones que se
+// refuerzan:
+//
+//  1. El criterio de aceptacion es literal: un archivo al que le falta una
+//     columna requerida se rechaza "sin que se persista nada". De la boveda no
+//     se borra (ADR 0006), asi que un objeto escrito ya no se puede deshacer.
+//  2. Y peor: el duplicado se decide por el UNIQUE (sha256, fuente). Escribir
+//     el acuse de un archivo estructuralmente roto QUEMA su huella para esa
+//     fuente. La correccion que el cliente mande despues no puede entrar --
+//     ErrReporteDuplicado -- si resulta ser byte a byte la misma, y la entrega
+//     no se recupera sin cirugia en la base.
+//
+// El parseo no toca nada: es una funcion de bytes a filas. Cuesta lo mismo
+// antes que despues y solo antes tiene marcha atras.
+//
+// # Un archivo sin filas es un fallo estructural, no una carga vacia
+//
+// Por lo mismo del punto 2. Aceptarlo escribiria un acuse con cero usos y
+// dejaria la huella quemada; y un export que salio vacio es exactamente el
+// caso en el que el cliente vuelve a mandar el archivo bueno.
+func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
+	// UNA sola normalizacion, y antes de todo lo demas, por lo mismo que en
+	// GuardarReporte: la fuente se usa aqui para BUSCAR el adaptador y se pasa
+	// despues a GuardarReporte, y con dos criterios distintos " caracol " no
+	// encontraria lector y el mensaje culparia a la fuente equivocada.
+	fuente = strings.TrimSpace(fuente)
+	formato = strings.TrimSpace(formato)
+
+	lector, ok := i.Lectores[ClaveLector{Fuente: fuente, Formato: formato}]
+	if !ok {
+		// El mensaje lleva lo que SI se sabe leer. Un "no hay adaptador" pelado
+		// deja a quien sube el archivo adivinando si se equivoco de fuente, de
+		// formato o de las dos, y esta es la unica capa que conoce las dos
+		// listas. Ordenado para que el mensaje no dependa del recorrido del
+		// mapa, que en Go es aleatorio: un error que cambia de texto en cada
+		// llamada no se puede probar ni buscar en un log.
+		return Recepcion{}, fmt.Errorf(
+			"%w: no hay adaptador para la fuente %q en formato %q; hay para %s",
+			ErrReporteInvalido, fuente, formato, i.lectoresDisponibles())
+	}
+
+	filas, err := lector.Leer(datos)
+	if err != nil {
+		// Sin envolver en ErrReporteInvalido aqui: el adaptador ya devuelve ese
+		// centinela -es su contrato- y volver a envolverlo no anade nada.
+		// errors.Is sigue casando a traves de este %w.
+		return Recepcion{}, fmt.Errorf("leer la entrega de %q (%s): %w", fuente, formato, err)
+	}
+	if len(filas) == 0 {
+		return Recepcion{}, fmt.Errorf(
+			"%w: la entrega de %q (%s) no trae ninguna fila de datos", ErrReporteInvalido, fuente, formato)
+	}
+
+	rep, err := i.GuardarReporte(ctx, fuente, periodo, datos)
+	if err != nil {
+		return Recepcion{}, err
+	}
+
+	rechazados, err := i.GuardarUsos(ctx, rep, filas)
+	if err != nil {
+		return Recepcion{}, err
+	}
+	return Recepcion{
+		Reporte:    rep,
+		Aceptados:  len(filas) - len(rechazados),
+		Rechazados: rechazados,
+	}, nil
+}
+
+// lectoresDisponibles describe el catalogo para un mensaje de error, en orden
+// estable.
+func (i Ingesta) lectoresDisponibles() string {
+	if len(i.Lectores) == 0 {
+		return "ninguna"
+	}
+	pares := make([]string, 0, len(i.Lectores))
+	for c := range i.Lectores {
+		pares = append(pares, c.Fuente+"/"+c.Formato)
+	}
+	slices.Sort(pares)
+	return strings.Join(pares, ", ")
+}
+
+// Cargas lista las entregas recibidas. Un periodo vacio no filtra.
+//
+// Es el "listado de cargas hechas" del criterio de aceptacion de #25, y la
+// unica lectura del sistema que responde a "¿entro completo lo que subi?": el
+// recuento de rechazos por entrega solo se ve aqui.
+//
+// El periodo se valida aunque solo se use como filtro. No es defensa contra
+// inyeccion -- va como parametro --, es que "2026-1" no casa con ninguna fila
+// y devolveria una lista vacia indistinguible de "ese periodo no tuvo cargas".
+func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+	periodo = strings.TrimSpace(periodo)
+	if periodo != "" && !periodoValido.MatchString(periodo) {
+		return nil, fmt.Errorf(
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+	}
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	if err != nil {
+		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
+	}
+	return cargas, nil
 }
 
 // huella devuelve el SHA-256 hexadecimal de unos bytes.

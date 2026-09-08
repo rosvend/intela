@@ -67,6 +67,18 @@ tags:
       de la Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Por eso un
       coautor de este catalogo no tiene campo de participacion.
 
+  - name: ingesta
+    description: |
+      Recepcion de reportes de uso: la subida manual y el listado de cargas
+      hechas. Solo `administrador`.
+
+      Ningun reporte de uso trae importes. Estos archivos PONDERAN la bolsa
+      que se cobro en Recaudo, no la aportan: por eso ni la entrega ni sus
+      filas tienen campo de dinero.
+
+      Una fila que no se puede normalizar no se descarta: queda con su motivo
+      en el log de rechazos (ADR 0016). Es criterio de aceptacion de OE-1.
+
 paths:
   /health:
     get:
@@ -649,6 +661,204 @@ paths:
               example:
                 error: esa obra no esta en el catalogo
 
+  /reportes:
+    get:
+      tags: [ingesta]
+      summary: Cargas hechas
+      description: |
+        El listado de entregas recibidas, de la mas reciente a la mas antigua.
+        Es la unica lectura que responde "¿entro completo lo que subi?": el
+        recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
+
+        Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
+        de la que salio (`sha256`), que es lo que permite volver al archivo
+        EXACTO que pondero una corrida y no "al archivo de esa fuente"
+        (ADR 0006).
+      operationId: listarCargas
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          description: |
+            Periodo de recaudo, `AAAA` o `AAAA-MM`. Ausente o vacio no filtra.
+
+            Un periodo mal escrito se rechaza con 400 en vez de ignorarse: no
+            casaria con ninguna fila y devolveria una lista vacia
+            indistinguible de "ese periodo no tuvo cargas".
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          example: 2026-01
+      responses:
+        "200":
+          description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Carga"
+        "400":
+          description: El periodo no tiene la forma AAAA o AAAA-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: periodo "2026-1", se esperaba AAAA o AAAA-MM'
+        "401":
+          description: Falta el token o no es valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: |
+            Esta instalacion no cablea la ingesta. Es el caso de `cmd/lambda`,
+            cuyo sistema de ficheros no sirve de boveda inmutable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
+    post:
+      tags: [ingesta]
+      summary: Subir un reporte de uso
+      description: |
+        La subida manual, que el criterio de aceptacion de OE-1 declara
+        "fallback permanente": la adquisicion autonoma es otro issue.
+
+        El archivo se PARSEA antes de tocar nada. Un fallo estructural -el
+        libro no se abre, falta una columna requerida- responde 400 sin
+        persistir NADA, ni siquiera la evidencia cruda: de la boveda no se
+        borra (ADR 0006), y escribir el acuse quemaria la huella de ese archivo
+        para esa fuente, de modo que la correccion que el cliente mande despues
+        chocaria con 409 si resulta ser el mismo archivo.
+
+        Un lote con filas malas NO es un error: es el caso normal. Las buenas
+        se persisten y las malas vuelven en `rechazados`, cada una con su
+        motivo nombrando el campo y la columna. Ninguna se descarta.
+
+        El formato sale de la extension de `archivo` salvo que se mande
+        `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
+        que de el sale UNICAMENTE esa decision: la clave del objeto de la
+        boveda se deriva de la huella del contenido, no del nombre.
+      operationId: subirReporte
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [fuente, periodo, archivo]
+              properties:
+                fuente:
+                  type: string
+                  description: |
+                    Quien entrego. Es lo que se estampa en cada fila y lo que
+                    indexa la tabla de alias, asi que tiene que ser una de las
+                    fuentes con adaptador dado de alta; si no, 400 con la lista
+                    de las que hay.
+                  example: caracol
+                periodo:
+                  type: string
+                  description: Periodo de recaudo al que pondera la entrega.
+                  pattern: '^[0-9]{4}(-[0-9]{2})?$'
+                  example: 2026-01
+                formato:
+                  type: string
+                  description: |
+                    Opcional. Si falta, se deduce de la extension de `archivo`.
+                  enum: [xlsx, csv, json]
+                archivo:
+                  type: string
+                  format: binary
+                  description: |
+                    El reporte tal como lo entrego la fuente. Tope de 32 MiB;
+                    el streaming de archivos grandes es el issue #46.
+      responses:
+        "201":
+          description: |
+            La entrega quedo congelada y sus filas persistidas. `rechazados`
+            puede venir con contenido: eso no es un fallo de la peticion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entrega"
+        "400":
+          description: |
+            La entrega no cumple la estructura minima: falta una columna
+            requerida, el archivo no se puede abrir, no hay adaptador para ese
+            par (fuente, formato), el periodo esta mal escrito o el archivo no
+            trae ninguna fila. NADA se persistio.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: a la entrega de "caracol" le faltan columnas requeridas: Duracion_total. El archivo trae: Canal, Titulo, ID_Ficha'
+        "401":
+          description: Falta el token o no es valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            Esa fuente ya entrego exactamente esos bytes -lo decide el
+            UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
+            tiene contenido distinto bajo esa huella.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa fuente ya entrego exactamente ese archivo
+        "413":
+          description: El archivo pasa del tope de 32 MiB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el archivo pasa de 32 MiB
+        "503":
+          description: Esta instalacion no cablea la ingesta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
 components:
   securitySchemes:
     bearerAuth:
@@ -664,6 +874,112 @@ components:
         matriz Rol -> capacidad esta en docs/architecture/roles.md.
 
   schemas:
+    Entrega:
+      type: object
+      description: |
+        El acuse de una entrega ingerida entera.
+
+        No hay campo de dinero, y no lo va a haber: un reporte de uso PONDERA
+        la bolsa, no la aporta.
+      required:
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la entrega. Se deriva del par (fuente, huella), no
+            del nombre del archivo.
+          example: rep-9f2c...
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          description: |
+            Huella de los bytes crudos. Es como se cita una evidencia en toda
+            la trazabilidad (ADR 0006).
+          pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: Donde quedaron los bytes en la boveda. Se deriva de la huella.
+          example: reportes/9f2c...
+        nbytes:
+          type: integer
+          example: 21032
+        aceptados:
+          type: integer
+          description: Filas que entraron a la forma canonica.
+          example: 58
+        rechazados:
+          type: array
+          description: |
+            Las filas que no se pudieron normalizar, con su motivo. Lista vacia
+            si no hubo ninguna, nunca `null`.
+          items:
+            $ref: "#/components/schemas/Rechazo"
+
+    Rechazo:
+      type: object
+      description: |
+        Una fila que no se pudo normalizar. Lleva lo identificatorio y el
+        motivo, y NINGUNA columna de medida: una fila rechazada no pondera, y
+        sin las medidas nadie las puede sumar "solo para ver" (ADR 0016).
+      required: [id, titulo, ids_fuente, motivo]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la fila. Vive en el log de rechazos y no en `usos`:
+            un id esta en una de las dos tablas, nunca en las dos.
+        titulo:
+          type: string
+        ids_fuente:
+          type: string
+          description: El identificador de la fuente, tal como venia.
+        motivo:
+          type: string
+          description: |
+            Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
+            archivo, que es lo que permite volver a pedirle al cliente
+            exactamente eso.
+          example: 'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero'
+
+    Carga:
+      type: object
+      description: Una entrega en el listado de cargas hechas.
+      required:
+        [id, fuente, periodo, sha256, nbytes, recibido, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        nbytes:
+          type: integer
+        recibido:
+          type: string
+          format: date-time
+          description: |
+            Cuando llego. Sale del reloj de la base: es la marca de un hecho de
+            almacenamiento, no de negocio. Nada del reparto se calcula con el.
+        aceptados:
+          type: integer
+        rechazados:
+          type: integer
+          description: |
+            Cuantas filas quedaron en el log de rechazos. Junto con `aceptados`
+            es lo que responde si la carga entro completa.
+
     Estado:
       type: object
       required: [estado]
