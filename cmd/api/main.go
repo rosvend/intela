@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,9 +21,17 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
+
+// dirObjetosPorDefecto es la boveda de reportes crudos cuando nadie fija
+// OBJECT_DIR. Relativa al directorio de trabajo, igual que en cmd/seed y por
+// lo mismo: `/data` no se puede crear en una maquina de desarrollo. En
+// contenedor la ruta la fija OBJECT_DIR, que es lo que hace docker-compose.yml.
+const dirObjetosPorDefecto = "./data/objetos"
 
 func main() {
 	log := config.Logger("api")
@@ -74,7 +83,32 @@ func ejecutar(log *slog.Logger) error {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, httpapi.Opciones{
+	// La ingesta de reportes de uso: la base para el acuse y las filas, la
+	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
+	// formato para leer lo que llega.
+	//
+	// El catalogo se construye AL ARRANCAR y su error tumba el proceso. Un mapa
+	// de columnas mal escrito es un defecto del programa, no de la entrega:
+	// descubrirlo aqui cuesta un arranque fallido, y descubrirlo en la primera
+	// subida cuesta una entrega perdida con el cliente esperando.
+	lectores, err := ingesta.CatalogoDelCliente()
+	if err != nil {
+		return fmt.Errorf("construir los adaptadores de ingesta: %w", err)
+	}
+	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
+
+	recepcion := aplicacion.Ingesta{
+		Reportes: store,
+		Almacen:  objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Lectores: lectores,
+	}
+
+	api := httpapi.Nueva(httpapi.Casos{
+		Salud:    store,
+		Auth:     autenticacion,
+		Catalogo: catalogo,
+		Ingesta:  recepcion,
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})

@@ -1,0 +1,6 @@
+[
+  {"Id_Ntx": 1, "show_name": "My Horrible Boss", "netflix_id": 80197856, "episode_nbr": "1009", "episode_runtime": "64.3", "stream_starts": 2172, "eidr": null},
+  {"Id_Ntx": 2, "show_name": "Dirk Gently's Holistic Detective Agency", "netflix_id": 80175605, "episode_nbr": "--", "episode_runtime": "41.2", "stream_starts": 15289},
+  {"Id_Ntx": 3, "show_name": "Repetido", "netflix_id": 80197856, "stream_starts": 10},
+  {"Id_Ntx": 4, "show_name": "Vistas que no son un numero", "netflix_id": 80000001, "stream_starts": "muchas"}
+]

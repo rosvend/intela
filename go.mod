@@ -18,7 +18,15 @@ require (
 	github.com/shopspring/decimal v1.4.0
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
-	golang.org/x/crypto v0.43.0
+	// Fijada a proposito, por lo mismo que aws-lambda-go: v2.11.0 declara
+	// `go 1.25`, y con eso `go mod tidy` sube la directiva `go` de este modulo.
+	// Eso rompe el Dockerfile (golang:1.24-bookworm) y cambia la version de Go
+	// que instala CI, que la lee de aqui.
+	//
+	// v2.10.1 declara `go 1.24.0`, igual que este modulo. Subirla exige subir
+	// las dos cosas a la vez, no de una.
+	github.com/xuri/excelize/v2 v2.10.1
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -88,9 +96,18 @@ require (
 	go.opentelemetry.io/otel/sdk v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/grpc v1.73.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+
+require (
+	github.com/richardlehane/mscfb v1.0.6 // indirect
+	github.com/richardlehane/msoleps v1.0.6 // indirect
+	github.com/tiendc/go-deepcopy v1.7.2 // indirect
+	github.com/xuri/efp v0.0.1 // indirect
+	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	golang.org/x/net v0.50.0 // indirect
 )

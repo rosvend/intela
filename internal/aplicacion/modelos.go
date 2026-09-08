@@ -73,6 +73,42 @@ type Reporte struct {
 	NBytes      int
 }
 
+// Recepcion es el acuse de una entrega INGERIDA entera: congelada, parseada y
+// persistida.
+//
+// Los rechazos viajan enteros y no como recuento. Quien sube un archivo tiene
+// que poder leer, sin abrir la base, que linea le falta y por que: es criterio
+// de aceptacion de OE-1, y un numero a secas obliga a otra consulta para saber
+// que pedirle al cliente.
+//
+// Aceptados es un recuento y no una lista a proposito: las filas buenas ya
+// estan en `usos` y quien las quiera las lee de ahi. Devolverlas aqui seria
+// materializar una parrilla entera en memoria para que casi siempre nadie la
+// mire.
+type Recepcion struct {
+	Reporte    Reporte
+	Aceptados  int
+	Rechazados []UsoPersistido
+}
+
+// CargaReporte es una entrega tal como aparece en el listado de cargas hechas.
+//
+// Es una PROYECCION de lectura, no el [Reporte] con campos de mas: los dos
+// recuentos salen de contar `usos` y `usos_rechazados`, o sea de otras dos
+// tablas, y meterlos en Reporte obligaria a que toda escritura de una entrega
+// -- que ocurre ANTES de que exista ninguna fila -- cargara dos ceros sin
+// significado.
+//
+// Recibido es el `creado` de la fila. Sale del reloj de la base y no del
+// [Reloj] del nucleo porque es la marca de un hecho de almacenamiento, no de
+// negocio: nada del reparto se calcula con el.
+type CargaReporte struct {
+	Reporte
+	Recibido   time.Time
+	Aceptados  int
+	Rechazados int
+}
+
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
 // resultado de la identificacion.
 //
