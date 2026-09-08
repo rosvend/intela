@@ -39,7 +39,8 @@ imagenes.
 
 **El `--profile demo` es lo unico que siembra.** Un `docker compose up` pelado
 levanta el sistema migrado pero **vacio**, y entrar al tablero da `credenciales
-invalidas` porque la tabla `usuarios` no existe todavia. Es a proposito: ver
+invalidas` porque la tabla `usuarios` esta **vacia**: la migracion la crea, y es
+el seed quien la llena. Es a proposito: ver
 [Migraciones y datos](#migraciones-y-datos).
 
 ### Si el puerto 80 esta ocupado
@@ -60,6 +61,26 @@ BASE_URL=http://localhost:8088 deploy/smoke.sh
 `deploy/smoke.sh` lee `INTELA_PUERTO_HTTP` por su cuenta, asi que con el
 `export` puesto basta con `deploy/smoke.sh`. `BASE_URL` esta para apuntarlo a
 otro sitio — un stack en otra maquina, por ejemplo.
+
+### Si hay que ensenar la demo desde otra maquina
+
+Los tres puertos se publican en `127.0.0.1`. Postgres lleva la clave de demo
+escrita en `docker-compose.yml` (`intela` / `intela`) y las cinco cuentas del
+seed estan publicadas mas abajo en esta misma pagina: en 0.0.0.0 eso queda
+ofrecido a toda la red del anfitrion, que en una universidad o un cafe no es
+una red de confianza. Para el arranque local no cambia nada. Para ensenarlo
+desde otra maquina, y solo entonces:
+
+```bash
+INTELA_BIND=0.0.0.0 INTELA_PUERTO_HTTP=8088 docker compose --profile demo up --build
+```
+
+### Si nginx se reinicia en bucle con `Permission denied`
+
+En Fedora, RHEL o CentOS con SELinux en Enforcing. El montaje de
+`deploy/nginx.conf` lleva la bandera `z` justamente para eso, asi que si sale
+igual, lo que falta es la bandera: comprobar que el volumen del servicio
+`nginx` termina en `:ro,z` y no en `:ro` a secas.
 
 ## El arranque sin demo
 

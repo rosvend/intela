@@ -44,6 +44,9 @@ SMOKE_EMAIL="${SMOKE_EMAIL:-admin@redes.co}"
 # Tiene que ser el rol `administrador`: GET /obras exige ese rol y con cualquier
 # otro la prueba fallaria con 403 sin que nada este roto.
 SMOKE_CLAVE="${SMOKE_CLAVE:-${SEED_CLAVE_ADMIN:-admin-local}}"
+# Cuantas obras siembra el seed. Este `4` es el unico del proyecto: la etapa de
+# CI no lo repite, exporta SMOKE_OBRAS solo si quiere otra cosa. Cuando el
+# dataset del seed crezca, se cambia aqui y CI viene detras.
 SMOKE_OBRAS="${SMOKE_OBRAS:-4}"
 SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-180}"
 SMOKE_INTERVALO="${SMOKE_INTERVALO:-2}"

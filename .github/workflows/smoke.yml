@@ -36,10 +36,6 @@ on:
           ever ships something listening there.
         type: string
         default: "80"
-      obras:
-        description: How many obras the seed is expected to load.
-        type: string
-        default: "4"
 
 permissions:
   contents: read
@@ -59,7 +55,12 @@ jobs:
       # exercises the override that docker-compose.yml documents.
       INTELA_PUERTO_PG: "55432"
       INTELA_PUERTO_API: "18080"
-      SMOKE_OBRAS: ${{ inputs.obras }}
+      # SMOKE_OBRAS is deliberately NOT set here. How many obras the seed loads
+      # is one fact, and it lives in one place: the `SMOKE_OBRAS:-4` default in
+      # deploy/smoke.sh. Repeating it as a workflow input meant the seed could
+      # grow to five and CI would keep asserting four -or worse, local and CI
+      # would assert different numbers and only one of them would be right.
+      # Override it by exporting SMOKE_OBRAS, the same way a person does.
       BASE_URL: http://localhost:${{ inputs.puerto }}
     steps:
       - uses: actions/checkout@v7
