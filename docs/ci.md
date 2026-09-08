@@ -44,6 +44,7 @@ if: always()
 | `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
 | `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
+| `Boot smoke test` | `shellcheck`, la unidad de `deploy/smoke_test.sh`, y `docker compose --profile demo up` + `deploy/smoke.sh` contra el stack real | Hay `docker-compose.yml` y `deploy/smoke.sh`, y el PR toca algo de lo que el stack esta hecho |
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
 
@@ -150,11 +151,54 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
   imagenes del mismo commit podrian llevar codigo distinto. La capa trajo eslint y tsc, y vitest y
   prettier llegaron despues: hoy `Lint (frontend)` y `Test (frontend)` comprueban de verdad.
 
+### La etapa que comprueba que arranca
+
+`Docker build (backend)` y `Docker build (frontend)` demuestran que las imagenes **construyen**. No
+pueden demostrar que el sistema **corre**: un panic al arrancar, una migracion que falla, un
+`upstream` de `deploy/nginx.conf` apuntando a un servicio que no esta, un `proxy_pass` sin la barra
+final — todos construyen una imagen perfectamente valida. `Boot smoke test` es lo que cierra ese
+hueco, y corre exactamente el mismo comando y el mismo script que corre una persona en local:
+
+```bash
+docker compose --profile demo up -d --build
+deploy/smoke.sh
+```
+
+No una variante para CI. Un smoke test que solo existe en el pipeline se separa del comando
+documentado, y de esa separacion se entera primero el companero al que no le funciona el
+quickstart.
+
+La etapa hace tres pasos, del mas barato al mas caro, para que una asercion mal escrita no cueste
+un build de imagenes:
+
+1. `shellcheck` sobre `deploy/smoke.sh` y `deploy/smoke_test.sh` — el shellcheck que trae actionlint
+   solo mira los bloques `run:` de los workflows, no los scripts.
+2. `deploy/smoke_test.sh`, la **logica de decision** sobre fixtures, en menos de un segundo y sin
+   red. No es ceremonia: si lo que se rompe es el criterio —contar un objeto de error como una obra,
+   dar cualquier `200` por bueno— la etapa se queda en verde y deja de significar nada. Los fixtures
+   son la unica forma de ejercitar un camino de fallo a proposito.
+3. El stack de verdad, por HTTP y **a traves de nginx**, no contra la API en el 8080: un proxy mal
+   configurado es invisible si se golpea la API directamente.
+
+El paso 3 comprueba la **cuenta** de obras, no solo el codigo de estado. Un `200 []` es el falso
+verde clasico de esta prueba: el stack responde, la ruta existe, la autorizacion pasa y no hay
+datos.
+
+`P_COMPOSE` es el patron de rutas mas ancho del `detect`, a proposito: esta es la unica etapa que
+contesta "¿sigue arrancando?", asi que le pertenece todo aquello de lo que el stack esta hecho —los
+dos `Dockerfile`, los dos `nginx.conf`, las migraciones, el frontend y las fuentes Go de cada
+binario. Acotarlo a `docker-compose.yml` significaria que el cambio que rompe el arranque es
+justamente el que no dispara la comprobacion del arranque.
+
 ## Lo que todavia no cubre
 
-- **Sin arranque de imagen.** Las etapas de Docker comprueban que la imagen *construye*, no que
-  *arranca*. Pesa menos desde el [ADR 0014](decisiones/0014-infraestructura-serverless-en-aws.md):
-  la imagen ya no es lo que se despliega, aunque `docker compose` siga dependiendo de ella.
+- **El smoke test no usa la cache de imagenes de CI.** `docker compose build` no comparte el
+  `cache-from: type=gha` de las etapas de contenedor, asi que la etapa reconstruye las tres imagenes
+  en frio. Es la razon por la que tiene `timeout-minutes: 30` y por la que su filtro de rutas, con
+  ser ancho, no es incondicional.
+- **El smoke test recorre la superficie, no el negocio.** Comprueba que el sistema arranca, se
+  autentica y sirve el catalogo sembrado. No comprueba ni un reparto ni un matching: para eso estan
+  los golden files de aqui abajo.
 - **El `plan` de infraestructura necesita AWS.** `Infrastructure` valida siempre, pero su job de
   `plan` solo corre si el secreto del rol esta cargado; sin el, la etapa reporta y no bloquea.
   Detalle en [`docs/cd.md`](cd.md).

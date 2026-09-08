@@ -1,5 +1,68 @@
 # Arranque local
 
+## Quickstart: la demo en un comando
+
+Desde un clon limpio, sin configurar nada:
+
+```bash
+docker compose --profile demo up --build
+```
+
+Eso construye las imagenes, arranca Postgres, aplica las migraciones, **siembra
+el dataset de demo** y levanta API, worker, scheduler, tablero y nginx. Cuando
+para de escupir logs:
+
+| Que | Donde |
+| --- | --- |
+| Tablero | <http://localhost> |
+| API por el proxy | <http://localhost/api> |
+| Sondas | <http://localhost/health>, <http://localhost/ready> |
+| Entrar | `admin@redes.co` / `admin-local` |
+
+Comprobarlo sin abrir el navegador — recorre la misma ruta que una persona y
+falla con un motivo si algo no esta:
+
+```bash
+deploy/smoke.sh
+```
+
+Cerrar:
+
+```bash
+docker compose --profile demo down       # apagar, conservando los datos
+docker compose --profile demo down -v    # apagar y borrar la base y los objetos
+```
+
+**Requisitos:** Docker con Compose v2 (`docker compose version`), y `curl` y
+`jq` para el smoke test. Nada mas: Go, Node y `goose` viven dentro de las
+imagenes.
+
+**El `--profile demo` es lo unico que siembra.** Un `docker compose up` pelado
+levanta el sistema migrado pero **vacio**, y entrar al tablero da `credenciales
+invalidas` porque la tabla `usuarios` no existe todavia. Es a proposito: ver
+[Migraciones y datos](#migraciones-y-datos).
+
+### Si el puerto 80 esta ocupado
+
+Pasa siempre con Docker rootless, que no puede abrir puertos por debajo de
+1024, y con cualquier maquina que ya tenga algo escuchando ahi. Los tres
+puertos que publica el compose se mueven por entorno, sin editar ficheros:
+
+```bash
+export INTELA_PUERTO_HTTP=8088    # nginx      (por defecto 80)
+export INTELA_PUERTO_API=18080    # API        (por defecto 8080)
+export INTELA_PUERTO_PG=55432     # PostgreSQL (por defecto 5432)
+
+docker compose --profile demo up --build
+BASE_URL=http://localhost:8088 deploy/smoke.sh
+```
+
+`deploy/smoke.sh` lee `INTELA_PUERTO_HTTP` por su cuenta, asi que con el
+`export` puesto basta con `deploy/smoke.sh`. `BASE_URL` esta para apuntarlo a
+otro sitio — un stack en otra maquina, por ejemplo.
+
+## El arranque sin demo
+
 ```bash
 docker compose up -d --build   # Postgres, migraciones, API, worker, scheduler, tablero y nginx
 make verificar                 # tidy, build, vet, gofmt y test - lo mismo que corre CI
@@ -29,14 +92,32 @@ arranca la API. Antes lo hacia la propia API al levantar, lo que significaba que
 cada replica intentaba migrar en paralelo y que un fallo de migracion se
 confundia con un fallo de arranque.
 
-El seed **no corre en `up`**: es un comando explicito, contra una base ya
-migrada, para demos y desarrollo. No hay siembra en produccion.
+El seed **no corre en un `up` pelado**. Vive detras de un perfil, que es lo que
+mantiene esa promesa: un arranque normal no toca los datos, y sembrar hay que
+pedirlo. No hay siembra en produccion.
 
 ```bash
-docker compose run --rm seed      # dataset sintetico; no corre en `up`
+docker compose --profile demo up --build              # levanta Y siembra
+docker compose run --rm seed                          # sembrar un stack ya arriba
 SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
-go run ./cmd/seed                 # equivalente, con DATABASE_URL
+go run ./cmd/seed                                     # equivalente, con DATABASE_URL
 ```
+
+`demo` y `seed` son **dos nombres del mismo servicio**. `--profile demo` se lee
+al lado de `up` y dice lo que se quiere ("levantalo con datos"); `seed` nombra
+el servicio y es lo que se escribe al lado de `run`. `docker compose run`
+enciende solo el perfil del servicio que nombra, asi que no hace falta pasarlo.
+
+Sembrar es **idempotente** cuando el dataset ya esta completo: repetir el
+`--profile demo up` no duplica nada, el binario mira, ve que ya esta y sale con
+0. Si la carga anterior quedo a medias, en cambio, **falla y pide
+`SEED_RESET=true`** en vez de completar el hueco a ciegas.
+
+Nada depende del seed: `api`, `worker` y `scheduler` esperan a `migrate`, no a
+`seed`. Es deliberado — la API no necesita datos para arrancar, y encadenarla
+convertiria un fallo de siembra en un stack que no levanta. La consecuencia es
+que durante los primeros segundos del `--profile demo up` la API ya responde y
+el login todavia no: por eso `deploy/smoke.sh` sondea en vez de asumir.
 
 El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
 tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que

@@ -1,4 +1,13 @@
-# Entorno de desarrollo. `docker compose up --build` levanta el sistema entero.
+# Entorno de desarrollo. `docker compose up --build` levanta el sistema entero,
+# y `docker compose --profile demo up --build` lo levanta ADEMAS sembrado: un
+# solo comando desde un clon limpio hasta un tablero con datos.
+#
+# Los puertos del anfitrion se pueden mover sin editar este fichero. El 80 no lo
+# puede abrir un Docker rootless (`net.ipv4.ip_unprivileged_port_start`) y el
+# 8080 lo suele tener ocupado otra cosa; sin esto la unica salida era editar el
+# compose, que es exactamente lo que no debe hacer quien solo quiere ver la demo:
+#
+#   INTELA_PUERTO_HTTP=8088 docker compose --profile demo up --build
 #
 # MinIO no esta aqui. Estaba, pero sin cablear: la aplicacion escribe en disco
 # local y ningun adaptador habla S3, asi que el servicio solo servia para
@@ -34,7 +43,7 @@ services:
       POSTGRES_USER: intela
       POSTGRES_PASSWORD: intela
       POSTGRES_DB: intela
-    ports: ["5432:5432"]
+    ports: ["${INTELA_PUERTO_PG:-5432}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U intela -d intela"]
@@ -63,17 +72,35 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Paso opcional, a mano. No entra en `up`.
-  #   docker compose run --rm seed
-  # SEED_RESET=true recarga. Cada rol tiene su clave (ARRANQUE.md).
+  # Paso opcional. NO entra en un `up` pelado; entra si -y solo si- se pide su
+  # perfil:
+  #
+  #   docker compose --profile demo up --build   la demo de un comando
+  #   docker compose run --rm seed               a mano, contra un stack ya arriba
+  #
+  # Dos nombres para el mismo servicio a proposito. `demo` es lo que se escribe
+  # al lado de `up` y describe lo que se quiere -"levantalo con datos"-; `seed`
+  # es lo que se escribe al lado de `run` y nombra el servicio. Un perfil que no
+  # se enciende solo es lo que mantiene la promesa de que `up` no siembra: un
+  # arranque normal sigue sin tocar los datos.
+  #
+  # Sembrar es idempotente cuando el dataset ya esta completo, asi que repetir el
+  # `--profile demo up` no duplica nada. SEED_RESET=true recarga. Cada rol tiene
+  # su clave (ARRANQUE.md).
   #
   # `target: seed` es una IMAGEN DISTINTA de la de la API, no un entrypoint
   # distinto de la misma. El binario borra 21 tablas con SEED_RESET=true y
   # reescribe `usuarios` con una clave publicada: no viaja en la imagen que
   # atiende produccion. Aqui es un servicio mas porque este compose es el
   # entorno de desarrollo.
+  #
+  # No hay `depends_on: seed` en ningun sitio, y no es un olvido: la API no
+  # necesita datos para arrancar, y encadenarla al seed convertiria un fallo de
+  # siembra en un stack que no levanta. Quien si tiene que esperar al seed es
+  # quien mira los datos, y para eso esta `deploy/smoke.sh`, que sondea hasta
+  # que las obras aparecen.
   seed:
-    profiles: ["seed"]
+    profiles: ["seed", "demo"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -103,7 +130,7 @@ services:
       # Lista blanca, nunca "*". En desarrollo, el origen de Vite y el de nginx.
       CORS_ORIGENES: "http://localhost,http://localhost:5173"
     volumes: [objetos:/objetos]
-    ports: ["8080:8080"]
+    ports: ["${INTELA_PUERTO_API:-8080}:8080"]
     # Sin healthcheck: la imagen es distroless y no tiene shell ni curl con
     # que sondear. La sonda vive en nginx, que si los tiene, contra /ready.
 
@@ -127,7 +154,7 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    ports: ["80:80"]
+    ports: ["${INTELA_PUERTO_HTTP:-80}:80"]
     depends_on: [api, web]
     restart: unless-stopped
 

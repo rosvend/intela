@@ -108,14 +108,21 @@ si hay que decidir a mano:
 ## Arranque local
 
 ```
-docker compose up --build
+docker compose --profile demo up --build   # levanta Y siembra: la demo de un comando
+docker compose up --build                  # levanta migrado pero vacio
+deploy/smoke.sh                            # comprueba que arranca y sirve
 ```
 
-Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`.
+Dashboard en `http://localhost/` (nginx). API en `http://localhost/api`. Entrar
+como `admin@redes.co` / `admin-local`. Si el 80 esta ocupado —Docker rootless no
+puede abrirlo— `INTELA_PUERTO_HTTP=8088` mueve el puerto sin editar ficheros.
 
 El arranque **si** aplica las migraciones, como paso propio: el servicio
 `migrate` corre una vez y `api`, `worker` y `scheduler` heredan
 `depends_on: migrate: condition: service_completed_successfully`, asi que no
-arrancan hasta que termina. Lo que el arranque no hace es sembrar: el seed es
-`docker compose run --rm seed`, explicito, y su binario va en otra imagen.
+arrancan hasta que termina. Lo que un `up` pelado no hace es sembrar: el seed
+vive detras del perfil `demo`/`seed`, hay que pedirlo, y su binario va en otra
+imagen. Nada depende de `seed`, asi que durante los primeros segundos la API ya
+responde y el login todavia no — por eso `deploy/smoke.sh` sondea.
+
 Detalle y variables de entorno en [`docs/ARRANQUE.md`](docs/ARRANQUE.md).
