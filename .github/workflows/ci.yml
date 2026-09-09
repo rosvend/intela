@@ -70,6 +70,7 @@ jobs:
       contract: ${{ steps.layers.outputs.contract }}
       docker-backend: ${{ steps.layers.outputs.docker_backend }}
       docker-frontend: ${{ steps.layers.outputs.docker_frontend }}
+      compose: ${{ steps.layers.outputs.compose }}
       terraform: ${{ steps.layers.outputs.terraform }}
     steps:
       - uses: actions/checkout@v7
@@ -123,6 +124,14 @@ jobs:
           # FROM them, so a change to `internal/` that breaks the build has to
           # re-run this stage, not wait for the merge to main to find out.
           P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          # The widest pattern in the file, and deliberately so: this stage is
+          # the only one that answers "does it still START?". Everything the
+          # composed stack is made of belongs here - both Dockerfiles, the two
+          # nginx configs, the migrations, the frontend, the smoke scripts and
+          # the Go sources of every binary in it. Narrowing it to
+          # `docker-compose.yml` would mean the change that breaks boot is
+          # precisely the change that does not run the boot check.
+          P_COMPOSE='(^docker-compose\.yml$|^Dockerfile|^\.dockerignore$|^deploy/|^migrations/|^web/|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|smoke)\.yml$)'
           # The Go sources are in here for the same reason they are in P_DOCKER:
           # the plan hashes the Lambda zips, which are built FROM them, so a
           # change under cmd/lambda has to re-plan rather than surprise the
@@ -152,6 +161,9 @@ jobs:
           docker_frontend=false
           if exists web/Dockerfile && touched "$P_FRONTEND"; then docker_frontend=true; fi
 
+          compose=false
+          if exists docker-compose.yml && exists deploy/smoke.sh && touched "$P_COMPOSE"; then compose=true; fi
+
           terraform=false
           if exists infra/envs/nheo/main.tf && touched "$P_TERRAFORM"; then terraform=true; fi
 
@@ -163,6 +175,7 @@ jobs:
             echo "contract=$contract"
             echo "docker_backend=$docker_backend"
             echo "docker_frontend=$docker_frontend"
+            echo "compose=$compose"
             echo "terraform=$terraform"
           } >> "$GITHUB_OUTPUT"
 
@@ -182,6 +195,7 @@ jobs:
             echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
             echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
+            echo "| smoke | \`$compose\` | \`docker-compose.yml\` and \`deploy/smoke.sh\` exist and the PR touches anything the composed stack is made of |"
             echo "| terraform | \`$terraform\` | \`infra/\` exists and the PR touches infrastructure or what it packages |"
             echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -321,6 +335,22 @@ jobs:
       dockerfile: web/Dockerfile
       push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
+  # Does it START? `container-*` above proves the images build; this proves the
+  # composed system boots, migrates, seeds and serves over HTTP through nginx.
+  # It is the check that turns "it builds" into "it starts and serves", and the
+  # one that closes the "Sin arranque de imagen" gap in `docs/ci.md`.
+  #
+  # It costs a cold build of three images, which is why it is the widest path
+  # filter in `detect` and still not unconditional: a PR that only edits an ADR
+  # skips it. On a push to `main` and on `workflow_dispatch` there is no filter,
+  # so the boot check always runs before anything is released - and dispatching
+  # `CI` by hand is also how you re-run just this against `main`.
+  smoke:
+    name: Boot smoke test
+    needs: detect
+    if: needs.detect.outputs.compose == 'true'
+    uses: ./.github/workflows/smoke.yml
+
   # Infrastructure. `validate` inside this stage needs no credentials and always
   # runs; `plan` runs on a pull request, where a human is there to read the
   # result and where the destroy guard has something to refuse.
@@ -377,6 +407,7 @@ jobs:
       - contract
       - container-backend
       - container-frontend
+      - smoke
       - terraform
     if: always()
     runs-on: ubuntu-latest

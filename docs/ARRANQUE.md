@@ -1,5 +1,127 @@
 # Arranque local
 
+## Quickstart: la demo en un comando
+
+Desde un clon limpio, sin configurar nada:
+
+```bash
+docker compose --profile demo up --build
+```
+
+Eso construye las imagenes, arranca Postgres, aplica las migraciones, **siembra
+el dataset de demo** y levanta API, worker, scheduler, tablero y nginx. Cuando
+para de escupir logs:
+
+| Que | Donde |
+| --- | --- |
+| Tablero | <http://localhost> |
+| API por el proxy | <http://localhost/api> |
+| Sondas | <http://localhost/health>, <http://localhost/ready> |
+| Entrar | `admin@redes.co` / `admin-local` |
+
+Comprobarlo sin abrir el navegador — recorre la misma ruta que una persona y
+falla con un motivo si algo no esta:
+
+```bash
+deploy/smoke.sh
+```
+
+Cerrar:
+
+```bash
+docker compose --profile demo down       # apagar, conservando los datos
+docker compose --profile demo down -v    # apagar y borrar la base y los objetos
+```
+
+**Requisitos:** Docker con Compose v2 (`docker compose version`), y `curl` y
+`jq` para el smoke test. Nada mas: Go, Node y `goose` viven dentro de las
+imagenes.
+
+**El `--profile demo` es lo unico que siembra.** Un `docker compose up` pelado
+levanta el sistema migrado pero **vacio**, y entrar al tablero da `credenciales
+invalidas` porque la tabla `usuarios` esta **vacia**: la migracion la crea, y es
+el seed quien la llena. Es a proposito: ver
+[Migraciones y datos](#migraciones-y-datos).
+
+### Si un puerto esta ocupado
+
+El compose publica **tres** puertos en el anfitrion, y los tres se mueven por
+entorno sin editar ficheros:
+
+```bash
+export INTELA_PUERTO_HTTP=8088    # nginx      (por defecto 80)
+export INTELA_PUERTO_API=18080    # API        (por defecto 8080)
+export INTELA_PUERTO_PG=55432     # PostgreSQL (por defecto 5432)
+
+docker compose --profile demo up --build
+BASE_URL=http://localhost:8088 deploy/smoke.sh
+```
+
+**Mover solo el de nginx no basta, y es el error facil.** El 80 es el que se
+nota —Docker o Podman rootless no pueden abrir nada por debajo de 1024, asi que
+falla en cuanto la maquina es rootless—, pero los otros dos chocan igual de
+seguido: el **8080** de la API lo tiene ocupado casi cualquier cosa (otro
+servidor de desarrollo, un puente, un Tomcat) y el **5432** lo tiene un
+PostgreSQL instalado en el anfitrion. Quien mueve solo `INTELA_PUERTO_HTTP`
+vuelve a estrellarse, ahora contra el 8080, y el sintoma no lo dice: los
+contenedores se quedan en `Created` y nunca pasan a `Up`. Exportar los tres de
+una vez sale mas barato que averiguar cual de ellos era.
+
+Se puede comprobar antes de arrancar:
+
+```bash
+ss -ltn '( sport = :80 or sport = :8080 or sport = :5432 )'
+```
+
+`deploy/smoke.sh` lee `INTELA_PUERTO_HTTP` por su cuenta, asi que con el
+`export` puesto basta con `deploy/smoke.sh`. `BASE_URL` esta para apuntarlo a
+otro sitio — un stack en otra maquina, por ejemplo.
+
+El puerto **de dentro** de cada contenedor no cambia nunca: la API sigue
+escuchando en el 8080 y Postgres en el 5432 dentro de la red del compose, que
+es por donde hablan entre ellos. Estas tres variables solo mueven el lado del
+anfitrion. Por eso `deploy/nginx.conf` no se toca al moverlas, y por eso el
+modo desarrollo del frontend —que sale del anfitrion, no de la red del
+compose— si depende de `INTELA_PUERTO_API`: `web/vite.config.ts` apunta su
+proxy a `http://localhost:8080`, el valor por defecto.
+
+### Si dos copias del repo tienen que correr a la vez
+
+Cada `docker compose up` de este fichero usa el nombre de proyecto `intela`, asi
+que dos worktrees comparten red, contenedores y —lo que duele— el volumen
+`pgdata`. `COMPOSE_PROJECT_NAME` le da a cada uno su propio espacio, y tiene
+precedencia sobre el `name:` del fichero, asi que no hay nada que editar:
+
+```bash
+COMPOSE_PROJECT_NAME=intela-wt45 INTELA_PUERTO_HTTP=8088 \
+  docker compose --profile demo up --build
+```
+
+Los puertos del anfitrion siguen siendo del anfitrion: dos stacks a la vez
+necesitan ademas tres puertos distintos cada uno.
+
+### Si hay que ensenar la demo desde otra maquina
+
+Los tres puertos se publican en `127.0.0.1`. Postgres lleva la clave de demo
+escrita en `docker-compose.yml` (`intela` / `intela`) y las cinco cuentas del
+seed estan publicadas mas abajo en esta misma pagina: en 0.0.0.0 eso queda
+ofrecido a toda la red del anfitrion, que en una universidad o un cafe no es
+una red de confianza. Para el arranque local no cambia nada. Para ensenarlo
+desde otra maquina, y solo entonces:
+
+```bash
+INTELA_BIND=0.0.0.0 INTELA_PUERTO_HTTP=8088 docker compose --profile demo up --build
+```
+
+### Si nginx se reinicia en bucle con `Permission denied`
+
+En Fedora, RHEL o CentOS con SELinux en Enforcing. El montaje de
+`deploy/nginx.conf` lleva la bandera `z` justamente para eso, asi que si sale
+igual, lo que falta es la bandera: comprobar que el volumen del servicio
+`nginx` termina en `:ro,z` y no en `:ro` a secas.
+
+## El arranque sin demo
+
 ```bash
 docker compose up -d --build   # Postgres, migraciones, API, worker, scheduler, tablero y nginx
 make verificar                 # tidy, build, vet, gofmt y test - lo mismo que corre CI
@@ -29,14 +151,32 @@ arranca la API. Antes lo hacia la propia API al levantar, lo que significaba que
 cada replica intentaba migrar en paralelo y que un fallo de migracion se
 confundia con un fallo de arranque.
 
-El seed **no corre en `up`**: es un comando explicito, contra una base ya
-migrada, para demos y desarrollo. No hay siembra en produccion.
+El seed **no corre en un `up` pelado**. Vive detras de un perfil, que es lo que
+mantiene esa promesa: un arranque normal no toca los datos, y sembrar hay que
+pedirlo. No hay siembra en produccion.
 
 ```bash
-docker compose run --rm seed      # dataset sintetico; no corre en `up`
+docker compose --profile demo up --build              # levanta Y siembra
+docker compose run --rm seed                          # sembrar un stack ya arriba
 SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
-go run ./cmd/seed                 # equivalente, con DATABASE_URL
+go run ./cmd/seed                                     # equivalente, con DATABASE_URL
 ```
+
+`demo` y `seed` son **dos nombres del mismo servicio**. `--profile demo` se lee
+al lado de `up` y dice lo que se quiere ("levantalo con datos"); `seed` nombra
+el servicio y es lo que se escribe al lado de `run`. `docker compose run`
+enciende solo el perfil del servicio que nombra, asi que no hace falta pasarlo.
+
+Sembrar es **idempotente** cuando el dataset ya esta completo: repetir el
+`--profile demo up` no duplica nada, el binario mira, ve que ya esta y sale con
+0. Si la carga anterior quedo a medias, en cambio, **falla y pide
+`SEED_RESET=true`** en vez de completar el hueco a ciegas.
+
+Nada depende del seed: `api`, `worker` y `scheduler` esperan a `migrate`, no a
+`seed`. Es deliberado — la API no necesita datos para arrancar, y encadenarla
+convertiria un fallo de siembra en un stack que no levanta. La consecuencia es
+que durante los primeros segundos del `--profile demo up` la API ya responde y
+el login todavia no: por eso `deploy/smoke.sh` sondea en vez de asumir.
 
 El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
 tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que
@@ -97,6 +237,7 @@ autorizacion de verdad va en el servidor y es el `#17`.
 
 | Sintoma | Causa | Arreglo |
 | --- | --- | --- |
+| Los contenedores se quedan en `Created` y nunca pasan a `Up` | Un puerto del anfitrion ya esta ocupado — casi siempre el 8080 de la API, no el 80 | [Si un puerto esta ocupado](#si-un-puerto-esta-ocupado) |
 | `404 ruta no encontrada` al entrar | Imagenes viejas | `docker compose up -d --build` |
 | `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed` |
 | La API se reinicia sola, `lookup postgres ... no such host` | Docker se reinicio y el contenedor quedo con una direccion vieja | `docker compose up -d --force-recreate api` |
