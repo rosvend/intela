@@ -43,11 +43,10 @@ invalidas` porque la tabla `usuarios` esta **vacia**: la migracion la crea, y es
 el seed quien la llena. Es a proposito: ver
 [Migraciones y datos](#migraciones-y-datos).
 
-### Si el puerto 80 esta ocupado
+### Si un puerto esta ocupado
 
-Pasa siempre con Docker rootless, que no puede abrir puertos por debajo de
-1024, y con cualquier maquina que ya tenga algo escuchando ahi. Los tres
-puertos que publica el compose se mueven por entorno, sin editar ficheros:
+El compose publica **tres** puertos en el anfitrion, y los tres se mueven por
+entorno sin editar ficheros:
 
 ```bash
 export INTELA_PUERTO_HTTP=8088    # nginx      (por defecto 80)
@@ -58,9 +57,48 @@ docker compose --profile demo up --build
 BASE_URL=http://localhost:8088 deploy/smoke.sh
 ```
 
+**Mover solo el de nginx no basta, y es el error facil.** El 80 es el que se
+nota —Docker o Podman rootless no pueden abrir nada por debajo de 1024, asi que
+falla en cuanto la maquina es rootless—, pero los otros dos chocan igual de
+seguido: el **8080** de la API lo tiene ocupado casi cualquier cosa (otro
+servidor de desarrollo, un puente, un Tomcat) y el **5432** lo tiene un
+PostgreSQL instalado en el anfitrion. Quien mueve solo `INTELA_PUERTO_HTTP`
+vuelve a estrellarse, ahora contra el 8080, y el sintoma no lo dice: los
+contenedores se quedan en `Created` y nunca pasan a `Up`. Exportar los tres de
+una vez sale mas barato que averiguar cual de ellos era.
+
+Se puede comprobar antes de arrancar:
+
+```bash
+ss -ltn '( sport = :80 or sport = :8080 or sport = :5432 )'
+```
+
 `deploy/smoke.sh` lee `INTELA_PUERTO_HTTP` por su cuenta, asi que con el
 `export` puesto basta con `deploy/smoke.sh`. `BASE_URL` esta para apuntarlo a
 otro sitio — un stack en otra maquina, por ejemplo.
+
+El puerto **de dentro** de cada contenedor no cambia nunca: la API sigue
+escuchando en el 8080 y Postgres en el 5432 dentro de la red del compose, que
+es por donde hablan entre ellos. Estas tres variables solo mueven el lado del
+anfitrion. Por eso `deploy/nginx.conf` no se toca al moverlas, y por eso el
+modo desarrollo del frontend —que sale del anfitrion, no de la red del
+compose— si depende de `INTELA_PUERTO_API`: `web/vite.config.ts` apunta su
+proxy a `http://localhost:8080`, el valor por defecto.
+
+### Si dos copias del repo tienen que correr a la vez
+
+Cada `docker compose up` de este fichero usa el nombre de proyecto `intela`, asi
+que dos worktrees comparten red, contenedores y —lo que duele— el volumen
+`pgdata`. `COMPOSE_PROJECT_NAME` le da a cada uno su propio espacio, y tiene
+precedencia sobre el `name:` del fichero, asi que no hay nada que editar:
+
+```bash
+COMPOSE_PROJECT_NAME=intela-wt45 INTELA_PUERTO_HTTP=8088 \
+  docker compose --profile demo up --build
+```
+
+Los puertos del anfitrion siguen siendo del anfitrion: dos stacks a la vez
+necesitan ademas tres puertos distintos cada uno.
 
 ### Si hay que ensenar la demo desde otra maquina
 
@@ -199,6 +237,7 @@ autorizacion de verdad va en el servidor y es el `#17`.
 
 | Sintoma | Causa | Arreglo |
 | --- | --- | --- |
+| Los contenedores se quedan en `Created` y nunca pasan a `Up` | Un puerto del anfitrion ya esta ocupado — casi siempre el 8080 de la API, no el 80 | [Si un puerto esta ocupado](#si-un-puerto-esta-ocupado) |
 | `404 ruta no encontrada` al entrar | Imagenes viejas | `docker compose up -d --build` |
 | `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed` |
 | La API se reinicia sola, `lookup postgres ... no such host` | Docker se reinicio y el contenedor quedo con una direccion vieja | `docker compose up -d --force-recreate api` |

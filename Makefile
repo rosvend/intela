@@ -60,8 +60,13 @@ humo-unidad:
 
 # `-v` a proposito: sin el, el pgdata de la corrida anterior sobrevive y el
 # seed de la siguiente se encuentra una base a medias.
+#
+# `--remove-orphans` por lo mismo, y es lo que corre la etapa de humo: un
+# servicio que se renombro o se quito -MinIO, sin ir mas lejos- deja su
+# contenedor colgando fuera del compose actual, y ese huerfano sigue ocupando el
+# puerto del anfitrion que el siguiente `up` necesita.
 abajo:
-	docker compose --profile demo down -v
+	docker compose --profile demo down -v --remove-orphans
 
 # --- Despliegue -------------------------------------------------------------
 

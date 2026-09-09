@@ -5,9 +5,19 @@
 # Los puertos del anfitrion se pueden mover sin editar este fichero. El 80 no lo
 # puede abrir un Docker rootless (`net.ipv4.ip_unprivileged_port_start`) y el
 # 8080 lo suele tener ocupado otra cosa; sin esto la unica salida era editar el
-# compose, que es exactamente lo que no debe hacer quien solo quiere ver la demo:
+# compose, que es exactamente lo que no debe hacer quien solo quiere ver la demo.
 #
-#   INTELA_PUERTO_HTTP=8088 docker compose --profile demo up --build
+# Son TRES, y se mueven juntos. Mover solo el de nginx es el error facil: el 80
+# es el que se nota, pero el que vuelve a chocar es el 8080 de la API, y ahi el
+# sintoma ya no dice de que se trata -los contenedores se quedan en `Created` y
+# nunca pasan a `Up`-:
+#
+#   INTELA_PUERTO_HTTP=8088 INTELA_PUERTO_API=18080 INTELA_PUERTO_PG=55432 \
+#     docker compose --profile demo up --build
+#
+# Mueven el lado del ANFITRION y nada mas: dentro de esta red la API sigue en el
+# 8080 y Postgres en el 5432, que es como se nombran entre servicios y como los
+# escribe deploy/nginx.conf.
 #
 # Y se publican en 127.0.0.1, no en 0.0.0.0. Un `ports: ["5432:5432"]` pelado
 # ofrece Postgres con la clave de demo -intela/intela, escrita aqui mismo- a
@@ -53,8 +63,36 @@ services:
       POSTGRES_DB: intela
     ports: ["${INTELA_BIND:-127.0.0.1}:${INTELA_PUERTO_PG:-5432}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
+    # El `-h 127.0.0.1` no es adorno: es lo que hace que esta sonda y `migrate`
+    # comprueben LA MISMA VIA.
+    #
+    # `pg_isready` sin `-h` sondea el socket unix. Y durante el arranque desde
+    # un pgdata vacio hay una fase entera en la que ese socket esta vivo y el
+    # TCP no existe todavia: el entrypoint oficial de la imagen levanta un
+    # servidor temporal para correr `initdb`, crear la base y pasar los scripts
+    # de `/docker-entrypoint-initdb.d`, y lo levanta con
+    #
+    #   -c listen_addresses=''      docker-entrypoint.sh, docker_temp_server_start
+    #
+    # que es exactamente "no escuches en TCP". Su propio comentario lo dice:
+    # "start socket-only postgresql server". Al terminar hace un fast shutdown y
+    # solo entonces arranca el servidor de verdad, que es el primero que abre el
+    # 5432.
+    #
+    # Con la sonda por socket, compose marca `healthy` en cuanto responde ese
+    # servidor temporal. `migrate` -que conecta por TCP y hace UN `PingContext`
+    # sin reintento, internal/infraestructura/migraciones/migraciones.go- arranca
+    # dentro de esa ventana, se lleva un `connection refused`, sale con 1 y
+    # tumba el `up` entero. Medido en esta imagen con `--cpus 0.25`: el socket
+    # dice "listo" 434 ms antes que el TCP. Contra un `interval: 5s`, eso es del
+    # orden del 6% de los arranques en frio - poco para verlo a mano, demasiado
+    # para una compuerta de CI que corre en cada PR.
+    #
+    # `127.0.0.1` y no un nombre: libpq trata como socket unix cualquier host
+    # que empiece por `/`, y como TCP todo lo demas. Es el puerto de dentro del
+    # contenedor, siempre 5432; `INTELA_PUERTO_PG` solo mueve el del anfitrion.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U intela -d intela"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U intela -d intela"]
       interval: 5s
       timeout: 5s
       retries: 10
