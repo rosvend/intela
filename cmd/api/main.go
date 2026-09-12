@@ -70,11 +70,16 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, httpapi.Opciones{
+	api := httpapi.Nueva(store, autenticacion, liquidaciones, catalogo, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})
