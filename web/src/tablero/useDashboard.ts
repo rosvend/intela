@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, ErrorDeRed, api } from "../api";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
@@ -61,10 +61,20 @@ export function useDashboard(rol: Rol): Tablero {
   };
 }
 
-export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
+/**
+ * `recarga` fuerza un refetch (sondeo del panel de corridas, o tras firmar).
+ * Si el path no cambio y ya habia datos, no se pinta "Cargando…" otra vez:
+ * un parpadeo cada 15s haria ilegible el pipeline.
+ */
+export function useRecurso<T>(
+  path: string,
+  habilitado = true,
+  recarga = 0,
+): Recurso<T> {
   const [recurso, setRecurso] = useState<Recurso<T>>(
     habilitado ? { tipo: "cargando" } : { tipo: "inactivo" },
   );
+  const pathAnterior = useRef(path);
 
   useEffect(() => {
     if (!habilitado) {
@@ -72,8 +82,13 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
       return;
     }
 
+    const cambioDePath = pathAnterior.current !== path;
+    pathAnterior.current = path;
+
     let vigente = true;
-    setRecurso({ tipo: "cargando" });
+    setRecurso((actual) =>
+      !cambioDePath && actual.tipo === "listo" ? actual : { tipo: "cargando" },
+    );
 
     (api(path) as Promise<T>)
       .then((datos) => {
@@ -95,7 +110,7 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
     return () => {
       vigente = false;
     };
-  }, [path, habilitado]);
+  }, [path, habilitado, recarga]);
 
   return recurso;
 }

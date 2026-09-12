@@ -297,17 +297,36 @@ a {
   cursor: default;
 }
 
-.boton-primario:focus-visible {
-  outline: 2px solid var(--acento);
-  outline-offset: 2px;
+.boton-secundario,
+.boton-peligro {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 1rem;
+  border-radius: var(--radio-boton);
+  cursor: pointer;
 }
 
-/* Deshabilitado a proposito: se muestra lo que existira y se dice que aun no. */
-.enlace-tenue {
-  background: none;
+.boton-secundario {
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  color: var(--texto);
+}
+
+.boton-peligro {
   border: none;
-  padding: 0;
-  font: inherit;
+  background: #b91c1c;
+  color: white;
+}
+
+.boton-secundario:disabled,
+.boton-peligro:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-demo {
+  margin-top: 1.5rem;
+  text-align: center;
   font-size: 0.78rem;
   color: var(--texto-suave);
   cursor: not-allowed;
@@ -721,6 +740,162 @@ td {
 
   .tablero-kpis,
   .tablero-kpis-titular {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- panel de corridas y anomalias (#40) ---------- */
+
+.panel-corridas-cuerpo {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.panel-corridas-detalle {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fila-activa {
+  background: var(--acento-activo);
+}
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.pipeline-paso {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  position: relative;
+  padding: 0.35rem 1.1rem 0.35rem 0;
+  color: var(--texto-suave);
+  font-size: 0.8rem;
+}
+
+.pipeline-paso:not(:last-child)::after {
+  content: "";
+  width: 1.1rem;
+  height: 1px;
+  background: var(--borde);
+  position: absolute;
+  right: 0;
+  top: 50%;
+}
+
+.pipeline-marca {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--borde);
+  flex-shrink: 0;
+}
+
+.pipeline-paso-hecha {
+  color: var(--ok);
+}
+
+.pipeline-paso-hecha .pipeline-marca {
+  background: var(--ok);
+}
+
+.pipeline-paso-actual {
+  color: var(--acento);
+  font-weight: 600;
+}
+
+.pipeline-paso-actual .pipeline-marca {
+  background: var(--acento);
+}
+
+.compuerta {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compuerta h3 {
+  margin: 0;
+}
+
+.compuerta-firmas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.compuerta-firmas li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.compuerta-estado-firmado {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.compuerta-estado-pendiente {
+  color: var(--alerta);
+  font-weight: 600;
+}
+
+.compuerta-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.compuerta-rechazo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.compuerta-rechazo textarea {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  resize: vertical;
+}
+
+.selector-periodo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.selector-periodo select {
+  font: inherit;
+  font-weight: 500;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--superficie);
+}
+
+@media (max-width: 900px) {
+  .panel-corridas-cuerpo {
     grid-template-columns: 1fr;
   }
 }
