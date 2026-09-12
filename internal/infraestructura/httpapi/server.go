@@ -57,6 +57,7 @@ type API struct {
 	salud    Salud
 	auth     Autenticacion
 	catalogo Catalogo
+	liq      Liquidaciones
 	opts     Opciones
 	log      *slog.Logger
 }
@@ -66,13 +67,13 @@ type API struct {
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
 // se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con dos todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, opts Opciones) *API {
+// Casos; con tres (auth, catalogo, liquidaciones) todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, liq Liquidaciones, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, catalogo: catalogo, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, catalogo: catalogo, liq: liq, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -120,7 +121,6 @@ func (a *API) Router() http.Handler {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
 		})
-
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo
@@ -133,6 +133,11 @@ func (a *API) Router() http.Handler {
 			cat.Post("/", a.registrarObra)
 			cat.Get("/{id}", a.obraPorID)
 			cat.Patch("/{id}", a.actualizarObra)
+		})
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-liquidaciones", a.consultarLiquidaciones)
+			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
 		})
 	})
 
@@ -170,6 +175,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origen)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 			h.Set("Access-Control-Max-Age", "600")
 			// El origen entra en la respuesta, asi que las caches
 			// intermedias tienen que variar por el.

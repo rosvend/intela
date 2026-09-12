@@ -23,6 +23,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
+| `/mis-liquidaciones` | `titular` |
 
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
 LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo

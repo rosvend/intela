@@ -18,7 +18,8 @@ import { RUTAS } from "./navegacion";
  * Las rutas de `RUTAS` (Sprint 3-5) entran aqui como placeholder: la pantalla
  * real llega con su propio PR, y esta tabla es lo unico que ese PR toca para
  * pasar de <EnConstruccion> al componente de verdad (issue #19: "so the
- * feature screens are pure additions").
+ * feature screens are pure additions"). Liquidaciones (OE-6) no es una ruta
+ * aparte: el titular las ve en Inicio (M-5).
  */
 export default function App() {
   return (

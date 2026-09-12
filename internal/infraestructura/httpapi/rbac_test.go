@@ -13,10 +13,17 @@ import (
 // router, con el doble de sesiones. Los 204 son la superficie vacia; lo
 // que se comprueba es el middleware, no el payload.
 func TestMatrizRolRuta(t *testing.T) {
-	rutas := []string{"/admin/pipeline", "/auditoria/asientos"}
+	exito := map[string]int{
+		"/admin/pipeline":                       http.StatusNoContent,
+		"/auditoria/asientos":                   http.StatusNoContent,
+		"/mis-liquidaciones":                    http.StatusOK,
+		"/mis-liquidaciones/export?formato=pdf": http.StatusOK,
+	}
 	permitido := map[string][]aplicacion.Rol{
-		"/admin/pipeline":     {aplicacion.RolAdministrador},
-		"/auditoria/asientos": {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+		"/admin/pipeline":                       {aplicacion.RolAdministrador},
+		"/auditoria/asientos":                   {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+		"/mis-liquidaciones":                    {aplicacion.RolTitular},
+		"/mis-liquidaciones/export?formato=pdf": {aplicacion.RolTitular},
 	}
 	roles := []aplicacion.Rol{
 		aplicacion.RolAdministrador,
@@ -27,13 +34,13 @@ func TestMatrizRolRuta(t *testing.T) {
 	}
 
 	for _, rol := range roles {
-		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol}}
+		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol, TitularID: "tit-1"}}
 		h := servidor(t, auth)
-		for _, ruta := range rutas {
+		for ruta, codigoOK := range exito {
 			codigo := http.StatusForbidden
 			for _, p := range permitido[ruta] {
 				if p == rol {
-					codigo = http.StatusNoContent
+					codigo = codigoOK
 					break
 				}
 			}
@@ -53,7 +60,7 @@ func TestMatrizRolRuta(t *testing.T) {
 func TestRutaConRolSinSesionEs401(t *testing.T) {
 	h := servidor(t, &autenticacionFalsa{})
 
-	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos"} {
+	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/mis-liquidaciones"} {
 		t.Run(ruta, func(t *testing.T) {
 			rec := pedir(t, h, http.MethodGet, ruta, "", "")
 			if rec.Code != http.StatusUnauthorized {
