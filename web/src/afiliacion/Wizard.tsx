@@ -19,6 +19,7 @@ type AfiliacionCreada = {
   id: string;
   estado: string;
   subtipo: string;
+  ipi: string;
   elegible_anticipo: boolean;
 };
 
@@ -69,6 +70,7 @@ export default function WizardAfiliacion() {
     cuerpo.set("email", datos.email.trim());
     cuerpo.set("documento_identidad", datos.documentoIdentidad.trim());
     cuerpo.set("subtipo", datos.subtipo);
+    cuerpo.set("clave", datos.clave);
     if (datos.ipi.trim()) cuerpo.set("ipi", datos.ipi.trim());
     cuerpo.set("pertenece_otra_sgc", datos.perteneceOtraSgc ? "true" : "false");
     cuerpo.set("rut", datos.rut);
@@ -93,20 +95,10 @@ export default function WizardAfiliacion() {
 
   if (creada) {
     return (
-      <section className="wizard">
-        <h1>Solicitud enviada</h1>
-        <p role="status">
-          Quedó en estado <strong>pendiente de admisión</strong>. El Consejo
-          Directivo la estudia según el reglamento de socios (RS 5.2 / RS 5.3).
-        </p>
-        <p className="muted">Referencia: {creada.id}</p>
-        <p className="muted">
-          Vínculo:{" "}
-          {creada.subtipo === "socio" ? "Socio" : "Titular administrado"}. El
-          anticipo solo procede si, una vez admitido, el vínculo es societario
-          (R-30).
-        </p>
-      </section>
+      <ConfirmacionSolicitud
+        creada={creada}
+        onCompletada={(siguiente) => setCreada(siguiente)}
+      />
     );
   }
 
@@ -160,18 +152,49 @@ export default function WizardAfiliacion() {
               />
             </label>
             <label>
+              Clave
+              <input
+                name="clave"
+                type="password"
+                value={datos.clave}
+                onChange={(e) => patch({ clave: e.target.value })}
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={72}
+              />
+            </label>
+            <label>
+              Confirmar clave
+              <input
+                name="clave_confirmacion"
+                type="password"
+                value={datos.claveConfirmacion}
+                onChange={(e) => patch({ claveConfirmacion: e.target.value })}
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={72}
+              />
+            </label>
+            <p className="muted">
+              Con esta clave entra al portal una vez que el Consejo admita la
+              solicitud.
+            </p>
+            <label>
               IPI (opcional)
               <input
                 name="ipi"
                 value={datos.ipi}
                 onChange={(e) => patch({ ipi: e.target.value })}
-                placeholder={"Se puede completar después, antes de la admisión"}
+                placeholder="Se puede completar después, antes de la admisión"
               />
             </label>
             <p className="muted">
               El IPI identifica a la persona en el sistema CISAC. No es
-              obligatorio en este paso; una persona natural no entra al padrón
-              de cobro sin él.
+              obligatorio en este paso; si lo omites, podrás completarlo con la
+              referencia de la solicitud antes de que el Consejo te admita. Una
+              persona natural no entra al padrón de cobro sin él.
             </p>
           </fieldset>
         )}
@@ -292,8 +315,10 @@ export default function WizardAfiliacion() {
               <dd>{datos.email}</dd>
               <dt>Documento</dt>
               <dd>{datos.documentoIdentidad}</dd>
+              <dt>Clave</dt>
+              <dd>Definida (no se muestra)</dd>
               <dt>IPI</dt>
-              <dd>{datos.ipi.trim() || "No informado (opcional)"}</dd>
+              <dd>{datos.ipi.trim() || "No informado (se puede completar después)"}</dd>
               <dt>Vínculo</dt>
               <dd>
                 {datos.subtipo === "socio"
@@ -339,6 +364,162 @@ export default function WizardAfiliacion() {
           )}
         </div>
       </form>
+
+      <CompletarIPIConReferencia />
     </section>
+  );
+}
+
+function ConfirmacionSolicitud({
+  creada,
+  onCompletada,
+}: {
+  creada: AfiliacionCreada;
+  onCompletada: (siguiente: AfiliacionCreada) => void;
+}) {
+  return (
+    <section className="wizard">
+      <h1>Solicitud enviada</h1>
+      <p role="status">
+        Quedó en estado <strong>pendiente de admisión</strong>. El Consejo
+        Directivo la estudia según el reglamento de socios (RS 5.2 / RS 5.3).
+      </p>
+      <p className="muted">Referencia: {creada.id}</p>
+      <p className="muted">
+        Vínculo:{" "}
+        {creada.subtipo === "socio" ? "Socio" : "Titular administrado"}. El
+        anticipo solo procede si, una vez admitido, el vínculo es societario
+        (R-30).
+      </p>
+      <p className="muted">
+        Cuando el Consejo admita la solicitud, entra al portal con el correo y
+        la clave que registraste.
+      </p>
+      {creada.ipi?.trim() ? (
+        <p className="muted">IPI informado: {creada.ipi}</p>
+      ) : (
+        <FormularioIPI
+          idSolicitud={creada.id}
+          onCompletada={onCompletada}
+        />
+      )}
+    </section>
+  );
+}
+
+function CompletarIPIConReferencia() {
+  const [id, setId] = useState("");
+  const [creada, setCreada] = useState<AfiliacionCreada | null>(null);
+
+  if (creada?.ipi?.trim()) {
+    return (
+      <p role="status">
+        IPI guardado en la solicitud {creada.id}.
+      </p>
+    );
+  }
+  if (creada) {
+    return (
+      <FormularioIPI
+        idSolicitud={creada.id}
+        onCompletada={setCreada}
+      />
+    );
+  }
+
+  return (
+    <details className="wizard-retorno">
+      <summary>Ya envié una solicitud y quiero completar el IPI</summary>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const recorte = id.trim();
+          if (!recorte) return;
+          setCreada({
+            id: recorte,
+            estado: "pendiente",
+            subtipo: "",
+            ipi: "",
+            elegible_anticipo: false,
+          });
+        }}
+      >
+        <label>
+          Referencia de la solicitud
+          <input
+            name="referencia"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        <button type="submit">Continuar</button>
+      </form>
+    </details>
+  );
+}
+
+function FormularioIPI({
+  idSolicitud,
+  onCompletada,
+}: {
+  idSolicitud: string;
+  onCompletada: (siguiente: AfiliacionCreada) => void;
+}) {
+  const [ipi, setIpi] = useState("");
+  const [error, setError] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  async function enviar(e: FormEvent) {
+    e.preventDefault();
+    if (!ipi.trim()) {
+      setError("El IPI es obligatorio para entrar al padrón de cobro.");
+      return;
+    }
+    setEnviando(true);
+    setError("");
+    try {
+      const r = (await api(`/api/afiliaciones/${idSolicitud}/ipi`, {
+        method: "PATCH",
+        body: JSON.stringify({ ipi: ipi.trim() }),
+        anonima: true,
+      })) as AfiliacionCreada;
+      onCompletada(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo completar el IPI.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <form onSubmit={enviar}>
+      <fieldset>
+        <legend>Completar IPI antes de la admisión</legend>
+        <p className="muted">
+          Una persona natural no entra al padrón sin IPI (RD 3). Puedes
+          rellenarlo ahora; si no, el Consejo no podrá admitir la solicitud.
+        </p>
+        <label>
+          IPI
+          <input
+            name="ipi_posterior"
+            value={ipi}
+            onChange={(e) => {
+              setIpi(e.target.value);
+              setError("");
+            }}
+          />
+        </label>
+        {error ? (
+          <p role="alert" className="alerta">
+            {error}
+          </p>
+        ) : null}
+        <button type="submit" disabled={enviando}>
+          {enviando ? "Guardando…" : "Guardar IPI"}
+        </button>
+      </fieldset>
+    </form>
   );
 }

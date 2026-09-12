@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,14 @@ import (
 )
 
 type admisionFalsa struct {
-	vista     aplicacion.AfiliacionVista
-	err       error
-	recibida  aplicacion.SolicitudAfiliacion
-	actor     aplicacion.Usuario
-	idAprobar string
+	vista       aplicacion.AfiliacionVista
+	err         error
+	recibida    aplicacion.SolicitudAfiliacion
+	actor       aplicacion.Usuario
+	idAprobar   string
+	idRechazar  string
+	idIPI       string
+	ipiRecibido string
 }
 
 func (a *admisionFalsa) Solicitar(_ context.Context, in aplicacion.SolicitudAfiliacion) (aplicacion.AfiliacionVista, error) {
@@ -26,9 +30,21 @@ func (a *admisionFalsa) Solicitar(_ context.Context, in aplicacion.SolicitudAfil
 	return a.vista, a.err
 }
 
+func (a *admisionFalsa) CompletarIPI(_ context.Context, id, ipi string) (aplicacion.AfiliacionVista, error) {
+	a.idIPI = id
+	a.ipiRecibido = ipi
+	return a.vista, a.err
+}
+
 func (a *admisionFalsa) Aprobar(_ context.Context, actor aplicacion.Usuario, id string) (aplicacion.AfiliacionVista, error) {
 	a.actor = actor
 	a.idAprobar = id
+	return a.vista, a.err
+}
+
+func (a *admisionFalsa) Rechazar(_ context.Context, actor aplicacion.Usuario, id string) (aplicacion.AfiliacionVista, error) {
+	a.actor = actor
+	a.idRechazar = id
 	return a.vista, a.err
 }
 
@@ -79,6 +95,7 @@ func TestSolicitarAfiliacionDevuelvePendiente(t *testing.T) {
 		"documento_identidad": "123",
 		"subtipo":             "socio",
 		"ipi":                 "IPI-1",
+		"clave":               "secret12",
 	}
 	archivos := map[string][]byte{
 		"rut":                    []byte("%PDF-1.4\n"),
@@ -106,6 +123,9 @@ func TestSolicitarAfiliacionDevuelvePendiente(t *testing.T) {
 	}
 	if !bytes.HasPrefix(adm.recibida.CertBancaria, []byte("%PDF")) {
 		t.Fatal("la certificacion bancaria no llego al caso de uso")
+	}
+	if adm.recibida.Clave != "secret12" {
+		t.Fatalf("clave = %q", adm.recibida.Clave)
 	}
 }
 
@@ -225,5 +245,92 @@ func TestElAltaNoPideSesion(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("el alta sin token dio %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSolicitarAfiliacionConflictoNoEnumeraCorreo(t *testing.T) {
+	adm := &admisionFalsa{err: aplicacion.ErrConflicto}
+	h := servidorAdmision(t, &autenticacionFalsa{}, adm)
+	cuerpo, ctype := multipartSolicitud(t, map[string]string{
+		"nombre": "A", "email": "a@redes.co", "documento_identidad": "1", "subtipo": "socio",
+	}, map[string][]byte{"rut": []byte("%PDF-1.4\n"), "certificacion_bancaria": []byte("%PDF-1.4\n")})
+	req := httptest.NewRequest(http.MethodPost, "/afiliaciones", cuerpo)
+	req.Header.Set("Content-Type", ctype)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400 (no 409). Cuerpo: %s", rec.Code, rec.Body)
+	}
+	msg, _ := decodificar(t, rec)["error"].(string)
+	if strings.Contains(strings.ToLower(msg), "existe") || strings.Contains(strings.ToLower(msg), "conflicto") {
+		t.Fatalf("el mensaje no puede decir que el correo ya existe: %q", msg)
+	}
+}
+
+func TestCompletarIPIPublico(t *testing.T) {
+	adm := &admisionFalsa{vista: aplicacion.AfiliacionVista{
+		ID: "afil-1", IPI: "IPI-42", Estado: "pendiente",
+	}}
+	h := servidorAdmision(t, &autenticacionFalsa{}, adm)
+
+	req := httptest.NewRequest(http.MethodPatch, "/afiliaciones/afil-1/ipi", strings.NewReader(`{"ipi":"IPI-42"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if adm.idIPI != "afil-1" || adm.ipiRecibido != "IPI-42" {
+		t.Fatalf("id=%q ipi=%q", adm.idIPI, adm.ipiRecibido)
+	}
+}
+
+func TestRechazarAfiliacionExigeSesion(t *testing.T) {
+	h := servidorAdmision(t, &autenticacionFalsa{}, &admisionFalsa{})
+	rec := pedir(t, h, http.MethodPost, "/afiliaciones/afil-1/rechazar", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("codigo = %d, se esperaba 401", rec.Code)
+	}
+}
+
+func TestRechazarAfiliacionDevuelveRechazada(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{
+		ID: "usr-admin", Rol: aplicacion.RolAdministrador,
+	}}
+	adm := &admisionFalsa{vista: aplicacion.AfiliacionVista{
+		ID: "afil-1", Estado: "rechazado", Subtipo: "socio",
+	}}
+	h := servidorAdmision(t, auth, adm)
+
+	rec := pedir(t, h, http.MethodPost, "/afiliaciones/afil-1/rechazar", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	got := decodificar(t, rec)
+	if got["estado"] != "rechazado" {
+		t.Fatalf("estado = %v", got["estado"])
+	}
+	if adm.idRechazar != "afil-1" {
+		t.Fatalf("id = %q", adm.idRechazar)
+	}
+}
+
+func TestErrorCuerpoAfiliacionDistingueTamanoDeMultipart(t *testing.T) {
+	codigo, msg := errorCuerpoAfiliacion(&http.MaxBytesError{Limit: maxCuerpoAfiliacion})
+	if codigo != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413", codigo)
+	}
+	if !strings.Contains(strings.ToLower(msg), "tamano") && !strings.Contains(strings.ToLower(msg), "tamaño") {
+		t.Fatalf("el 413 tiene que hablar de tamano: %q", msg)
+	}
+
+	codigo, msg = errorCuerpoAfiliacion(errors.New("no es multipart"))
+	if codigo != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400", codigo)
+	}
+	if !strings.Contains(msg, "multipart") {
+		t.Fatalf("el 400 tiene que pedir multipart: %q", msg)
 	}
 }

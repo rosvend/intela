@@ -37,6 +37,10 @@ CREATE TABLE afiliaciones (
   clave_rut            TEXT NOT NULL CHECK (btrim(clave_rut) <> ''),
   clave_cert_bancaria  TEXT NOT NULL CHECK (btrim(clave_cert_bancaria) <> ''),
   clave_renuncia       TEXT NOT NULL DEFAULT '',
+  -- Hash de la clave con la que el titular entra una vez admitido.
+  -- El CHECK copia el de usuarios.password_hash: un valor corto no es
+  -- verificable y dejaría al socio fuera para siempre.
+  clave_hash           TEXT NOT NULL CHECK (length(clave_hash) >= 20),
   titular_id           TEXT REFERENCES titulares(id),
   solicitado           TIMESTAMPTZ NOT NULL DEFAULT now(),
   resuelto             TIMESTAMPTZ,
@@ -56,7 +60,27 @@ CREATE UNIQUE INDEX afiliaciones_email_activa
   WHERE estado IN ('pendiente', 'admitido');
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+-- El IPI identifica a la persona en el padron (RD 3). Dos solicitudes
+-- activas con el mismo no pueden convivir; una rechazada si, igual que
+-- el correo. El vacio se permite: el alta lo omite y CompletarIPI lo
+-- rellena antes de admitir.
+CREATE UNIQUE INDEX afiliaciones_ipi_activa
+  ON afiliaciones (ipi)
+  WHERE estado IN ('pendiente', 'admitido') AND btrim(ipi) <> '';
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- La misma unicidad en el padron: dos titulares admitidos no pueden
+-- compartir IPI. El vacio queda fuera porque una persona juridica puede
+-- no tenerlo (titular_natural_tiene_ipi solo obliga a la persona natural).
+CREATE UNIQUE INDEX titulares_ipi_unico
+  ON titulares (ipi)
+  WHERE btrim(ipi) <> '';
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+DROP INDEX IF EXISTS titulares_ipi_unico;
 DROP TABLE IF EXISTS afiliaciones;
 -- +goose StatementEnd

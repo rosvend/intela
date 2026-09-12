@@ -237,7 +237,14 @@ paths:
 
         El RUT actualizado y la certificacion bancaria son obligatorios
         (`R-12` / `RD 13.1.6`). El IPI se puede omitir en esta peticion;
-        una persona natural no se admite al padron sin el (`RD 3`).
+        una persona natural no se admite al padron sin el (`RD 3`). Hay
+        `PATCH /afiliaciones/{id}/ipi` para completarlo despues.
+
+        La clave (8 a 72 caracteres) se recoge aqui: al admitir se crea
+        la cuenta con la que el titular entra.
+
+        Este endpoint es publico y esta limitado por IP. Un correo ya
+        afiliado no responde 409: enumeraria el padron.
 
         Si el aspirante declara pertenecer a otra sociedad de gestion
         colectiva del mismo genero y no adjunta la renuncia, responde 409
@@ -271,7 +278,10 @@ paths:
                 tiene_renuncia: false
                 titular_id: ""
         "400":
-          description: Faltan datos o documentos, o el adjunto no es un PDF o una imagen.
+          description: |
+            Faltan datos o documentos, el adjunto no es un PDF o una imagen,
+            o no se pudo registrar (incluido un correo ya activo: no se
+            distingue a proposito).
           content:
             application/json:
               schema:
@@ -279,22 +289,108 @@ paths:
               example:
                 error: "r-12: el rut actualizado y la certificacion bancaria son obligatorios"
         "409":
-          description: |
-            Conflicto de exclusividad (`R-28`) o ya existe una solicitud
-            activa con el mismo correo.
+          description: Conflicto de exclusividad (`R-28`).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
                 error: "r-28: no se acepta como afiliado a quien pertenezca a otra sociedad de gestion colectiva del mismo genero sin renuncia previa y expresa"
+        "413":
+          description: El cuerpo supera 18 MiB (tres documentos de 5 MiB mas el formulario).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el cuerpo supera el tamano maximo permitido
+        "429":
+          description: Demasiadas solicitudes desde la misma IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: demasiadas solicitudes, reintente en un momento
+
+  /afiliaciones/{id}/ipi:
+    patch:
+      tags: [afiliacion]
+      summary: Completar IPI de una solicitud pendiente
+      description: |
+        Rellena el IPI que el alta permite omitir. Va sin sesion: el
+        `{id}` es un token opaco de 256 bits. Una persona natural no se
+        admite al padron sin este identificador (`RD 3`).
+      operationId: completarIPI
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ipi]
+              properties:
+                ipi:
+                  type: string
+                  description: Identificador IPI de la persona.
+            example:
+              ipi: IPI-00000001
+      responses:
+        "200":
+          description: IPI guardado. La solicitud sigue pendiente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+        "400":
+          description: IPI vacio, o no se pudo completar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el ipi es obligatorio para admitir a una persona natural
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya no esta pendiente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
+        "429":
+          description: Demasiadas solicitudes desde la misma IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: demasiadas solicitudes, reintente en un momento
 
   /afiliaciones/{id}/aprobar:
     post:
       tags: [afiliacion]
       summary: Aprobar afiliacion
       description: |
-        Admite una solicitud pendiente y crea la fila del padron.
+        Admite una solicitud pendiente, crea la fila del padron y la
+        cuenta en `usuarios` con la clave que el aspirante eligio al
+        solicitar.
 
         Solo el rol `administrador`, que en este andamiaje representa al
         Consejo Directivo (`RS 5.2`). A partir de la admision el subtipo
@@ -361,6 +457,75 @@ paths:
                 error: solicitud no encontrada
         "409":
           description: La solicitud ya estaba resuelta, o el padron ya tiene esa fila.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
+
+  /afiliaciones/{id}/rechazar:
+    post:
+      tags: [afiliacion]
+      summary: Rechazar afiliacion
+      description: |
+        Cierra una solicitud pendiente. Libera el correo y el IPI para
+        que el aspirante pueda volver a presentarse. Solo el Consejo
+        Directivo (`RS 5.2`).
+      operationId: rechazarAfiliacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Solicitud rechazada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: rechazado
+                elegible_anticipo: false
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: ""
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no es el del Consejo Directivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya estaba resuelta.
           content:
             application/json:
               schema:
@@ -994,6 +1159,7 @@ components:
         - email
         - documento_identidad
         - subtipo
+        - clave
         - rut
         - certificacion_bancaria
       properties:
@@ -1011,7 +1177,17 @@ components:
           type: string
           description: |
             Identificador IPI de la persona. Opcional en el alta; obligatorio
-            para admitir a una persona natural.
+            para admitir a una persona natural. Se puede completar despues
+            con `PATCH /afiliaciones/{id}/ipi`.
+        clave:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          description: |
+            Clave con la que el titular entra una vez admitido. No se
+            devuelve. El hash se guarda con la solicitud y pasa a
+            `usuarios` al admitir.
         subtipo:
           type: string
           enum: [socio, administrado]

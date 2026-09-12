@@ -26,10 +26,17 @@ var (
 	// No se inventa un valor por defecto: se falla (ADR 0004).
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
-	// ErrConflicto: la fila ya existe (correo o IPI duplicado en una
-	// solicitud activa). Distinto de ErrNoEncontrado: aqui la consulta
-	// encontro de mas, no de menos.
+	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
+	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
+	// admitida). En titulares, el IPI no vacio es unico. Distinto de
+	// ErrNoEncontrado: aqui la consulta encontro de mas, no de menos.
 	ErrConflicto = errors.New("ya existe una solicitud o afiliacion con esos datos")
+
+	// ErrClaveInvalida: la clave del alta no cumple el minimo. Se distingue
+	// de ErrDocumentoInvalido porque quien la recibe tiene que saber que
+	// campo rehacer, y de ErrCredenciales porque aqui todavia no hay
+	// sesion que rechazar.
+	ErrClaveInvalida = errors.New("la clave tiene que tener entre 8 y 72 caracteres")
 
 	// ErrDocumentoInvalido: el adjunto no es un PDF o una imagen, o viene
 	// vacio. El dominio no mira bytes; esto lo decide el caso de uso antes

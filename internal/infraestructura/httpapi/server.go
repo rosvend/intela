@@ -110,6 +110,7 @@ func (a *API) Router() http.Handler {
 		protegido.Delete("/auth/session", a.cerrarSesion)
 		if a.admision != nil {
 			protegido.Post("/afiliaciones/{id}/aprobar", a.aprobarAfiliacion)
+			protegido.Post("/afiliaciones/{id}/rechazar", a.rechazarAfiliacion)
 		}
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
@@ -141,9 +142,15 @@ func (a *API) Router() http.Handler {
 	})
 
 	// El alta la rellena quien todavia no es afiliado, asi que va sin
-	// sesion. La admision (aprobar) si pide la del Consejo.
+	// sesion. Completar el IPI tambien: el identificador de la solicitud
+	// es el token. Ambas llevan rate limit porque aceptan trafico anonimo
+	// y la primera escribe a disco.
 	if a.admision != nil {
-		r.Post("/afiliaciones", a.solicitarAfiliacion)
+		r.Group(func(alta chi.Router) {
+			alta.Use(limitarPorIP(10, time.Minute))
+			alta.Post("/afiliaciones", a.solicitarAfiliacion)
+			alta.Patch("/afiliaciones/{id}/ipi", a.completarIPI)
+		})
 	}
 
 	return r

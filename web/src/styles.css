@@ -657,6 +657,15 @@ td {
   color: var(--acento);
   font-weight: 600;
 }
+.wizard-retorno {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+}
+.wizard-retorno summary {
+  cursor: pointer;
+  color: var(--texto-suave);
+}
 .revision {
   display: grid;
   grid-template-columns: 11rem 1fr;

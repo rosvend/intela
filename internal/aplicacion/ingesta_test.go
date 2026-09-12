@@ -51,6 +51,11 @@ func (a *almacenMemoria) Obtener(_ context.Context, clave string) ([]byte, error
 	return datos, nil
 }
 
+func (a *almacenMemoria) Borrar(_ context.Context, clave string) error {
+	delete(a.objetos, clave)
+	return nil
+}
+
 // repoIngestaMemoria imita el UNIQUE (sha256, fuente) de la tabla reportes,
 // que es la unica fuente de verdad de "reporte duplicado".
 type repoIngestaMemoria struct {

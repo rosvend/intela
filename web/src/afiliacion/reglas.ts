@@ -4,6 +4,11 @@ export const MENSAJE_EXCLUSIVIDAD =
 export const MENSAJE_DOCUMENTOS =
   "R-12: el RUT actualizado y la certificación bancaria son obligatorios.";
 
+export const MENSAJE_CLAVE =
+  "La clave tiene que tener entre 8 y 72 caracteres.";
+
+export const MENSAJE_CLAVE_DISTINTA = "Las dos claves no coinciden.";
+
 export type SubtipoAfiliacion = "socio" | "administrado";
 
 export type DatosAlta = {
@@ -11,6 +16,8 @@ export type DatosAlta = {
   email: string;
   documentoIdentidad: string;
   ipi: string;
+  clave: string;
+  claveConfirmacion: string;
   subtipo: SubtipoAfiliacion | "";
   perteneceOtraSgc: boolean | null;
   rut: File | null;
@@ -23,6 +30,8 @@ export const datosVacios: DatosAlta = {
   email: "",
   documentoIdentidad: "",
   ipi: "",
+  clave: "",
+  claveConfirmacion: "",
   subtipo: "",
   perteneceOtraSgc: null,
   rut: null,
@@ -40,9 +49,15 @@ export function conflictoExclusividad(
   return null;
 }
 
+export function errorDeClave(clave: string, confirmacion: string): string | null {
+  if (clave.length < 8 || clave.length > 72) return MENSAJE_CLAVE;
+  if (clave !== confirmacion) return MENSAJE_CLAVE_DISTINTA;
+  return null;
+}
+
 export function errorDelPaso(paso: number, d: DatosAlta): string | null {
   switch (paso) {
-    case 0:
+    case 0: {
       if (!d.nombre.trim()) return "El nombre es obligatorio.";
       if (!d.email.includes("@") || !d.email.includes(".")) {
         return "El correo no es válido.";
@@ -50,7 +65,8 @@ export function errorDelPaso(paso: number, d: DatosAlta): string | null {
       if (!d.documentoIdentidad.trim()) {
         return "El documento de identidad es obligatorio.";
       }
-      return null;
+      return errorDeClave(d.clave, d.claveConfirmacion);
+    }
     case 1:
       if (d.subtipo !== "socio" && d.subtipo !== "administrado") {
         return "Hay que elegir el tipo de vínculo.";
@@ -68,3 +84,4 @@ export function errorDelPaso(paso: number, d: DatosAlta): string | null {
       return null;
   }
 }
+

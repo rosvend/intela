@@ -110,8 +110,27 @@ func (a Afiliado) Admitir(titularID string) (Afiliado, error) {
 	return a, nil
 }
 
+// CompletarIPI rellena el identificador que ValidarSolicitud permite omitir.
+//
+// Solo desde pendiente: una vez admitido el IPI ya esta en el padron, y una
+// vez rechazado el aspirante tiene que volver a presentarse. El recorte va
+// aqui para que una cadena de espacios no pase por "ya lo complete".
+func (a Afiliado) CompletarIPI(ipi string) (Afiliado, error) {
+	if a.Estado != EstadoPendiente {
+		return Afiliado{}, ErrEstadoInvalido
+	}
+	ipi = strings.TrimSpace(ipi)
+	if ipi == "" {
+		return Afiliado{}, ErrIPIObligatorio
+	}
+	a.IPI = ipi
+	return a, nil
+}
+
 // Rechazar pasa de pendiente a rechazado. Una solicitud ya resuelta no
-// se vuelve a resolver: el Consejo ya decidio.
+// se vuelve a resolver: el Consejo ya decidio. El indice parcial de correo
+// activo excluye este estado a proposito: el aspirante puede volver a
+// presentarse.
 func (a Afiliado) Rechazar() (Afiliado, error) {
 	if a.Estado != EstadoPendiente {
 		return Afiliado{}, ErrEstadoInvalido

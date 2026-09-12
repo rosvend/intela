@@ -140,6 +140,7 @@ func construir() (http.Handler, error) {
 		Solicitudes: store,
 		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", "/data/objetos")},
 		IDs:         cripto.TokensAleatorios{},
+		Claves:      cripto.Bcrypt{},
 	}
 
 	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo

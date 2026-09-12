@@ -28,6 +28,12 @@ async function completarHasta(pasoObjetivo: number) {
   fireEvent.change(screen.getByLabelText(/Documento de identidad/i), {
     target: { value: "12345678" },
   });
+  fireEvent.change(screen.getByLabelText(/^Clave$/i), {
+    target: { value: "secret12" },
+  });
+  fireEvent.change(screen.getByLabelText(/Confirmar clave/i), {
+    target: { value: "secret12" },
+  });
   fireEvent.click(screen.getByRole("button", { name: /siguiente/i }));
 
   if (pasoObjetivo < 1) return;
@@ -97,8 +103,64 @@ describe("WizardAfiliacion", () => {
     const fd = init?.body as FormData;
     expect(fd.get("nombre")).toBe("Ana Escritora");
     expect(fd.get("subtipo")).toBe("socio");
+    expect(fd.get("clave")).toBe("secret12");
     expect(fd.get("rut")).toBeInstanceOf(File);
     expect(fd.get("certificacion_bancaria")).toBeInstanceOf(File);
+  });
+
+  it("permite completar el IPI despues de enviar sin el", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "afil-1",
+            estado: "pendiente",
+            subtipo: "socio",
+            ipi: "",
+            elegible_anticipo: false,
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "afil-1",
+            estado: "pendiente",
+            subtipo: "socio",
+            ipi: "IPI-42",
+            elegible_anticipo: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+    render(<WizardAfiliacion />);
+    await completarHasta(3);
+    fireEvent.click(
+      screen.getByRole("radio", { name: /no pertenezco a otra SGC/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /siguiente/i }));
+    fireEvent.click(screen.getByRole("button", { name: /enviar solicitud/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toMatch(
+        /pendiente de admisión/i,
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText(/^IPI$/i), {
+      target: { value: "IPI-42" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar ipi/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/IPI informado/i).textContent).toMatch(/IPI-42/);
+    });
+
+    const [, init] = vi.mocked(fetch).mock.calls[1];
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(String(init?.body))).toEqual({ ipi: "IPI-42" });
   });
 
   it("muestra la explicacion del servidor ante un 409 de exclusividad", async () => {

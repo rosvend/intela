@@ -164,6 +164,32 @@ func TestNoSeAdmiteDosVeces(t *testing.T) {
 	}
 }
 
+func TestCompletarIPISoloDesdePendiente(t *testing.T) {
+	t.Parallel()
+	a := solicitudValida()
+	a.IPI = ""
+
+	got, err := a.CompletarIPI("  IPI-00000009  ")
+	if err != nil {
+		t.Fatalf("CompletarIPI: %v", err)
+	}
+	if got.IPI != "IPI-00000009" {
+		t.Fatalf("IPI = %q", got.IPI)
+	}
+
+	if _, err := got.CompletarIPI("   "); !errors.Is(err, ErrIPIObligatorio) {
+		t.Fatalf("vacío: se esperaba ErrIPIObligatorio, se obtuvo %v", err)
+	}
+
+	admitida, err := got.Admitir("tit-1")
+	if err != nil {
+		t.Fatalf("Admitir: %v", err)
+	}
+	if _, err := admitida.CompletarIPI("IPI-otro"); !errors.Is(err, ErrEstadoInvalido) {
+		t.Fatalf("admitida: se esperaba ErrEstadoInvalido, se obtuvo %v", err)
+	}
+}
+
 func TestRechazarSoloDesdePendiente(t *testing.T) {
 	t.Parallel()
 	got, err := solicitudValida().Rechazar()

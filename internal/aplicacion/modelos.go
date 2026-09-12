@@ -160,6 +160,7 @@ type SolicitudAfiliacion struct {
 	IPI                string
 	Subtipo            string
 	PerteneceOtraSGC   bool
+	Clave              string
 	RUT                []byte
 	CertBancaria       []byte
 	Renuncia           []byte

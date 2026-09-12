@@ -16,18 +16,23 @@ func pdfPrueba() []byte {
 
 type repoAdmisionMemoria struct {
 	porID map[string]afiliacion.Afiliado
+	hash  map[string]string
 	err   error
 }
 
 func nuevoRepoAdmision() *repoAdmisionMemoria {
-	return &repoAdmisionMemoria{porID: map[string]afiliacion.Afiliado{}}
+	return &repoAdmisionMemoria{
+		porID: map[string]afiliacion.Afiliado{},
+		hash:  map[string]string{},
+	}
 }
 
-func (r *repoAdmisionMemoria) GuardarSolicitud(_ context.Context, a afiliacion.Afiliado) error {
+func (r *repoAdmisionMemoria) GuardarSolicitud(_ context.Context, a afiliacion.Afiliado, claveHash string) error {
 	if r.err != nil {
 		return r.err
 	}
 	r.porID[a.ID] = a
+	r.hash[a.ID] = claveHash
 	return nil
 }
 
@@ -45,6 +50,21 @@ func (r *repoAdmisionMemoria) SolicitudPorID(_ context.Context, id string) (afil
 func (r *repoAdmisionMemoria) AdmitirSolicitud(_ context.Context, a afiliacion.Afiliado) error {
 	if r.err != nil {
 		return r.err
+	}
+	r.porID[a.ID] = a
+	return nil
+}
+
+func (r *repoAdmisionMemoria) ActualizarPendiente(_ context.Context, a afiliacion.Afiliado) error {
+	if r.err != nil {
+		return r.err
+	}
+	actual, hay := r.porID[a.ID]
+	if !hay {
+		return ErrNoEncontrado
+	}
+	if actual.Estado != afiliacion.EstadoPendiente {
+		return afiliacion.ErrEstadoInvalido
 	}
 	r.porID[a.ID] = a
 	return nil
@@ -71,11 +91,29 @@ func (o *objetosMemoria) Obtener(_ context.Context, clave string) ([]byte, error
 	return b, nil
 }
 
+func (o *objetosMemoria) Borrar(_ context.Context, clave string) error {
+	delete(o.guardados, clave)
+	return nil
+}
+
+type hasherDeClave struct{}
+
+func (hasherDeClave) Verificar(hash, clave string) bool {
+	return hash == "hash-de-prueba-"+clave
+}
+func (hasherDeClave) Hash(clave string) (string, error) {
+	return "hash-de-prueba-" + clave, nil
+}
+func (hasherDeClave) EsHash(posible string) bool {
+	return strings.HasPrefix(posible, "hash-de-prueba-")
+}
+
 func nuevaAdmision(repo *repoAdmisionMemoria, obj *objetosMemoria) Admision {
 	return Admision{
 		Solicitudes: repo,
 		Objetos:     obj,
 		IDs:         tokensFijos{valor: "id-fijo"},
+		Claves:      hasherDeClave{},
 	}
 }
 
@@ -86,6 +124,7 @@ func solicitudCompleta() SolicitudAfiliacion {
 		DocumentoIdentidad: "12345678",
 		IPI:                "IPI-00000001",
 		Subtipo:            "socio",
+		Clave:              "secret12",
 		RUT:                pdfPrueba(),
 		CertBancaria:       pdfPrueba(),
 	}
@@ -121,6 +160,9 @@ func TestSolicitarDejaLaSolicitudPendienteYGuardaDocumentos(t *testing.T) {
 	}
 	if _, hay := obj.guardados["afiliaciones/afil-id-fijo/banco"]; !hay {
 		t.Fatal("la certificacion bancaria no quedo en el almacen")
+	}
+	if repo.hash[vista.ID] != "hash-de-prueba-secret12" {
+		t.Fatalf("hash persistido = %q", repo.hash[vista.ID])
 	}
 
 	guardada, hay := repo.porID[vista.ID]
@@ -206,6 +248,35 @@ func TestSolicitarPermiteOmitirIPI(t *testing.T) {
 	}
 }
 
+func TestSolicitarExigeClave(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	obj := nuevosObjetos()
+	in := solicitudCompleta()
+	in.Clave = "corta"
+
+	_, err := nuevaAdmision(repo, obj).Solicitar(context.Background(), in)
+	if !errors.Is(err, ErrClaveInvalida) {
+		t.Fatalf("se esperaba ErrClaveInvalida, se obtuvo %v", err)
+	}
+	if len(repo.porID) != 0 || len(obj.guardados) != 0 {
+		t.Fatal("una clave invalida no escribe nada")
+	}
+}
+
+func TestSolicitarCompensaDocumentosSiElInsertFalla(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	repo.err = ErrConflicto
+	obj := nuevosObjetos()
+
+	_, err := nuevaAdmision(repo, obj).Solicitar(context.Background(), solicitudCompleta())
+	if !errors.Is(err, ErrConflicto) {
+		t.Fatalf("se esperaba ErrConflicto, se obtuvo %v", err)
+	}
+	if len(obj.guardados) != 0 {
+		t.Fatalf("los documentos no pueden quedar huerfanos: %v", obj.guardados)
+	}
+}
+
 func TestAprobarAdmiteYHabilitaAnticipoAlSocio(t *testing.T) {
 	repo := nuevoRepoAdmision()
 	obj := nuevosObjetos()
@@ -285,6 +356,73 @@ func TestAprobarSinIPIFallaParaPersonaNatural(t *testing.T) {
 	}
 }
 
+func TestCompletarIPIDespuesPermiteAdmitir(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	obj := nuevosObjetos()
+	s := nuevaAdmision(repo, obj)
+	in := solicitudCompleta()
+	in.IPI = ""
+
+	vista, err := s.Solicitar(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Solicitar: %v", err)
+	}
+
+	completa, err := s.CompletarIPI(context.Background(), vista.ID, "IPI-00000042")
+	if err != nil {
+		t.Fatalf("CompletarIPI: %v", err)
+	}
+	if completa.IPI != "IPI-00000042" {
+		t.Fatalf("IPI = %q", completa.IPI)
+	}
+
+	admitida, err := s.Aprobar(context.Background(), Usuario{Rol: RolAdministrador}, vista.ID)
+	if err != nil {
+		t.Fatalf("Aprobar tras completar IPI: %v", err)
+	}
+	if admitida.Estado != string(afiliacion.EstadoAdmitido) {
+		t.Fatalf("Estado = %q", admitida.Estado)
+	}
+}
+
+func TestRechazarCierraLaSolicitudPendiente(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	obj := nuevosObjetos()
+	s := nuevaAdmision(repo, obj)
+
+	vista, err := s.Solicitar(context.Background(), solicitudCompleta())
+	if err != nil {
+		t.Fatalf("Solicitar: %v", err)
+	}
+
+	rechazada, err := s.Rechazar(context.Background(), Usuario{Rol: RolAdministrador}, vista.ID)
+	if err != nil {
+		t.Fatalf("Rechazar: %v", err)
+	}
+	if rechazada.Estado != string(afiliacion.EstadoRechazado) {
+		t.Fatalf("Estado = %q", rechazada.Estado)
+	}
+
+	if _, err := s.Aprobar(context.Background(), Usuario{Rol: RolAdministrador}, vista.ID); !errors.Is(err, afiliacion.ErrEstadoInvalido) {
+		t.Fatalf("una rechazada no se admite: %v", err)
+	}
+}
+
+func TestRechazarExigeRolDeConsejo(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	obj := nuevosObjetos()
+	s := nuevaAdmision(repo, obj)
+	vista, err := s.Solicitar(context.Background(), solicitudCompleta())
+	if err != nil {
+		t.Fatalf("Solicitar: %v", err)
+	}
+
+	_, err = s.Rechazar(context.Background(), Usuario{Rol: RolTitular}, vista.ID)
+	if !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("se esperaba ErrNoAutorizado, se obtuvo %v", err)
+	}
+}
+
 func TestSolicitarRechazaUnAdjuntoQueNoEsDocumento(t *testing.T) {
 	repo := nuevoRepoAdmision()
 	obj := nuevosObjetos()
@@ -292,7 +430,23 @@ func TestSolicitarRechazaUnAdjuntoQueNoEsDocumento(t *testing.T) {
 	in.RUT = []byte("esto no es un pdf")
 
 	_, err := nuevaAdmision(repo, obj).Solicitar(context.Background(), in)
-	if !errors.Is(err, afiliacion.ErrDocumentosPago) {
-		t.Fatalf("se esperaba ErrDocumentosPago, se obtuvo %v", err)
+	if !errors.Is(err, ErrDocumentoInvalido) {
+		t.Fatalf("se esperaba ErrDocumentoInvalido, se obtuvo %v", err)
+	}
+}
+
+func TestSolicitarNoAcusaExclusividadSiLaRenunciaTieneFormatoInvalido(t *testing.T) {
+	repo := nuevoRepoAdmision()
+	obj := nuevosObjetos()
+	in := solicitudCompleta()
+	in.PerteneceOtraSGC = true
+	in.Renuncia = []byte("esto no es un pdf")
+
+	_, err := nuevaAdmision(repo, obj).Solicitar(context.Background(), in)
+	if !errors.Is(err, ErrDocumentoInvalido) {
+		t.Fatalf("se esperaba ErrDocumentoInvalido, se obtuvo %v", err)
+	}
+	if errors.Is(err, afiliacion.ErrExclusividad) {
+		t.Fatal("no se acusa de no renunciar a quien adjunto el papel")
 	}
 }

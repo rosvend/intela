@@ -32,16 +32,16 @@ func escanearAfiliado(fila pgx.Row) (afiliacion.Afiliado, error) {
 	return a, err
 }
 
-func (s *Store) GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado) error {
+func (s *Store) GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado, claveHash string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO afiliaciones (
 			id, nombre, email, documento_identidad, ipi, subtipo, estado,
 			persona_natural, pertenece_otra_sgc, clave_rut, clave_cert_bancaria,
-			clave_renuncia
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			clave_renuncia, clave_hash
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		a.ID, a.Nombre, a.Email, a.DocumentoIdentidad, a.IPI,
 		string(a.Subtipo), string(a.Estado), a.PersonaNatural, a.PerteneceOtraSGC,
-		a.ClaveRUT, a.ClaveCertBancaria, a.ClaveRenuncia,
+		a.ClaveRUT, a.ClaveCertBancaria, a.ClaveRenuncia, claveHash,
 	)
 	if err != nil {
 		if esConflictoUnico(err) {
@@ -62,9 +62,10 @@ func (s *Store) SolicitudPorID(ctx context.Context, id string) (afiliacion.Afili
 	return a, nil
 }
 
-// AdmitirSolicitud escribe el titular del padron y marca la solicitud
-// admitida en la misma transaccion: una de las dos a medias dejaria a
-// alguien cobrando sin haber sido admitido, o admitido sin fila de cobro.
+// AdmitirSolicitud escribe el titular del padron, la cuenta con la que
+// entra, y marca la solicitud admitida, las tres cosas en la misma
+// transaccion: un padron sin credenciales deja al socio fuera, y una
+// cuenta sin fila de cobro cobra a nadie.
 func (s *Store) AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
@@ -77,6 +78,26 @@ func (s *Store) AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) err
 				return fmt.Errorf("crear titular %q: %w", a.TitularID, aplicacion.ErrConflicto)
 			}
 			return traducirError(err, "crear titular %q", a.TitularID)
+		}
+
+		var claveHash string
+		if err := tx.QueryRow(ctx,
+			`SELECT clave_hash FROM afiliaciones WHERE id = $1`, a.ID,
+		).Scan(&claveHash); err != nil {
+			return traducirError(err, "clave de solicitud %q", a.ID)
+		}
+
+		usuarioID := "usr-" + a.TitularID
+		_, err = tx.Exec(ctx, `
+			INSERT INTO usuarios (id, email, nombre, rol, titular_id, password_hash)
+			VALUES ($1, $2, $3, 'titular', $4, $5)`,
+			usuarioID, a.Email, a.Nombre, a.TitularID, claveHash,
+		)
+		if err != nil {
+			if esConflictoUnico(err) {
+				return fmt.Errorf("crear usuario de titular %q: %w", usuarioID, aplicacion.ErrConflicto)
+			}
+			return traducirError(err, "crear usuario de titular %q", usuarioID)
 		}
 
 		tag, err := tx.Exec(ctx, `
@@ -93,4 +114,27 @@ func (s *Store) AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) err
 		}
 		return nil
 	})
+}
+
+// ActualizarPendiente persiste IPI o rechazo sobre una fila que sigue
+// pendiente. El WHERE cierra la carrera con AdmitirSolicitud.
+func (s *Store) ActualizarPendiente(ctx context.Context, a afiliacion.Afiliado) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE afiliaciones
+		   SET ipi = $2,
+		       estado = $3,
+		       resuelto = CASE WHEN $3 <> 'pendiente' THEN now() ELSE resuelto END
+		 WHERE id = $1 AND estado = 'pendiente'`,
+		a.ID, a.IPI, string(a.Estado),
+	)
+	if err != nil {
+		if esConflictoUnico(err) {
+			return fmt.Errorf("actualizar solicitud %q: %w", a.ID, aplicacion.ErrConflicto)
+		}
+		return traducirError(err, "actualizar solicitud %q", a.ID)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("actualizar solicitud %q: %w", a.ID, afiliacion.ErrEstadoInvalido)
+	}
+	return nil
 }

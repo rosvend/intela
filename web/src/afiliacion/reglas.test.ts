@@ -30,4 +30,28 @@ describe("errorDelPaso", () => {
   it("exige el subtipo", () => {
     expect(errorDelPaso(1, datosVacios)).toMatch(/vínculo/i);
   });
+
+  it("exige una clave de al menos 8 caracteres", () => {
+    const d = {
+      ...datosVacios,
+      nombre: "Ana",
+      email: "ana@redes.co",
+      documentoIdentidad: "123",
+      clave: "corta",
+      claveConfirmacion: "corta",
+    };
+    expect(errorDelPaso(0, d)).toMatch(/8 y 72/i);
+  });
+
+  it("exige que las dos claves coincidan", () => {
+    const d = {
+      ...datosVacios,
+      nombre: "Ana",
+      email: "ana@redes.co",
+      documentoIdentidad: "123",
+      clave: "secret12",
+      claveConfirmacion: "secret99",
+    };
+    expect(errorDelPaso(0, d)).toMatch(/no coinciden/i);
+  });
 });

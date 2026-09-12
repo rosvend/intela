@@ -28,7 +28,7 @@ func TestGuardarYLeerSolicitud(t *testing.T) {
 	ctx := t.Context()
 	a := solicitudDePrueba("afil-nueva")
 
-	if err := s.GuardarSolicitud(ctx, a); err != nil {
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
 		t.Fatalf("GuardarSolicitud: %v", err)
 	}
 
@@ -51,14 +51,29 @@ func TestGuardarSolicitudDuplicadaEsConflicto(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
 	a := solicitudDePrueba("afil-1")
-	if err := s.GuardarSolicitud(ctx, a); err != nil {
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
 		t.Fatalf("primera: %v", err)
 	}
 
 	otra := a
 	otra.ID = "afil-2"
-	if err := s.GuardarSolicitud(ctx, otra); !errors.Is(err, aplicacion.ErrConflicto) {
+	if err := s.GuardarSolicitud(ctx, otra, hashBcrypt); !errors.Is(err, aplicacion.ErrConflicto) {
 		t.Fatalf("se esperaba ErrConflicto, se obtuvo %v", err)
+	}
+}
+
+func TestGuardarSolicitudConIPIDuplicadoEsConflicto(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	a := solicitudDePrueba("afil-ipi-1")
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
+		t.Fatalf("primera: %v", err)
+	}
+
+	otra := solicitudDePrueba("afil-ipi-2")
+	otra.Email = "otra@redes.co"
+	if err := s.GuardarSolicitud(ctx, otra, hashBcrypt); !errors.Is(err, aplicacion.ErrConflicto) {
+		t.Fatalf("IPI duplicado: se esperaba ErrConflicto, se obtuvo %v", err)
 	}
 }
 
@@ -67,17 +82,17 @@ func TestExclusividadSinRenunciaLaBaseLaRechaza(t *testing.T) {
 	a := solicitudDePrueba("afil-sgc")
 	a.PerteneceOtraSGC = true
 
-	err := s.GuardarSolicitud(t.Context(), a)
+	err := s.GuardarSolicitud(t.Context(), a, hashBcrypt)
 	if err == nil {
 		t.Fatal("el CHECK de exclusividad tenia que rechazar la fila")
 	}
 }
 
-func TestAdmitirSolicitudCreaElTitularYCambiaEstado(t *testing.T) {
+func TestAdmitirSolicitudCreaElTitularElUsuarioYCambiaEstado(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
 	a := solicitudDePrueba("afil-ok")
-	if err := s.GuardarSolicitud(ctx, a); err != nil {
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
 		t.Fatalf("GuardarSolicitud: %v", err)
 	}
 
@@ -107,6 +122,66 @@ func TestAdmitirSolicitudCreaElTitularYCambiaEstado(t *testing.T) {
 	}
 	if clase != "socio" {
 		t.Fatalf("clase = %q, el subtipo tiene que llegar al padron", clase)
+	}
+
+	var rol, hash string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT rol, password_hash FROM usuarios WHERE email = $1`, a.Email,
+	).Scan(&rol, &hash); err != nil {
+		t.Fatalf("el titular admitido no puede entrar: no hay fila en usuarios: %v", err)
+	}
+	if rol != "titular" {
+		t.Fatalf("rol = %q", rol)
+	}
+	if hash != hashBcrypt {
+		t.Fatal("el hash de la solicitud no llego a la cuenta")
+	}
+}
+
+func TestActualizarPendienteCompletaElIPIYRechaza(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	a := solicitudDePrueba("afil-ipi")
+	a.IPI = ""
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
+		t.Fatalf("GuardarSolicitud: %v", err)
+	}
+
+	completa, err := a.CompletarIPI("IPI-00000888")
+	if err != nil {
+		t.Fatalf("CompletarIPI: %v", err)
+	}
+	if err := s.ActualizarPendiente(ctx, completa); err != nil {
+		t.Fatalf("ActualizarPendiente: %v", err)
+	}
+	got, err := s.SolicitudPorID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("SolicitudPorID: %v", err)
+	}
+	if got.IPI != "IPI-00000888" {
+		t.Fatalf("IPI = %q", got.IPI)
+	}
+
+	rechazada, err := got.Rechazar()
+	if err != nil {
+		t.Fatalf("Rechazar: %v", err)
+	}
+	if err := s.ActualizarPendiente(ctx, rechazada); err != nil {
+		t.Fatalf("rechazar: %v", err)
+	}
+	got, err = s.SolicitudPorID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("SolicitudPorID: %v", err)
+	}
+	if got.Estado != afiliacion.EstadoRechazado {
+		t.Fatalf("Estado = %q", got.Estado)
+	}
+
+	// Liberado el correo, puede volver a presentarse.
+	otra := solicitudDePrueba("afil-reintento")
+	otra.IPI = "IPI-00000777"
+	if err := s.GuardarSolicitud(ctx, otra, hashBcrypt); err != nil {
+		t.Fatalf("reintento tras rechazo: %v", err)
 	}
 }
 
