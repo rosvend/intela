@@ -109,6 +109,19 @@ func (r *repoIngestaMemoria) UsoPorID(_ context.Context, id string) (UsoPersisti
 	return UsoPersistido{}, ErrNoEncontrado
 }
 
+func (r *repoIngestaMemoria) ListarRechazos(context.Context) ([]UsoPersistido, error) {
+	var us []UsoPersistido
+	for _, u := range r.usos {
+		if u.RechazoMotivo != "" {
+			us = append(us, u)
+		}
+	}
+	if us == nil {
+		us = []UsoPersistido{}
+	}
+	return us, nil
+}
+
 // canonicos deja fuera las filas rechazadas, igual que el adaptador real: las
 // guarda, pero no las devuelve por las lecturas canonicas.
 func (r *repoIngestaMemoria) canonicos() []UsoPersistido {
