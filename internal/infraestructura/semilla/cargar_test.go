@@ -172,7 +172,9 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 		t.Fatalf("Cargar: %v", err)
 	}
 
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// *Store no es CatalogoObras: PorID ya es el de la bitacora (Asiento).
+	// El adaptador catalogo tapa ese metodo con el de la obra.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras()}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
 	if err != nil {

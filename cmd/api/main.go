@@ -70,11 +70,23 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// El mismo *Store cubre bitacora y ONI. CatalogoObras va por un
+	// envoltorio: BitacoraAuditoria.PorID y CatalogoObras.PorID no pueden
+	// convivir en el mismo tipo. El nucleo sigue viendo puertos separados.
+	casos := httpapi.Casos{
+		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
+	}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, httpapi.Opciones{
+	api := httpapi.Nueva(store, autenticacion, casos, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})
