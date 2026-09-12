@@ -84,9 +84,12 @@ module "api" {
   # a reparto run in flight must not meet a schema its code does not know. If
   # goose fails, this never updates and the old code keeps serving.
   #
-  # It lives here rather than inside a module so the guarantee is visible where
-  # the system is assembled.
-  depends_on = [module.migrations]
+  # This is an attribute reference, not `depends_on = [module.migrations]`.
+  # A module-level depends_on defers every data source inside api/go-lambda
+  # until apply, so policy_arn is (known after apply) and the execution-role
+  # attachment is ForceNew-replaced on every plan. The destroy guard then
+  # refuses the PR. hashicorp/terraform-provider-aws#32529.
+  wait_for = module.migrations.invocation_id
 }
 
 module "frontend" {

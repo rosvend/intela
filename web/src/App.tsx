@@ -18,7 +18,8 @@ import { RUTAS } from "./navegacion";
  * Las rutas de `RUTAS` (Sprint 3-5) entran aqui como placeholder: la pantalla
  * real llega con su propio PR, y esta tabla es lo unico que ese PR toca para
  * pasar de <EnConstruccion> al componente de verdad (issue #19: "so the
- * feature screens are pure additions").
+ * feature screens are pure additions"). El panel del titular (OE-6) aterriza
+ * en <Inicio> segun el rol, no como item de nav propio (M-5).
  */
 export default function App() {
   return (

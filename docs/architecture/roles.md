@@ -22,6 +22,8 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | ------- | ----- |
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
+| `/mis-ingresos` | `titular` |
+| `/explicar/{ref}` | `titular`, `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
 
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
@@ -33,4 +35,6 @@ traigan esos paneles.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
-`TitularID`, no el id de usuario.
+`TitularID`, no el id de usuario. En `/mis-ingresos` el recorte es el
+`TitularID` de la sesion (nunca un parametro). En `/explicar/{ref}` una
+cifra de otro titular responde 403.

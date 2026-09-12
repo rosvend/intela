@@ -603,6 +603,55 @@ td {
   border-bottom: 1px solid var(--borde);
 }
 
+/* Panel del titular (OE-6): filtros, neto y linaje de ExplicarCifra. */
+.filtros {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+
+.filtros label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.filtros select {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--borde);
+  background: white;
+  border-radius: var(--radio);
+}
+
+.neto {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.explicacion dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--acento);
+}
+
+.explicacion dd {
+  margin: 0 0 0.6rem;
+}
+
+table button {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--borde);
+  background: var(--acento);
+  color: white;
+  cursor: pointer;
+  border-radius: var(--radio);
+}
+
 .badge {
   font-size: 0.75rem;
   text-transform: uppercase;

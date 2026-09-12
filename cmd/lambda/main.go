@@ -139,7 +139,12 @@ func construir() (http.Handler, error) {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, httpapi.Opciones{
+	api := httpapi.Nueva(store, httpapi.Casos{
+		Auth:     autenticacion,
+		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
+		Explicar: aplicacion.ExplicarCifra{Repo: store},
+		Catalogo: catalogo,
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})
