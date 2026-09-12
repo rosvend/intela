@@ -70,7 +70,7 @@ func servidorConCatalogo(t *testing.T, cat Catalogo) http.Handler {
 	auth := &autenticacionFalsa{
 		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
 	}
-	return Nueva(nil, auth, cat, Opciones{}).Router()
+	return Nueva(nil, auth, nil, cat, Opciones{}).Router()
 }
 
 const cuerpoAlta = `{
@@ -105,7 +105,7 @@ func TestElCatalogoExigeElRolAdministrador(t *testing.T) {
 
 	for _, rol := range roles {
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol}}
-		h := Nueva(nil, auth, &catalogoFalso{}, Opciones{}).Router()
+		h := Nueva(nil, auth, nil, &catalogoFalso{}, Opciones{}).Router()
 		for _, p := range peticiones {
 			t.Run(string(rol)+" "+p.metodo+" "+p.ruta, func(t *testing.T) {
 				rec := pedir(t, h, p.metodo, p.ruta, p.cuerpo, "tok")

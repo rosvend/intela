@@ -1,4 +1,5 @@
 import { Route, Routes } from "react-router-dom";
+import WizardAfiliacion from "./afiliacion/Wizard";
 import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
 import Inicio from "./Inicio";
@@ -19,11 +20,15 @@ import { RUTAS } from "./navegacion";
  * real llega con su propio PR, y esta tabla es lo unico que ese PR toca para
  * pasar de <EnConstruccion> al componente de verdad (issue #19: "so the
  * feature screens are pure additions").
+ *
+ * /afiliacion va FUERA de RutaProtegida: el alta la rellena quien todavia no
+ * es afiliado, igual que el POST /afiliaciones del backend va sin sesion.
  */
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/afiliacion" element={<WizardAfiliacion />} />
       <Route element={<RutaProtegida />}>
         <Route element={<Layout />}>
           <Route index element={<Inicio />} />

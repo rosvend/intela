@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -36,6 +37,17 @@ type Reloj interface {
 type AlmacenObjetos interface {
 	Poner(ctx context.Context, clave string, datos []byte) error
 	Obtener(ctx context.Context, clave string) ([]byte, error)
+
+	// Borrar quita un objeto. Existe para compensar una escritura que no
+	// llego a convertirse en evidencia: si Poner gano y el INSERT de la
+	// solicitud perdio, el RUT y la certificacion bancaria no pueden
+	// quedarse huerfanos en disco.
+	//
+	// No contradice el ADR 0006. Ese ADR pide que la copia CRUDA ya
+	// retenida sea inmutable; esto borra bytes que nunca tuvieron fila
+	// que los referencie. Borrar una clave inexistente no es error: la
+	// compensacion tiene que ser idempotente.
+	Borrar(ctx context.Context, clave string) error
 }
 
 type Notificador interface {
@@ -98,6 +110,27 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// RepositorioAdmision cubre el flujo de alta: la solicitud que deja al
+// titular en pendiente y la admision que lo pasa al padron.
+//
+// Vive aparte de RepositorioAfiliacion para no ensanchar el puerto que usa
+// Autenticacion: si GuardarSolicitud viviera ahi, cada doble del login
+// tendria que fingir un metodo que no le compete.
+type RepositorioAdmision interface {
+	// GuardarSolicitud persiste el alta y el hash de la clave con la que
+	// el titular va a entrar una vez admitido. El hash viaja aparte del
+	// Afiliado: el dominio de admision no conoce credenciales.
+	GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado, claveHash string) error
+	SolicitudPorID(ctx context.Context, id string) (afiliacion.Afiliado, error)
+	AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) error
+
+	// ActualizarPendiente persiste cambios sobre una solicitud que TODAVIA
+	// esta pendiente: completar el IPI o rechazarla. El WHERE estado =
+	// 'pendiente' cierra la carrera con una admision concurrente; si no
+	// toco una fila, es ErrEstadoInvalido.
+	ActualizarPendiente(ctx context.Context, a afiliacion.Afiliado) error
 }
 
 // RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.

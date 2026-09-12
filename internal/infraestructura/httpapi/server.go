@@ -56,6 +56,7 @@ type Opciones struct {
 type API struct {
 	salud    Salud
 	auth     Autenticacion
+	admision Admision
 	catalogo Catalogo
 	opts     Opciones
 	log      *slog.Logger
@@ -66,13 +67,13 @@ type API struct {
 // Los casos de uso van como parametros y no dentro de Opciones porque son
 // dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
 // se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con dos todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, opts Opciones) *API {
+// Casos; con tres todavia no hace falta.
+func Nueva(salud Salud, auth Autenticacion, admision Admision, catalogo Catalogo, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, catalogo: catalogo, opts: opts, log: log}
+	return &API{salud: salud, auth: auth, admision: admision, catalogo: catalogo, opts: opts, log: log}
 }
 
 func (a *API) Router() http.Handler {
@@ -107,6 +108,10 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		if a.admision != nil {
+			protegido.Post("/afiliaciones/{id}/aprobar", a.aprobarAfiliacion)
+			protegido.Post("/afiliaciones/{id}/rechazar", a.rechazarAfiliacion)
+		}
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
@@ -135,6 +140,18 @@ func (a *API) Router() http.Handler {
 			cat.Patch("/{id}", a.actualizarObra)
 		})
 	})
+
+	// El alta la rellena quien todavia no es afiliado, asi que va sin
+	// sesion. Completar el IPI tambien: el identificador de la solicitud
+	// es el token. Ambas llevan rate limit porque aceptan trafico anonimo
+	// y la primera escribe a disco.
+	if a.admision != nil {
+		r.Group(func(alta chi.Router) {
+			alta.Use(limitarPorIP(10, time.Minute))
+			alta.Post("/afiliaciones", a.solicitarAfiliacion)
+			alta.Patch("/afiliaciones/{id}/ipi", a.completarIPI)
+		})
+	}
 
 	return r
 }
