@@ -69,15 +69,12 @@ Claves por defecto (sobreescribibles con `SEED_CLAVE_*`):
 | --- | --- | --- | --- |
 | `admin@redes.co` | administrador | `admin-local` | Los nueve modulos |
 | `distribucion@redes.co` | distribucion | `distribucion-local` | Ingesta, Catalogo, Distribucion, Anomalias |
-| `contabilidad@redes.co` | contabilidad | `contabilidad-local` | Titulares, Reportes y Distribucion (la otra firma de la compuerta) |
+| `contabilidad@redes.co` | contabilidad | `contabilidad-local` | Titulares y Reportes - no Distribucion |
 | `auditor@redes.co` | auditor | `auditor-local` | Todo, en solo lectura |
 | `ana@redes.co` | titular | `ana-local` | Solo Inicio, con su liquidacion |
 
-`distribucion` y `contabilidad` **no se solapan** en Ingesta, Catalogo,
-Reportes ni Anomalias: son las dos firmas del control de doble firma
-(ADR 0008, `RD 13.5`). Las dos ven Distribucion porque ahi se firma la
-compuerta; una sola persona no cubre los dos roles (el esquema `firmas` lo
-impide).
+`distribucion` y `contabilidad` **no se solapan** a proposito: son las dos firmas
+del control de doble firma (ADR 0008, `RD 13.5`).
 
 ### Que muestra la demo
 
