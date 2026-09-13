@@ -17,6 +17,30 @@ import (
 // negocio posible-.
 var ErrDeclaracionInvalida = errors.New("declaracion invalida")
 
+// precisionPorcentaje es la escala de la columna `declaraciones.porcentaje`
+// (NUMERIC(8,4), migracion 00001): 4 decimales.
+//
+// NuevaDeclaracion RECHAZA -no redondea- un porcentaje con mas precision que
+// esta. Redondear en el dominio exigiria que el modo de redondeo de
+// shopspring/decimal coincida bit a bit con el de Postgres al truncar a la
+// escala de la columna, y una diferencia de un solo caso limite (un empate a
+// la mitad del ultimo decimal) dejaria al dominio validando una suma que la
+// base termina guardando distinta. Rechazar de entrada evita esa dependencia
+// por completo: lo que este validador acepta ya cabe exacto en la columna,
+// sin que Postgres tenga que redondear nada.
+//
+// Sin esto, un porcentaje positivo por debajo de la mitad del ultimo decimal
+// -0.00004, por ejemplo- pasaba esta validacion (es > 0 en la precision
+// arbitraria de Go) y Postgres lo redondeaba a 0.0000 al escribir: el UNICO
+// lugar donde eso se notaba era el CHECK (porcentaje > 0) de la tabla, que
+// sale como un error generico y no como el ErrDeclaracionInvalida que
+// corresponde a un dato mal formado. Y en la otra direccion: dos partes que
+// suman un poco MENOS de 100 (declaracion_incompleta valida, R-04) podian
+// redondear cada una por separado hasta sumar exactamente 100 al guardarse
+// -una declaracion que nunca llego a completa segun el dominio, pasando a
+// "completa" para el motor de reparto sin que nadie la haya validado asi.
+const precisionPorcentaje = 4
+
 type Parte struct {
 	TitularID  string
 	IPI        string
@@ -62,6 +86,10 @@ func NuevaDeclaracion(obraID string, partes []Parte) (Declaracion, error) {
 		}
 		if p.Porcentaje.LessThanOrEqual(decimal.Zero) {
 			return Declaracion{}, fmt.Errorf("%w: el porcentaje del titular %q tiene que ser positivo", ErrDeclaracionInvalida, p.TitularID)
+		}
+		if !p.Porcentaje.Equal(p.Porcentaje.Round(precisionPorcentaje)) {
+			return Declaracion{}, fmt.Errorf("%w: el porcentaje del titular %q admite hasta %d decimales",
+				ErrDeclaracionInvalida, p.TitularID, precisionPorcentaje)
 		}
 		suma = suma.Add(p.Porcentaje)
 	}

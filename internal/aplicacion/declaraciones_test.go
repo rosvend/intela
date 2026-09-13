@@ -131,6 +131,31 @@ func TestGuardarSplitsInvalidoNoTocaElPuerto(t *testing.T) {
 	}
 }
 
+// Issue #109 (Roy, revisando la #106): un porcentaje positivo por debajo de
+// la mitad del ultimo decimal pasaba NuevaDeclaracion (es > 0 en la
+// precision arbitraria de Go) y llegaba hasta el puerto, donde NUMERIC(8,4)
+// lo redondeaba a 0.0000 y reventaba un CHECK que el handler HTTP no sabe
+// traducir -sale como 500, no como el 400 que promete el contrato. Esta
+// prueba fija el limite en la capa de caso de uso: GuardarSplits tiene que
+// rechazarlo ANTES de tocar el puerto, igual que con una suma > 100.
+func TestGuardarSplitsRechazaPorcentajeQueNumericRedondeariaACero(t *testing.T) {
+	gestion := &gestionFalsa{}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: "t1", IPI: "IPI-1", Porcentaje: decimal.RequireFromString("0.00004")},
+		{TitularID: "t2", IPI: "IPI-2", Porcentaje: decimal.RequireFromString("99.99996")},
+	}
+
+	_, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if !errors.Is(err, repertorio.ErrDeclaracionInvalida) {
+		t.Fatalf("se esperaba ErrDeclaracionInvalida, se obtuvo %v", err)
+	}
+	if gestion.guardadas != 0 {
+		t.Fatal("se intento guardar un porcentaje que NUMERIC(8,4) redondearia a 0 en silencio")
+	}
+}
+
 // Si Guardar falla -incluido un fallo al asentar, que ahora vive DENTRO de
 // esa misma llamada (ver [Store.Guardar] en postgres/declaraciones.go)-,
 // GuardarSplits solo tiene que propagar el error: ya no hay una segunda

@@ -723,8 +723,9 @@ paths:
         "400":
           description: |
             El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
-            que no es positivo, un titular repetido, la suma se pasa de 100, o
-            nombra un titular_id que no esta en el padron.
+            que no es positivo o que trae mas de 4 decimales, un titular
+            repetido, la suma se pasa de 100, o nombra un titular_id que no
+            esta en el padron.
           content:
             application/json:
               schema:
@@ -809,8 +810,9 @@ paths:
         "400":
           description: |
             El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
-            que no es positivo, un titular repetido, la suma se pasa de 100, o
-            nombra un titular_id que no esta en el padron.
+            que no es positivo o que trae mas de 4 decimales, un titular
+            repetido, la suma se pasa de 100, o nombra un titular_id que no
+            esta en el padron.
           content:
             application/json:
               schema:
@@ -1118,10 +1120,13 @@ components:
           description: |
             Porcentaje declarado por este titular. El esquema solo exige no
             negativo: la regla real -estrictamente positivo, un titular al 0%
-            no es titular- la aplica el backend (`ErrDeclaracionInvalida`),
-            que es la fuente autoritativa. La SUMA de todas las partes de una
-            declaracion puede dar menos de 100 -es `declaracion_incompleta`,
-            un estado valido de `R-04`- pero nunca mas.
+            no es titular, hasta 4 decimales- la aplica el backend
+            (`ErrDeclaracionInvalida`), que es la fuente autoritativa. Mas de
+            4 decimales se rechaza y no se redondea: es la precision que
+            `declaraciones.porcentaje` puede guardar sin perderla en
+            silencio. La SUMA de todas las partes de una declaracion puede dar
+            menos de 100 -es `declaracion_incompleta`, un estado valido de
+            `R-04`- pero nunca mas.
 
     VersionDeclaracion:
       type: object
