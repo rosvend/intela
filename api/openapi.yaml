@@ -1115,8 +1115,14 @@ components:
           type: number
           format: decimal
           minimum: 0
-          exclusiveMinimum: true
           maximum: 100
+          # No exclusiveMinimum aqui a proposito: redocly-cli@1 (el que fija
+          # CI en contract.yml) lo exige boolean para la regla `struct` de
+          # OAS 3.0 pero numerico para el Ajv que usa
+          # `no-invalid-media-type-examples` al validar los ejemplos -ninguna
+          # de las dos formas satisface a la otra regla, y las dos estan en
+          # `error` en redocly.yaml-. La restriccion real -estrictamente
+          # positivo- la sigue exigiendo el backend, no el esquema.
           description: |
             Porcentaje declarado por este titular. El esquema solo exige no
             negativo: la regla real -estrictamente positivo, un titular al 0%
