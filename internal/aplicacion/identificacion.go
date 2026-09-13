@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 )
@@ -18,10 +17,13 @@ const quienCascada = "cascada"
 
 // parCanonicoPorFuente es la clave local preferida para el escalon 1 (D2 del
 // diseno): la obra de REDES es el programa/show, no el capitulo, y esta
-// tabla fija que columna identifica el show para cada fuente conocida.
+// tabla fija que clave de ids_fuente (ADR 0018) lo identifica en cada fuente
+// conocida. Netflix trae tres ids a granularidades distintas; show_id es el
+// del mismo nivel que id_ficha, asi que un alias aprendido cubre todos los
+// episodios del show.
 var parCanonicoPorFuente = map[string]string{
-	"caracol": "id_ficha",
-	"netflix": "show_id",
+	"caracol": ClaveIDFicha,
+	"netflix": ClaveShowID,
 }
 
 // ResolverUsos corre los escalones 1-2 de la cascada del ADR 0007, mas el
@@ -45,8 +47,13 @@ type ResolverUsos struct {
 // resolvio. Las que no resuelvan quedan escalon='pendiente': es el insumo
 // del escalon difuso (#32), no un fallo de esta corrida.
 //
-// Idempotente (D9): una fila que ya no este pendiente -ya resuelta, excluida
-// en una corrida anterior, o clasificada a mano- no se vuelve a tocar.
+// Las filas excluidas en una corrida anterior tambien se reevaluan (D4): la
+// lista de fuentes fuera de repertorio es configuracion, y si estaba mal, la
+// siguiente corrida con la lista corregida las devuelve a la cascada. Una que
+// sigue excluida no se reescribe.
+//
+// Idempotente (D9): una fila resuelta o clasificada a mano no se vuelve a
+// tocar, ni aunque cambie entre la lectura y la escritura (ver guardarMatch).
 func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, error) {
 	usos, err := r.Usos.UsosDePeriodo(ctx, periodo)
 	if err != nil {
@@ -55,7 +62,7 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 
 	resueltas := 0
 	for _, u := range usos {
-		if u.Escalon != "pendiente" {
+		if u.Escalon != identificacion.EscalonPendiente && u.Escalon != identificacion.EscalonExcluido {
 			continue
 		}
 
@@ -64,8 +71,29 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		if err != nil {
 			return resueltas, err
 		}
-		if res.ObraID == "" {
-			// Excluida (D4) o no resuelta (insumo de #32): no se escribe nada.
+		switch {
+		case res.Escalon == identificacion.EscalonExcluido:
+			if u.Escalon == identificacion.EscalonExcluido {
+				continue // sigue excluida: no hay nada nuevo que escribir
+			}
+			// Excluida (D4): escalon='excluido' con oni=false, para que no
+			// aparezca en el listado publico de ONI (criterio 4). No cuenta
+			// como resuelta: no se le asigno obra.
+			if _, err := r.guardarMatch(ctx, u, res); err != nil {
+				return resueltas, fmt.Errorf("guardar exclusion de %q: %w", u.ID, err)
+			}
+			continue
+		case res.ObraID == "":
+			if u.Escalon == identificacion.EscalonPendiente {
+				continue // no resuelta (insumo de #32): no se escribe nada
+			}
+			// Estaba excluida y su fuente ya no lo esta, pero la cascada no la
+			// resuelve: vuelve a pendiente (y a ONI) para que la vean el difuso
+			// y la cola manual.
+			pendiente := identificacion.Resultado{Escalon: identificacion.EscalonPendiente}
+			if _, err := r.guardarMatch(ctx, u, pendiente); err != nil {
+				return resueltas, fmt.Errorf("devolver a pendiente %q: %w", u.ID, err)
+			}
 			continue
 		}
 
@@ -81,17 +109,40 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		// rechaza- y ese error, al no ser ErrNoEncontrado, abortaria la
 		// corrida entera (D8): ni esta fila ni las siguientes del lote se
 		// procesarian, aunque esta si se hubiera identificado bien.
+		//
+		// Comparar contra "" basta, sin volver a recortar: LeerIDsFuente
+		// recorta clave y valor al parsear, asi que un id de solo espacios
+		// llega aqui ya vacio.
 		if res.Escalon == identificacion.EscalonIDGlobal && e.TipoID != "" && e.ValorID != "" {
 			if err := r.Identificacion.GuardarAlias(ctx, e.Fuente, e.TipoID, e.ValorID, res.ObraID, quienCascada); err != nil {
 				return resueltas, fmt.Errorf("aprender alias de %q: %w", u.ID, err)
 			}
 		}
-		if err := r.Identificacion.GuardarMatch(ctx, u.ID, res); err != nil {
+		escrita, err := r.guardarMatch(ctx, u, res)
+		if err != nil {
 			return resueltas, fmt.Errorf("guardar match de %q: %w", u.ID, err)
 		}
-		resueltas++
+		if escrita {
+			resueltas++
+		}
 	}
 	return resueltas, nil
+}
+
+// guardarMatch escribe res sobre u solo si la fila sigue en el escalon con
+// que se leyo. Si entre la lectura y la escritura otro proceso la cambio -una
+// resolucion manual (#39), otra corrida-, el puerto responde ErrNoEncontrado y
+// la fila se salta sin error: esa decision es posterior a la lectura y la
+// cascada no puede pisarla. escrita dice si hubo escritura.
+//
+// El alias que se haya aprendido antes (D5) se queda: es conocimiento correcto
+// sacado de un identificador global, aunque esta fila ya no lo use.
+func (r ResolverUsos) guardarMatch(ctx context.Context, u UsoPersistido, res identificacion.Resultado) (escrita bool, err error) {
+	err = r.Identificacion.GuardarMatch(ctx, u.ID, u.Escalon, res)
+	if errors.Is(err, ErrNoEncontrado) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // resolverFila sondea los escalones en orden y deja que
@@ -179,7 +230,9 @@ func idaEidrImdb(e identificacion.Entrada, g identificacion.IDGlobal) (ida, eidr
 }
 
 // entradaDesdeUso construye la Entrada de dominio a partir de una fila
-// persistida: parsea ids_fuente (D1) y elige el par local canonico (D2).
+// persistida: lee ids_fuente con el contrato estricto de ADR 0018
+// (LeerIDsFuente, que ya descarta lo que no lo cumple y recorta los valores) y
+// elige el par local canonico (D2).
 func entradaDesdeUso(u UsoPersistido) identificacion.Entrada {
 	e := identificacion.Entrada{
 		Fuente: u.Fuente,
@@ -187,20 +240,16 @@ func entradaDesdeUso(u UsoPersistido) identificacion.Entrada {
 	}
 
 	locales := map[string]string{}
-	for _, linea := range strings.Split(u.IDsFuente, "\n") {
-		clave, valor, ok := strings.Cut(linea, "=")
-		if !ok || clave == "" || valor == "" {
-			continue // linea rota: se ignora (D1, el lector es tolerante)
-		}
+	for clave, valor := range LeerIDsFuente(u.IDsFuente) {
 		switch clave {
-		case "ida":
+		case ClaveIDA:
 			e.IDA = valor
-		case "eidr":
+		case ClaveEIDR:
 			e.EIDR = valor
-		case "imdb":
+		case ClaveIMDB:
 			e.IMDB = valor
 		default:
-			locales[clave] = valor // clave repetida: gana la ultima (determinista)
+			locales[clave] = valor
 		}
 	}
 

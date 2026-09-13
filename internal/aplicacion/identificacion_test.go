@@ -44,8 +44,9 @@ type llamadaAlias struct {
 }
 
 type llamadaMatch struct {
-	UsoID string
-	R     identificacion.Resultado
+	UsoID         string
+	EscalonPrevio string
+	R             identificacion.Resultado
 }
 
 // identificacionFalsa simula RepositorioIdentificacion con mapas fijos y
@@ -64,6 +65,10 @@ type identificacionFalsa struct {
 	errIDGlobal     error
 	errGuardarAlias error
 	errGuardarMatch error
+	// cambiadas simula filas que otro proceso cambio entre la lectura y la
+	// escritura: GuardarMatch responde ErrNoEncontrado, como el UPDATE
+	// condicional del adaptador real.
+	cambiadas map[string]bool
 
 	llamadasAlias    []string
 	llamadasIDGlobal []string
@@ -102,8 +107,11 @@ func (f *identificacionFalsa) ObraPorIDGlobal(_ context.Context, ida, eidr, imdb
 	return "", ErrNoEncontrado
 }
 
-func (f *identificacionFalsa) GuardarMatch(_ context.Context, usoID string, r identificacion.Resultado) error {
-	f.guardadosMatch = append(f.guardadosMatch, llamadaMatch{usoID, r})
+func (f *identificacionFalsa) GuardarMatch(_ context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
+	if f.cambiadas[usoID] {
+		return ErrNoEncontrado
+	}
+	f.guardadosMatch = append(f.guardadosMatch, llamadaMatch{usoID, escalonPrevio, r})
 	f.orden = append(f.orden, "match:"+usoID)
 	return f.errGuardarMatch
 }
@@ -266,7 +274,7 @@ func TestResolverUsosConFilaSinDatosNoResuelve(t *testing.T) {
 	}
 }
 
-func TestResolverUsosExcluyeSinSondearNiEscribir(t *testing.T) {
+func TestResolverUsosExcluyeSinSondearYGuardaLaExclusion(t *testing.T) {
 	ing := &ingestaFalsa{}
 	// El alias SI pegaria si se sondeara: la prueba es que ni se intenta.
 	idf := &identificacionFalsa{alias: map[string]string{"canal-deportes|id_ficha|1": "obra-45"}}
@@ -277,13 +285,120 @@ func TestResolverUsosExcluyeSinSondearNiEscribir(t *testing.T) {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("n = %d, se esperaba 0", n)
+		t.Fatalf("n = %d, se esperaba 0: excluida no es resuelta", n)
 	}
 	if len(idf.llamadasAlias) != 0 || len(idf.llamadasIDGlobal) != 0 {
 		t.Fatal("una fuente fuera de repertorio no puede sondear nada (R-27)")
 	}
-	if len(idf.guardadosAlias) != 0 || len(idf.guardadosMatch) != 0 {
-		t.Fatal("una fuente fuera de repertorio no puede escribir nada")
+	if len(idf.guardadosAlias) != 0 {
+		t.Fatal("una fuente fuera de repertorio no puede aprender alias")
+	}
+	// Criterio 4: la exclusion se persiste para que la fila salga de ONI.
+	if len(idf.guardadosMatch) != 1 || idf.guardadosMatch[0].UsoID != "u-1" ||
+		idf.guardadosMatch[0].R.Escalon != identificacion.EscalonExcluido || idf.guardadosMatch[0].R.ObraID != "" {
+		t.Fatalf("se esperaba un GuardarMatch con escalon excluido y sin obra: %+v", idf.guardadosMatch)
+	}
+}
+
+func TestResolverUsosPropagaElErrorDeGuardarLaExclusion(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{errGuardarMatch: errors.New("fallo al guardar")}
+
+	u := usoPendiente("u-1", "canal-deportes", "id_ficha=1")
+	if _, err := correr(t, ing, idf, identificacion.FuentesExcluidas{"canal-deportes"}, u); err == nil {
+		t.Fatal("se esperaba un error: una exclusion que no se guarda no puede pasar en silencio (D8)")
+	}
+}
+
+// D4: una fila excluida en una corrida anterior se reevalua. Si su fuente
+// sigue excluida no se sondea ni se reescribe: la corrida es idempotente.
+func TestResolverUsosExcluidaQueSigueExcluidaNoSeReescribe(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{alias: map[string]string{"canal-deportes|id_ficha|1": "obra-45"}}
+
+	u := usoPendiente("u-1", "canal-deportes", "id_ficha=1")
+	u.Escalon, u.ONI = identificacion.EscalonExcluido, false
+	n, err := correr(t, ing, idf, identificacion.FuentesExcluidas{"canal-deportes"}, u)
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 0 || len(idf.llamadasAlias) != 0 || len(idf.guardadosMatch) != 0 {
+		t.Fatalf("una excluida que sigue excluida no se toca: n=%d sondeos=%v matches=%+v",
+			n, idf.llamadasAlias, idf.guardadosMatch)
+	}
+}
+
+// D4: si la lista de exclusion estaba mal y se corrige, la siguiente corrida
+// devuelve la fila a la cascada y la resuelve. La escritura es condicional al
+// escalon 'excluido' con que se leyo.
+func TestResolverUsosExcluidaCuyaFuenteYaNoLoEstaSeResuelve(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}
+
+	u := usoPendiente("u-1", "caracol", "id_ficha=1")
+	u.Escalon, u.ONI = identificacion.EscalonExcluido, false
+	n, err := correr(t, ing, idf, nil, u)
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1", n)
+	}
+	if len(idf.guardadosMatch) != 1 {
+		t.Fatalf("se esperaba un match: %+v", idf.guardadosMatch)
+	}
+	m := idf.guardadosMatch[0]
+	if m.EscalonPrevio != identificacion.EscalonExcluido || m.R.Escalon != identificacion.EscalonAlias || m.R.ObraID != "obra-1" {
+		t.Fatalf("match mal armado: %+v", m)
+	}
+}
+
+// D4: una excluida cuya fuente ya no lo esta pero que la cascada no resuelve
+// vuelve a pendiente, para que la vean el difuso (#32) y ONI.
+func TestResolverUsosExcluidaQueYaNoLoEstaYNoResuelveVuelveAPendiente(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+
+	u := usoPendiente("u-1", "caracol", "id_ficha=1")
+	u.Escalon, u.ONI = identificacion.EscalonExcluido, false
+	n, err := correr(t, ing, idf, nil, u)
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, se esperaba 0: volver a pendiente no es resolver", n)
+	}
+	if len(idf.guardadosMatch) != 1 {
+		t.Fatalf("se esperaba una escritura: %+v", idf.guardadosMatch)
+	}
+	m := idf.guardadosMatch[0]
+	if m.EscalonPrevio != identificacion.EscalonExcluido || m.R.Escalon != identificacion.EscalonPendiente || m.R.ObraID != "" {
+		t.Fatalf("se esperaba devolver a pendiente sin obra: %+v", m)
+	}
+}
+
+// Hallazgo 3: si otro proceso cambio la fila entre la lectura y la escritura,
+// GuardarMatch no escribe (ErrNoEncontrado) y la corrida sigue con las demas
+// sin error y sin contarla como resuelta.
+func TestResolverUsosSaltaUnaFilaQueCambioDuranteLaCorrida(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{
+		alias:     map[string]string{"caracol|id_ficha|1": "obra-1"},
+		cambiadas: map[string]bool{"u-1": true},
+	}
+
+	n, err := correr(t, ing, idf, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"),
+		usoPendiente("u-2", "caracol", "id_ficha=1"))
+	if err != nil {
+		t.Fatalf("una fila cambiada por otro no es un error de la corrida: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1 (solo u-2)", n)
+	}
+	if len(idf.guardadosMatch) != 1 || idf.guardadosMatch[0].UsoID != "u-2" ||
+		idf.guardadosMatch[0].EscalonPrevio != identificacion.EscalonPendiente {
+		t.Fatalf("se esperaba escribir solo u-2, condicionado a pendiente: %+v", idf.guardadosMatch)
 	}
 }
 
@@ -413,31 +528,67 @@ func TestEntradaDesdeUso(t *testing.T) {
 		{
 			nombre:    "netflix prefiere show_id sobre series_id y netflix_id",
 			fuente:    "netflix",
-			idsFuente: "show_id=80141259\nseries_id=123\nnetflix_id=456",
+			idsFuente: "netflix_id=81003997\nseries_id=81004793\nshow_id=80141259",
 			quiero:    identificacion.Entrada{Fuente: "netflix", TipoID: "show_id", ValorID: "80141259"},
 		},
 		{
-			nombre:    "fuente con mapeo pero sin su clave preferida no produce par",
+			nombre:    "netflix sin show_id no produce par aunque traiga netflix_id",
+			fuente:    "netflix",
+			idsFuente: "netflix_id=81003997",
+			quiero:    identificacion.Entrada{Fuente: "netflix"},
+		},
+		{
+			nombre:    "los tres globales se leen",
+			fuente:    "caracol",
+			idsFuente: "ida=IDA-1\neidr=EIDR-1\nimdb=tt1",
+			quiero:    identificacion.Entrada{Fuente: "caracol", IDA: "IDA-1", EIDR: "EIDR-1", IMDB: "tt1"},
+		},
+		{
+			nombre:    "espacios alrededor de clave y valor se recortan",
+			fuente:    "caracol",
+			idsFuente: "  id_ficha  =  871732  \n imdb = tt0100001 ",
+			quiero:    identificacion.Entrada{Fuente: "caracol", TipoID: "id_ficha", ValorID: "871732", IMDB: "tt0100001"},
+		},
+		{
+			nombre:    "valor de solo espacios se ignora: no produce par",
+			fuente:    "caracol",
+			idsFuente: "id_ficha=   \nimdb=tt0100001",
+			quiero:    identificacion.Entrada{Fuente: "caracol", IMDB: "tt0100001"},
+		},
+		{
+			nombre:    "valor sin clave se ignora (contrato estricto)",
+			fuente:    "caracol",
+			idsFuente: "871732",
+			quiero:    identificacion.Entrada{Fuente: "caracol"},
+		},
+		{
+			nombre:    "linea basura no pisa un id valido",
+			fuente:    "caracol",
+			idsFuente: "id_ficha=871732\nimdb=tt0100001\nN/A",
+			quiero:    identificacion.Entrada{Fuente: "caracol", TipoID: "id_ficha", ValorID: "871732", IMDB: "tt0100001"},
+		},
+		{
+			nombre:    "clave con otra grafia se ignora (contrato estricto)",
+			fuente:    "caracol",
+			idsFuente: "ID_Ficha=871732",
+			quiero:    identificacion.Entrada{Fuente: "caracol"},
+		},
+		{
+			nombre:    "clave fuera del contrato se ignora",
 			fuente:    "caracol",
 			idsFuente: "foo=bar",
 			quiero:    identificacion.Entrada{Fuente: "caracol"},
 		},
 		{
-			nombre:    "linea sin igual se ignora",
-			fuente:    "caracol",
-			idsFuente: "solo-texto",
-			quiero:    identificacion.Entrada{Fuente: "caracol"},
-		},
-		{
 			nombre:    "clave sin valor se ignora",
 			fuente:    "caracol",
-			idsFuente: "k=",
+			idsFuente: "id_ficha=",
 			quiero:    identificacion.Entrada{Fuente: "caracol"},
 		},
 		{
-			nombre:    "valor sin clave se ignora",
+			nombre:    "valor con igual vacio a la izquierda se ignora",
 			fuente:    "caracol",
-			idsFuente: "=v",
+			idsFuente: "=871732",
 			quiero:    identificacion.Entrada{Fuente: "caracol"},
 		},
 		{
@@ -447,22 +598,22 @@ func TestEntradaDesdeUso(t *testing.T) {
 			quiero:    identificacion.Entrada{Fuente: "caracol"},
 		},
 		{
-			nombre:    "fuente sin mapeo con una sola clave local la usa",
-			fuente:    "otra",
-			idsFuente: "unica=1",
-			quiero:    identificacion.Entrada{Fuente: "otra", TipoID: "unica", ValorID: "1"},
+			nombre:    "clave repetida: gana la ultima",
+			fuente:    "caracol",
+			idsFuente: "id_ficha=1\nid_ficha=2",
+			quiero:    identificacion.Entrada{Fuente: "caracol", TipoID: "id_ficha", ValorID: "2"},
 		},
 		{
-			nombre:    "clave local repetida: gana la ultima",
-			fuente:    "otra",
-			idsFuente: "a=1\na=2",
-			quiero:    identificacion.Entrada{Fuente: "otra", TipoID: "a", ValorID: "2"},
+			nombre:    "fuente sin mapeo con una sola clave local la usa",
+			fuente:    "procinal",
+			idsFuente: "id_pelicula=PX-1",
+			quiero:    identificacion.Entrada{Fuente: "procinal", TipoID: "id_pelicula", ValorID: "PX-1"},
 		},
 		{
 			nombre:    "fuente sin mapeo con varias claves: la alfabetica",
 			fuente:    "otra",
-			idsFuente: "y=2\nx=1",
-			quiero:    identificacion.Entrada{Fuente: "otra", TipoID: "x", ValorID: "1"},
+			idsFuente: "show_id=2\nid_pelicula=1",
+			quiero:    identificacion.Entrada{Fuente: "otra", TipoID: "id_pelicula", ValorID: "1"},
 		},
 	}
 

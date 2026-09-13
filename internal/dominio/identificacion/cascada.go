@@ -9,13 +9,18 @@ import (
 
 // Escalones del vocabulario del CHECK de usos.escalon (00001_init.sql).
 //
-// EscalonExcluido solo vive en Resultado: no es un valor del CHECK y este
-// issue no lo persiste (ver D4 de docs/planes/28-cascada-identificacion/01-design.md).
-// Una fila excluida no se toca: ni escalon, ni oni, ni obra_id cambian.
+// EscalonExcluido se persiste desde la migracion 00010 (ver D4 de
+// docs/planes/28-cascada-identificacion/01-design.md): la fila queda sin obra
+// y con oni=false, porque fuera de repertorio no es lo mismo que no
+// identificada (criterio 4 de #28).
+//
+// EscalonPendiente es el estado con que la ingesta siembra cada fila, y al
+// que vuelve una fila excluida cuya fuente deja de estarlo y no resuelve.
 const (
-	EscalonAlias    = "alias"
-	EscalonIDGlobal = "id_global"
-	EscalonExcluido = "excluido"
+	EscalonPendiente = "pendiente"
+	EscalonAlias     = "alias"
+	EscalonIDGlobal  = "id_global"
+	EscalonExcluido  = "excluido"
 )
 
 // IDGlobal identifica cual de los tres identificadores globales caso en el

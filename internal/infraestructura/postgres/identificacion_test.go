@@ -79,7 +79,8 @@ func insertarUsoSQL(t *testing.T, pool *pgxpool.Pool, u aplicacion.UsoPersistido
 // sembrarIdentificacion deja un catalogo minimo -una obra con imdb, una con
 // ida, una sin ningun identificador global- y un reporte con tres usos
 // pendientes: u-1 y u-2 comparten el par (caracol, id_ficha, 871732) -el
-// mismo programa en dos emisiones-, y u-3 no trae ids_fuente.
+// mismo programa en dos emisiones-, y u-3 no trae ids_fuente. Todo en el
+// formato del contrato de ids_fuente (ADR 0018).
 func sembrarIdentificacion(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
 
@@ -372,7 +373,7 @@ func TestGuardarMatchActualizaLaFilaConElResultado(t *testing.T) {
 		Puntaje:   decimal.NewFromInt(1),
 		Evidencia: "alias caracol id_ficha=871732 -> obra-45",
 	}
-	if err := s.GuardarMatch(ctx, "u-1", r); err != nil {
+	if err := s.GuardarMatch(ctx, "u-1", "pendiente", r); err != nil {
 		t.Fatalf("GuardarMatch: %v", err)
 	}
 
@@ -412,7 +413,7 @@ func TestGuardarMatchConResultadoONIDejaObraNula(t *testing.T) {
 	ctx := t.Context()
 
 	r := identificacion.Resultado{Escalon: "oni", ObraID: "", ONI: true}
-	if err := s.GuardarMatch(ctx, "u-3", r); err != nil {
+	if err := s.GuardarMatch(ctx, "u-3", "pendiente", r); err != nil {
 		t.Fatalf("GuardarMatch: %v", err)
 	}
 
@@ -430,12 +431,12 @@ func TestGuardarMatchConResultadoONIDejaObraNula(t *testing.T) {
 	}
 }
 
-// Cero filas afectadas no puede pasar por silencio (D8): con la lectura de
-// pendientes como unica fuente de usoID, solo pasa por una carrera.
+// Cero filas afectadas no pasa en silencio: el adaptador lo dice con
+// ErrNoEncontrado, y es el caso de uso el que decide saltar la fila.
 func TestGuardarMatchConUsoInexistente(t *testing.T) {
 	s, _ := sembrarIdentificacion(t)
 
-	err := s.GuardarMatch(t.Context(), "u-no-existe", identificacion.Resultado{
+	err := s.GuardarMatch(t.Context(), "u-no-existe", "pendiente", identificacion.Resultado{
 		ObraID: obraImdb, Escalon: identificacion.EscalonAlias, Puntaje: decimal.NewFromInt(1),
 	})
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
@@ -443,17 +444,88 @@ func TestGuardarMatchConUsoInexistente(t *testing.T) {
 	}
 }
 
-// El adaptador no traga un estado que el esquema no conoce: "excluido" es
-// una decision que solo vive en memoria (D4) y nunca llega a GuardarMatch en
-// una corrida real.
+// Hallazgo 3: el UPDATE es condicional al escalon con que se leyo la fila. Si
+// otro proceso la cambio -aqui, una resolucion manual-, GuardarMatch no la
+// pisa y responde ErrNoEncontrado.
+func TestGuardarMatchNoPisaUnaFilaQueCambioDeEscalon(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+		 VALUES ('usr-1', 'a@b.co', 'Revisora', 'distribucion', repeat('x', 20))`); err != nil {
+		t.Fatalf("sembrar usuario: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE usos SET escalon = 'manual', obra_id = $1, oni = FALSE,
+		        resuelto_por = 'usr-1', resuelto_en = now()
+		  WHERE id = 'u-1'`, obraIda); err != nil {
+		t.Fatalf("resolver a mano: %v", err)
+	}
+	antes := leerUso(t, pool, "u-1")
+
+	err := s.GuardarMatch(ctx, "u-1", "pendiente", identificacion.Resultado{
+		ObraID: obraImdb, Escalon: identificacion.EscalonAlias, Puntaje: decimal.NewFromInt(1),
+	})
+	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
+	}
+	if got := leerUso(t, pool, "u-1"); got != antes {
+		t.Fatalf("la resolucion manual se piso: antes %+v, ahora %+v", antes, got)
+	}
+}
+
+// El adaptador no traga un estado que el esquema no conoce.
 func TestGuardarMatchRechazaUnEscalonQueElEsquemaNoConoce(t *testing.T) {
 	s, _ := sembrarIdentificacion(t)
 
-	err := s.GuardarMatch(t.Context(), "u-1", identificacion.Resultado{
-		Escalon: identificacion.EscalonExcluido,
+	err := s.GuardarMatch(t.Context(), "u-1", "pendiente", identificacion.Resultado{
+		Escalon: "inventado",
 	})
 	if err == nil {
 		t.Fatal("se esperaba un error: el CHECK de escalon no se disparo")
+	}
+}
+
+// Criterio 4 de #28: excluida es sin obra y SIN ONI. Con la formula de oni
+// de antes (oni = obra vacia) la fila quedaria en oni_publico.
+func TestGuardarMatchExcluidoNoEsONI(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	r := identificacion.Resultado{
+		Escalon:   identificacion.EscalonExcluido,
+		Evidencia: "fuera de repertorio: caracol",
+	}
+	if err := s.GuardarMatch(ctx, "u-1", "pendiente", r); err != nil {
+		t.Fatalf("GuardarMatch: %v", err)
+	}
+
+	f := leerUso(t, pool, "u-1")
+	if f.escalon != identificacion.EscalonExcluido || !f.obraIDNulo || f.oni || f.evidencia != r.Evidencia {
+		t.Fatalf("fila excluida mal guardada: %+v", f)
+	}
+
+	var enListado int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM oni_publico WHERE id = 'u-1'`).Scan(&enListado); err != nil {
+		t.Fatalf("leer oni_publico: %v", err)
+	}
+	if enListado != 0 {
+		t.Fatal("una fila excluida no puede salir en el listado publico de ONI")
+	}
+}
+
+// uso_resuelto_tiene_obra (00010): la rama de 'excluido' no es una puerta
+// trasera para guardar una fila con obra fuera de las reglas de siempre.
+func TestGuardarMatchRechazaExcluidoConObra(t *testing.T) {
+	s, _ := sembrarIdentificacion(t)
+
+	err := s.GuardarMatch(t.Context(), "u-1", "pendiente", identificacion.Resultado{
+		Escalon: identificacion.EscalonExcluido,
+		ObraID:  obraImdb,
+	})
+	if err == nil {
+		t.Fatal("se esperaba un error: uso_resuelto_tiene_obra no se disparo")
 	}
 }
 
@@ -462,7 +534,7 @@ func TestGuardarMatchRechazaUnEscalonQueElEsquemaNoConoce(t *testing.T) {
 func TestGuardarMatchRechazaManualSinAutor(t *testing.T) {
 	s, _ := sembrarIdentificacion(t)
 
-	err := s.GuardarMatch(t.Context(), "u-1", identificacion.Resultado{
+	err := s.GuardarMatch(t.Context(), "u-1", "pendiente", identificacion.Resultado{
 		Escalon: "manual",
 		ObraID:  obraImdb,
 	})
@@ -474,7 +546,7 @@ func TestGuardarMatchRechazaManualSinAutor(t *testing.T) {
 func TestGuardarMatchRechazaUnaObraQueNoExiste(t *testing.T) {
 	s, _ := sembrarIdentificacion(t)
 
-	err := s.GuardarMatch(t.Context(), "u-1", identificacion.Resultado{
+	err := s.GuardarMatch(t.Context(), "u-1", "pendiente", identificacion.Resultado{
 		Escalon: identificacion.EscalonAlias,
 		ObraID:  "obra-inexistente",
 		Puntaje: decimal.NewFromInt(1),
@@ -604,6 +676,48 @@ func TestResolverUsosIntegracionCriterio1AliasExistente(t *testing.T) {
 	}
 }
 
+// Contrato de ids_fuente (ADR 0018): una fila de Netflix escrita con
+// EscribirIDsFuente -show_id, series_id y netflix_id, como la entrega del
+// cliente- resuelve por el alias de show_id. Dos episodios distintos del
+// mismo show casan con el mismo alias: es la razon de sondear show_id (D2).
+func TestResolverUsosIntegracionNetflixPorShowID(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	if err := s.GuardarAlias(ctx, "netflix", aplicacion.ClaveShowID, "80141259", obraIda, ""); err != nil {
+		t.Fatalf("sembrar alias de netflix: %v", err)
+	}
+	for _, ep := range []struct{ id, netflixID string }{{"u-7", "81003997"}, {"u-8", "81012675"}} {
+		ids, err := aplicacion.EscribirIDsFuente(
+			aplicacion.IDFuente{Clave: aplicacion.ClaveShowID, Valor: "80141259"},
+			aplicacion.IDFuente{Clave: aplicacion.ClaveSeriesID, Valor: "81004793"},
+			aplicacion.IDFuente{Clave: aplicacion.ClaveNetflixID, Valor: ep.netflixID},
+		)
+		if err != nil {
+			t.Fatalf("EscribirIDsFuente: %v", err)
+		}
+		insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+			ID: ep.id, ReporteID: reporteUno, Fuente: "netflix",
+			Titulo: "Un episodio", IDsFuente: ids, Modalidad: reparto.OTT,
+		})
+	}
+
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+
+	for _, id := range []string{"u-7", "u-8"} {
+		f := leerUso(t, pool, id)
+		if f.obraID != obraIda || f.escalon != identificacion.EscalonAlias {
+			t.Fatalf("%s deberia resolver por el alias de show_id: %+v", id, f)
+		}
+		if f.evidencia != "alias netflix show_id=80141259 -> obra-12" {
+			t.Fatalf("%s evidencia = %q", id, f.evidencia)
+		}
+	}
+}
+
 // I2 (criterio 2) + I3 (criterio 3, cortocircuito): una fila sin alias pero
 // con un identificador global que casa resuelve en escalon 2 y aprende el
 // alias; una fila nueva con el mismo id de fuente, en una corrida posterior,
@@ -652,7 +766,9 @@ func TestResolverUsosIntegracionCriterio2Y3(t *testing.T) {
 }
 
 // I4 (criterio 4): un canal/programa fuera de repertorio se excluye antes de
-// la cascada y no se marca ONI -queda exactamente como llego.
+// la cascada y no se marca ONI: queda escalon='excluido', sin obra y con
+// oni=false, fuera de oni_publico. Una segunda corrida con la misma lista no
+// la toca; una con la lista corregida la devuelve a la cascada (D4).
 func TestResolverUsosIntegracionCriterio4Repertorio(t *testing.T) {
 	s, pool := sembrarIdentificacion(t)
 	ctx := t.Context()
@@ -676,11 +792,105 @@ func TestResolverUsosIntegracionCriterio4Repertorio(t *testing.T) {
 	}
 
 	u5 := leerUso(t, pool, "u-5")
-	if u5.escalon != "pendiente" || !u5.obraIDNulo || !u5.oni {
-		t.Fatalf("una fila excluida no puede cambiar de estado: %+v", u5)
+	if u5.escalon != identificacion.EscalonExcluido || !u5.obraIDNulo || u5.oni {
+		t.Fatalf("una fila excluida tiene que quedar excluido, sin obra y sin ONI: %+v", u5)
+	}
+	var enListado int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM oni_publico WHERE id = 'u-5'`).Scan(&enListado); err != nil {
+		t.Fatalf("leer oni_publico: %v", err)
+	}
+	if enListado != 0 {
+		t.Fatal("una fila excluida no puede salir en el listado publico de ONI")
 	}
 	if contarAlias(t, pool, "canal-deportes", "id_ficha", "999") != 1 {
 		t.Fatal("la exclusion no puede ganar ni perder filas de alias_obra")
+	}
+
+	// D9: con la misma lista, la re-corrida no cambia nada.
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("segunda corrida: %v", err)
+	}
+	if got := leerUso(t, pool, "u-5"); got != u5 {
+		t.Fatalf("u-5 se volvio a tocar: antes %+v, ahora %+v", u5, got)
+	}
+
+	// La lista estaba mal y se corrige: la fila vuelve a la cascada y resuelve
+	// por el alias que antes ni se sondeo.
+	r.FueraDeRepertorio = nil
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("corrida con la lista corregida: %v", err)
+	}
+	if got := leerUso(t, pool, "u-5"); got.escalon != identificacion.EscalonAlias || got.obraID != obraImdb || got.oni {
+		t.Fatalf("u-5 deberia resolver por alias tras corregir la lista: %+v", got)
+	}
+}
+
+// D4: una fila excluida por error, cuya fuente deja de estar excluida y que
+// la cascada no resuelve, vuelve a pendiente y a ONI -a oni_publico y al
+// difuso-, en vez de quedarse fuera de todo.
+func TestResolverUsosIntegracionExcluidaSinMatchVuelveAPendiente(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+		ID: "u-5", ReporteID: reporteUno, Fuente: "canal-deportes",
+		Titulo: "Gol Caracol", IDsFuente: "id_ficha=999",
+	})
+	r := aplicacion.ResolverUsos{
+		Usos: ingestaDePrueba{pool: pool}, Identificacion: s,
+		FueraDeRepertorio: identificacion.FuentesExcluidas{"canal-deportes"},
+	}
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("corrida con exclusion: %v", err)
+	}
+
+	r.FueraDeRepertorio = nil
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("corrida sin exclusion: %v", err)
+	}
+	u5 := leerUso(t, pool, "u-5")
+	if u5.escalon != identificacion.EscalonPendiente || !u5.obraIDNulo || !u5.oni || u5.evidencia != "" {
+		t.Fatalf("u-5 deberia volver a pendiente y ONI: %+v", u5)
+	}
+}
+
+// M1: un id local de solo espacios no puede llegar a GuardarAlias. Contra el
+// CHECK de valor no vacio real de alias_obra: antes del recorte en
+// entradaDesdeUso, u-0 resolvia por imdb, intentaba aprender el alias
+// (caracol, id_ficha, "   "), el CHECK lo rechazaba y la corrida abortaba
+// entera (D8) -sin procesar u-1..u-3, que vienen despues en el lote-.
+func TestResolverUsosIntegracionIDLocalDeSoloEspaciosNoTumbaLaCorrida(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	insertarUsoSQL(t, pool, aplicacion.UsoPersistido{
+		ID: "u-0", ReporteID: reporteUno, Fuente: "caracol",
+		Titulo: "La Casa de las Dos Palmas", IDsFuente: "id_ficha=   \nimdb=tt0100001",
+	})
+
+	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+
+	u0 := leerUso(t, pool, "u-0")
+	if u0.obraID != obraImdb || u0.escalon != identificacion.EscalonIDGlobal {
+		t.Fatalf("u-0 deberia resolver por imdb: %+v", u0)
+	}
+	// u-0 no tiene par local tras el recorte: el unico alias aprendido es el
+	// de u-1 (id_ficha=871732).
+	var alias int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM alias_obra`).Scan(&alias); err != nil {
+		t.Fatalf("contar alias: %v", err)
+	}
+	if alias != 1 || contarAlias(t, pool, "caracol", "id_ficha", "871732") != 1 {
+		t.Fatalf("alias_obra tiene %d filas, se esperaba solo la de u-1", alias)
+	}
+
+	// La fila sana que viene despues en el lote se proceso.
+	u1 := leerUso(t, pool, "u-1")
+	if u1.obraID != obraImdb || u1.escalon != identificacion.EscalonIDGlobal {
+		t.Fatalf("u-1 no se proceso tras la fila sucia: %+v", u1)
 	}
 }
 

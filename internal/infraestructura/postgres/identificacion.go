@@ -65,8 +65,10 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 }
 
 // GuardarMatch traduce un Resultado de la cascada al UPDATE de la fila, sin
-// reinterpretar nada (D6 del diseno): oni es la negacion de si hay obra, y eso
-// es consistente con el CHECK uso_resuelto_tiene_obra por construccion.
+// reinterpretar nada (D6 del diseno): oni es la negacion de si hay obra, salvo
+// para escalon='excluido', que no tiene obra y tampoco es ONI (criterio 4 de
+// #28: una fila fuera de repertorio no puede aparecer en oni_publico). El CHECK
+// uso_resuelto_tiene_obra, desde 00010, admite ese caso y solo ese.
 //
 // oni = ($2 = vacio), no ($2 <> vacio): el CHECK uso_resuelto_tiene_obra
 // exige (oni AND obra_id IS NULL) OR (NOT oni AND obra_id IS NOT NULL) -oni
@@ -76,18 +78,24 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 //
 // resuelto_por y resuelto_en no se tocan: el CHECK manual_tiene_autor los
 // reserva a escalon='manual', que este puerto no escribe en este issue.
-func (s *Store) GuardarMatch(ctx context.Context, usoID string, r identificacion.Resultado) error {
+//
+// AND escalon = escalonPrevio: la escritura es condicional al estado que el
+// caso de uso leyo. Una fila que otro proceso cambio entre la lectura y este
+// UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
+// ErrNoEncontrado y la salta.
+func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
 	etiqueta, err := s.pool.Exec(ctx,
 		`UPDATE usos
 		    SET obra_id = NULLIF($2, ''), escalon = $3, evidencia = $4, puntaje = $5,
-		        oni = ($2 = '')
-		  WHERE id = $1`,
-		usoID, r.ObraID, r.Escalon, r.Evidencia, r.Puntaje)
+		        oni = ($2 = '' AND $3 <> 'excluido')
+		  WHERE id = $1 AND escalon = $6`,
+		usoID, r.ObraID, r.Escalon, r.Evidencia, r.Puntaje, escalonPrevio)
 	if err != nil {
 		return traducirError(err, "guardar match del uso %q", usoID)
 	}
 	if etiqueta.RowsAffected() == 0 {
-		return fmt.Errorf("guardar match del uso %q: %w", usoID, aplicacion.ErrNoEncontrado)
+		return fmt.Errorf("guardar match del uso %q: no existe o ya no esta en escalon %q: %w",
+			usoID, escalonPrevio, aplicacion.ErrNoEncontrado)
 	}
 	return nil
 }

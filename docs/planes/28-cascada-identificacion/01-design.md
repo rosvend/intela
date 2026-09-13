@@ -23,7 +23,8 @@ filtro de repertorio (R-27) que corre **antes** de la cascada:
    tiene una obra con ese identificador → resuelve, **y aprende el alias** (fuente, tipo, valor) para
    que la próxima fila con ese id de fuente entre por el escalón 1.
 3. **Filtro de repertorio (escalón 0)**: una fila de una fuente excluida no entra a la cascada:
-   queda excluida, **no se marca ONI** y no se le escribe nada.
+   queda `escalon = 'excluido'` con `oni = false` y sin obra: **no se marca ONI** y no sale en
+   `oni_publico` (migración `00010`, ver D4).
 4. **Lo no resuelto se queda como está** (`escalon = 'pendiente'`): es el insumo del difuso (#32),
    que es otro issue. La cola manual/ONI y su UI son #39/#37.
 
@@ -119,9 +120,16 @@ el esquema ni #72 ni ningún doc definen su formato. `Entrada` (tipos.go) espera
   canónico de la columna id del archivo (`id_ficha` para Caracol; `show_id`, `series_id`,
   `netflix_id` para Netflix); los globales entran bajo su clave reservada; pares ordenados por clave,
   sin duplicados; solo pares con valor no vacío.
-- El lector (este issue) es **tolerante**: línea sin `=`, clave desconocida o valor vacío se ignora;
-  ante clave repetida gana la última (determinista). Un `ids_fuente` vacío es válido: la fila solo
-  podrá resolver por lo que traiga en otras columnas (título → #32).
+- El lector (este issue) es **estricto**: línea sin `=`, clave fuera de la lista o valor vacío se
+  ignora; ante clave repetida gana la última (determinista). Un `ids_fuente` vacío es válido: la fila
+  solo podrá resolver por lo que traiga en otras columnas (título → #32).
+
+**Revisión (review de la PR #99)**: este contrato se elevó a **ADR 0018** porque #108 y el seed de
+`main` escribían otra cosa (el valor sin clave, `ID_Ficha`, `netflix_id`). Queda en código en
+`internal/aplicacion/idsfuente.go`: lista cerrada de claves (`Clave*`), `EscribirIDsFuente` para
+quien escribe y `LeerIDsFuente` para la cascada. Durante la revisión se probó un lector tolerante
+(aceptar el valor sin clave, normalizar mayúsculas) y se descartó: una línea basura podía acabar
+convertida en un alias falso.
 
 Consecuencia para la cascada: cada fila aporta **un** par local para el escalón 1 — el «par
 canónico» — elegido con una precedencia por fuente (D2), y hasta tres globales para el escalón 2.
@@ -144,6 +152,11 @@ alias y su propio viaje por la cola; con `show_id`, aprender una vez resuelve lo
 show. Los alias que algún día existan a granularidad de temporada/episodio no se consultan ni se
 aprenden en este issue (quedan fuera; si el negocio decide identificar capítulos, será una decisión
 de granularidad nueva con su issue).
+
+**Revisión (review de la PR #99)**: se mantiene `netflix → show_id` y queda fijado en ADR 0018. #108
+guardaba solo `netflix_id` porque le sirve para detectar duplicados. El contrato le pide guardar los
+tres ids de Netflix (`show_id`, `series_id`, `netflix_id`): la ingesta sigue deduplicando por
+`netflix_id` y la cascada busca y aprende por `show_id`.
 
 **Alternativa descartada**: sondear todos los pares locales de la fila en orden y quedarse con el
 primer alias que pegue. Es más tolerante pero rompe el modelo de `Entrada` (un par) del andamiaje,
@@ -175,28 +188,40 @@ puerto de listado y no debe inventarse. La variante «sondeo por fila y cero dom
 porque dejaría la regla de clasificación y la evidencia en el caso de uso, sin tests de tabla de
 dominio y sin punto único para que #32 se cuelgue.
 
-### D4 — Filtro de repertorio: escalón 0 puro, excluido ≠ ONI, y sin estado persistido (por ahora)
+### D4 — Filtro de repertorio: escalón 0 puro, excluido ≠ ONI, persistido como `escalon='excluido'`
 
 **Decisión**: el filtro es parte de `Resolver` (escalón 0, antes del alias): la entrada es de
 repertorio salvo que su `Fuente` esté en `FuentesExcluidas` (conjunto que entra como parámetro del
 dominio; en el caso de uso es un campo de configuración de `ResolverUsos`). Si está excluida,
-`Resolver` devuelve `Resultado{Escalon: "excluido", ONI: false, ObraID: "", Evidencia: ...}` y el
-caso de uso **no escribe nada**: ni `GuardarMatch`, ni `GuardarAlias`, ni marca ONI, ni cambia el
-`escalon` de la fila.
+`Resolver` devuelve `Resultado{Escalon: "excluido", ONI: false, ObraID: "", Evidencia: ...}`; el
+caso de uso no sondea nada ni aprende alias, y **persiste la exclusión** con `GuardarMatch`:
+`escalon = 'excluido'`, `obra_id = NULL`, `oni = false`. La fila excluida no cuenta como resuelta.
 
-Qué significa esto en el esquema y por qué no se persiste la exclusión:
+**Revisión (review de la PR #99)**: la primera versión de este diseño no escribía nada sobre la fila
+excluida («sin estado persistido, por ahora»). Eso dejaba la fila como la siembra la ingesta
+(`pendiente`, `oni = true`), y como `oni_publico` filtra `WHERE u.oni`, la fila excluida aparecía en
+el listado público de ONI: violaba el criterio 4 de la issue. Se resuelve con la migración aditiva
+`00010_uso_excluido_no_es_oni.sql`:
 
-- El CHECK de `usos.escalon` solo admite `pendiente|alias|id_global|difuso|manual|oni`; **no existe
-  un estado «excluido»** y la fila excluida tampoco puede ponerse `oni=false` (el CHECK
-  `uso_resuelto_tiene_obra` exige obra_id cuando no es ONI). Representar la exclusión como estado
-  exigiría una migración que este issue no necesita.
-- La exclusión es un **predicado determinista sobre la fila**: una re-corrida excluye otra vez la
-  misma fila sin escribir nada, así que no hay trabajo repetido que valga la pena persistir hoy, y
-  no se pierde trazabilidad (nada se decidió sobre la fila; decidir «excluida» no es un hecho de
-  matching). Cuando #32/#37 necesiten saber qué filas quedaron fuera de la cascada (p. ej. para no
-  listarlas en ONI), será el momento de decidir el estado (probablemente una migración aditiva con
-  un valor `excluido` en el CHECK de `usos.escalon` o una tabla/log propio) — se deja anotado como
-  pregunta abierta (P3), fuera de este issue.
+- añade `excluido` al CHECK de `usos.escalon`;
+- abre en `uso_resuelto_tiene_obra` una rama solo para ese valor: excluida es **sin obra y sin ONI
+  a la vez**; los demás escalones siguen atados a `oni ⇔ sin obra`. `manual_tiene_autor` no cambia;
+- no toca `oni_publico` ni los índices parciales `usos_pendientes`/`usos_oni`: con `oni = false` y
+  `escalon <> 'pendiente'` la fila ya queda fuera de los tres.
+
+**Las excluidas se reevalúan en cada corrida.** `FueraDeRepertorio` es configuración y puede estar
+mal. Por eso `ResolverUsos` procesa las filas `pendiente` y también las `excluido`:
+
+- si la fuente sigue excluida, no se sondea ni se escribe nada (idempotente, D9);
+- si ya no lo está y la cascada la resuelve, se guarda el match normal;
+- si ya no lo está y no resuelve, vuelve a `pendiente` con `oni = true`, para que la vean el difuso
+  (#32) y el listado de ONI.
+
+Sin esto, una lista mal configurada dejaría filas fuera del reparto y de ONI para siempre, sin más
+arreglo que SQL a mano.
+
+Nota para #52 (instantánea de `oni_publico`): la semántica de «excluida» vive en `usos`; lo que
+pueble esa instantánea debe filtrar por `oni` igual que la vista actual.
 
 El dato de política (qué fuentes/canales están fuera) **no existe en el esquema ni llega por ningún
 puerto**: R-27/RD 9.5 es una clasificación de operadores de cable para el reparto, y el equivalente
@@ -235,11 +260,12 @@ deshacer una corrección previa.
 ### D6 — Trazabilidad: el `Resultado` habla el vocabulario del CHECK de `usos`
 
 **Decisión**: `Resultado.Escalon` (string) usa los valores del CHECK de `usos.escalon` que ya
-existen: `"alias"` e `"id_global"`, más `"excluido"` que **solo** vive en memoria (no se persiste,
-ver D4). `GuardarMatch` traduce el `Resultado` al `UPDATE` de la fila sin reinterpretar nada:
+existen: `"alias"` e `"id_global"`, más `"excluido"` (añadido al CHECK por `00010`, ver D4).
+`GuardarMatch` traduce el `Resultado` al `UPDATE` de la fila sin reinterpretar nada:
 
 - `obra_id = NULLIF($2,'')`, `escalon = $3`, `evidencia = $4`, `puntaje = $5`,
-  `oni = (obra_id vacío)` — consistente con el CHECK `uso_resuelto_tiene_obra` por construcción.
+  `oni = (obra_id vacío AND escalon <> 'excluido')` — consistente con el CHECK
+  `uso_resuelto_tiene_obra` (versión de `00010`) por construcción.
 - Los aciertos de alias/id_global llevan `puntaje = 1` (certeza máxima por igualdad exacta) y
   `oni = false`; `resuelto_por` y `resuelto_en` quedan `NULL` (el CHECK `manual_tiene_autor` los
   reserva a la resolución manual; el instante de la resolución automática quedará en el asiento de
@@ -290,9 +316,13 @@ es el de lecturas de `usos`, no los sondeos de escalón.
 - **Cualquier otro error aborta la corrida** con contexto (`errors.Is` intacto): tragarse un fallo
   de red como «no hay alias» reclasificaría filas en silencio y es el error caro que el repo declara
   por escrito. No se «marca ONI» ni se salta la fila: falla la corrida.
-- `GuardarMatch` contra un `usoID` inexistente (0 filas afectadas) devuelve `ErrNoEncontrado`
-  envuelto: con la lectura de pendientes como única fuente de `usoID`, solo puede pasar por
-  concurrencia y debe sonar, no callar.
+- `GuardarMatch` es **condicional** al escalón con que se leyó la fila (`WHERE id = $1 AND escalon
+  = escalonPrevio`). Si la fila no existe o ya cambió (0 filas afectadas), el adaptador devuelve
+  `ErrNoEncontrado` envuelto. **Revisión (review de la PR #99)**: la primera versión escribía sin esa
+  condición y trataba el 0 como fallo de la corrida. Así, una resolución manual hecha entre la
+  lectura y la escritura se podía pisar sin aviso. Ahora el caso de uso trata ese `ErrNoEncontrado`
+  como «otro proceso ya decidió esta fila»: la salta, no la cuenta y sigue con las demás. Cualquier
+  otro error de `GuardarMatch` sigue abortando la corrida.
 - Violaciones de constraint (CHECK de `escalon`, `uso_resuelto_tiene_obra`, FK de `obra_id`) suben
   envueltas con contexto; son bugs de llamada o estados que el dominio no debió producir, y se ven
   en los tests del adaptador. **No se añaden centinelas nuevos a `aplicacion/errores.go`**: este
@@ -313,9 +343,10 @@ que no sea fila — es exactamente lo que `traducirError` está diseñado para n
   UNIQUE en `obras`) devuelve la de menor `id` (`ORDER BY id LIMIT 1`): determinista y documentado.
   El catálogo real no debería tener ese duplicado (es dato sucio de carga), pero la corrida no
   puede depender del orden físico.
-- Re-ejecución: una corrida sobre un periodo ya corrido no re-resuelve nada (las filas ya no están
-  `pendiente`) y no duplica alias (`ON CONFLICT DO NOTHING`). Una corrida interrumpida converge al
-  reintentarse (D5).
+- Re-ejecución: una corrida sobre un periodo ya corrido no re-resuelve nada (las filas resueltas ya
+  no están `pendiente`, y las excluidas que siguen excluidas no se reescriben, D4) y no duplica alias
+  (`ON CONFLICT DO NOTHING`). Una corrida interrumpida converge al reintentarse (D5). Una fila que
+  cambia entre la lectura y la escritura no se pisa (D8).
 
 ---
 
@@ -404,21 +435,23 @@ Lógica (con los errores según D8):
 
 ```go
 usos, err := r.Usos.UsosDePeriodo(ctx, periodo)          // 1 lectura (D7)
-// por cada u con u.Escalon == "pendiente":
+// por cada u con u.Escalon en {"pendiente", "excluido"}:
 //   e := entradaDesdeUso(u)                              // 5.4, puro
 //   res, err := r.resolverFila(ctx, u, e)                // 5.3
-//   if res.ObraID == "" { continue }                     // excluida o no resuelta: nada
+//   excluida y ya lo estaba      -> continue             // D4: nada nuevo
+//   excluida y estaba pendiente  -> GuardarMatch(excluido)
+//   sin obra y estaba pendiente  -> continue             // no resuelta: nada
+//   sin obra y estaba excluida   -> GuardarMatch(pendiente) // D4: vuelve a la cascada
 //   if res.Escalon == identificacion.EscalonIDGlobal {   // aprendizaje (D5)
 //       r.Identificacion.GuardarAlias(ctx, e.Fuente, e.TipoID, e.ValorID,
 //           res.ObraID, quienCascada)                    // ANTES que el match
 //   }
-//   r.Identificacion.GuardarMatch(ctx, u.ID, res)
-//   resueltas++
+//   GuardarMatch(ctx, u.ID, u.Escalon, res)              // condicional; ErrNoEncontrado = saltar (D8)
+//   resueltas++ si se escribio
 ```
 
-Las filas que no estén `pendiente` (ya resueltas, ya ONI, manuales) se ignoran: la corrida es
-idempotente sobre un periodo ya corrido (D9). Ninguna otra escritura: las excluidas no se tocan,
-las no resueltas no se tocan.
+Las filas en cualquier otro escalón (ya resueltas, ya ONI, manuales) se ignoran: la corrida es
+idempotente sobre un periodo ya corrido (D9).
 
 ### 5.3 `resolverFila` (privado, en el mismo fichero)
 
@@ -470,8 +503,8 @@ orden alias→match (D5) más la idempotencia (D9).
 ```go
 // parCanonicoPorFuente: clave local preferida para el escalón 1 (D2).
 var parCanonicoPorFuente = map[string]string{
-    "caracol": "id_ficha",
-    "netflix": "show_id",
+    "caracol": ClaveIDFicha, // "id_ficha", constantes de ADR 0018
+    "netflix": ClaveShowID,  // "show_id"
 }
 
 func entradaDesdeUso(u UsoPersistido) identificacion.Entrada
@@ -481,10 +514,9 @@ Pasos:
 1. `e.Fuente = u.Fuente`, `e.Titulo = u.Titulo`. `TituloOrig` queda `""`: `usos` no tiene columna
    para el título original (lo necesitará el difuso #32; si hace falta, será decisión de esquema de
    ese issue).
-2. Parsear `u.IDsFuente` por líneas (`\n`): cada línea `clave=valor` → si `clave` ∈
-   `{ida, eidr, imdb}` y `valor != ""`, llenar el global correspondiente; si no, acumular en un mapa
-   ordenado de locales. Líneas rotas (sin `=`, clave vacía, valor vacío) se ignoran; clave repetida:
-   gana la última.
+2. Leer `u.IDsFuente` con `LeerIDsFuente` (ADR 0018, estricto): los globales (`ida`, `eidr`, `imdb`)
+   van a su campo y el resto a un mapa de locales. Lo que no cumple el contrato (sin `=`, clave fuera
+   de la lista, valor vacío) ya viene descartado; clave repetida: gana la última.
 3. Elegir el par local: clave del mapa `parCanonicoPorFuente[u.Fuente]`; si no hay mapeo para la
    fuente y hay una sola clave local, esa; si hay varias, la primera en orden alfabético. Ese par va
    a `e.TipoID` / `e.ValorID`.
@@ -517,11 +549,10 @@ SQL de las cuatro operaciones (firmas: las de `puertos.go`, sin cambios):
   imdb = $3) ORDER BY id LIMIT 1` — usa los índices parciales de 00001, es determinista ante
   duplicados de id global (D9) y no distingue cuál columna casó (no lo necesita: la cascada llama
   con uno solo poblado).
-- `GuardarMatch(ctx, usoID string, r identificacion.Resultado) error`
+- `GuardarMatch(ctx, usoID, escalonPrevio string, r identificacion.Resultado) error`
   `UPDATE usos SET obra_id = NULLIF($2,''), escalon = $3, evidencia = $4, puntaje = $5,
-   oni = ($2 = '') WHERE id = $1`; si `RowsAffected() == 0` →
-  `traducirError`-style wrap de `ErrNoEncontrado` («el uso X no existe» — patrón del `Actualizar` de
-  `catalogo.go`); los CHECK (`escalon`, `uso_resuelto_tiene_obra`, `manual_tiene_autor`, FK de
+   oni = ($2 = '' AND $3 <> 'excluido') WHERE id = $1 AND escalon = $6`; si `RowsAffected() == 0` →
+  wrap de `ErrNoEncontrado` («no existe o ya no está en escalón X», D8; el caso de uso lo salta); los CHECK (`escalon`, `uso_resuelto_tiene_obra`, `manual_tiene_autor`, FK de
   `obra_id`) que fallen suben envueltos. El `puntaje` viaja como `decimal.Decimal` directo a pgx
   (mismo mecanismo que #72 con las medidas de `usos`).
 
@@ -559,7 +590,7 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
 | Escalón 1: `(fuente, tipo_id, valor) → obra` | `alias_obra(fuente, tipo_id, valor, obra_id, quien, aprendido)`, PK `(fuente, tipo_id, valor)` |
 | Escalón 2: igualdad por IDA/EIDR/IMDB | `obras(ida, eidr, imdb)` + índices parciales `obras_ida/eidr/imdb` (00001, creados para esto) |
 | GuardarMatch: qué escalón y qué evidencia | `usos(obra_id, escalon, evidencia, puntaje, oni)` — columnas y CHECK ya en 00001 |
-| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra ausente`) |
+| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra ausente y no excluida`; rama `excluido` desde 00010) |
 | Actor/instante de la resolución | `usos.resuelto_por/resuelto_en` + CHECK `manual_tiene_autor`: reservados a `escalon='manual'` (#39) |
 | Puntaje de confianza | `usos.puntaje NUMERIC(6,5) CHECK (0..1)`; alias/id_global = 1 |
 | Ids de fuente de la fila | `usos.ids_fuente TEXT` (formato: D1) |
@@ -576,9 +607,8 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
 - **Nada de UI/cola manual (#39)**: GuardarAlias con `quien` humano no tiene llamador todavía.
 - **Nada de lectura de usos (#72)**: `ResolverUsos` consume el puerto declarado; el adaptador de
   `RepositorioIngesta` lo trae #72. Los tests de integración usan doble local + SQL directo.
-- **No se toca el esquema**: cero migraciones. Si la revisión demuestra que algo necesita esquema
-  (p. ej. persistir la exclusión, D4/P3), se escribe la migración con su número negociado (§2), no
-  en silencio.
+- **Esquema**: una sola migración aditiva, `00010_uso_excluido_no_es_oni.sql`, que la review de la
+  PR #99 hizo necesaria para persistir la exclusión (D4/P3). Nada más del esquema cambia.
 - **No hay dinero**: ninguna medida ni importe entra en la cascada; el `puntaje` es confianza de
   matching, no valor.
 - **No se re-planea**: este documento y sus compañeros son el plan. Desviaciones de implementación
@@ -619,10 +649,9 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
   el repo la reinterpreta a nivel de programa (noticieros/magazines); el dato (canales/programas
   fuera + mapeo de géneros, pregunta 5 de `fuentes-datos.md`) no existe. Mientras tanto el set
   inyectado queda vacío en producción. ¿Alguien más conoce una fuente de este dato?
-- **P3 (revisor)** — Si #32/#52 necesitan que las filas excluidas no aparezcan como pendientes/ONI
-  (la vista `oni_publico` lista `WHERE oni`, y las pendientes vienen `oni=true` desde ingesta),
-  hará falta representar «excluido» en `usos` (migración aditiva al CHECK de `escalon`, o log
-  propio). No es de este issue; dejarlo anotado para #32/#37.
+- **P3 (revisor) — resuelta en la review de la PR #99** — Las filas excluidas no pueden aparecer
+  como ONI (criterio 4). Se representa «excluido» en `usos` con la migración aditiva `00010`
+  (valor `excluido` en el CHECK de `escalon` y `oni = false`); ver D4.
 - **P4 (revisor)** — `GuardarMatch` no registra el instante de la resolución automática
   (`resuelto_en` queda NULL; el CHECK lo reserva a `manual`). El «cuándo» quedará en el asiento de
   bitácora cuando #29 conecte `BitacoraAuditoria`. ¿Se acepta así o este issue debe abrir la
