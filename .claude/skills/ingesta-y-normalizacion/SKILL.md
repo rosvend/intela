@@ -21,7 +21,10 @@ Cada fuente se lleva al mismo esquema antes de que nada aguas abajo la toque. Lo
 esquema tiene que capturar, segun lo que exigen las formulas de `RD 9`:
 
 - Identidad de la fuente y del reporte (con su version en el almacen de objetos).
-- Identificadores de origen tal como vienen, sin normalizar, para la tabla de alias.
+- Identificadores de origen, para la tabla de alias. El valor va tal como viene; la **clave** no:
+  `usos.ids_fuente` se escribe siempre con `aplicacion.EscribirIDsFuente` y las constantes
+  `aplicacion.Clave*` (`id_ficha`, `show_id`, `series_id`, `netflix_id`...), una linea `clave=valor`
+  por id. Nunca el valor solo ni el encabezado del archivo. Ver ADR 0018.
 - Titulos, en todas las variantes que traiga el archivo (localizado y original).
 - La metrica de uso que corresponda a la modalidad: duracion y emisiones en TV, visualizaciones en
   OTT, taquilla en cine.
