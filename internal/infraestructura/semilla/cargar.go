@@ -406,11 +406,15 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	// una persona, la trae el dataset (ADR 0004).
 	for _, r := range d.Reportes {
 		for _, u := range r.Usos {
+			// El valor se lee de ids_fuente con el mismo lector que la cascada:
+			// si el seed escribiera algo que el contrato no reconoce, saldria
+			// vacio y el CHECK de alias_obra lo pararia aqui.
+			valor := aplicacion.LeerIDsFuente(u.IDsFuente)[r.TipoID]
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO alias_obra (fuente, tipo_id, valor, obra_id, quien)
 				VALUES ($1, $2, $3, $4, 'semilla')`,
-				r.Fuente, r.TipoID, u.IDsFuente, u.ObraID); err != nil {
-				return fmt.Errorf("insertar alias %s/%s=%s: %w", r.Fuente, r.TipoID, u.IDsFuente, err)
+				r.Fuente, r.TipoID, valor, u.ObraID); err != nil {
+				return fmt.Errorf("insertar alias %s/%s=%s: %w", r.Fuente, r.TipoID, valor, err)
 			}
 		}
 	}

@@ -211,11 +211,15 @@ type FiltroObras struct {
 // ObraPorIDGlobal recibe los tres identificadores y devuelve ErrNoEncontrado
 // si los tres llegan vacios: llamarla sin datos no puede pasar por "no hay
 // match".
+//
+// GuardarMatch escribe r solo si la fila sigue en escalonPrevio, el escalon
+// con que se leyo; si no existe o ya cambio, devuelve ErrNoEncontrado sin
+// escribir nada.
 type RepositorioIdentificacion interface {
 	Alias(ctx context.Context, fuente, tipo, valor string) (obraID string, err error)
 	GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error
 	ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (obraID string, err error)
-	GuardarMatch(ctx context.Context, usoID string, r identificacion.Resultado) error
+	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
