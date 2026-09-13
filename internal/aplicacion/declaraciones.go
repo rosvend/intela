@@ -2,7 +2,6 @@ package aplicacion
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,13 +11,17 @@ import (
 // Declaraciones son los casos de uso de la Declaracion de Obra: el ABM
 // versionado que la #23 le debia a la #30.
 //
-// Un servicio con tres operaciones y no tres structs, por lo mismo que
+// Un servicio con dos operaciones y no dos structs, por lo mismo que
 // [Catalogo]: giran sobre el mismo agregado y comparten las mismas
 // dependencias.
+//
+// No lleva un [BitacoraAuditoria] propio: el asiento de esta operacion es
+// parte del mismo contrato atomico que [GestionDeclaraciones.Guardar], no un
+// segundo puerto que este caso de uso orqueste por su cuenta -ver el
+// comentario de ese puerto en puertos.go.
 type Declaraciones struct {
-	Gestion  GestionDeclaraciones
-	Bitacora BitacoraAuditoria
-	Reloj    Reloj
+	Gestion GestionDeclaraciones
+	Reloj   Reloj
 }
 
 // GuardarSplits valida las partes que llegan y las guarda como una version
@@ -29,14 +32,6 @@ type Declaraciones struct {
 // una version anterior o abre la primera. Separarlo en dos metodos de caso de
 // uso duplicaria esta funcion entera para una diferencia que ya resuelve el
 // adaptador.
-//
-// El asiento de auditoria es parte de la definicion de hecho de esta
-// operacion (ADR 0006): si Asentar falla, GuardarSplits devuelve error aunque
-// la escritura en el repositorio ya se haya hecho. No hay una transaccion que
-// abarque los dos puertos -esa es una decision de infraestructura mas grande
-// que este issue-, asi que un fallo aqui dice "la declaracion se guardo pero
-// no quedo asiento", y quien opera el sistema tiene que poder distinguirlo de
-// un fallo que no escribio nada.
 func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes []repertorio.Parte, actorID string) (VersionDeclaracion, error) {
 	decl, err := repertorio.NuevaDeclaracion(obraID, partes)
 	if err != nil {
@@ -44,33 +39,12 @@ func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes 
 	}
 
 	ahora := d.Reloj.Ahora()
-	version, err := d.Gestion.Guardar(ctx, decl, ahora)
+	version, err := d.Gestion.Guardar(ctx, decl, ahora, actorID)
 	if err != nil {
 		return VersionDeclaracion{}, fmt.Errorf("guardar declaracion de la obra %q: %w", obraID, err)
 	}
 
-	vd := VersionDeclaracion{Version: version, VigenteDesde: ahora, Declaracion: decl}
-
-	payload, err := json.Marshal(asientoDeclaracion{
-		Version: version,
-		Estado:  decl.Estado(),
-		Partes:  decl.Partes,
-	})
-	if err != nil {
-		return VersionDeclaracion{}, fmt.Errorf("serializar asiento de la obra %q: %w", obraID, err)
-	}
-	if err := d.Bitacora.Asentar(ctx, Asiento{
-		Hecho:   "declaracion.guardada",
-		RefTipo: "obra",
-		RefID:   obraID,
-		ActorID: actorID,
-		Payload: payload,
-		Cuando:  ahora,
-	}); err != nil {
-		return VersionDeclaracion{}, fmt.Errorf("asentar declaracion de la obra %q: %w", obraID, err)
-	}
-
-	return vd, nil
+	return VersionDeclaracion{Version: version, VigenteDesde: ahora, Declaracion: decl}, nil
 }
 
 // Historial devuelve todas las versiones de la declaracion de una obra,
@@ -95,10 +69,13 @@ func (d Declaraciones) VigenteEn(ctx context.Context, obraID string, momento tim
 	return vd, nil
 }
 
-// asientoDeclaracion es la forma del payload JSONB del asiento. Vive aqui y
-// no como forma de red porque el asiento tampoco lo es: es el registro
-// interno de la bitacora (ADR 0006), no una respuesta HTTP.
-type asientoDeclaracion struct {
+// AsientoDeclaracion es la forma del payload JSONB del asiento que
+// [GestionDeclaraciones.Guardar] escribe. Exportada porque quien la
+// serializa es el adaptador de infraestructura -es el unico que sabe en que
+// transaccion asentar-, no este caso de uso; vive aqui y no como forma de red
+// porque el asiento tampoco lo es: es el registro interno de la bitacora
+// (ADR 0006), no una respuesta HTTP.
+type AsientoDeclaracion struct {
 	Version int                `json:"version"`
 	Estado  string             `json:"estado"`
 	Partes  []repertorio.Parte `json:"partes"`

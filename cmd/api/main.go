@@ -74,12 +74,12 @@ func ejecutar(log *slog.Logger) error {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	// Y tambien GestionDeclaraciones y BitacoraAuditoria: el editor de splits
-	// de la #30 y el primer asiento real que este binario escribe (#23).
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
 	declaraciones := aplicacion.Declaraciones{
-		Gestion:  store,
-		Bitacora: store,
-		Reloj:    reloj.Sistema{},
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
 	}
 
 	api := httpapi.Nueva(store, httpapi.Casos{

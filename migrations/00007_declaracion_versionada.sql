@@ -60,8 +60,23 @@ CREATE INDEX declaracion_versiones_abierta
 -- un NULL sin tipo cae en TEXT -que el INSERT ya no convierte solo, y aborta
 -- la migracion entera con "column vigente_hasta is of type timestamp with
 -- time zone but expression is of type text".
+--
+-- vigente_desde NO es now(): esta fila no es una version declarada HOY al
+-- migrar, es la MISMA declaracion que ya regia para esa obra desde antes de
+-- que existiera el versionado. Con now() aqui, VigenteEn(obraID, T) para
+-- cualquier T anterior al instante del migrate no encuentra ninguna version
+-- -en cuanto el motor de reparto (#33) reprocese un periodo anterior a este
+-- deploy, un split que siempre existio aparece como si no existiera.
+--
+-- Tampoco es '-infinity': PostgreSQL lo acepta como TIMESTAMPTZ valido, pero
+-- pgx se niega a escanearlo en un time.Time normal ("cannot scan -Infinity
+-- into *time.Time"), y CADA lectura de esta fila -Historial, VigenteEn, y el
+-- propio Guardar al buscar la version abierta antes de cerrarla- pasa por ese
+-- Scan. Un corte real y lejano cumple lo mismo -ninguna fecha de negocio cae
+-- antes- sin ese riesgo: aqui el primer instante representable, documentado
+-- como el corte de todo lo declarado antes de este PR.
 INSERT INTO declaracion_versiones (obra_id, version, vigente_desde, vigente_hasta)
-SELECT DISTINCT obra_id, 1, now(), NULL::timestamptz
+SELECT DISTINCT obra_id, 1, TIMESTAMPTZ '0001-01-01 00:00:00+00', NULL::timestamptz
 FROM declaraciones;
 -- +goose StatementEnd
 

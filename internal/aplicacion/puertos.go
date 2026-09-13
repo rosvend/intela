@@ -178,8 +178,14 @@ type CatalogoObras interface {
 // lo mismo declarar por primera vez que editar, la unica diferencia es si
 // habia una version que cerrar. Devuelve [ErrNoEncontrado] si la obra no
 // existe en el catalogo.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico:
+// actorID es quien firma el hecho, y la implementacion lo asienta en la misma
+// transaccion que la version. No es un puerto ni una llamada aparte -eso deja
+// una version guardada sin asiento si la segunda llamada falla- sino la unica
+// forma de que "version + asiento" sea una sola cosa o ninguna.
 type GestionDeclaraciones interface {
-	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time) (version int, err error)
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, err error)
 	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
 }

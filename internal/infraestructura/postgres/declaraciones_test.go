@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestGuardarPrimeraVersion(t *testing.T) {
 	s, _ := sembrar(t)
 	ahora := time.Now().UTC()
 
-	version, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), ahora)
+	version, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), ahora, usuarioAdmin)
 	if err != nil {
 		t.Fatalf("Guardar: %v", err)
 	}
@@ -62,11 +63,11 @@ func TestEditarAbreNuevaVersionYConservaLaAnterior(t *testing.T) {
 	t1 := time.Now().UTC().Truncate(time.Microsecond)
 	t2 := t1.Add(time.Hour)
 
-	v1, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), t1)
+	v1, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), t1, usuarioAdmin)
 	if err != nil {
 		t.Fatalf("Guardar v1: %v", err)
 	}
-	v2, err := s.Guardar(t.Context(), partesDePrueba(t, 70, 30), t2)
+	v2, err := s.Guardar(t.Context(), partesDePrueba(t, 70, 30), t2, usuarioAdmin)
 	if err != nil {
 		t.Fatalf("Guardar v2: %v", err)
 	}
@@ -112,10 +113,10 @@ func TestVigenteEnResuelveAntesYDespuesDelCorte(t *testing.T) {
 	t1 := time.Now().UTC().Truncate(time.Microsecond)
 	t2 := t1.Add(time.Hour)
 
-	if _, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), t1); err != nil {
+	if _, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), t1, usuarioAdmin); err != nil {
 		t.Fatalf("Guardar v1: %v", err)
 	}
-	if _, err := s.Guardar(t.Context(), partesDePrueba(t, 70, 30), t2); err != nil {
+	if _, err := s.Guardar(t.Context(), partesDePrueba(t, 70, 30), t2, usuarioAdmin); err != nil {
 		t.Fatalf("Guardar v2: %v", err)
 	}
 
@@ -164,7 +165,7 @@ func TestGuardarObraInexistenteEsNoEncontrado(t *testing.T) {
 		t.Fatalf("construir la declaracion: %v", err)
 	}
 
-	_, err = s.Guardar(t.Context(), d, time.Now().UTC())
+	_, err = s.Guardar(t.Context(), d, time.Now().UTC(), usuarioAdmin)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -177,7 +178,7 @@ func TestElEsquemaRechazaVigenciasQueSeSolapan(t *testing.T) {
 	ctx := t.Context()
 
 	t1 := time.Now().UTC()
-	if _, err := s.Guardar(ctx, partesDePrueba(t, 100, 0), t1); err != nil {
+	if _, err := s.Guardar(ctx, partesDePrueba(t, 100, 0), t1, usuarioAdmin); err != nil {
 		t.Fatalf("Guardar v1: %v", err)
 	}
 
@@ -189,5 +190,105 @@ func TestElEsquemaRechazaVigenciasQueSeSolapan(t *testing.T) {
 		obraSinDeclaracion, t1.Add(time.Minute))
 	if err == nil {
 		t.Fatal("se esperaba que el EXCLUDE rechazara el solape")
+	}
+}
+
+// El asiento se escribe en la MISMA transaccion que la version (ADR 0006):
+// Guardar deja exactamente un asiento por escritura, con el payload que
+// describe esa version.
+func TestGuardarAsientaElHechoEnLaMismaTransaccion(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	ahora := time.Now().UTC().Truncate(time.Microsecond)
+
+	version, err := s.Guardar(ctx, partesDePrueba(t, 60, 40), ahora, usuarioAdmin)
+	if err != nil {
+		t.Fatalf("Guardar: %v", err)
+	}
+
+	asientos, err := s.De(ctx, "obra", obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("De: %v", err)
+	}
+	if len(asientos) != 1 {
+		t.Fatalf("se esperaba 1 asiento, hubo %d", len(asientos))
+	}
+	a := asientos[0]
+	if a.Hecho != "declaracion.guardada" || a.ActorID != usuarioAdmin || !a.Cuando.Equal(ahora) {
+		t.Fatalf("asiento = %+v", a)
+	}
+	var payload struct {
+		Version int    `json:"version"`
+		Estado  string `json:"estado"`
+	}
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("payload no es JSON: %v", err)
+	}
+	if payload.Version != version {
+		t.Fatalf("payload.Version = %d, se esperaba %d", payload.Version, version)
+	}
+}
+
+// El caso que motivo el arreglo: si el asiento falla, la version tiene que
+// quedar SIN escribir, no huerfana. actor_id referencia a usuarios(id); un
+// actor que no existe hace fallar el INSERT en `asientos` sin tocar ninguna
+// otra tabla -es la unica forma de forzar ese fallo especifico sin doblar la
+// base-, y el rollback de EnTransaccion tiene que deshacer TODO lo anterior
+// en la misma llamada: la version abierta y sus partes.
+func TestGuardarRevierteLaVersionSiElAsientoFalla(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	_, err := s.Guardar(ctx, partesDePrueba(t, 60, 40), time.Now().UTC(), "actor-que-no-existe")
+	if err == nil {
+		t.Fatal("se esperaba que el asiento fallara por el actor inexistente")
+	}
+
+	historial, err := s.Historial(ctx, obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("Historial: %v", err)
+	}
+	if len(historial) != 0 {
+		t.Fatalf("la version quedo huerfana: %+v", historial)
+	}
+	asientos, err := s.De(ctx, "obra", obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("De: %v", err)
+	}
+	if len(asientos) != 0 {
+		t.Fatalf("no se esperaba ningun asiento: %+v", asientos)
+	}
+}
+
+// Dos ediciones SECUENCIALES (la segunda ya con la primera confirmada) que
+// piden el mismo instante -doble clic, o un reloj de baja resolucion- no
+// pueden dejar vigente_hasta == vigente_desde: el CHECK
+// declaracion_vigencia_coherente rechazaria una edicion valida. Guardar tiene
+// que empujar la segunda hacia adelante.
+func TestGuardarEmpujaVigenteDesdeSiCoincideConLaAnterior(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	mismoInstante := time.Now().UTC().Truncate(time.Microsecond)
+
+	if _, err := s.Guardar(ctx, partesDePrueba(t, 60, 40), mismoInstante, usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v1: %v", err)
+	}
+	if _, err := s.Guardar(ctx, partesDePrueba(t, 70, 30), mismoInstante, usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v2 con el mismo instante que v1: %v", err)
+	}
+
+	historial, err := s.Historial(ctx, obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("Historial: %v", err)
+	}
+	if len(historial) != 2 {
+		t.Fatalf("se esperaban 2 versiones, llegaron %d", len(historial))
+	}
+	if historial[0].VigenteHasta == nil || !historial[0].VigenteHasta.After(mismoInstante) {
+		t.Fatalf("version 1 cerro en %+v, se esperaba un instante posterior a %s", historial[0].VigenteHasta, mismoInstante)
+	}
+	if !historial[1].VigenteDesde.Equal(*historial[0].VigenteHasta) {
+		t.Fatalf("version 2 abre en %s, version 1 cerro en %s: tienen que coincidir",
+			historial[1].VigenteDesde, *historial[0].VigenteHasta)
 	}
 }

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -17,23 +18,55 @@ var _ aplicacion.GestionDeclaraciones = (*Store)(nil)
 const columnasParteEscritura = `titular_id, ipi, porcentaje`
 
 // Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
-// con las partes que llegan, todo en una sola transaccion.
+// con las partes que llegan, y asienta el hecho en la bitacora (ADR 0006),
+// todo en una sola transaccion.
 //
 // "Declarar por primera vez" y "editar" son la misma operacion aqui: la unica
 // diferencia es si existia una fila en declaracion_versiones con
 // vigente_hasta IS NULL para cerrar antes. El EXCLUDE de la migracion
 // 00007 es la ultima linea de defensa contra un solape; esta funcion nunca
 // deja dos versiones abiertas por su cuenta.
-func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time) (int, error) {
+//
+// El SELECT ... FOR UPDATE sobre `obras` bloquea la fila antes de mirar cual
+// es la version abierta. Sin el, dos PUT concurrentes sobre la misma obra
+// pueden leer la misma version abierta, calcular version+1 los dos, e
+// intentar abrir la misma PK -uno de los dos pierde con un 500 aunque su
+// declaracion fuera valida-. El lock tambien resuelve "la obra no existe"
+// (ErrNoEncontrado) sin esperar a la FK del INSERT de mas abajo, que se deja
+// como red de seguridad.
+//
+// ahora nunca queda menor o igual que el vigente_desde de la version que
+// cierra: TIMESTAMPTZ trunca a microsegundos, y dos ediciones SECUENCIALES
+// (no concurrentes: el FOR UPDATE no ayuda aqui, la primera ya confirmo)
+// pueden pedir el mismo instante. Sin este ajuste, la version nueva abre con
+// el mismo vigente_desde que vigente_hasta de la que cierra, y
+// declaracion_vigencia_coherente rechaza una edicion valida.
+//
+// El asiento se escribe con la MISMA tx que la version: ADR 0006 dice que es
+// parte de la definicion de hecho de esta operacion. Antes se escribia con
+// una llamada aparte a BitacoraAuditoria.Asentar despues de confirmar esta
+// transaccion, y un fallo ahi dejaba la version guardada sin asiento, sin
+// forma de revertirla ni de saber que quedo huerfana.
+func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, error) {
 	var version int
 	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		var existe string
+		if err := tx.QueryRow(ctx, `SELECT id FROM obras WHERE id = $1 FOR UPDATE`, d.ObraID).
+			Scan(&existe); err != nil {
+			return traducirError(err, "bloquear la obra %q para declarar", d.ObraID)
+		}
+
 		var versionAnterior int
+		var desdeAnterior time.Time
 		err := tx.QueryRow(ctx,
-			`SELECT version FROM declaracion_versiones WHERE obra_id = $1 AND vigente_hasta IS NULL`,
-			d.ObraID).Scan(&versionAnterior)
+			`SELECT version, vigente_desde FROM declaracion_versiones WHERE obra_id = $1 AND vigente_hasta IS NULL`,
+			d.ObraID).Scan(&versionAnterior, &desdeAnterior)
 		switch {
 		case err == nil:
 			version = versionAnterior + 1
+			if !ahora.After(desdeAnterior) {
+				ahora = desdeAnterior.Add(time.Microsecond)
+			}
 			if _, err := tx.Exec(ctx,
 				`UPDATE declaracion_versiones SET vigente_hasta = $3 WHERE obra_id = $1 AND version = $2`,
 				d.ObraID, versionAnterior, ahora); err != nil {
@@ -51,7 +84,8 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 			`INSERT INTO declaracion_versiones (obra_id, version, vigente_desde) VALUES ($1, $2, $3)`,
 			d.ObraID, version, ahora); err != nil {
 			// La unica FK de esta tabla es obra_id -> obras: una violacion aqui
-			// solo puede ser esa.
+			// solo puede ser esa. El FOR UPDATE de arriba deja esta rama
+			// practicamente inalcanzable; se queda como red de seguridad.
 			if esClaveForanea(err) {
 				return fmt.Errorf("abrir version %d de la obra %q: %w", version, d.ObraID, aplicacion.ErrNoEncontrado)
 			}
@@ -71,6 +105,25 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 			 SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[]::numeric[])`,
 			d.ObraID, version, titulares, ipis, porcentajes); err != nil {
 			return traducirError(err, "escribir las partes de la version %d de la obra %q", version, d.ObraID)
+		}
+
+		payload, err := json.Marshal(aplicacion.AsientoDeclaracion{
+			Version: version,
+			Estado:  d.Estado(),
+			Partes:  d.Partes,
+		})
+		if err != nil {
+			return fmt.Errorf("serializar asiento de la obra %q: %w", d.ObraID, err)
+		}
+		if err := asentar(ctx, tx, aplicacion.Asiento{
+			Hecho:   "declaracion.guardada",
+			RefTipo: "obra",
+			RefID:   d.ObraID,
+			ActorID: actorID,
+			Payload: payload,
+			Cuando:  ahora,
+		}); err != nil {
+			return err
 		}
 		return nil
 	})

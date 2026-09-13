@@ -22,7 +22,17 @@ const columnasAsiento = `id::text, hecho, ref_tipo, ref_id, COALESCE(actor_id, '
 // silenciosa de asientos, que es justo lo que el comentario de la migracion
 // advierte.
 func (s *Store) Asentar(ctx context.Context, a aplicacion.Asiento) error {
-	_, err := s.pool.Exec(ctx,
+	return asentar(ctx, s.pool, a)
+}
+
+// asentar es el INSERT que comparten [Store.Asentar] -suelto, contra el
+// pool- y cualquier otro puerto que necesite el mismo asiento DENTRO de su
+// propia transaccion -ver [Store.Guardar] en declaraciones.go, que lo corre
+// contra una pgx.Tx para que la version y el asiento sean una sola operacion
+// (ADR 0006)-. ejecutor es la parte de *pgxpool.Pool y pgx.Tx que este INSERT
+// necesita; cual de los dos llega lo decide quien llama.
+func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
+	_, err := ex.Exec(ctx,
 		`INSERT INTO asientos (hecho, ref_tipo, ref_id, actor_id, payload, cuando)
 		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)`,
 		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.Payload, a.Cuando)

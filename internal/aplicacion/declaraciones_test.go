@@ -18,16 +18,18 @@ type gestionFalsa struct {
 	guardadas        int
 	declRecibida     repertorio.Declaracion
 	ahoraRecibida    time.Time
+	actorIDRecibido  string
 	versionADevolver int
 	historial        []VersionDeclaracion
 	vigente          VersionDeclaracion
 	err              error
 }
 
-func (g *gestionFalsa) Guardar(_ context.Context, d repertorio.Declaracion, ahora time.Time) (int, error) {
+func (g *gestionFalsa) Guardar(_ context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, error) {
 	g.guardadas++
 	g.declRecibida = d
 	g.ahoraRecibida = ahora
+	g.actorIDRecibido = actorID
 	if g.err != nil {
 		return 0, g.err
 	}
@@ -45,25 +47,6 @@ func (g *gestionFalsa) VigenteEn(_ context.Context, _ string, _ time.Time) (Vers
 	return g.vigente, g.err
 }
 
-// bitacoraFalsa cuenta cuantos asientos se pidieron y puede simular el fallo
-// de escribirlos.
-type bitacoraFalsa struct {
-	asentados     int
-	asientoUltimo Asiento
-	errAsentar    error
-}
-
-func (b *bitacoraFalsa) Asentar(_ context.Context, a Asiento) error {
-	b.asentados++
-	b.asientoUltimo = a
-	return b.errAsentar
-}
-
-func (b *bitacoraFalsa) De(_ context.Context, _, _ string) ([]Asiento, error) { return nil, nil }
-func (b *bitacoraFalsa) AsientoPorID(_ context.Context, _ string) (Asiento, error) {
-	return Asiento{}, nil
-}
-
 func partesValidas() []repertorio.Parte {
 	return []repertorio.Parte{
 		{TitularID: "t1", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(60)},
@@ -71,12 +54,15 @@ func partesValidas() []repertorio.Parte {
 	}
 }
 
-func TestGuardarSplitsValidaGuardaYAsienta(t *testing.T) {
+// GuardarSplits delega TODO el trabajo de guardar y asentar en un unico
+// metodo de puerto (ver el comentario de GestionDeclaraciones en puertos.go):
+// esta prueba comprueba que le llegan los datos correctos, no que orqueste
+// una escritura y un asiento por separado -eso ya no existe, y es a proposito.
+func TestGuardarSplitsValidaYDelegaEnElPuerto(t *testing.T) {
 	gestion := &gestionFalsa{versionADevolver: 1}
-	bitacora := &bitacoraFalsa{}
 	momento := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 
-	d := Declaraciones{Gestion: gestion, Bitacora: bitacora, Reloj: relojFijo{instante: momento}}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{instante: momento}}
 
 	vd, err := d.GuardarSplits(t.Context(), "obra-1", partesValidas(), "usr-admin")
 	if err != nil {
@@ -91,14 +77,8 @@ func TestGuardarSplitsValidaGuardaYAsienta(t *testing.T) {
 	if gestion.declRecibida.ObraID != "obra-1" {
 		t.Fatalf("al puerto le llego otra obra: %q", gestion.declRecibida.ObraID)
 	}
-	if bitacora.asentados != 1 {
-		t.Fatalf("se esperaba 1 asiento, hubo %d", bitacora.asentados)
-	}
-	if bitacora.asientoUltimo.RefTipo != "obra" || bitacora.asientoUltimo.RefID != "obra-1" {
-		t.Fatalf("asiento mal referenciado: %+v", bitacora.asientoUltimo)
-	}
-	if bitacora.asientoUltimo.ActorID != "usr-admin" {
-		t.Fatalf("actor = %q", bitacora.asientoUltimo.ActorID)
+	if gestion.actorIDRecibido != "usr-admin" {
+		t.Fatalf("actor = %q", gestion.actorIDRecibido)
 	}
 }
 
@@ -106,8 +86,7 @@ func TestGuardarSplitsValidaGuardaYAsienta(t *testing.T) {
 // suman mas de 100 no llegan ni a intentarse.
 func TestGuardarSplitsInvalidoNoTocaElPuerto(t *testing.T) {
 	gestion := &gestionFalsa{}
-	bitacora := &bitacoraFalsa{}
-	d := Declaraciones{Gestion: gestion, Bitacora: bitacora, Reloj: relojFijo{}}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
 	partes := []repertorio.Parte{
 		{TitularID: "t1", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(60)},
@@ -121,30 +100,27 @@ func TestGuardarSplitsInvalidoNoTocaElPuerto(t *testing.T) {
 	if gestion.guardadas != 0 {
 		t.Fatal("se intento guardar una declaracion que el dominio rechaza")
 	}
-	if bitacora.asentados != 0 {
-		t.Fatal("se asento un hecho que nunca ocurrio")
-	}
 }
 
-// El asiento es parte de la definicion de hecho (ADR 0006): si Asentar falla,
-// GuardarSplits devuelve error aunque la escritura ya se hizo.
-func TestGuardarSplitsPropagaElFalloDelAsiento(t *testing.T) {
-	gestion := &gestionFalsa{versionADevolver: 1}
-	bitacora := &bitacoraFalsa{errAsentar: errors.New("bitacora caida")}
-	d := Declaraciones{Gestion: gestion, Bitacora: bitacora, Reloj: relojFijo{}}
+// Si Guardar falla -incluido un fallo al asentar, que ahora vive DENTRO de
+// esa misma llamada (ver [Store.Guardar] en postgres/declaraciones.go)-,
+// GuardarSplits solo tiene que propagar el error: ya no hay una segunda
+// escritura de la que deshacerse en este nivel. La prueba de que no queda una
+// version huerfana es de integracion, contra Postgres real:
+// TestGuardarRevierteLaVersionSiElAsientoFalla.
+func TestGuardarSplitsPropagaElErrorDelPuerto(t *testing.T) {
+	gestion := &gestionFalsa{err: errors.New("version y asiento fallaron juntos")}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
 	_, err := d.GuardarSplits(t.Context(), "obra-1", partesValidas(), "usr-admin")
 	if err == nil {
-		t.Fatal("se esperaba un error cuando el asiento falla")
-	}
-	if gestion.guardadas != 1 {
-		t.Fatalf("la escritura ya se habia hecho: se esperaba 1, hubo %d", gestion.guardadas)
+		t.Fatal("se esperaba un error cuando el puerto falla")
 	}
 }
 
 func TestGuardarSplitsPropagaNoEncontrado(t *testing.T) {
 	gestion := &gestionFalsa{err: ErrNoEncontrado}
-	d := Declaraciones{Gestion: gestion, Bitacora: &bitacoraFalsa{}, Reloj: relojFijo{}}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
 	_, err := d.GuardarSplits(t.Context(), "obra-inexistente", partesValidas(), "usr-admin")
 	if !errors.Is(err, ErrNoEncontrado) {
@@ -155,7 +131,7 @@ func TestGuardarSplitsPropagaNoEncontrado(t *testing.T) {
 func TestHistorialPasaAlPuerto(t *testing.T) {
 	quiero := []VersionDeclaracion{{Version: 1}, {Version: 2}}
 	gestion := &gestionFalsa{historial: quiero}
-	d := Declaraciones{Gestion: gestion, Bitacora: &bitacoraFalsa{}, Reloj: relojFijo{}}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
 	got, err := d.Historial(t.Context(), "obra-1")
 	if err != nil {
@@ -170,7 +146,7 @@ func TestVigenteEnPasaElMomento(t *testing.T) {
 	momento := time.Date(2020, 6, 1, 0, 0, 0, 0, time.UTC)
 	quiero := VersionDeclaracion{Version: 3}
 	gestion := &gestionFalsa{vigente: quiero}
-	d := Declaraciones{Gestion: gestion, Bitacora: &bitacoraFalsa{}, Reloj: relojFijo{}}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
 	got, err := d.VigenteEn(t.Context(), "obra-1", momento)
 	if err != nil {
