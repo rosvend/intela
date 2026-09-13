@@ -171,6 +171,43 @@ func TestGuardarObraInexistenteEsNoEncontrado(t *testing.T) {
 	}
 }
 
+// Un titular_id que no esta en el padron es un dato malo del CUERPO, no una
+// obra ausente: tiene centinela propio para que el adaptador HTTP lo pueda
+// separar del 404 de la obra.
+func TestGuardarTitularInexistenteEsErrTitularInexistente(t *testing.T) {
+	s, _ := sembrar(t)
+
+	d, err := repertorio.NuevaDeclaracion(obraSinDeclaracion, []repertorio.Parte{
+		{TitularID: "titular-que-no-existe", IPI: "IPI-00000099", Porcentaje: decimal.NewFromInt(100)},
+	})
+	if err != nil {
+		t.Fatalf("construir la declaracion: %v", err)
+	}
+
+	_, err = s.Guardar(t.Context(), d, time.Now().UTC(), usuarioAdmin)
+	if !errors.Is(err, aplicacion.ErrTitularInexistente) {
+		t.Fatalf("se esperaba ErrTitularInexistente, se obtuvo %v", err)
+	}
+
+	// La FK revienta DENTRO de la misma transaccion que abrio la version: no
+	// puede quedar una version huerfana ni un asiento sin las partes que
+	// describe (mismo patron que TestGuardarRevierteLaVersionSiElAsientoFalla).
+	historial, err := s.Historial(t.Context(), obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("Historial: %v", err)
+	}
+	if len(historial) != 0 {
+		t.Fatalf("la version quedo huerfana: %+v", historial)
+	}
+	asientos, err := s.De(t.Context(), "obra", obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("De: %v", err)
+	}
+	if len(asientos) != 0 {
+		t.Fatalf("no se esperaba ningun asiento: %+v", asientos)
+	}
+}
+
 // Ultima linea de defensa: el EXCLUDE de la migracion 00007 rechaza un
 // solape aunque alguien lo intente por fuera de Guardar.
 func TestElEsquemaRechazaVigenciasQueSeSolapan(t *testing.T) {

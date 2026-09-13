@@ -101,6 +101,14 @@ func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoE
 		// registrarObra con ErrObraInvalida-.
 		escribirError(w, http.StatusBadRequest, err.Error())
 		return
+	case errors.Is(err, aplicacion.ErrTitularInexistente):
+		// Mismo criterio 400 que ErrDeclaracionInvalida: el titular_id viene del
+		// cuerpo, no del path -por eso no es 404, que aqui esta reservado al
+		// recurso de la URL (la obra)-. Mensaje fijo y no err.Error() porque
+		// este centinela sube envuelto por el adaptador y por el caso de uso, y
+		// esas frases son internas.
+		escribirError(w, http.StatusBadRequest, "uno de los titulares indicados no existe")
+		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa obra no esta en el catalogo")
 		return

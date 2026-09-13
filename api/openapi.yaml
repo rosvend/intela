@@ -717,7 +717,8 @@ paths:
         "400":
           description: |
             El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
-            que no es positivo, un titular repetido, o la suma se pasa de 100.
+            que no es positivo, un titular repetido, la suma se pasa de 100, o
+            nombra un titular_id que no esta en el padron.
           content:
             application/json:
               schema:
@@ -802,7 +803,8 @@ paths:
         "400":
           description: |
             El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
-            que no es positivo, un titular repetido, o la suma se pasa de 100.
+            que no es positivo, un titular repetido, la suma se pasa de 100, o
+            nombra un titular_id que no esta en el padron.
           content:
             application/json:
               schema:

@@ -104,6 +104,14 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 			`INSERT INTO declaraciones (obra_id, version, `+columnasParteEscritura+`)
 			 SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[]::numeric[])`,
 			d.ObraID, version, titulares, ipis, porcentajes); err != nil {
+			// La FK viva de esta tabla es titular_id -> titulares: la de obra_id
+			// ya la resolvio el FOR UPDATE de arriba. A diferencia del INSERT
+			// anterior, esta no es una red de seguridad sino la unica linea que
+			// detecta un titular inventado.
+			if esClaveForanea(err) {
+				return fmt.Errorf("escribir las partes de la version %d de la obra %q: %w",
+					version, d.ObraID, aplicacion.ErrTitularInexistente)
+			}
 			return traducirError(err, "escribir las partes de la version %d de la obra %q", version, d.ObraID)
 		}
 

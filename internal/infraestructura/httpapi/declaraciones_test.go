@@ -136,6 +136,18 @@ func TestGuardarDeclaracionDeObraInexistenteDevuelve404(t *testing.T) {
 	}
 }
 
+// 400 y no 404: el titular_id llega en el cuerpo, y el 404 de esta ruta esta
+// reservado a la obra del path.
+func TestGuardarDeclaracionConTitularInexistenteDevuelve400(t *testing.T) {
+	falso := &declaracionesFalso{err: aplicacion.ErrTitularInexistente}
+	h := servidorConDeclaraciones(t, falso)
+
+	rec := pedir(t, h, http.MethodPost, "/obras/obra-1/declaracion", cuerpoPartes, "tok")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestGuardarDeclaracionCuerpoMalFormadoDevuelve400(t *testing.T) {
 	h := servidorConDeclaraciones(t, &declaracionesFalso{})
 
