@@ -24,7 +24,7 @@ filtro de repertorio (R-27) que corre **antes** de la cascada:
    que la próxima fila con ese id de fuente entre por el escalón 1.
 3. **Filtro de repertorio (escalón 0)**: una fila de una fuente excluida no entra a la cascada:
    queda `escalon = 'excluido'` con `oni = false` y sin obra: **no se marca ONI** y no sale en
-   `oni_publico` (migración `00010`, ver D4).
+   `oni_publico` (migración `00007`, ver D4).
 4. **Lo no resuelto se queda como está** (`escalon = 'pendiente'`): es el insumo del difuso (#32),
    que es otro issue. La cola manual/ONI y su UI son #39/#37.
 
@@ -201,7 +201,7 @@ caso de uso no sondea nada ni aprende alias, y **persiste la exclusión** con `G
 excluida («sin estado persistido, por ahora»). Eso dejaba la fila como la siembra la ingesta
 (`pendiente`, `oni = true`), y como `oni_publico` filtra `WHERE u.oni`, la fila excluida aparecía en
 el listado público de ONI: violaba el criterio 4 de la issue. Se resuelve con la migración aditiva
-`00010_uso_excluido_no_es_oni.sql`:
+`00007_uso_excluido_no_es_oni.sql`:
 
 - añade `excluido` al CHECK de `usos.escalon`;
 - abre en `uso_resuelto_tiene_obra` una rama solo para ese valor: excluida es **sin obra y sin ONI
@@ -260,12 +260,12 @@ deshacer una corrección previa.
 ### D6 — Trazabilidad: el `Resultado` habla el vocabulario del CHECK de `usos`
 
 **Decisión**: `Resultado.Escalon` (string) usa los valores del CHECK de `usos.escalon` que ya
-existen: `"alias"` e `"id_global"`, más `"excluido"` (añadido al CHECK por `00010`, ver D4).
+existen: `"alias"` e `"id_global"`, más `"excluido"` (añadido al CHECK por `00007`, ver D4).
 `GuardarMatch` traduce el `Resultado` al `UPDATE` de la fila sin reinterpretar nada:
 
 - `obra_id = NULLIF($2,'')`, `escalon = $3`, `evidencia = $4`, `puntaje = $5`,
   `oni = (obra_id vacío AND escalon <> 'excluido')` — consistente con el CHECK
-  `uso_resuelto_tiene_obra` (versión de `00010`) por construcción.
+  `uso_resuelto_tiene_obra` (versión de `00007`) por construcción.
 - Los aciertos de alias/id_global llevan `puntaje = 1` (certeza máxima por igualdad exacta) y
   `oni = false`; `resuelto_por` y `resuelto_en` quedan `NULL` (el CHECK `manual_tiene_autor` los
   reserva a la resolución manual; el instante de la resolución automática quedará en el asiento de
@@ -590,7 +590,7 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
 | Escalón 1: `(fuente, tipo_id, valor) → obra` | `alias_obra(fuente, tipo_id, valor, obra_id, quien, aprendido)`, PK `(fuente, tipo_id, valor)` |
 | Escalón 2: igualdad por IDA/EIDR/IMDB | `obras(ida, eidr, imdb)` + índices parciales `obras_ida/eidr/imdb` (00001, creados para esto) |
 | GuardarMatch: qué escalón y qué evidencia | `usos(obra_id, escalon, evidencia, puntaje, oni)` — columnas y CHECK ya en 00001 |
-| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra ausente y no excluida`; rama `excluido` desde 00010) |
+| «Un uso resuelto tiene obra; uno en ONI no» | CHECK `uso_resuelto_tiene_obra`; `GuardarMatch` lo respeta por construcción (`oni = obra ausente y no excluida`; rama `excluido` desde 00007) |
 | Actor/instante de la resolución | `usos.resuelto_por/resuelto_en` + CHECK `manual_tiene_autor`: reservados a `escalon='manual'` (#39) |
 | Puntaje de confianza | `usos.puntaje NUMERIC(6,5) CHECK (0..1)`; alias/id_global = 1 |
 | Ids de fuente de la fila | `usos.ids_fuente TEXT` (formato: D1) |
@@ -607,7 +607,7 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
 - **Nada de UI/cola manual (#39)**: GuardarAlias con `quien` humano no tiene llamador todavía.
 - **Nada de lectura de usos (#72)**: `ResolverUsos` consume el puerto declarado; el adaptador de
   `RepositorioIngesta` lo trae #72. Los tests de integración usan doble local + SQL directo.
-- **Esquema**: una sola migración aditiva, `00010_uso_excluido_no_es_oni.sql`, que la review de la
+- **Esquema**: una sola migración aditiva, `00007_uso_excluido_no_es_oni.sql`, que la review de la
   PR #99 hizo necesaria para persistir la exclusión (D4/P3). Nada más del esquema cambia.
 - **No hay dinero**: ninguna medida ni importe entra en la cascada; el `puntaje` es confianza de
   matching, no valor.
@@ -650,7 +650,7 @@ Catálogo sembrado: obra `obra-45` con `ida=''`, `eidr=''`, `imdb='tt0100001'`; 
   fuera + mapeo de géneros, pregunta 5 de `fuentes-datos.md`) no existe. Mientras tanto el set
   inyectado queda vacío en producción. ¿Alguien más conoce una fuente de este dato?
 - **P3 (revisor) — resuelta en la review de la PR #99** — Las filas excluidas no pueden aparecer
-  como ONI (criterio 4). Se representa «excluido» en `usos` con la migración aditiva `00010`
+  como ONI (criterio 4). Se representa «excluido» en `usos` con la migración aditiva `00007`
   (valor `excluido` en el CHECK de `escalon` y `oni = false`); ver D4.
 - **P4 (revisor)** — `GuardarMatch` no registra el instante de la resolución automática
   (`resuelto_en` queda NULL; el CHECK lo reserva a `manual`). El «cuándo» quedará en el asiento de

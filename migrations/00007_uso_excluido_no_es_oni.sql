@@ -16,8 +16,27 @@
 -- no se tocan: con oni=FALSE y escalon<>'pendiente' la fila excluida ya queda
 -- fuera de los tres.
 --
--- NUMERO: 00010, por encima del mayor reclamado en `main` y en las ramas
--- abiertas el 2026-09-12 (ver la cabecera de 00006: nunca un hueco).
+-- NUMERO: 00007, el primero libre por encima de la version que produccion ya
+-- aplico (00006). Renumerado desde 00010 en la review de esta PR.
+--
+-- 00010 seguia la LETRA de la cabecera de 00006 -"por encima del mayor que
+-- exista"-, pero esa regla solo protege a quien la aplica. Esta es la primera
+-- de las cinco PRs con migracion en llegar a `main`, y al desplegarse deja
+-- produccion en la version que diga este nombre. Con 00010, los 00007 de #106
+-- y #80, el 00008 de #87 y el 00009 de #88 quedan POR DEBAJO de la version
+-- aplicada, y `goose` -allowMissing = false- los rechaza con
+--
+--     found N missing migrations before current version 10
+--
+-- que es exactamente el bloqueo de despliegue que describe 00006, solo que
+-- infligido a otras cuatro PRs a la vez. Con 00007 produccion queda en 7, y el
+-- 00008 de #87 y el 00009 de #88 siguen siendo validos sin tocar nada.
+--
+-- La regla utilizable no es "por encima del mayor que exista" sino "el primero
+-- libre por encima de la version APLICADA, y se reasigna al mergear". #106 y
+-- #80, que tambien reclaman 00007, tendran que subirlo: dos archivos con
+-- nombres distintos y la misma version no dan conflicto en git, y hacen que
+-- `goose` entre en panic con "duplicate version 7" en pleno despliegue.
 
 -- +goose Up
 -- +goose StatementBegin

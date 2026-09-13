@@ -68,7 +68,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // reinterpretar nada (D6 del diseno): oni es la negacion de si hay obra, salvo
 // para escalon='excluido', que no tiene obra y tampoco es ONI (criterio 4 de
 // #28: una fila fuera de repertorio no puede aparecer en oni_publico). El CHECK
-// uso_resuelto_tiene_obra, desde 00010, admite ese caso y solo ese.
+// uso_resuelto_tiene_obra, desde 00007, admite ese caso y solo ese.
 //
 // oni = ($2 = vacio), no ($2 <> vacio): el CHECK uso_resuelto_tiene_obra
 // exige (oni AND obra_id IS NULL) OR (NOT oni AND obra_id IS NOT NULL) -oni

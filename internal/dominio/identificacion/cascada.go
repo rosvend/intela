@@ -9,7 +9,7 @@ import (
 
 // Escalones del vocabulario del CHECK de usos.escalon (00001_init.sql).
 //
-// EscalonExcluido se persiste desde la migracion 00010 (ver D4 de
+// EscalonExcluido se persiste desde la migracion 00007 (ver D4 de
 // docs/planes/28-cascada-identificacion/01-design.md): la fila queda sin obra
 // y con oni=false, porque fuera de repertorio no es lo mismo que no
 // identificada (criterio 4 de #28).

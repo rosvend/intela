@@ -515,7 +515,7 @@ func TestGuardarMatchExcluidoNoEsONI(t *testing.T) {
 	}
 }
 
-// uso_resuelto_tiene_obra (00010): la rama de 'excluido' no es una puerta
+// uso_resuelto_tiene_obra (00007): la rama de 'excluido' no es una puerta
 // trasera para guardar una fila con obra fuera de las reglas de siempre.
 func TestGuardarMatchRechazaExcluidoConObra(t *testing.T) {
 	s, _ := sembrarIdentificacion(t)
