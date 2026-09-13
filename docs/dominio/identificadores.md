@@ -61,7 +61,7 @@ Forma minima de la tabla de alias:
 ```
 alias_obra(
   fuente,            -- 'caracol' | 'netflix' | ...
-  tipo_id,           -- 'ID_Ficha' | 'show_id' | 'series_id' | 'netflix_id'
+  tipo_id,           -- 'id_ficha' | 'show_id' | 'series_id' | 'netflix_id' (claves de ADR 0018)
   valor_id,
   obra_id,           -- FK al catalogo maestro
   confianza,
