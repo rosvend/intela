@@ -353,7 +353,7 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 	}
 
-	// Cabecera de version (migracion 00007, #23): cada declaracion del
+	// Cabecera de version (migracion 00008, #23): cada declaracion del
 	// dataset entra como version 1, vigente desde el momento del seed. El
 	// seed no reproduce reparto (ADR 0005 no aplica aqui, ver docs/dominio
 	// sobre que el seed no es dato real), asi que time.Now() esta bien -no

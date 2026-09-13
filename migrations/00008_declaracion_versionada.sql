@@ -73,10 +73,17 @@ CREATE INDEX declaracion_versiones_abierta
 -- into *time.Time"), y CADA lectura de esta fila -Historial, VigenteEn, y el
 -- propio Guardar al buscar la version abierta antes de cerrarla- pasa por ese
 -- Scan. Un corte real y lejano cumple lo mismo -ninguna fecha de negocio cae
--- antes- sin ese riesgo: aqui el primer instante representable, documentado
--- como el corte de todo lo declarado antes de este PR.
+-- antes- sin ese riesgo.
+--
+-- Y tampoco es '0001-01-01': ese valor especifico round-trippea exactamente
+-- al time.Time{} cero de Go, asi que VigenteDesde.IsZero() daria true para
+-- TODA declaracion previa a este PR -indistinguible en Go de "no hay valor"-,
+-- y se filtraria tal cual a la API como "vigente_desde": "0001-01-01T...".
+-- 1900-01-01 cumple lo mismo -ningun reparto real es anterior- sin colisionar
+-- con el cero de Go, y queda documentado aqui como el corte de todo lo
+-- declarado antes de este PR.
 INSERT INTO declaracion_versiones (obra_id, version, vigente_desde, vigente_hasta)
-SELECT DISTINCT obra_id, 1, TIMESTAMPTZ '0001-01-01 00:00:00+00', NULL::timestamptz
+SELECT DISTINCT obra_id, 1, TIMESTAMPTZ '1900-01-01 00:00:00+00', NULL::timestamptz
 FROM declaraciones;
 -- +goose StatementEnd
 

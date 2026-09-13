@@ -185,7 +185,13 @@ type CatalogoObras interface {
 // una version guardada sin asiento si la segunda llamada falla- sino la unica
 // forma de que "version + asiento" sea una sola cosa o ninguna.
 type GestionDeclaraciones interface {
-	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, err error)
+	// Guardar devuelve la version nueva y el vigente_desde que de verdad quedo
+	// escrito: no siempre es el ahora que llego, porque la implementacion
+	// puede ajustarlo -por ejemplo para que no coincida con el vigente_desde
+	// de la version que cierra-. Devolver el valor real y no el que se envio
+	// es lo que evita que el llamador informe una ventana de vigencia que la
+	// base nunca tuvo.
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
 	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
 }

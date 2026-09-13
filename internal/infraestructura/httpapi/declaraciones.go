@@ -58,12 +58,16 @@ func aVersionJSON(vd aplicacion.VersionDeclaracion) versionDeclaracionJSON {
 	}
 	var vigenteHasta *string
 	if vd.VigenteHasta != nil {
-		s := vd.VigenteHasta.Format(time.RFC3339)
+		// RFC3339Nano y no RFC3339: la ventana de vigencia se compara y se
+		// ajusta a resolucion de microsegundo (ver postgres.Store.Guardar), y
+		// RFC3339 la trunca a segundos -dos versiones que abrieron en el mismo
+		// segundo se verian con el mismo vigente_desde en la API.
+		s := vd.VigenteHasta.Format(time.RFC3339Nano)
 		vigenteHasta = &s
 	}
 	return versionDeclaracionJSON{
 		Version:      vd.Version,
-		VigenteDesde: vd.VigenteDesde.Format(time.RFC3339),
+		VigenteDesde: vd.VigenteDesde.Format(time.RFC3339Nano),
 		VigenteHasta: vigenteHasta,
 		Estado:       vd.Declaracion.Estado(),
 		Partes:       partes,
@@ -77,7 +81,14 @@ func aVersionJSON(vd aplicacion.VersionDeclaracion) versionDeclaracionJSON {
 // operacion en el nucleo (aplicacion.Declaraciones.GuardarSplits decide por
 // si sola si cierra una version anterior o abre la primera), y lo unico que
 // cambia entre POST y PUT es el codigo de exito.
+// maxCuerpoDeclaracion acota el JSON del cuerpo antes de decodificarlo: sin
+// limite, un array arbitrariamente grande de partes se asigna entero en
+// memoria antes de que NuevaDeclaracion tenga oportunidad de rechazarlo.
+const maxCuerpoDeclaracion = 1 << 20 // 1 MiB: ninguna obra real tiene miles de coautores.
+
 func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoExito int) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoDeclaracion)
+
 	var cuerpo []parteJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con la lista de partes")

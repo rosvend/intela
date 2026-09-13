@@ -19,12 +19,14 @@ const columnasParteEscritura = `titular_id, ipi, porcentaje`
 
 // Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
 // con las partes que llegan, y asienta el hecho en la bitacora (ADR 0006),
-// todo en una sola transaccion.
+// todo en una sola transaccion. Devuelve la version nueva y el vigente_desde
+// que de verdad quedo escrito, que no siempre es el ahora que llego: ver el
+// tercer parrafo.
 //
 // "Declarar por primera vez" y "editar" son la misma operacion aqui: la unica
 // diferencia es si existia una fila en declaracion_versiones con
 // vigente_hasta IS NULL para cerrar antes. El EXCLUDE de la migracion
-// 00007 es la ultima linea de defensa contra un solape; esta funcion nunca
+// 00008 es la ultima linea de defensa contra un solape; esta funcion nunca
 // deja dos versiones abiertas por su cuenta.
 //
 // El SELECT ... FOR UPDATE sobre `obras` bloquea la fila antes de mirar cual
@@ -35,19 +37,31 @@ const columnasParteEscritura = `titular_id, ipi, porcentaje`
 // (ErrNoEncontrado) sin esperar a la FK del INSERT de mas abajo, que se deja
 // como red de seguridad.
 //
-// ahora nunca queda menor o igual que el vigente_desde de la version que
-// cierra: TIMESTAMPTZ trunca a microsegundos, y dos ediciones SECUENCIALES
-// (no concurrentes: el FOR UPDATE no ayuda aqui, la primera ya confirmo)
-// pueden pedir el mismo instante. Sin este ajuste, la version nueva abre con
-// el mismo vigente_desde que vigente_hasta de la que cierra, y
-// declaracion_vigencia_coherente rechaza una edicion valida.
+// ahora se trunca a microsegundo ANTES de compararlo con nada, no en el
+// momento de escribir: TIMESTAMPTZ solo guarda microsegundos y pgx trunca al
+// codificar sin avisar. Comparar en la resolucion de nanosegundo de Go contra
+// un desdeAnterior que ya viene truncado deja pasar un ahora que en Go es
+// estrictamente posterior pero cae en el MISMO microsegundo una vez escrito
+// -el UPDATE de mas abajo terminaria con vigente_hasta == vigente_desde, y
+// declaracion_vigencia_coherente rechazaria una edicion valida con un 500
+// opaco-. Truncar primero hace que la comparacion ocurra en la resolucion
+// real de la base, y que el valor que este metodo devuelve coincida siempre
+// con el que quedo escrito.
+//
+// ahora tambien nunca queda menor o igual que el vigente_desde de la version
+// que cierra: dos ediciones SECUENCIALES (no concurrentes: el FOR UPDATE no
+// ayuda aqui, la primera ya confirmo) pueden pedir el mismo instante una vez
+// truncado. Sin este ajuste, la version nueva abriria con el mismo
+// vigente_desde que vigente_hasta de la que cierra, y
+// declaracion_vigencia_coherente rechazaria esa edicion tambien.
 //
 // El asiento se escribe con la MISMA tx que la version: ADR 0006 dice que es
 // parte de la definicion de hecho de esta operacion. Antes se escribia con
 // una llamada aparte a BitacoraAuditoria.Asentar despues de confirmar esta
 // transaccion, y un fallo ahi dejaba la version guardada sin asiento, sin
 // forma de revertirla ni de saber que quedo huerfana.
-func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, error) {
+func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, time.Time, error) {
+	ahora = ahora.Truncate(time.Microsecond)
 	var version int
 	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		var existe string
@@ -104,11 +118,14 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 			`INSERT INTO declaraciones (obra_id, version, `+columnasParteEscritura+`)
 			 SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[]::numeric[])`,
 			d.ObraID, version, titulares, ipis, porcentajes); err != nil {
-			// La FK viva de esta tabla es titular_id -> titulares: la de obra_id
-			// ya la resolvio el FOR UPDATE de arriba. A diferencia del INSERT
-			// anterior, esta no es una red de seguridad sino la unica linea que
-			// detecta un titular inventado.
-			if esClaveForanea(err) {
+			// declaraciones_titular_id_fkey (titular_id -> titulares) es la unica
+			// de las dos FK de esta tabla que puede violarse aqui de verdad: la de
+			// obra_id+version -> declaracion_versiones ya la satisface el INSERT
+			// de la cabecera, unas lineas arriba, en la MISMA transaccion. Se
+			// discrimina por nombre igual -no con esClaveForanea a secas- para no
+			// traducir un fallo ajeno como "titular inexistente" si esa segunda FK
+			// alguna vez se alcanza.
+			if esClaveForaneaDe(err, "declaraciones_titular_id_fkey") {
 				return fmt.Errorf("escribir las partes de la version %d de la obra %q: %w",
 					version, d.ObraID, aplicacion.ErrTitularInexistente)
 			}
@@ -136,9 +153,9 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
-	return version, nil
+	return version, ahora, nil
 }
 
 // Historial devuelve todas las versiones de la declaracion de una obra, en

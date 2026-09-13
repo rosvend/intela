@@ -38,13 +38,12 @@ func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes 
 		return VersionDeclaracion{}, err
 	}
 
-	ahora := d.Reloj.Ahora()
-	version, err := d.Gestion.Guardar(ctx, decl, ahora, actorID)
+	version, vigenteDesde, err := d.Gestion.Guardar(ctx, decl, d.Reloj.Ahora(), actorID)
 	if err != nil {
 		return VersionDeclaracion{}, fmt.Errorf("guardar declaracion de la obra %q: %w", obraID, err)
 	}
 
-	return VersionDeclaracion{Version: version, VigenteDesde: ahora, Declaracion: decl}, nil
+	return VersionDeclaracion{Version: version, VigenteDesde: vigenteDesde, Declaracion: decl}, nil
 }
 
 // Historial devuelve todas las versiones de la declaracion de una obra,

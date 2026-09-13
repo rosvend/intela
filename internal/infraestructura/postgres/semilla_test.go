@@ -98,7 +98,7 @@ func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 	            ($4, 'IPI-00000002', 'Beto Libretista', 'argumentista')`,
 		obraCompleta, obraIncompleta, obraSinDeclaracion, obraSinIPI)
 
-	// Cabecera de version (migracion 00007, #23): toda fila de `declaraciones`
+	// Cabecera de version (migracion 00008, #23): toda fila de `declaraciones`
 	// necesita una fila en `declaracion_versiones` para el par (obra_id,
 	// version) que referencia. Las tres obras que declaran algo abajo entran
 	// con version 1, vigente desde ahora -ninguna prueba de este paquete edita

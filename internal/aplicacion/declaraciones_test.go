@@ -15,28 +15,37 @@ import (
 // comprobable que la validacion del dominio corre ANTES y no despues, igual
 // que catalogoFalso.
 type gestionFalsa struct {
-	guardadas        int
-	declRecibida     repertorio.Declaracion
-	ahoraRecibida    time.Time
-	actorIDRecibido  string
-	versionADevolver int
-	historial        []VersionDeclaracion
-	vigente          VersionDeclaracion
-	err              error
+	guardadas             int
+	declRecibida          repertorio.Declaracion
+	ahoraRecibida         time.Time
+	actorIDRecibido       string
+	versionADevolver      int
+	vigenteDesdeADevolver time.Time
+	historial             []VersionDeclaracion
+	vigente               VersionDeclaracion
+	err                   error
 }
 
-func (g *gestionFalsa) Guardar(_ context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, error) {
+// Guardar devuelve, por defecto, el mismo ahora que recibe -asi el doble
+// falso se comporta como el caso comun, sin vigenteDesdeADevolver de por
+// medio, en las pruebas que no estan verificando el ajuste del puerto-.
+func (g *gestionFalsa) Guardar(_ context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, time.Time, error) {
 	g.guardadas++
 	g.declRecibida = d
 	g.ahoraRecibida = ahora
 	g.actorIDRecibido = actorID
 	if g.err != nil {
-		return 0, g.err
+		return 0, time.Time{}, g.err
 	}
-	if g.versionADevolver == 0 {
-		return 1, nil
+	version := g.versionADevolver
+	if version == 0 {
+		version = 1
 	}
-	return g.versionADevolver, nil
+	vigenteDesde := ahora
+	if !g.vigenteDesdeADevolver.IsZero() {
+		vigenteDesde = g.vigenteDesdeADevolver
+	}
+	return version, vigenteDesde, nil
 }
 
 func (g *gestionFalsa) Historial(_ context.Context, _ string) ([]VersionDeclaracion, error) {
@@ -79,6 +88,26 @@ func TestGuardarSplitsValidaYDelegaEnElPuerto(t *testing.T) {
 	}
 	if gestion.actorIDRecibido != "usr-admin" {
 		t.Fatalf("actor = %q", gestion.actorIDRecibido)
+	}
+}
+
+// GuardarSplits tiene que devolver el vigente_desde que el PUERTO dice que
+// escribio, no el instante de Reloj.Ahora() que le mando: el puerto puede
+// ajustarlo (ver postgres.Store.Guardar) para que no choque con la version
+// que cierra, y devolver el valor local en vez del real es precisamente el
+// bloqueante que esta prueba existe para cazar.
+func TestGuardarSplitsDevuelveElVigenteDesdeDelPuertoNoElDelReloj(t *testing.T) {
+	momento := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	ajustado := momento.Add(time.Microsecond)
+	gestion := &gestionFalsa{versionADevolver: 2, vigenteDesdeADevolver: ajustado}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{instante: momento}}
+
+	vd, err := d.GuardarSplits(t.Context(), "obra-1", partesValidas(), "usr-admin")
+	if err != nil {
+		t.Fatalf("GuardarSplits: %v", err)
+	}
+	if !vd.VigenteDesde.Equal(ajustado) {
+		t.Fatalf("VigenteDesde = %s, se esperaba el valor ajustado del puerto %s", vd.VigenteDesde, ajustado)
 	}
 }
 

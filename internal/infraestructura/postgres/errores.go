@@ -58,6 +58,20 @@ func esClaveForanea(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == codigoForanea
 }
 
+// esClaveForaneaDe es [esClaveForanea] pero para una tabla con MAS de una FK,
+// donde "es una violacion de FK" no basta para saber cual: hace falta
+// preguntar por el nombre de la restriccion.
+//
+// Ver [Store.Guardar] en declaraciones.go: `declaraciones` tiene la FK hacia
+// `titulares` (declaraciones_titular_id_fkey) y, desde la migracion 00008,
+// tambien hacia `declaracion_versiones` (declaraciones_version_fkey). Sin
+// discriminar, un fallo en la segunda se traduciria como "titular inexistente"
+// -que no es lo que paso- solo porque las dos comparten codigo SQLSTATE.
+func esClaveForaneaDe(err error, restriccion string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoForanea && pgErr.ConstraintName == restriccion
+}
+
 // traducirError lleva un error de pgx al vocabulario de aplicacion.
 //
 // pgx.ErrNoRows significa "la consulta fue bien y no hay fila", que es justo

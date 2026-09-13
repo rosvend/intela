@@ -661,15 +661,18 @@ paths:
 
     post:
       tags: [repertorio]
-      summary: Declarar la obra por primera vez
+      summary: Declarar la obra
       description: |
-        Da de alta la primera version de la Declaracion de Obra (`R-03`,
-        `RD 7.3.1`, `RD 7.3.4`): el UNICO origen valido de los porcentajes de
-        reparto, nunca los reportes de uso ni los contratos de escritura.
+        Abre una version nueva de la Declaracion de Obra (`R-03`, `RD 7.3.1`,
+        `RD 7.3.4`): el UNICO origen valido de los porcentajes de reparto,
+        nunca los reportes de uso ni los contratos de escritura.
 
-        Es la misma operacion que `PUT` en este mismo path -las dos abren una
-        version nueva-; la unica diferencia es el codigo de exito. Se ofrecen
-        los dos verbos porque distinguir "la primera vez" de "una edicion" es
+        Es la misma operacion que `PUT` en este mismo path -las dos cierran la
+        version abierta si la hay y abren una nueva-; la unica diferencia es
+        el codigo de exito, no el numero de version que resulta. Si la obra ya
+        tenia una declaracion, este `POST` la sustituye igual que lo haria un
+        `PUT`: no es exclusivo de "la primera vez", aunque ese sea el uso mas
+        comun. Se ofrecen los dos verbos porque distinguir alta de edicion es
         util para quien integra, aunque el nucleo no necesite la distincion.
 
         Una suma menor a 100 SI se acepta: es el estado `declaracion_incompleta`
@@ -697,7 +700,10 @@ paths:
                 porcentaje: 40
       responses:
         "201":
-          description: Version 1 de la declaracion, recien creada.
+          description: |
+            La version nueva, recien creada. Es version 1 solo si la obra no
+            tenia ninguna declaracion previa; si ya tenia una, esta la cierra
+            y el numero sigue la secuencia.
           content:
             application/json:
               schema:
@@ -1107,6 +1113,7 @@ components:
           type: number
           format: decimal
           minimum: 0
+          exclusiveMinimum: true
           maximum: 100
           description: |
             Porcentaje declarado por este titular. El esquema solo exige no

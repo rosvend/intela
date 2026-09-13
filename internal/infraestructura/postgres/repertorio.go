@@ -15,7 +15,7 @@ const columnasObra = `id, titulo, ida, eidr, imdb, tipo`
 // las dos quieren la declaracion VIGENTE, sin versiones visibles -eso lo
 // resuelve [Store.Guardar] y [Store.Historial] en declaraciones.go, para el
 // consumidor que si necesita hablar en versiones-. Por eso el JOIN filtra
-// vigente_hasta IS NULL: desde la migracion 00007, `declaraciones` puede tener
+// vigente_hasta IS NULL: desde la migracion 00008, `declaraciones` puede tener
 // varias filas por (obra_id, titular_id), una por version, y sin este filtro
 // se mezclarian partes de versiones historicas con las de la vigente.
 const columnasParte = `titular_id, ipi, porcentaje`

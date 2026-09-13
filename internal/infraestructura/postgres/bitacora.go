@@ -45,10 +45,15 @@ func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
 // De devuelve los asientos de una referencia, del mas antiguo al mas nuevo:
 // es el orden en el que ocurrieron los hechos, y es el que espera
 // ExplicarCifra para reconstruir una cadena.
+//
+// ORDER BY cuando, id: cuando por si solo no desempata dos asientos escritos
+// en el mismo instante -Guardar los escribe con el mismo ahora que la version
+// que asientan-, y el ADR 0005 exige que este orden sea reproducible, no
+// arbitrario.
 func (s *Store) De(ctx context.Context, refTipo, refID string) ([]aplicacion.Asiento, error) {
 	filas, err := s.pool.Query(ctx,
 		`SELECT `+columnasAsiento+` FROM asientos
-		  WHERE ref_tipo = $1 AND ref_id = $2 ORDER BY cuando`,
+		  WHERE ref_tipo = $1 AND ref_id = $2 ORDER BY cuando, id`,
 		refTipo, refID)
 	if err != nil {
 		return nil, traducirError(err, "asientos de %s %q", refTipo, refID)
