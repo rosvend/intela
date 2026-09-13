@@ -162,6 +162,34 @@ type CatalogoObras interface {
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
 }
 
+// GestionDeclaraciones es la escritura y el historial de la Declaracion de
+// Obra: el ABM de la #23 y lo que consume el editor de splits de la #30.
+//
+// Separado de [RepositorioRepertorio] por la misma razon que [CatalogoObras]
+// esta separado de el (ver su comentario arriba): son dos lecturas del mismo
+// dato para dos consumidores distintos. RepositorioRepertorio sirve al motor
+// de reparto y al estado del catalogo con la declaracion VIGENTE, sin
+// versiones visibles. GestionDeclaraciones habla en versiones explicitas
+// porque el criterio de la #23 pide ver el historial y resolver la vigente en
+// un instante pasado.
+//
+// Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
+// con las partes que llegan, en una sola operacion atomica por contrato: es
+// lo mismo declarar por primera vez que editar, la unica diferencia es si
+// habia una version que cerrar. Devuelve [ErrNoEncontrado] si la obra no
+// existe en el catalogo.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico:
+// actorID es quien firma el hecho, y la implementacion lo asienta en la misma
+// transaccion que la version. No es un puerto ni una llamada aparte -eso deja
+// una version guardada sin asiento si la segunda llamada falla- sino la unica
+// forma de que "version + asiento" sea una sola cosa o ninguna.
+type GestionDeclaraciones interface {
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, err error)
+	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+}
+
 // FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
 // NO filtra, y los que vienen se combinan con Y.
 //
@@ -286,10 +314,13 @@ type RepositorioLiquidacion interface {
 // La regla "ningun modulo escribe en la trazabilidad de otro" (ADR 0003) se
 // sostiene porque este puerto se inyecta por separado, no porque estuviera
 // suelto en un contrato que todos comparten.
+// AsientoPorID y no PorID: el mismo *Store satisface tambien [CatalogoObras],
+// que ya tiene un PorID con otra firma -misma razon por la que
+// [RepositorioRepertorio] tiene ObraPorID y no PorID-.
 type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
-	PorID(ctx context.Context, id string) (Asiento, error)
+	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.

@@ -42,6 +42,22 @@ func esClaveDuplicada(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == codigoUnicidad
 }
 
+// codigoForanea es el SQLSTATE 23503, foreign_key_violation.
+const codigoForanea = "23503"
+
+// esClaveForanea dice si el error es una violacion de FOREIGN KEY.
+//
+// Misma logica que [esClaveDuplicada] y el mismo motivo para no vivir dentro
+// de traducirError: una FK rota no significa lo mismo en todas las tablas -en
+// `declaracion_versiones` es "esa obra no existe" (404); en la FK de
+// `declaraciones` hacia `titulares` seria "ese titular no existe", que no es
+// el mismo caso-. Cada sitio de llamada decide que centinela le corresponde a
+// SU tabla.
+func esClaveForanea(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoForanea
+}
+
 // traducirError lleva un error de pgx al vocabulario de aplicacion.
 //
 // pgx.ErrNoRows significa "la consulta fue bien y no hay fila", que es justo

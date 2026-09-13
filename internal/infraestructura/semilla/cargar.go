@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -352,11 +353,23 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 	}
 
+	// Cabecera de version (migracion 00007, #23): cada declaracion del
+	// dataset entra como version 1, vigente desde el momento del seed. El
+	// seed no reproduce reparto (ADR 0005 no aplica aqui, ver docs/dominio
+	// sobre que el seed no es dato real), asi que time.Now() esta bien -no
+	// hace falta un Reloj inyectado para una operacion de una sola vez.
+	ahoraDelSeed := time.Now().UTC()
 	for _, decl := range d.Declaraciones {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO declaracion_versiones (obra_id, version, vigente_desde)
+			VALUES ($1, 1, $2)`,
+			decl.ObraID, ahoraDelSeed); err != nil {
+			return fmt.Errorf("insertar version de la declaracion de %s: %w", decl.ObraID, err)
+		}
 		for _, p := range decl.Partes {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO declaraciones (obra_id, titular_id, ipi, porcentaje)
-				VALUES ($1, $2, $3, $4)`,
+				INSERT INTO declaraciones (obra_id, version, titular_id, ipi, porcentaje)
+				VALUES ($1, 1, $2, $3, $4)`,
 				decl.ObraID, p.TitularID, p.IPI, p.Porcentaje); err != nil {
 				return fmt.Errorf("insertar declaracion de %s/%s: %w", decl.ObraID, p.TitularID, err)
 			}

@@ -98,6 +98,15 @@ func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 	            ($4, 'IPI-00000002', 'Beto Libretista', 'argumentista')`,
 		obraCompleta, obraIncompleta, obraSinDeclaracion, obraSinIPI)
 
+	// Cabecera de version (migracion 00007, #23): toda fila de `declaraciones`
+	// necesita una fila en `declaracion_versiones` para el par (obra_id,
+	// version) que referencia. Las tres obras que declaran algo abajo entran
+	// con version 1, vigente desde ahora -ninguna prueba de este paquete edita
+	// una declaracion, asi que una sola version abierta por obra basta-.
+	ejecutar(`INSERT INTO declaracion_versiones (obra_id, version, vigente_desde) VALUES
+	            ($1, 1, now()), ($2, 1, now()), ($3, 1, now())`,
+		obraCompleta, obraIncompleta, obraSinIPI)
+
 	// Suma exacta 100 con IPI en las dos partes: completa.
 	ejecutar(`INSERT INTO declaraciones (obra_id, titular_id, ipi, porcentaje) VALUES
 	            ($1, $2, 'IPI-00000001', 60.0000),

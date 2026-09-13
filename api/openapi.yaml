@@ -649,6 +649,266 @@ paths:
               example:
                 error: esa obra no esta en el catalogo
 
+  /obras/{id}/declaracion:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Identificador de la obra.
+        schema:
+          type: string
+        example: obra-1
+
+    post:
+      tags: [repertorio]
+      summary: Declarar la obra por primera vez
+      description: |
+        Da de alta la primera version de la Declaracion de Obra (`R-03`,
+        `RD 7.3.1`, `RD 7.3.4`): el UNICO origen valido de los porcentajes de
+        reparto, nunca los reportes de uso ni los contratos de escritura.
+
+        Es la misma operacion que `PUT` en este mismo path -las dos abren una
+        version nueva-; la unica diferencia es el codigo de exito. Se ofrecen
+        los dos verbos porque distinguir "la primera vez" de "una edicion" es
+        util para quien integra, aunque el nucleo no necesite la distincion.
+
+        Una suma menor a 100 SI se acepta: es el estado `declaracion_incompleta`
+        valido de `R-04` (`RD 13.1.3`), y REDES SGC retiene el importe completo
+        de la obra hasta que se complete. Una suma mayor a 100 se rechaza.
+      operationId: declararObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Parte"
+            example:
+              - titular_id: tit-1
+                ipi: IPI-00000001
+                porcentaje: 60
+              - titular_id: tit-2
+                ipi: IPI-00000002
+                porcentaje: 40
+      responses:
+        "201":
+          description: Version 1 de la declaracion, recien creada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                version: 1
+                vigente_desde: "2026-01-15T10:00:00Z"
+                vigente_hasta: null
+                estado: completa
+                partes:
+                  - titular_id: tit-1
+                    ipi: IPI-00000001
+                    porcentaje: 60
+                  - titular_id: tit-2
+                    ipi: IPI-00000002
+                    porcentaje: 40
+        "400":
+          description: |
+            El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
+            que no es positivo, un titular repetido, la suma se pasa de 100, o
+            nombra un titular_id que no esta en el padron.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "declaracion invalida: la suma de porcentajes es 120.0000%, no puede superar 100"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
+    put:
+      tags: [repertorio]
+      summary: Editar la Declaracion de Obra
+      description: |
+        Cierra la version vigente y abre una nueva con las partes que llegan.
+        La version anterior NO se borra ni se modifica: sigue consultable en
+        `GET .../historial`, porque un reparto de un periodo pasado tiene que
+        poder reproducirse con el split que estaba vigente ENTONCES.
+
+        Mismas reglas de validacion que el alta: suma > 100 se rechaza, suma
+        < 100 se acepta como `declaracion_incompleta`.
+      operationId: editarDeclaracion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Parte"
+            example:
+              - titular_id: tit-1
+                ipi: IPI-00000001
+                porcentaje: 70
+              - titular_id: tit-2
+                ipi: IPI-00000002
+                porcentaje: 30
+      responses:
+        "200":
+          description: La nueva version, ya vigente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                version: 2
+                vigente_desde: "2026-03-01T09:00:00Z"
+                vigente_hasta: null
+                estado: completa
+                partes:
+                  - titular_id: tit-1
+                    ipi: IPI-00000001
+                    porcentaje: 70
+                  - titular_id: tit-2
+                    ipi: IPI-00000002
+                    porcentaje: 30
+        "400":
+          description: |
+            El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
+            que no es positivo, un titular repetido, la suma se pasa de 100, o
+            nombra un titular_id que no esta en el padron.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "declaracion invalida: al titular \"tit-1\" le falta el IPI"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
+  /obras/{id}/declaracion/historial:
+    get:
+      tags: [repertorio]
+      summary: Ver todas las versiones de la Declaracion de Obra
+      description: |
+        Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
+        una con su ventana de vigencia. Es de solo lectura: no hay forma de
+        editar una version pasada, unicamente de abrir una nueva -eso es
+        `PUT .../declaracion`-.
+
+        Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
+        un 404: mismo criterio que `GET /obras`.
+      operationId: historialDeclaracion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la obra.
+          schema:
+            type: string
+          example: obra-1
+      responses:
+        "200":
+          description: Las versiones de la declaracion, en orden.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                - version: 1
+                  vigente_desde: "2026-01-15T10:00:00Z"
+                  vigente_hasta: "2026-03-01T09:00:00Z"
+                  estado: completa
+                  partes:
+                    - titular_id: tit-1
+                      ipi: IPI-00000001
+                      porcentaje: 60
+                    - titular_id: tit-2
+                      ipi: IPI-00000002
+                      porcentaje: 40
+                - version: 2
+                  vigente_desde: "2026-03-01T09:00:00Z"
+                  vigente_hasta: null
+                  estado: completa
+                  partes:
+                    - titular_id: tit-1
+                      ipi: IPI-00000001
+                      porcentaje: 70
+                    - titular_id: tit-2
+                      ipi: IPI-00000002
+                      porcentaje: 30
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
 components:
   securitySchemes:
     bearerAuth:
@@ -828,6 +1088,68 @@ components:
               type: string
               description: Identificador de la obra. Opaco, unico e inmutable.
         - $ref: "#/components/schemas/MetadatosObra"
+
+    Parte:
+      type: object
+      required: [titular_id, ipi, porcentaje]
+      description: |
+        Lo que un titular declaro sobre una obra. El unico origen valido de un
+        porcentaje de reparto es este (`R-03`) -nunca un reporte de uso ni un
+        contrato de escritura-.
+      properties:
+        titular_id:
+          type: string
+          description: Identificador del titular al que corresponde esta parte.
+        ipi:
+          type: string
+          description: IPI del titular. Obligatorio, igual que en un coautor del catalogo.
+        porcentaje:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 100
+          description: |
+            Porcentaje declarado por este titular. El esquema solo exige no
+            negativo: la regla real -estrictamente positivo, un titular al 0%
+            no es titular- la aplica el backend (`ErrDeclaracionInvalida`),
+            que es la fuente autoritativa. La SUMA de todas las partes de una
+            declaracion puede dar menos de 100 -es `declaracion_incompleta`,
+            un estado valido de `R-04`- pero nunca mas.
+
+    VersionDeclaracion:
+      type: object
+      required: [version, vigente_desde, vigente_hasta, estado, partes]
+      description: |
+        Una version de la Declaracion de Obra, con la ventana de tiempo en la
+        que rigio. Un reparto de un periodo pasado usa la version vigente
+        ENTONCES, no la mas reciente -es lo que hace consultable `.../historial`-.
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: Numero de version, consecutivo por obra empezando en 1.
+        vigente_desde:
+          type: string
+          format: date-time
+          description: Instante en que esta version empezo a regir.
+        vigente_hasta:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Instante en que dejo de regir. `null` quiere decir que esta es la
+            version vigente ahora mismo.
+        estado:
+          type: string
+          enum: [completa, incompleta]
+          description: |
+            `completa` si las partes suman exactamente 100; `incompleta` en
+            cualquier otro caso -incluida una obra sin ninguna parte-. Nunca
+            se reparte una obra `incompleta`: se retiene el total (`R-04`).
+        partes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Parte"
 
     Error:
       type: object
