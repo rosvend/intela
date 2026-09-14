@@ -4,22 +4,24 @@
 -- OE-6 piden el desglose en cada consulta. Colapsar las deducciones en el
 -- neto haria inexpresable el resumen que exige RD 13.2.
 --
--- COORDINACION DE NUMERO: esta migracion nacio como 00002 y luego paso a
--- 00003 cuando el catalogo (#86) se quedo con esa version. El 00003 ya no
--- se puede usar. El PR #85 renumero la suya a 00005 y su despliegue corrio
--- `goose up` de verdad; #72 entro despues como 00006. Produccion esta por
--- encima del 00003, y goose corre con `allowMissing = false` -- un numero
--- LIBRE por debajo de la version ya aplicada aborta con
+-- COORDINACION DE NUMERO: esta migracion nacio como 00002, paso a 00003
+-- cuando el catalogo (#86) se quedo esa version, y luego a 00007 cuando
+-- #85/#72 ocuparon 00005/00006. El 00007 ya no se puede usar: main
+-- mergeo `00007_uso_excluido_no_es_oni.sql`, y goose aborta con
+-- `duplicate version 7` si dos archivos llevan el mismo numero.
+--
+-- goose corre con `allowMissing = false`. Un numero LIBRE por debajo de
+-- la version ya aplicada aborta con
 --
 --     found 1 missing migrations before current version N
 --
 -- antes de aplicar nada, y el despliegue condiciona el rollout a que
--- goose termine bien.
+-- goose termine bien. Por eso no se rellena el hueco 00003/00004.
 --
--- Se toma el 00007: el 2026-09-07 el mayor en `main` y en TODAS las ramas
--- abiertas era 00006 (`log_de_rechazos`). #87 (`oni_publicacion`) y #88
--- (`afiliaciones`) siguen en 00003 y tendran que subir por encima de este
--- numero, no rellenar el hueco. Un ADR admite huecos; una migracion no.
+-- Se toma el 00010: el 2026-09-14 el mayor en `main` es 00009
+-- (`usuarios_de_recaudo`). #87 (`oni_publicacion`) y #88 (`afiliaciones`)
+-- siguen reclamando 00008/00009, que ya estan en main, y tendran que
+-- subir por encima de este numero. Un ADR admite huecos; una migracion no.
 
 -- +goose Up
 
