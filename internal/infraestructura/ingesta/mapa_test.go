@@ -52,6 +52,41 @@ func TestValidarRechazaUnMapaMalEscritoAlConstruirlo(t *testing.T) {
 				{Campo: CampoTitulo, Nombre: "titulo_original"},
 			},
 		}},
+		{"columna de origen repetida", Mapa{
+			Fuente: "x", Modalidad: reparto.TV,
+			Columnas: []Columna{
+				{Campo: CampoTitulo, Nombre: "name"},
+				{Campo: CampoVistas, Nombre: "name"},
+			},
+		}},
+		{"ids_fuente sin clave del contrato", Mapa{
+			Fuente: "x", Modalidad: reparto.TV,
+			Columnas: []Columna{
+				{Campo: CampoTitulo, Nombre: "t"},
+				{Campo: CampoIDsFuente, Nombre: "ID_Ficha"},
+			},
+		}},
+		{"clave de ids_fuente desconocida", Mapa{
+			Fuente: "x", Modalidad: reparto.TV,
+			Columnas: []Columna{
+				{Campo: CampoTitulo, Nombre: "t"},
+				{Campo: CampoIDsFuente, Nombre: "ID_Ficha", ClaveID: "ID_Ficha"},
+			},
+		}},
+		{"clave de ids_fuente repetida", Mapa{
+			Fuente: "x", Modalidad: reparto.TV,
+			Columnas: []Columna{
+				{Campo: CampoTitulo, Nombre: "t"},
+				{Campo: CampoIDsFuente, Nombre: "a", ClaveID: aplicacion.ClaveIDFicha},
+				{Campo: CampoIDsFuente, Nombre: "b", ClaveID: aplicacion.ClaveIDFicha},
+			},
+		}},
+		{"clave de ids_fuente en un campo que no lo es", Mapa{
+			Fuente: "x", Modalidad: reparto.TV,
+			Columnas: []Columna{
+				{Campo: CampoTitulo, Nombre: "t", ClaveID: aplicacion.ClaveIDFicha},
+			},
+		}},
 		{"columna sin nombre", Mapa{
 			Fuente: "x", Modalidad: reparto.TV,
 			Columnas: []Columna{{Campo: CampoTitulo, Nombre: "  "}},
@@ -69,8 +104,25 @@ func TestValidarRechazaUnMapaMalEscritoAlConstruirlo(t *testing.T) {
 
 	if err := mapaMinimo().Validar(); err != nil {
 		// Sin este caso, una Validar() que devolviera error siempre pasaria
-		// los siete de arriba.
+		// los de arriba.
 		t.Fatalf("el mapa minimo deberia ser valido: %v", err)
+	}
+}
+
+func TestValidarAceptaVariosIDsFuenteConClavesDistintas(t *testing.T) {
+	t.Parallel()
+
+	m := Mapa{
+		Fuente: "netflix", Modalidad: reparto.OTT,
+		Columnas: []Columna{
+			{Campo: CampoTitulo, Nombre: "show_name"},
+			{Campo: CampoIDsFuente, Nombre: "show_id", ClaveID: aplicacion.ClaveShowID},
+			{Campo: CampoIDsFuente, Nombre: "series_id", ClaveID: aplicacion.ClaveSeriesID},
+			{Campo: CampoIDsFuente, Nombre: "netflix_id", ClaveID: aplicacion.ClaveNetflixID},
+		},
+	}
+	if err := m.Validar(); err != nil {
+		t.Fatalf("varios ids con claves distintas deberian ser validos: %v", err)
 	}
 }
 
@@ -81,7 +133,7 @@ func TestAplicarNombraTODASLasColumnasRequeridasQueFaltan(t *testing.T) {
 		Fuente: "prueba", Modalidad: reparto.TV,
 		Columnas: []Columna{
 			{Campo: CampoTitulo, Nombre: "Titulo", Requerida: true},
-			{Campo: CampoIDsFuente, Nombre: "ID_Ficha", Requerida: true},
+			{Campo: CampoIDsFuente, Nombre: "ID_Ficha", Requerida: true, ClaveID: aplicacion.ClaveIDFicha},
 			{Campo: CampoDuracionMin, Nombre: "Duracion_total", Requerida: true},
 		},
 	}

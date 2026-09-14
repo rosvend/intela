@@ -85,9 +85,15 @@ func MapaCaracol() Mapa {
 			// difieren en 16 de 59 filas; el original se recuperara cuando el
 			// esquema canonico admita las dos variantes.
 			{Campo: CampoTitulo, Nombre: "Titulo", Requerida: true},
-			// `ID_Ficha` es la clave de obra de la fuente. Va a `ids_fuente` tal
-			// cual, sin normalizar, porque es lo que indexa `alias_obra`.
-			{Campo: CampoIDsFuente, Nombre: "ID_Ficha", Requerida: true},
+			// `ID_Ficha` es la clave de obra de la fuente. El valor va tal
+			// cual; la clave del contrato es `id_ficha`, que es lo que indexa
+			// `alias_obra.tipo_id` (ADR 0018). Sin el par `id_ficha=<valor>`,
+			// la cascada tira la linea y el escalon 1 no casa nunca.
+			{Campo: CampoIDsFuente, Nombre: "ID_Ficha", Requerida: true, ClaveID: aplicacion.ClaveIDFicha},
+			// Unico identificador externo utilizable de la parrilla, poblado
+			// en ~54% de las filas. Vacio se omite. `Capitulo ID_IMDB` no se
+			// mapea: es constante en 0, relleno, no dato.
+			{Campo: CampoIDsFuente, Nombre: "Programa ID_IMDB", Requerida: false, ClaveID: aplicacion.ClaveIMDB},
 			// Minutos. Poblada en las 59 filas. Alimenta `Duracion` de
 			// `RD 9.1.1`.
 			{Campo: CampoDuracionMin, Nombre: "Duracion_total", Requerida: true},
@@ -110,7 +116,8 @@ func MapaCaracol() Mapa {
 // maestro, y los campos de episodio de la parrilla de Caracol estan vacios al
 // 100%, asi que el episodio no existe en ninguno de los dos lados de la
 // comparacion. El show es la unidad comparable que hay hoy. La identidad del
-// episodio no se pierde: `netflix_id` es de episodio y va a `ids_fuente`.
+// episodio no se pierde: `netflix_id` va a `ids_fuente` junto a `show_id` y
+// `series_id`.
 //
 // # `Id_Ntx` no se mapea, y no es un olvido
 //
@@ -139,7 +146,14 @@ func MapaNetflix() Mapa {
 		Hoja: "NETFLIX_REDES_2018",
 		Columnas: []Columna{
 			{Campo: CampoTitulo, Nombre: "show_name", Requerida: true},
-			{Campo: CampoIDsFuente, Nombre: "netflix_id", Requerida: true},
+			// Los tres ids, cada uno con su clave del contrato. La cascada
+			// busca y aprende alias por `show_id` (el nivel de la obra);
+			// `netflix_id` es de episodio y sigue siendo la clave de
+			// registro para duplicados. Sin `show_id` en ids_fuente, el
+			// escalon 1 no casa nunca.
+			{Campo: CampoIDsFuente, Nombre: "show_id", Requerida: true, ClaveID: aplicacion.ClaveShowID},
+			{Campo: CampoIDsFuente, Nombre: "series_id", Requerida: true, ClaveID: aplicacion.ClaveSeriesID},
+			{Campo: CampoIDsFuente, Nombre: "netflix_id", Requerida: true, ClaveID: aplicacion.ClaveNetflixID},
 			// La metrica de uso. Alimenta `V` de `RD 9.7`.
 			{Campo: CampoVistas, Nombre: "stream_starts", Requerida: true},
 			// La duracion del episodio, que es lo que la columna dice ser. NO es
@@ -174,7 +188,7 @@ func MapaCine() Mapa {
 		Modalidad: reparto.Cine,
 		Columnas: []Columna{
 			{Campo: CampoTitulo, Nombre: "titulo", Requerida: true},
-			{Campo: CampoIDsFuente, Nombre: "id", Requerida: true},
+			{Campo: CampoIDsFuente, Nombre: "id", Requerida: true, ClaveID: aplicacion.ClaveIDPelicula},
 			{Campo: CampoModalidad, Nombre: "modalidad", Requerida: false},
 			{Campo: CampoTipoObra, Nombre: "tipo_obra", Requerida: false},
 			// La metrica de la modalidad. Sin ella la fila no pondera nada.

@@ -86,14 +86,15 @@ type rechazoJSON struct {
 
 // cargaJSON es una entrega en el listado de cargas hechas.
 type cargaJSON struct {
-	ID         string    `json:"id"`
-	Fuente     string    `json:"fuente"`
-	Periodo    string    `json:"periodo"`
-	SHA256     string    `json:"sha256"`
-	NBytes     int       `json:"nbytes"`
-	Recibido   time.Time `json:"recibido"`
-	Aceptados  int       `json:"aceptados"`
-	Rechazados int       `json:"rechazados"`
+	ID          string    `json:"id"`
+	Fuente      string    `json:"fuente"`
+	Periodo     string    `json:"periodo"`
+	SHA256      string    `json:"sha256"`
+	ClaveObjeto string    `json:"clave_objeto"`
+	NBytes      int       `json:"nbytes"`
+	Recibido    time.Time `json:"recibido"`
+	Aceptados   int       `json:"aceptados"`
+	Rechazados  int       `json:"rechazados"`
 }
 
 // subirReporte recibe una entrega por multipart y la ingiere entera.
@@ -250,7 +251,7 @@ func (a *API) listarCargas(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cargas {
 		cuerpo = append(cuerpo, cargaJSON{
 			ID: c.ID, Fuente: c.Fuente, Periodo: c.Periodo, SHA256: c.SHA256,
-			NBytes: c.NBytes, Recibido: c.Recibido,
+			ClaveObjeto: c.ClaveObjeto, NBytes: c.NBytes, Recibido: c.Recibido,
 			Aceptados: c.Aceptados, Rechazados: c.Rechazados,
 		})
 	}

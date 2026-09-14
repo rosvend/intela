@@ -75,8 +75,9 @@ func TestCaracolXLSXRealEntraEntero(t *testing.T) {
 	if usos[0].Titulo != "Rebelde" {
 		t.Errorf("titulo[0] = %q", usos[0].Titulo)
 	}
-	if usos[0].IDsFuente != "55174" {
-		t.Errorf("ids_fuente[0] = %q, se esperaba el ID_Ficha", usos[0].IDsFuente)
+	ids0 := aplicacion.LeerIDsFuente(usos[0].IDsFuente)
+	if ids0[aplicacion.ClaveIDFicha] != "55174" {
+		t.Errorf("ids_fuente[0] = %q, se esperaba id_ficha=55174", usos[0].IDsFuente)
 	}
 	if usos[0].DuracionMin.String() != "45" {
 		t.Errorf("duracion_min[0] = %s", usos[0].DuracionMin)
@@ -89,7 +90,7 @@ func TestCaracolXLSXRealEntraEntero(t *testing.T) {
 	// adaptador colapsara o rechazara las repetidas, este recuento seria 29.
 	fichas := map[string]struct{}{}
 	for _, u := range usos {
-		fichas[u.IDsFuente] = struct{}{}
+		fichas[aplicacion.LeerIDsFuente(u.IDsFuente)[aplicacion.ClaveIDFicha]] = struct{}{}
 	}
 	if len(fichas) != 29 {
 		t.Errorf("ID_Ficha distintos = %d, el perfil dice 29", len(fichas))
@@ -127,8 +128,12 @@ func TestNetflixXLSXRealEntraEntero(t *testing.T) {
 	}
 	// El identificador tiene que llegar como el entero que es. Pasado por un
 	// float64 saldria "8.0197856e+07" y no casaria con ningun alias nunca.
-	if usos[0].IDsFuente != "80197856" {
-		t.Errorf("ids_fuente[0] = %q", usos[0].IDsFuente)
+	ids0 := aplicacion.LeerIDsFuente(usos[0].IDsFuente)
+	if ids0[aplicacion.ClaveNetflixID] != "80197856" {
+		t.Errorf("ids_fuente[0] = %q, se esperaba netflix_id=80197856", usos[0].IDsFuente)
+	}
+	if ids0[aplicacion.ClaveShowID] == "" {
+		t.Errorf("ids_fuente[0] no trae show_id: %q", usos[0].IDsFuente)
 	}
 	if usos[0].Vistas.String() != "2172" {
 		t.Errorf("vistas[0] = %s, se esperaba el stream_starts", usos[0].Vistas)
@@ -142,7 +147,7 @@ func TestNetflixXLSXRealEntraEntero(t *testing.T) {
 	// que no se confundieron.
 	ids := map[string]struct{}{}
 	for _, u := range usos {
-		ids[u.IDsFuente] = struct{}{}
+		ids[aplicacion.LeerIDsFuente(u.IDsFuente)[aplicacion.ClaveNetflixID]] = struct{}{}
 	}
 	if len(ids) != filasNetflix {
 		t.Errorf("netflix_id distintos = %d, el perfil dice %d", len(ids), filasNetflix)
@@ -223,8 +228,12 @@ func TestNetflixJSONSigueElMismoMapaQueSuXLSX(t *testing.T) {
 	if len(usos) != 4 {
 		t.Fatalf("filas = %d, se esperaban 4", len(usos))
 	}
-	if usos[0].IDsFuente != "80197856" {
+	ids0 := aplicacion.LeerIDsFuente(usos[0].IDsFuente)
+	if ids0[aplicacion.ClaveNetflixID] != "80197856" {
 		t.Errorf("el netflix_id se estropeo al pasar por JSON: %q", usos[0].IDsFuente)
+	}
+	if ids0[aplicacion.ClaveShowID] != "80141259" {
+		t.Errorf("el show_id no viajo: %q", usos[0].IDsFuente)
 	}
 	if usos[0].Vistas.String() != "2172" {
 		t.Errorf("vistas[0] = %s", usos[0].Vistas)

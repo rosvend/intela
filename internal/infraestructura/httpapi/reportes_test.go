@@ -394,7 +394,9 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 	ing := &ingestaFalsa{cargas: []aplicacion.CargaReporte{{
 		Reporte: aplicacion.Reporte{
 			ID: "rep-1", Fuente: "caracol", Periodo: "2026-01",
-			SHA256: strings.Repeat("a", 64), NBytes: 21032,
+			SHA256:      strings.Repeat("a", 64),
+			ClaveObjeto: "reportes/" + strings.Repeat("a", 64),
+			NBytes:      21032,
 		},
 		Recibido:   time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC),
 		Aceptados:  58,
@@ -424,6 +426,9 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 	}
 	if cuerpo[0]["periodo"] != "2026-01" {
 		t.Errorf("periodo = %v", cuerpo[0]["periodo"])
+	}
+	if cuerpo[0]["clave_objeto"] != "reportes/"+strings.Repeat("a", 64) {
+		t.Errorf("clave_objeto = %v", cuerpo[0]["clave_objeto"])
 	}
 }
 

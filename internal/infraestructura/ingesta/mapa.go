@@ -30,8 +30,11 @@ const (
 	// hay nada que identificar.
 	CampoTitulo Campo = "titulo"
 
-	// CampoIDsFuente es el identificador de la fuente TAL COMO VIENE, sin
-	// normalizar. Es lo que indexa `alias_obra` y el escalon 1 de la cascada.
+	// CampoIDsFuente es un identificador de la fuente. El VALOR va tal como
+	// viene, sin normalizar; la CLAVE no: [Columna.ClaveID] tiene que ser una
+	// constante `aplicacion.Clave*`, y al persistir se juntan con
+	// [aplicacion.EscribirIDsFuente] en lineas `clave=valor` (ADR 0018).
+	// Sin la clave, la cascada tira la linea y el escalon 1 no casa nunca.
 	CampoIDsFuente Campo = "ids_fuente"
 
 	// CampoModalidad deja que la modalidad venga por fila. Casi ninguna fuente
@@ -98,6 +101,13 @@ type Columna struct {
 	// archivos reales del cliente traen 18 de 48 columnas vacias al 100%, y una
 	// celda en blanco es el caso normal, no la excepcion.
 	Requerida bool
+
+	// ClaveID es la clave del contrato de ids_fuente (ADR 0018) cuando
+	// [Campo] es [CampoIDsFuente]. Tiene que ser una constante
+	// `aplicacion.Clave*` -- `id_ficha`, `show_id`, `imdb` --, no el nombre
+	// de la columna del archivo. En cualquier otro campo tiene que quedar
+	// vacia.
+	ClaveID string
 }
 
 // Mapa es el mapeo declarativo de UNA fuente. Es DATO, no codigo.
@@ -157,6 +167,8 @@ func (m Mapa) Validar() error {
 			aplicacion.ErrReporteInvalido, m.Fuente)
 	}
 	vistos := map[Campo]string{}
+	nombres := map[string]Campo{}
+	clavesID := map[string]string{}
 	for _, c := range m.Columnas {
 		if _, ok := tipos[c.Campo]; !ok {
 			return fmt.Errorf("%w: el mapa de %q manda %q a un campo canonico que no existe (%q)",
@@ -166,9 +178,44 @@ func (m Mapa) Validar() error {
 			return fmt.Errorf("%w: el mapa de %q deja sin nombre la columna del campo %q",
 				aplicacion.ErrReporteInvalido, m.Fuente, c.Campo)
 		}
+		// La misma columna de origen a dos campos no es ambiguo de leer --
+		// esa posicion alimentaria los dos campos con la misma celda -- pero
+		// si de mantener: la identidad de la fuente quedaria copiada del
+		// titulo (o al reves) sin que nadie lo viera.
+		if otro, repe := nombres[c.Nombre]; repe {
+			return fmt.Errorf("%w: el mapa de %q usa la columna %q para los campos %q y %q",
+				aplicacion.ErrReporteInvalido, m.Fuente, c.Nombre, otro, c.Campo)
+		}
+		nombres[c.Nombre] = c.Campo
+
+		claveID := strings.TrimSpace(c.ClaveID)
+		if c.Campo == CampoIDsFuente {
+			if claveID == "" {
+				return fmt.Errorf("%w: el mapa de %q manda %q a ids_fuente sin clave del contrato",
+					aplicacion.ErrReporteInvalido, m.Fuente, c.Nombre)
+			}
+			if !aplicacion.EsClaveIDsFuente(claveID) {
+				return fmt.Errorf("%w: el mapa de %q manda %q a ids_fuente con clave %q, que no es del contrato",
+					aplicacion.ErrReporteInvalido, m.Fuente, c.Nombre, claveID)
+			}
+			if otra, repe := clavesID[claveID]; repe {
+				return fmt.Errorf("%w: el mapa de %q declara la clave %q dos veces (%q y %q)",
+					aplicacion.ErrReporteInvalido, m.Fuente, claveID, otra, c.Nombre)
+			}
+			clavesID[claveID] = c.Nombre
+			continue
+		}
+		if claveID != "" {
+			return fmt.Errorf("%w: el mapa de %q pone clave de ids_fuente %q en el campo %q, que no es ids_fuente",
+				aplicacion.ErrReporteInvalido, m.Fuente, claveID, c.Campo)
+		}
 		// Dos columnas al mismo campo no es ambiguo de leer -- ganaria la
 		// ultima -- pero si de mantener: nadie sabria cual de las dos es la que
 		// vale, y la respuesta cambiaria al reordenar la lista.
+		//
+		// CampoIDsFuente es la excepcion de arriba: una fila trae varios ids
+		// (show_id, series_id, netflix_id) y cada uno es una columna distinta
+		// con su clave del contrato.
 		if otra, repe := vistos[c.Campo]; repe {
 			return fmt.Errorf("%w: el mapa de %q manda dos columnas al campo %q (%q y %q)",
 				aplicacion.ErrReporteInvalido, m.Fuente, c.Campo, otra, c.Nombre)
@@ -244,6 +291,17 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea)
+		if motivo == "" && len(fila) > len(t.Columnas) {
+			// Un campo de mas no se recorta: en CSV suele ser una coma sin
+			// entrecomillar que recorre todos los valores de la fila, y si los
+			// corridos siguen siendo validos para su tipo, la fila entraria
+			// con identificadores o medidas de otra columna. El rechazo
+			// conserva lo que se pudo leer de las columnas de la cabecera
+			// para poder pedirle al cliente la linea exacta.
+			motivo = fmt.Sprintf(
+				"fila %d: trae %d campos y la cabecera tiene %d; un campo de mas no se recorta porque suele ser una coma sin entrecomillar que recorre los valores",
+				linea, len(fila), len(t.Columnas))
+		}
 		if motivo == "" && len(clave) > 0 {
 			k := claveDe(fila, clave)
 			if antes, repe := vistas[k]; repe {
@@ -263,16 +321,18 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 // indices resuelve cada columna del mapa a su posicion en la cabecera.
 //
 // -1 significa que la columna no esta y no era requerida: sus celdas se leen
-// como vacias, que es lo que son.
-func (m Mapa) indices(t Tabla) (map[Campo]int, error) {
-	indices := make(map[Campo]int, len(m.Columnas))
+// como vacias, que es lo que son. La clave es el nombre de la columna del
+// archivo, no el campo canonico: ids_fuente admite varias columnas (show_id,
+// series_id, netflix_id) y un mapa por campo se pisaria.
+func (m Mapa) indices(t Tabla) (map[string]int, error) {
+	indices := make(map[string]int, len(m.Columnas))
 	var faltan []string
 	for _, c := range m.Columnas {
 		i := posicion(t.Columnas, c.Nombre)
 		if i < 0 && c.Requerida {
 			faltan = append(faltan, c.Nombre)
 		}
-		indices[c.Campo] = i
+		indices[c.Nombre] = i
 	}
 	if len(faltan) > 0 {
 		// Con la cabecera que SI trae el archivo. Es lo que convierte "falta
@@ -327,15 +387,23 @@ func (m Mapa) indicesClave(t Tabla) ([]int, error) {
 // Solo se devuelve el PRIMER motivo. Un rechazo se lee para arreglar la fila y
 // volver a mandarla; acumular los cinco fallos de una fila rota entera no
 // ayuda mas y no cabe en el CHECK de un motivo por fila.
-func (m Mapa) fila(fila []string, indices map[Campo]int, linea int) (aplicacion.UsoPersistido, string) {
+func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion.UsoPersistido, string) {
 	u := aplicacion.UsoPersistido{Modalidad: m.Modalidad}
 	var motivo string
+	var ids []aplicacion.IDFuente
 
 	// Recorre m.Columnas y no el mapa `indices` porque el orden importa: es el
 	// que decide CUAL fallo se reporta cuando una fila tiene varios, y con el
 	// recorrido aleatorio de un mapa de Go seria otro en cada corrida.
 	for _, c := range m.Columnas {
-		bruto := celda(fila, indices[c.Campo])
+		bruto := celda(fila, indices[c.Nombre])
+		if c.Campo == CampoIDsFuente {
+			ids = append(ids, aplicacion.IDFuente{
+				Clave: strings.TrimSpace(c.ClaveID),
+				Valor: bruto,
+			})
+			continue
+		}
 		switch tipos[c.Campo] {
 		case texto:
 			m.asignarTexto(&u, c.Campo, bruto)
@@ -353,6 +421,16 @@ func (m Mapa) fila(fila []string, indices map[Campo]int, linea int) (aplicacion.
 			m.asignarDecimal(&u, c.Campo, v)
 		}
 	}
+	if len(ids) > 0 {
+		texto, err := aplicacion.EscribirIDsFuente(ids...)
+		if err != nil {
+			if motivo == "" {
+				motivo = fmt.Sprintf("fila %d, ids_fuente: %v", linea, err)
+			}
+		} else {
+			u.IDsFuente = texto
+		}
+	}
 	return u, motivo
 }
 
@@ -361,8 +439,6 @@ func (m Mapa) asignarTexto(u *aplicacion.UsoPersistido, c Campo, v string) {
 	switch c {
 	case CampoTitulo:
 		u.Titulo = v
-	case CampoIDsFuente:
-		u.IDsFuente = v
 	case CampoTipoObra:
 		u.TipoObra = v
 	case CampoModalidad:

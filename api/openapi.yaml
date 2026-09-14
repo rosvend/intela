@@ -1320,9 +1320,9 @@ paths:
         recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
 
         Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
-        de la que salio (`sha256`), que es lo que permite volver al archivo
-        EXACTO que pondero una corrida y no "al archivo de esa fuente"
-        (ADR 0006).
+        de la que salio (`sha256`, `clave_objeto`), que es lo que permite
+        volver al archivo EXACTO que pondero una corrida y no "al archivo de
+        esa fuente" (ADR 0006).
       operationId: listarCargas
       security:
         - bearerAuth: []
@@ -1604,7 +1604,7 @@ components:
       type: object
       description: Una entrega en el listado de cargas hechas.
       required:
-        [id, fuente, periodo, sha256, nbytes, recibido, aceptados, rechazados]
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, recibido, aceptados, rechazados]
       properties:
         id:
           type: string
@@ -1617,6 +1617,13 @@ components:
         sha256:
           type: string
           pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: |
+            Donde quedaron los bytes en la boveda. Se deriva de la huella, igual
+            que en el acuse de POST. Sin ella, tras recargar, el listado no
+            permite volver a la evidencia exacta (ADR 0006).
+          example: reportes/9f2c...
         nbytes:
           type: integer
         recibido:

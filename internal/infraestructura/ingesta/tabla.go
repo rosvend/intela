@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -29,11 +30,12 @@ import (
 // parrilla y seria un entero en cualquier otra columna, y solo el mapa sabe
 // cual de las dos cosas se le esta pidiendo.
 //
-// Filas NO incluye la cabecera, y todas tienen exactamente len(Columnas)
-// celdas: los lectores rellenan las que falten. Un formato tabular real
-// entrega filas cortas -- excelize recorta las celdas vacias del final, y un
-// CSV escrito a mano se queda sin comas -- y sin ese relleno cada lectura de
-// una columna del final tendria que comprobar el limite por su cuenta.
+// Filas NO incluye la cabecera. Las filas cortas se rellenan hasta
+// len(Columnas): excelize recorta las celdas vacias del final, y un CSV
+// escrito a mano se queda sin comas. Una fila MAS ancha que la cabecera se
+// deja con los campos de mas -- [Mapa.Aplicar] la rechaza -- porque recortarlos
+// en silencio es como se persiste un identificador corrido por una coma sin
+// entrecomillar.
 type Tabla struct {
 	Columnas []string
 	Filas    [][]string
@@ -119,11 +121,64 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 			ErrFormato, hoja, strings.Join(hojas, ", "))
 	}
 
-	filas, err := libro.GetRows(hoja)
+	filasIter, err := libro.Rows(hoja)
 	if err != nil {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
 	}
-	return desdeFilas(filas)
+	defer func() { _ = filasIter.Close() }()
+
+	// No se usa GetRows: compacta las filas fisicas vacias y, peor, rellena
+	// huecos hasta el atributo r del XML. Un r por encima de 1_048_576
+	// (GHSA-q5j5-6p94-4gwc, excelize v2.10.1) materializa filas hasta ese
+	// indice. Subir a v2.11.0 exigiria Go 1.25 y romperia el Dockerfile.
+	crudas := make([][]string, 0, 64)
+	fisicas := make([]int, 0, 64)
+	iteradas := 0
+	for filasIter.Next() {
+		iteradas++
+		if iteradas > maxFilasExcel {
+			return Tabla{}, fmt.Errorf("%w: la hoja %q supera el tope de %d filas",
+				ErrFormato, hoja, maxFilasExcel)
+		}
+		n, err := filaFisica(filasIter)
+		if err != nil {
+			return Tabla{}, fmt.Errorf("%w: %v", ErrFormato, err)
+		}
+		if n < 1 || n > maxFilasExcel {
+			return Tabla{}, fmt.Errorf(
+				"%w: la hoja %q declara la fila %d y Excel no admite mas de %d",
+				ErrFormato, hoja, n, maxFilasExcel)
+		}
+		row, err := filasIter.Columns()
+		if err != nil {
+			return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
+		}
+		if vacia(row) {
+			continue
+		}
+		crudas = append(crudas, row)
+		fisicas = append(fisicas, n)
+	}
+	if err := filasIter.Error(); err != nil {
+		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
+	}
+	return desdeFilasNumeradas(crudas, fisicas)
+}
+
+// maxFilasExcel es el tope de filas de una hoja .xlsx (2^20). Es el mismo
+// TotalRows de excelize. Un atributo r por encima es el vector de
+// GHSA-q5j5-6p94-4gwc: GetRows rellenaba huecos hasta ese indice.
+const maxFilasExcel = 1_048_576
+
+// filaFisica lee el numero de fila que excelize guardo al parsear el atributo
+// r del XML. No esta exportado en v2.10.1; si lo renombran, la prueba de la
+// fila fisica tras un hueco se pone roja.
+func filaFisica(rows *excelize.Rows) (int, error) {
+	v := reflect.ValueOf(rows).Elem().FieldByName("curRow")
+	if !v.IsValid() || v.Kind() != reflect.Int {
+		return 0, fmt.Errorf("excelize.Rows ya no expone curRow; hay que actualizar el lector de xlsx")
+	}
+	return int(v.Int()), nil
 }
 
 // TablaCSV lee un CSV con cabecera.
@@ -131,9 +186,11 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 // FieldsPerRecord = -1 desactiva la comprobacion de que todas las filas tengan
 // el mismo numero de campos, y es deliberado: con la comprobacion puesta, UNA
 // fila con una coma de mas aborta la lectura del archivo ENTERO y las demas se
-// pierden sin motivo por fila. El desajuste no se ignora -- [desdeFilas] recorta
-// o rellena, y una fila a la que le falte una columna requerida acaba rechazada
-// con su motivo --, pero deja de llevarse por delante a las que estaban bien.
+// pierden sin motivo por fila. El desajuste no se ignora: la fila corta se
+// rellena, la fila ancha se deja con los campos de mas y [Mapa.Aplicar] la
+// rechaza nombrando el desajuste, que es lo que convierte un corrimiento por
+// coma sin entrecomillar en un rechazo de fila y no en un identificador
+// persistido.
 func TablaCSV(datos []byte) (Tabla, error) {
 	lector := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(datos), bom)))
 	lector.FieldsPerRecord = -1
@@ -269,8 +326,17 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 			// cliente.
 			continue
 		}
-		fila := make([]string, len(columnas))
-		copy(fila, f)
+		var fila []string
+		if len(f) > len(columnas) {
+			// Se conserva el ancho de mas. Recortar en silencio es como se
+			// persiste un valor corrido: la coma extra desplaza las celdas y,
+			// si lo corrido sigue siendo valido para su tipo, la fila entra
+			// con el identificador de otra columna.
+			fila = f
+		} else {
+			fila = make([]string, len(columnas))
+			copy(fila, f)
+		}
 		cuerpo = append(cuerpo, fila)
 		// El numero que ve el cliente en su hoja: `filas` incluye la cabecera,
 		// asi que el primer registro del archivo es la linea 2. Se anota AQUI,
@@ -280,6 +346,25 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 		lineas = append(lineas, i+2)
 	}
 	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas}, nil
+}
+
+// desdeFilasNumeradas es [desdeFilas] cuando el lector YA conoce el numero
+// fisico de cada fila -- el .xlsx, cuyo GetRows compacta huecos y no se usa.
+func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
+	if len(filas) != len(fisicas) {
+		return Tabla{}, fmt.Errorf("%w: el lector de xlsx desalineo filas y numeros de linea", ErrFormato)
+	}
+	t, err := desdeFilas(filas)
+	if err != nil {
+		return Tabla{}, err
+	}
+	if len(fisicas) == 0 {
+		return t, nil
+	}
+	// fisicas[0] es la cabecera. El cuerpo hereda el resto, que ya salio del
+	// XML y no se puede reconstruir como i+2.
+	t.Lineas = append([]int(nil), fisicas[1:]...)
+	return t, nil
 }
 
 func vacia(fila []string) bool {

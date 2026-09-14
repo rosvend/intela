@@ -1,9 +1,14 @@
 package ingesta
 
 import (
+	"archive/zip"
+	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
@@ -38,16 +43,14 @@ func TestTablaCSVCuadraElAnchoDeLasFilas(t *testing.T) {
 	if len(tabla.Filas) != 2 {
 		t.Fatalf("filas = %d, se esperaban 2 (la vacia no cuenta): %q", len(tabla.Filas), tabla.Filas)
 	}
-	for i, f := range tabla.Filas {
-		if len(f) != len(tabla.Columnas) {
-			t.Errorf("fila %d tiene %d celdas, la cabecera %d: %q", i, len(f), len(tabla.Columnas), f)
-		}
+	if len(tabla.Filas[0]) != len(tabla.Columnas) {
+		t.Errorf("la fila corta deberia rellenarse: %q", tabla.Filas[0])
 	}
 	if tabla.Filas[0][2] != "" {
 		t.Errorf("la celda que faltaba deberia ser vacia, es %q", tabla.Filas[0][2])
 	}
-	if tabla.Filas[1][2] != "6" {
-		t.Errorf("la celda sobrante deberia recortarse dejando %q, hay %q", "6", tabla.Filas[1][2])
+	if len(tabla.Filas[1]) != 4 || tabla.Filas[1][3] != "7" {
+		t.Errorf("la celda sobrante no se puede recortar en silencio: %q", tabla.Filas[1])
 	}
 }
 
@@ -145,4 +148,102 @@ func TestTablaXLSXNombraLasHojasQueSiHay(t *testing.T) {
 	if !strings.Contains(err.Error(), "CARACOL_REDES-SGC_(COLOMBIA)_20") {
 		t.Errorf("el error no lista las hojas del libro: %v", err)
 	}
+}
+
+func TestTablaXLSXConservaLaFilaFisicaTrasUnHueco(t *testing.T) {
+	t.Parallel()
+
+	// linea 1: cabecera
+	// linea 2: buena
+	// linea 3: vacia, omitida del XML
+	// linea 4: mala
+	datos := xlsxDeCeldas(t, map[string]string{
+		"A1": "titulo", "B1": "duracion",
+		"A2": "buena", "B2": "10",
+		"A4": "mala", "B4": "x",
+	})
+	tabla, err := TablaXLSX(datos, "")
+	if err != nil {
+		t.Fatalf("TablaXLSX: %v", err)
+	}
+	if len(tabla.Filas) != 2 || tabla.Linea(0) != 2 || tabla.Linea(1) != 4 {
+		t.Fatalf("lineas = %v con %d filas, se esperaban [2 4]", tabla.Lineas, len(tabla.Filas))
+	}
+
+	usos, err := mapaMinimo().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if !strings.Contains(usos[1].RechazoMotivo, "fila 4") {
+		t.Errorf("el motivo no cita la linea fisica: %s", usos[1].RechazoMotivo)
+	}
+	if strings.Contains(usos[1].RechazoMotivo, "fila 3") {
+		t.Errorf("el motivo numera sobre la lista compactada: %s", usos[1].RechazoMotivo)
+	}
+}
+
+func TestTablaXLSXRechazaUnaFilaFueraDelTopeDeExcel(t *testing.T) {
+	t.Parallel()
+
+	datos := xlsxDeCeldas(t, map[string]string{"A1": "titulo", "A2": "obra"})
+	datos = parcheFilaXML(t, datos, `<row r="2"`, `<row r="1048577"`)
+
+	_, err := TablaXLSX(datos, "")
+	if !errors.Is(err, aplicacion.ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+	if !strings.Contains(err.Error(), "1048577") {
+		t.Errorf("el error no nombra la fila fuera de rango: %v", err)
+	}
+}
+
+func xlsxDeCeldas(t *testing.T, celdas map[string]string) []byte {
+	t.Helper()
+	libro := excelize.NewFile()
+	t.Cleanup(func() { _ = libro.Close() })
+	for celda, valor := range celdas {
+		if err := libro.SetCellValue("Sheet1", celda, valor); err != nil {
+			t.Fatalf("SetCellValue(%s): %v", celda, err)
+		}
+	}
+	var buf bytes.Buffer
+	if err := libro.Write(&buf); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func parcheFilaXML(t *testing.T, datos []byte, viejo, nuevo string) []byte {
+	t.Helper()
+	origen, err := zip.NewReader(bytes.NewReader(datos), int64(len(datos)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	var salida bytes.Buffer
+	dest := zip.NewWriter(&salida)
+	for _, f := range origen.File {
+		w, err := dest.Create(f.Name)
+		if err != nil {
+			t.Fatalf("Create(%s): %v", f.Name, err)
+		}
+		r, err := f.Open()
+		if err != nil {
+			t.Fatalf("Open(%s): %v", f.Name, err)
+		}
+		cuerpo, err := io.ReadAll(r)
+		_ = r.Close()
+		if err != nil {
+			t.Fatalf("ReadAll(%s): %v", f.Name, err)
+		}
+		if strings.HasPrefix(f.Name, "xl/worksheets/") && strings.HasSuffix(f.Name, ".xml") {
+			cuerpo = []byte(strings.Replace(string(cuerpo), viejo, nuevo, 1))
+		}
+		if _, err := w.Write(cuerpo); err != nil {
+			t.Fatalf("Write(%s): %v", f.Name, err)
+		}
+	}
+	if err := dest.Close(); err != nil {
+		t.Fatalf("cerrar zip: %v", err)
+	}
+	return salida.Bytes()
 }

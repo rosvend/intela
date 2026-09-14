@@ -24,7 +24,9 @@ require (
 	// que instala CI, que la lee de aqui.
 	//
 	// v2.10.1 declara `go 1.24.0`, igual que este modulo. Subirla exige subir
-	// las dos cosas a la vez, no de una.
+	// las dos cosas a la vez, no de una. El tope de filas de GetRows
+	// (GHSA-q5j5-6p94-4gwc) se aplica en el lector de xlsx, no subiendo la
+	// libreria.
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.org/x/crypto v0.48.0
 )
