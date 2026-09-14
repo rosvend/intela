@@ -370,7 +370,7 @@ func (d *Dataset) parametros() {
 		// una etiqueta cosmetica: un reparto calculado con un 20% de deduccion
 		// se defenderia en auditoria citando un acta que no existe. Van
 		// sinteticos hasta que llegue el acta de la Asamblea con la tasa real,
-		// que es una de las preguntas abiertas de reglas-negocio.md.
+		// que es la pregunta P-10 de docs/dominio/preguntas-cliente.md.
 		sintetico("deduccion.administrativa", "0.20"),
 		sintetico("deduccion.social", "0.10"),
 		sintetico("reserva.errores_tecnicos", "0.05"),

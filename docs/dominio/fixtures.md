@@ -1,0 +1,170 @@
+---
+actualizado: 2026-09-13
+evidencia: internal/infraestructura/semilla/dataset.go
+---
+
+# Especificacion de las fixtures sinteticas
+
+Que forma tiene cada dato que el cliente todavia no entrego, y como se distingue de un dato real.
+Cierra la issue #21.
+
+**Los valores no se copian aqui.** Viven en `internal/infraestructura/semilla/dataset.go`, que es
+una funcion pura y la unica fuente de verdad. Este documento especifica **forma, rangos y
+procedencia**; si un numero cambia, cambia ahi y no en dos sitios. Es la misma convencion que el
+repo aplica a las reglas de `depguard`.
+
+Las respuestas de negocio que sostienen estos valores estan en
+[`preguntas-cliente.md`](preguntas-cliente.md), y **todas son provisionales**: las dio el equipo,
+no REDES SGC.
+
+## Como se marca lo sintetico
+
+No es una etiqueta cosmetica. Un parametro normativo lleva dos columnas que van juntas:
+
+| Columna | Dato real | Dato sintetico |
+| ------- | --------- | -------------- |
+| `organo` | El organo que lo aprobo, p. ej. `Consejo Directivo` | `sintetico` |
+| `reglamento` | El numeral, p. ej. `RD 9.1.1` | `RD-IX-seed-sintetico` |
+
+Asi, "que parametros tienen organo de verdad" es una consulta:
+`WHERE reglamento <> 'RD-IX-seed-sintetico'`. `dataset_test.go` fija el conjunto exacto de claves
+sinteticas esperadas, de modo que **promover un valor a real, u olvidar marcar uno nuevo, pone el
+test en rojo**. Ese test es el que impide que una cifra inventada se cuele a produccion
+disfrazada de norma.
+
+Por que importa: `RD 16` somete el reparto a auditoria en cualquier tiempo. Un importe calculado
+con una deduccion del 20% se defenderia citando un acta de Asamblea que nadie expidio. La etiqueta
+es lo que permite decir "esta cifra es de demo" sin tener que leer el codigo.
+
+## Estado por insumo
+
+| Insumo | Fixture | Marcada | Falta |
+| ------ | ------- | ------- | ----- |
+| Declaraciones de Obra | Si | n/a | -- |
+| Recaudo / bolsa | Si | n/a | El formato real (P-08) |
+| Coeficientes OTT `Wa/Wb/Wc` | Si | Si | El valor real (P-04) |
+| Rating por franja | **Parcial** | **No** | La tabla y la marca |
+| Mapeo de generos | **No existe** | -- | Todo |
+
+## Declaraciones de Obra
+
+Fixture: `Dataset.obrasYDeclaraciones()`. Periodo de referencia `2025-01`.
+
+Forma: por obra, una lista de partes `(titular_id, ipi, porcentaje)`. Las cuatro declaraciones
+cubren deliberadamente los casos que el motor tiene que distinguir:
+
+- **dos coautores que suman 100** -- el caso corriente,
+- **tres coautores que suman 100** -- que el reparto entre partes no sea un caso de dos,
+- **un solo autor con 100** -- para ejercitar la ponderacion de sketches,
+- **una parte sola que suma 60** -- el caso de `R-04`, en que se retiene el **total**.
+
+El cuarto es el mas instructivo y conviene no simplificarlo al tocarlo: la obra tiene **dos
+coautores en el catalogo y una sola parte declarada**. Eso es lo que hace explicable el 60%: la
+obra la escribieron dos y el 40% del segundo no esta declarado. El arreglo no es repartir el 60%,
+es que el coautor declare.
+
+No hay ninguna obra **sin** declaracion en el dataset. Cuando #33 pruebe esa rama de `R-04`
+-- obra sin declaracion, que tambien retiene -- hara falta anadirla.
+
+No son sinteticas en el sentido normativo: no son parametros, son datos de negocio de ejemplo. No
+llevan marca porque no hay riesgo de confundirlas con una norma.
+
+Procedencia real (P-07): el autor declara en REDES-SYS y **Intela no se integra**. El documento
+fuente es una declaracion jurada por autor, y `Otros autores` es **texto libre**
+(`Juan Perez (30%), Pedro Lopez (10%)`), sin IPI y sin identificador de obra -- ver
+[`fichas-fuente.md`](fichas-fuente.md#f-04-declaraciones-de-obra-redes-sys).
+
+Cuando llegue un export real, la fixture tendra que crecer con **al menos una obra cuyas partes
+vengan de esa cadena de texto**, para que el parseo no sea una sorpresa aguas abajo.
+
+Nota (P-11): el IPI **sale del padron por `titular_id`**, no de la declaracion. El formulario de
+REDES-SYS no tiene campo de IPI.
+
+## Recaudo / bolsa
+
+Fixture: `Dataset.bolsas()`.
+
+Forma: `(id, usuario_id, periodo, circuito, bruto)`. Cuatro bolsas del periodo `2025-01`, tres
+`nacional` y una `internacional` -- los dos circuitos importan porque el internacional **no se
+valoriza por puntos** (`RD 7.4`), se reparte tal como lo discrimino la sociedad hermana.
+
+Rangos: importes redondos del orden de $200.000 a $1.000.000 COP. Son redondos a proposito.
+
+Alcance (P-08): Intela **recibe** el importe cobrado; no lo calcula ni factura. La bolsa es un
+dato de entrada, no un resultado. Por eso la fixture no modela tarifa, convenio ni cuenta de
+cobro.
+
+## Coeficientes OTT `Wa`, `Wb`, `Wc`
+
+Fixture: `Dataset.parametros()`, marcados sinteticos.
+
+Forma: tres parametros decimales que **suman 1**. Los valores son redondos a proposito, para que
+nadie los confunda con una ponderacion aprobada.
+
+`RD 9.7` no los publica; la nota al pie 14 dice que se determinan por simulaciones (P-04).
+
+Contrato con el motor: si un coeficiente **no esta** en el snapshot, `reparto` devuelve **error
+tipado**, no un resultado en cero. Es criterio de aceptacion de #33, y es la diferencia entre "no
+se pudo calcular" y "dio cero", que en un sistema que mueve dinero de terceros no es un matiz.
+
+## Rating por franja horaria
+
+**Fixture incompleta.** Hoy los valores viajan **inline en cada uso de TV**
+(`usoTV(..., rating)`), no como tabla, y son **el unico dato sintetico del sembrador sin marcar**:
+todos los `parametros` son `publicado` o `sintetico`, el rating no es ninguno.
+
+Forma que debe tener (P-06): tabla indexada por **(canal, franja horaria, ano)**.
+
+| Campo | Tipo | Nota |
+| ----- | ---- | ---- |
+| `canal` | texto | `RD 9.1.1` calcula el valor punto **por canal** |
+| `franja` | texto | Franja horaria; el catalogo de franjas lo define el proveedor |
+| `ano` | entero | El feed se actualiza anualmente |
+| `rating` | decimal | Rango observado en la fixture actual: 2.0 a 9.0 |
+
+Pendiente de implementar: sacar el rating de la firma de `usoTV`, llevarlo a una tabla propia y
+marcarlo sintetico con el mismo mecanismo de dos columnas. Es cambio de codigo, no de este
+documento: corresponde a un seguimiento de #22, o a #26 si se prefiere resolverlo al normalizar.
+
+## Mapeo de generos
+
+**No existe como fixture ni como dato.** Es el insumo que hoy impide que una fila de parrilla
+sepa que ponderacion le toca.
+
+Respuesta provisional (P-05), aprobada por el equipo el 2026-09-13:
+
+Desde la columna `TIPO` de la parrilla:
+
+| `TIPO` | Tipo de obra | Ponderacion |
+| ------ | ------------ | ----------- |
+| Pelicula | `cinematografica` | 5.0 |
+| Unitario | `unitario` | 2.8 |
+| Sketch / humor | `sketches` | 0.8 |
+
+Desde `SubGenero`:
+
+| `SubGenero` | Tipo de obra | Ponderacion | Repertorio |
+| ----------- | ------------ | ----------- | ---------- |
+| Telenovela | `serie` | 1.3 | Si |
+| Drama | `serie` | 1.3 | Si |
+| Magazine | -- | -- | **No** |
+| Noticiero | -- | -- | **No** |
+| Agro | -- | -- | **No** |
+| Entretenimientos | -- | -- | **No** |
+| Religioso | -- | -- | **No** |
+
+Las cuatro ponderaciones **si son reales**: son la tabla de `RD 9.1.1` y ya estan en el sembrador
+como `publicado`. Lo sintetico es **el mapeo**, no el peso.
+
+Los cinco marcados como no repertorio son el filtro de `R-27` a nivel de programa: un noticiero no
+tiene guionista en el sentido de `RD 7.1`. **Entretenimientos es el mas dudoso** -- si son shows
+con libretista de planta si son repertorio, y habria que asignarles ponderacion. Esta explicito en
+la agenda de la reunion.
+
+Un `SubGenero` que no aparezca en la tabla **no se mapea a un tipo por defecto**: se trata como
+ausente y falla ruidosamente (ADR 0004). Adivinar la ponderacion es adivinar cuanto se le paga a
+alguien.
+
+Pendiente de implementar: la tabla debe vivir como **dato con vigencia**, no como constantes en
+codigo, para que corregirla despues sea cambiar una fila. Corresponde a #26, que es donde una fila
+de parrilla adquiere su tipo de obra.
