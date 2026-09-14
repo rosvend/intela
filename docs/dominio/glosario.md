@@ -102,15 +102,26 @@ datos (ID_Ficha, show_id, EIDR, IMDB).
 
 ## Sistemas de REDES SGC
 
-**REDES-SYS** — Aplicativo web de declaracion de obra en linea, en redescritores.com. Ahi el
-autor declara sus obras y los porcentajes de reparto. `RD 3`, `RD 13.1.2`
+**REDES-SYS** — Aplicativo web de declaracion de obra en linea, en
+`https://redes.declaraciondeobra.org/`. Ahi el autor declara sus obras y los porcentajes de
+reparto. `RD 3`, `RD 13.1.2`
+Verificado sobre una captura del formulario real (`RegistroObraCine.aspx`, REDES-SYS v1.0.0.7):
+la miga de pan dice `REDES-SYS > Menu Principal > Registro de Obra`. Es **una declaracion jurada
+por autor**; el 100% se arma sumando declaraciones independientes.
 
 **AVSYS** — Sistema donde se carga el neto a repartir, se genera la valorizacion de cada obra
 segun la ponderacion, y se producen las liquidaciones parcial y final. `RD 13.5`
 
-Nota de lectura: el Reglamento nombra los dos sistemas pero no explica su relacion ni si son
-modulos del mismo producto. **Confirmar con el cliente** si Intela reemplaza a uno, a ambos,
-o se integra con ellos. Esta pregunta condiciona todo el alcance del proyecto.
+Como se relacionan con Intela (P-03, **provisional**):
+
+- **Intela no reemplaza ni se integra con REDES-SYS.** Asume que el autor ya declaro ahi. Los
+  porcentajes entran por otra via -- hoy, fixtures.
+- **Intela ocupa el lugar de AVSYS**: cargar el neto, valorizar por ponderacion y liquidar es
+  exactamente su alcance.
+
+Lo segundo es una **inferencia del equipo** a partir de la definicion de AVSYS del propio
+Reglamento, no una frase del cliente. Esta en la agenda para confirmarlo. Ver
+[`preguntas-cliente.md`](preguntas-cliente.md).
 
 ## Organos de REDES SGC
 

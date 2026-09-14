@@ -24,7 +24,7 @@ func servidorConCola(t *testing.T, cola ColaRevision) http.Handler {
 	auth := &autenticacionFalsa{
 		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
 	}
-	return Nueva(nil, auth, nil, cola, Opciones{}).Router()
+	return Nueva(nil, Casos{Auth: auth, Cola: cola}, Opciones{}).Router()
 }
 
 func TestListarColaRevisionDevuelveElEsquemaCompartido(t *testing.T) {
@@ -73,7 +73,7 @@ func TestListarColaRevisionVaciaEsListaVacia(t *testing.T) {
 
 func TestListarColaRevisionExigeAdministrador(t *testing.T) {
 	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolTitular}}
-	h := Nueva(nil, auth, nil, &colaFalsa{}, Opciones{}).Router()
+	h := Nueva(nil, Casos{Auth: auth, Cola: &colaFalsa{}}, Opciones{}).Router()
 
 	rec := pedir(t, h, http.MethodGet, "/admin/cola-revision", "", "tok")
 	if rec.Code != http.StatusForbidden {
@@ -82,7 +82,7 @@ func TestListarColaRevisionExigeAdministrador(t *testing.T) {
 }
 
 func TestListarColaRevisionSinSesionEs401(t *testing.T) {
-	h := Nueva(nil, &autenticacionFalsa{}, nil, &colaFalsa{}, Opciones{}).Router()
+	h := Nueva(nil, Casos{Auth: &autenticacionFalsa{}, Cola: &colaFalsa{}}, Opciones{}).Router()
 	rec := pedir(t, h, http.MethodGet, "/admin/cola-revision", "", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("codigo = %d, se esperaba 401", rec.Code)

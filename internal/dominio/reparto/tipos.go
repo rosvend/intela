@@ -1,6 +1,10 @@
 package reparto
 
-import "github.com/shopspring/decimal"
+import (
+	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/recaudo"
+)
 
 // Modalidad del acto de comunicacion publica (RD 8). Determina con que
 // formula se valoriza un uso, no cuanto vale.
@@ -15,11 +19,13 @@ const (
 
 // Circuito de la corrida. Son dos recorridos distintos, no una variante de
 // uno: el internacional no valoriza por puntos (RD 7.4). Ver ADR 0008.
-type Circuito string
+//
+// Alias de [recaudo.Circuito], que es donde se declara. Ver [Bolsa].
+type Circuito = recaudo.Circuito
 
 const (
-	Nacional      Circuito = "nacional"
-	Internacional Circuito = "internacional"
+	Nacional      = recaudo.Nacional
+	Internacional = recaudo.Internacional
 )
 
 // Etapa del sistema de distribucion (RD 13.5). Cada una tiene dueno y
@@ -97,12 +103,19 @@ type Uso struct {
 
 // Bolsa a repartir en un periodo. Es lo unico que Recaudo pasa aguas abajo:
 // Reparto no conoce Usuario, Convenio ni Tarifa (ADR 0003).
-type Bolsa struct {
-	UsuarioID string
-	Periodo   string
-	Circuito  Circuito
-	Bruto     decimal.Decimal
-}
+//
+// Alias de [recaudo.Bolsa]. Se declaraba aqui, y estaba al reves: la regla del
+// ADR 0003 dice que la bolsa es lo que Recaudo ENTREGA, asi que el consumidor
+// no puede ser el dueno del tipo. Vive ahora en internal/dominio/recaudo, con
+// el constructor que la valida ([recaudo.NuevaBolsa]); el alias deja intacto
+// todo lo que ya la nombraba por este paquete.
+//
+// Que este paquete importe `recaudo` es la direccion permitida: depguard
+// deniega la vuelta (regla modulos-recaudo). Y que las reglas modulos-* de
+// otros modulos denieguen `recaudo` no entra en conflicto con esto: lo que
+// esas reglas protegen es que nadie mas vea Usuario ni la categoria del
+// pagador, no la bolsa, que es justo lo que el reglamento hace bajar.
+type Bolsa = recaudo.Bolsa
 
 // LineaObra es lo que le toca a una obra antes de mirar su declaracion.
 //
