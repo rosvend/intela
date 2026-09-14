@@ -39,6 +39,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Allow a Terraform plan that destroys resources. Type "yes" only when that is what you mean.'
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -65,6 +70,7 @@ jobs:
       contract: ${{ steps.layers.outputs.contract }}
       docker-backend: ${{ steps.layers.outputs.docker_backend }}
       docker-frontend: ${{ steps.layers.outputs.docker_frontend }}
+      terraform: ${{ steps.layers.outputs.terraform }}
     steps:
       - uses: actions/checkout@v7
 
@@ -117,6 +123,11 @@ jobs:
           # FROM them, so a change to `internal/` that breaks the build has to
           # re-run this stage, not wait for the merge to main to find out.
           P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          # The Go sources are in here for the same reason they are in P_DOCKER:
+          # the plan hashes the Lambda zips, which are built FROM them, so a
+          # change under cmd/lambda has to re-plan rather than surprise the
+          # deploy. The Makefile too, since it is what builds them.
+          P_TERRAFORM='(^infra/|^Makefile$|^cmd/lambda|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|terraform|deploy)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
@@ -141,6 +152,9 @@ jobs:
           docker_frontend=false
           if exists web/Dockerfile && touched "$P_FRONTEND"; then docker_frontend=true; fi
 
+          terraform=false
+          if exists infra/envs/nheo/main.tf && touched "$P_TERRAFORM"; then terraform=true; fi
+
           {
             echo "python=$python"
             echo "workflows=$workflows"
@@ -149,6 +163,7 @@ jobs:
             echo "contract=$contract"
             echo "docker_backend=$docker_backend"
             echo "docker_frontend=$docker_frontend"
+            echo "terraform=$terraform"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -167,6 +182,7 @@ jobs:
             echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
             echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
+            echo "| terraform | \`$terraform\` | \`infra/\` exists and the PR touches infrastructure or what it packages |"
             echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -305,6 +321,42 @@ jobs:
       dockerfile: web/Dockerfile
       push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
+  # Infrastructure. `validate` inside this stage needs no credentials and always
+  # runs; `plan` runs on a pull request, where a human is there to read the
+  # result and where the destroy guard has something to refuse.
+  #
+  # It ALSO runs on workflow_dispatch, and that is the only way the destroy
+  # guard's escape hatch is reachable: `confirm_destroy` is a dispatch input, so
+  # a run that cannot be dispatched can never carry it. Planning only on
+  # pull_request made the documented "re-run manually with confirm_destroy: yes"
+  # a promise with nothing behind it.
+  #
+  # A push to `main` skips the plan on purpose: the deploy job applies, and an
+  # apply plans anyway. Running it twice would only widen the window in which
+  # the two could disagree.
+  terraform:
+    name: Infrastructure
+    needs: detect
+    if: needs.detect.outputs.terraform == 'true'
+    uses: ./.github/workflows/terraform.yml
+    permissions:
+      contents: read
+      id-token: write # OIDC, for the plan. The plan role is read-only.
+      pull-requests: write # to post the plan
+    with:
+      environment: nheo
+      plan: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+      confirm_destroy: ${{ inputs.confirm_destroy || '' }}
+    # AWS_PLAN_ROLE_ARN is a REPOSITORY secret, not an environment one, and that
+    # is deliberate. An environment secret is invisible to a job that does not
+    # declare `environment:`, and this job must not declare `production`: every
+    # pull request would then sit waiting for the deploy approval just to read a
+    # plan. The role it names is read-only and its OIDC trust admits only
+    # `...:pull_request`, so the approval gate would buy nothing anyway.
+    secrets:
+      AWS_PLAN_ROLE_ARN: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+      BUDGET_NOTIFICATION_EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+
   # The gate. This is the ONLY required check in `main`'s branch protection,
   # so its name must stay `ci` - renaming it locks the branch.
   # `if: always()` so it runs even when a stage fails or is skipped.
@@ -325,6 +377,7 @@ jobs:
       - contract
       - container-backend
       - container-frontend
+      - terraform
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -383,7 +436,26 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     permissions:
       contents: read
+      id-token: write # OIDC against AWS. Added by the commit that uses it, as deploy.yml asked.
     with:
       environment: production
       backend-image: ${{ needs.container-backend.outputs.image }}
       frontend-image: ${{ needs.container-frontend.outputs.image }}
+      confirm_destroy: ${{ inputs.confirm_destroy || '' }}
+    # NOTHING IS PASSED HERE, and that is not an omission.
+    #
+    # AWS_DEPLOY_ROLE_ARN is a secret of the `production` environment, because
+    # it is the credential that can write to the account and so belongs behind
+    # the approval gate. This job cannot read it and cannot pass it on: a job
+    # that calls a reusable workflow may not declare `environment:` at all.
+    #
+    # It does not need to. deploy.yml's own job declares the environment, and a
+    # reusable workflow resolves its environment's secret itself -- in
+    # preference to anything a caller hands over. The gate and the secret stay
+    # in the one place that can hold both.
+    #
+    # `inherit` is what remains: it forwards repository- and organization-level
+    # secrets, which is the fallback if the ARN is ever moved out of the
+    # environment. It cannot forward the environment secret, which is why
+    # deploy.yml must NOT mark that one `required` -- see the long note there.
+    secrets: inherit

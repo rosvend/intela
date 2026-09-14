@@ -1,11 +1,20 @@
 # Despliegue continuo
 
 El despliegue vive en el mismo `ci.yml` que la integracion, al final, y **solo corre en `push` a
-`main`**. Hoy es un andamio: publica imagenes de verdad y no despliega nada, porque no hay proveedor
-decidido —no existe ADR de infraestructura de ejecucion—.
+`main`**. Despliega de verdad desde el [ADR 0014](decisiones/0014-infraestructura-serverless-en-aws.md),
+que eligio el proveedor que faltaba: AWS serverless, descrito en Terraform bajo
+[`infra/`](../infra/README.md).
 
-Un andamio que no miente: cada paso imprime el comando que acabara ejecutando y el secreto que
-necesitara. Un check verde aqui significa *se llego al camino de release*, nunca *se desplego*.
+Que sale por la puerta:
+
+| Pieza | Donde acaba |
+| ----- | ----------- |
+| API (`cmd/lambda`) | Lambda `provided.al2023` arm64, con Function URL |
+| Esquema (`cmd/lambda-migrate`) | Lambda dentro de la VPC, invocada por Terraform |
+| Tablero (`web/dist`) | Amplify Hosting, que ademas reescribe `/api/*` hacia la Function URL |
+
+Un check verde aqui significa que el release se aplico **y que `/api/health` y `/api/ready`
+respondieron 200**. El ultimo paso falla el job si no se recuperan.
 
 ## Por que esta en `ci.yml` y no en su propio workflow
 
@@ -22,7 +31,8 @@ del PR, y no aparece en el PR. Estarias revisando un camino de release que no es
 | --- | ------ | -------- |
 | `Docker build (backend)` | PR y `main` | En PR construye y descarta. En `main` publica a GHCR |
 | `Docker build (frontend)` | PR y `main` | Igual, para `web/Dockerfile` |
-| `Deploy (production)` | Solo `push` a `main`, tras `ci` | Andamio. Imprime el plan, no despliega |
+| `Infrastructure` | PR y `main` | Valida cada modulo aislado. En PR, ademas planifica y comenta |
+| `Deploy (production)` | Solo `push` a `main`, tras `ci` | Aplica Terraform, sube el tablero y verifica salud |
 
 **Verificar y publicar son la misma etapa** (`container.yml`), con `push: false` en PR y `push: true`
 en `main`. Separarlas en dos workflows las dejaria divergir, y construiria cada imagen dos veces en
@@ -35,59 +45,97 @@ Se publican en **GHCR**, que no necesita ningun secreto propio: `container.yml` 
 `GITHUB_TOKEN` del propio job, con permiso `packages: write`.
 
 ```text
-ghcr.io/rosvend/intela-api:sha-<sha completo>    inmutable, es lo que despliega el release
+ghcr.io/rosvend/intela-api:sha-<sha completo>    inmutable, es la que se anota en el release
 ghcr.io/rosvend/intela-api:main                  puntero movil, comodidad
 ghcr.io/rosvend/intela-web:sha-<sha completo>
 ghcr.io/rosvend/intela-web:main
 ```
 
 Las etiquetas se calculan dentro de `container.yml` en vez de con `docker/metadata-action`, para que
-la referencia que el workflow devuelve como `output` sea exactamente la que empujo. `deploy.yml`
-despliega **siempre la etiqueta `sha-`**: es inmutable, y un rollback es volver a lanzar el job con
-otro SHA.
+la referencia que el workflow devuelve como `output` sea exactamente la que empujo.
 
-> Mientras no exista ningun `Dockerfile` en el repositorio, las dos etapas de imagen se saltan y
-> `Deploy (production)` corre igualmente, con las entradas vacias, y reporta que no habia nada que
-> desplegar. Es la respuesta honesta y mantiene el camino de release ejercitado en vez de teorico.
+> **Las imagenes no son lo que se despliega.** El release serverless empaqueta el mismo codigo como
+> un zip de Lambda. GHCR se queda por dos razones: `docker compose up` es un entregable del proyecto
+> (`docs/context.md`), y construir la imagen es como se verifica que sigue construyendo. `deploy.yml`
+> recibe las dos referencias y las anota en el resumen, sin desplegarlas.
 
-## Donde se inyecta el proveedor
+## El orden, y por que migrar no es un paso propio
 
-Cada `TODO(provider)` de [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) es un
-punto de inyeccion. Rellenarlo es sustituir el `echo` por el comando real y anadir el secreto; la
-estructura de alrededor —orden, compuerta de entorno, concurrencia— no cambia.
+El orden que este documento pedia sigue siendo el mismo, y sigue sin ser decorativo:
 
-El orden no es decorativo:
+1. **Autenticar** contra AWS, por OIDC.
+2. **Migrar** la base, *antes* de que el codigo nuevo sirva trafico, y de forma compatible hacia
+   atras. El [ADR 0008](decisiones/0008-reparto-como-flujo-con-aprobaciones.md) hace del reparto un
+   flujo de varias etapas con aprobaciones: una corrida en vuelo durante un despliegue no puede
+   encontrarse un esquema que su codigo no conoce.
+3. **Desplegar** el codigo ya construido y verificado. Este paso selecciona, nunca reconstruye.
+4. **Verificar** salud, y fallar el job si no se recupera.
 
-1. **Autenticar** contra el proveedor.
-2. **Migrar** la base de datos, *antes* de que la imagen nueva sirva trafico, y de forma compatible
-   hacia atras. El [ADR 0008](decisiones/0008-reparto-como-flujo-con-aprobaciones.md) hace del
-   reparto un flujo de varias etapas con aprobaciones: una corrida en vuelo durante un despliegue no
-   puede encontrarse un esquema que su codigo no conoce.
-3. **Desplegar** la imagen ya publicada, por su etiqueta `sha-`. Este paso selecciona, nunca
-   reconstruye.
-4. **Verificar** salud, y fallar el job si no se recupera. Hasta que este paso exista de verdad, el
-   rollback es manual.
+Lo que cambio es donde vive el paso 2. **Migrar y desplegar la API ocurren los dos dentro del mismo
+`terraform apply`**, y el orden entre ellos lo impone el grafo de dependencias, no este fichero:
+
+```hcl
+module "api" {
+  depends_on = [module.migrations]
+}
+```
+
+Partirlos en dos pasos de shell haria que la garantia fuese una propiedad de un YAML que nadie lee
+durante un incidente. Asi es una propiedad del grafo, y falla ruidosamente: si goose falla, el apply
+falla, la funcion de la API no se actualiza y el codigo viejo sigue sirviendo el esquema viejo.
+
+El tablero se sube despues, con `aws amplify create-deployment` y su `start-deployment`, y el job
+sondea el trabajo hasta `SUCCEED`: sin eso, el paso quedaria verde en cuanto termina la subida, que
+no dice nada.
+
+## La guarda de destruccion
+
+Antes de aplicar —y antes de eso, en el `plan` de cada PR— el pipeline lee el plan en JSON y **se
+niega a continuar si algo se destruye**:
+
+```bash
+terraform show -json tfplan \
+  | jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | .address'
+```
+
+`index("delete")` atrapa tambien un reemplazo, que es un borrado y una creacion. Para pasar por
+encima hay que lanzar CI a mano con `confirm_destroy: yes`.
+
+Vigila **cualquier** borrado y no solo los etiquetados `Project=intela`: todo lo que hay en ese
+estado lleva la etiqueta por construccion, via `default_tags`, asi que filtrar por etiqueta solo
+anadiria formas de que se le escape algo. La base tiene ademas dos cinturones mas: `prevent_destroy`
+en su ciclo de vida y `deletion_protection` en la instancia.
 
 ## Donde van los secretos
 
-En secretos de **entorno** (`production`), no de repositorio: quedan acotados al entorno y una
-corrida que apunte a otro sitio no puede leerlos. Se declaran en el bloque `secrets:` de
-`workflow_call` de `deploy.yml` —hoy comentado, porque declarar un secreto antes de que algo lo
-consuma invita a pasar una credencial que el workflow no sabe usar— y el llamador los pasa.
+**No hay ninguna credencial guardada.** Se entra por OIDC, y lo que se almacena son ARN de roles,
+que no son secretos utiles por si solos: solo sirven a quien ya puede presentar un token de este
+repositorio.
 
-Dos formas, por orden de preferencia:
+Dos roles, porque los dos trabajos necesitan poderes distintos:
 
-- **OIDC**, si el proveedor lo soporta: no se guarda ninguna credencial. Necesita `id-token: write`
-  en el job que llama. **Hoy no se concede a proposito**: un permiso de token que nadie usa es un
-  pasivo permanente, asi que lo anade el commit que lo necesite.
-- **Credencial estatica** en un secreto de entorno, para proveedores sin OIDC.
+| Secreto de entorno | Rol | Confia en |
+| ------------------ | --- | --------- |
+| `AWS_PLAN_ROLE_ARN` | Solo lectura, mas el bloqueo del estado | `repo:<owner>/<repo>:pull_request` |
+| `AWS_DEPLOY_ROLE_ARN` | Gestion de los recursos del proyecto | `repo:<owner>/<repo>:ref:refs/heads/main` |
+
+Un pull request lleva un `sub` distinto, asi que **no puede asumir el rol de despliegue por mucho
+que edite el workflow en ese mismo PR**. Eso es lo que compra separarlos.
+
+Van en secretos de **entorno** (`production`), no de repositorio: quedan acotados al entorno y una
+corrida que apunte a otro sitio no puede leerlos. Ademas hace falta la variable de repositorio
+`TF_STATE_BUCKET`, que no es secreta y la imprime `infra/bootstrap/`.
+
+`id-token: write` ya se concede, en los dos jobs que lo usan y en ninguno mas — que era exactamente
+la condicion que este documento ponia.
 
 ## La compuerta de aprobacion
 
 `deploy.yml` corre con `environment: production`. Anadir *required reviewers* a ese entorno en los
 ajustes del repositorio convierte el job en una aprobacion manual **sin tocar el workflow**.
 
-El entorno todavia no existe; GitHub lo crea la primera vez que el job corre.
+GitHub crea el entorno la primera vez que el job corre. Los secretos de arriba hay que cargarlos
+ahi.
 
 ## Concurrencia
 
@@ -101,11 +149,20 @@ Y `deploy.yml` fija ademas la suya, `cancel-in-progress: false`. Es lo contrario
 CI, a proposito: cancelar un build desperdicia un runner, cancelar un despliegue deja el entorno a
 medio migrar.
 
+## Rollback
+
+Volver a lanzar el workflow sobre un commit anterior: reconstruye ese codigo y lo aplica. **Las
+migraciones no vuelven solas** — `goose down` no lo corre nadie automaticamente, y por eso el paso 2
+exige compatibilidad hacia atras. Un esquema que solo anade es un esquema del que se puede volver.
+
 ## Lo que todavia no cubre
 
-- **No despliega.** Falta el proveedor. Todo lo de arriba es la forma, no el fondo.
-- **Sin verificacion de salud real**, asi que el rollback es manual.
-- **Sin smoke test de arranque.** Las etapas de Docker comprueban que la imagen *construye*, no que
-  *arranca*. `load: true` en PR deja la imagen en el daemon local justo para poder encadenarlo aqui.
-- **Un solo entorno.** No hay `staging`. Cuando lo haya, es otra invocacion de `deploy.yml` con otro
-  `environment`, no otro workflow.
+- **Sin `staging`.** Un solo entorno. Cuando haya otro es otra invocacion de `deploy.yml` con otro
+  `environment` y otro `infra/envs/<nombre>/`, no otro workflow.
+- **Sin rollback automatico.** El paso de salud falla el job, pero no revierte: avisa, no arregla.
+- **Sin smoke test de arranque de la imagen.** Las etapas de Docker comprueban que la imagen
+  *construye*, no que *arranca*. Menos grave desde que la imagen no es lo que se despliega.
+- **`cmd/worker` y `cmd/scheduler` no se despliegan.** Sus cuerpos son `log.Debug(); return nil`. La
+  forma que tomaran —EventBridge Scheduler contra una Lambda acotada— esta escrita en el ADR 0014.
+- **La subida de parrillas no cabe por aqui.** `deploy/nginx.conf` admite 64 MB y una Function URL
+  topa en 6 MB. Cuando llegue el endpoint de ingesta necesita un PUT prefirmado a S3.

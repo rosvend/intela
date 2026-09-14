@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -55,6 +56,20 @@ type Similitud interface {
 type Hasher interface {
 	Verificar(hash, clave string) bool
 	Hash(clave string) (string, error)
+
+	// EsHash dice si una cadena tiene la forma de un hash de ESTE hasher.
+	//
+	// Existe porque el nucleo tiene una regla que cumplir -- lo que se guarda
+	// en `usuarios.password_hash` tiene que ser verificable -- y no puede
+	// comprobarla por si mismo sin aprenderse el algoritmo, que es justo lo
+	// que este puerto oculta. Asi que pregunta.
+	//
+	// No es cosmetico: una clave EN CLARO de 20 caracteres o mas pasaba el
+	// unico control que habia (la longitud) y el CHECK del esquema, se
+	// guardaba tal cual, y a partir de ahi el login fallaba con la clave
+	// correcta y con cualquier otra. Sin ninguna via para arreglarlo, porque
+	// esta operacion se niega a correr dos veces.
+	EsHash(posible string) bool
 }
 
 // GeneradorTokens produce el identificador opaco de una sesion.
@@ -86,6 +101,21 @@ type RepositorioAfiliacion interface {
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
 }
 
+// RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
+//
+// Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
+// usuarios en cada peticion autenticada, y esto se invoca UNA vez en la vida de
+// una instalacion. Juntarlos obligaria a todo doble de la afiliacion a
+// implementar una escritura que no usa.
+//
+// El contrato incluye la unicidad: la implementacion inserta solo si la tabla
+// esta vacia, EN LA MISMA SENTENCIA, y devuelve ErrYaHayUsuarios si no lo
+// estaba. Comprobarlo con un recuento previo deja una ventana entre el SELECT y
+// el INSERT por la que cabe una segunda cuenta de administrador.
+type RepositorioProvisionInicial interface {
+	CrearPrimerAdministrador(ctx context.Context, u Usuario, hash string) error
+}
+
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una
 // credencial permanente que nadie puede revocar.
 type Sesiones interface {
@@ -102,17 +132,101 @@ type RepositorioRepertorio interface {
 	DeclaracionDeObra(ctx context.Context, obraID string) (repertorio.Declaracion, error)
 }
 
+// CatalogoObras es la escritura y la busqueda del catalogo maestro.
+//
+// Esta separado de [RepositorioRepertorio] y no fusionado con el, aunque las
+// dos toquen la tabla `obras`, porque son dos lecturas distintas del mismo
+// dato y el ADR 0003 pide un puerto por responsabilidad:
+//
+//   - [RepositorioRepertorio] sirve al motor de reparto. Devuelve [Obra], que
+//     es una PROYECCION: identidad mas EstadoDecl, el estado de la declaracion
+//     derivado de `declaraciones`. No sabe de coautores.
+//   - CatalogoObras es el ABM del catalogo. Habla en [repertorio.Obra], que es
+//     la ENTIDAD, con su identificador inmutable y su invariante. No sabe de
+//     `declaraciones`, y no debe saber: el catalogo no reparte.
+//
+// Fundirlas daria un tipo que a la vez lleva el invariante de construccion y
+// un campo derivado de otra tabla, y cada lectura tendria que decidir cual de
+// las dos mitades vale.
+//
+// Registrar devuelve [ErrObraDuplicada] si el identificador ya existe. Lo
+// decide la clave primaria, no un SELECT previo: entre la consulta y el INSERT
+// cabe otra peticion.
+//
+// Registrar y Actualizar son ATOMICOS por contrato -la obra y sus coautores
+// entran o no entran-. Una obra a medias, sin coautores, viola la invariante
+// de [repertorio.Obra] en cuanto alguien la lea de vuelta.
+type CatalogoObras interface {
+	Registrar(ctx context.Context, o repertorio.Obra) error
+	Actualizar(ctx context.Context, o repertorio.Obra) error
+	PorID(ctx context.Context, id string) (repertorio.Obra, error)
+	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
+}
+
+// GestionDeclaraciones es la escritura y el historial de la Declaracion de
+// Obra: el ABM de la #23 y lo que consume el editor de splits de la #30.
+//
+// Separado de [RepositorioRepertorio] por la misma razon que [CatalogoObras]
+// esta separado de el (ver su comentario arriba): son dos lecturas del mismo
+// dato para dos consumidores distintos. RepositorioRepertorio sirve al motor
+// de reparto y al estado del catalogo con la declaracion VIGENTE, sin
+// versiones visibles. GestionDeclaraciones habla en versiones explicitas
+// porque el criterio de la #23 pide ver el historial y resolver la vigente en
+// un instante pasado.
+//
+// Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
+// con las partes que llegan, en una sola operacion atomica por contrato: es
+// lo mismo declarar por primera vez que editar, la unica diferencia es si
+// habia una version que cerrar. Devuelve [ErrNoEncontrado] si la obra no
+// existe en el catalogo.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico:
+// actorID es quien firma el hecho, y la implementacion lo asienta en la misma
+// transaccion que la version. No es un puerto ni una llamada aparte -eso deja
+// una version guardada sin asiento si la segunda llamada falla- sino la unica
+// forma de que "version + asiento" sea una sola cosa o ninguna.
+type GestionDeclaraciones interface {
+	// Guardar devuelve la version nueva y el vigente_desde que de verdad quedo
+	// escrito: no siempre es el ahora que llego, porque la implementacion
+	// puede ajustarlo -por ejemplo para que no coincida con el vigente_desde
+	// de la version que cierra-. Devolver el valor real y no el que se envio
+	// es lo que evita que el llamador informe una ventana de vigencia que la
+	// base nunca tuvo.
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
+	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+}
+
+// FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
+// NO filtra, y los que vienen se combinan con Y.
+//
+// Titulo es parcial porque es el unico campo por el que se busca sin saber el
+// dato exacto -es el escalon 3 de la cascada, y la muestra muestra por que:
+// el titulo localizado y el original difieren en 16 de 59 filas de Caracol-.
+// Los otros tres son exactos: un genero, un anio y un IPI se conocen enteros
+// o no se conocen.
+type FiltroObras struct {
+	Titulo string
+	Genero string
+	IPI    string
+	Anio   int
+}
+
 // RepositorioIdentificacion cubre alias, identificadores globales y el
 // resultado del matching.
 //
 // ObraPorIDGlobal recibe los tres identificadores y devuelve ErrNoEncontrado
 // si los tres llegan vacios: llamarla sin datos no puede pasar por "no hay
 // match".
+//
+// GuardarMatch escribe r solo si la fila sigue en escalonPrevio, el escalon
+// con que se leyo; si no existe o ya cambio, devuelve ErrNoEncontrado sin
+// escribir nada.
 type RepositorioIdentificacion interface {
 	Alias(ctx context.Context, fuente, tipo, valor string) (obraID string, err error)
 	GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error
 	ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (obraID string, err error)
-	GuardarMatch(ctx context.Context, usoID string, r identificacion.Resultado) error
+	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
@@ -132,9 +246,34 @@ type RepositorioONI interface {
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
 // Usuario, Convenio y Tarifa; aguas abajo solo circula la bolsa (ADR 0003).
+//
+// BolsasDePeriodo existe aparte de ListarBolsas -y no como un filtro opcional-
+// por lo mismo que UsosDePeriodo en [RepositorioIngesta]: es la lectura que
+// pide el motor de reparto, va por el indice `bolsas_periodo`, y un listado
+// entero de todos los periodos no es lo que nadie quiere cuando pregunta por
+// uno.
 type RepositorioRecaudo interface {
 	ListarBolsas(ctx context.Context) ([]BolsaPersistida, error)
+	BolsasDePeriodo(ctx context.Context, periodo string) ([]BolsaPersistida, error)
 	BolsaPorID(ctx context.Context, id string) (BolsaPersistida, error)
+	ListarUsuarios(ctx context.Context) ([]recaudo.Usuario, error)
+}
+
+// GestionRecaudo registra lo que se cobro. Es el lado de escritura de
+// [RepositorioRecaudo], separado por la misma razon que [GestionDeclaraciones]
+// lo esta de [RepositorioRepertorio]: quien solo lee no tiene por que poder
+// escribir dinero.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico que la
+// escritura, y por eso `ahora` y `actorID` son parametros de estos metodos y no
+// una segunda llamada a [BitacoraAuditoria] que el caso de uso orqueste. Una
+// bolsa escrita sin asiento es dinero que entro sin que nadie pueda decir de
+// donde salio, que es la pregunta 1 del ADR 0006.
+//
+// `ahora` viene del puerto [Reloj]; el adaptador no llama a time.Now().
+type GestionRecaudo interface {
+	RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora time.Time, actorID string) error
+	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
 }
 
 // ParametrosNormativos resuelve los parametros con vigencia y organo
@@ -211,31 +350,70 @@ type RepositorioLiquidacion interface {
 // La regla "ningun modulo escribe en la trazabilidad de otro" (ADR 0003) se
 // sostiene porque este puerto se inyecta por separado, no porque estuviera
 // suelto en un contrato que todos comparten.
+// AsientoPorID y no PorID: el mismo *Store satisface tambien [CatalogoObras],
+// que ya tiene un PorID con otra firma -misma razon por la que
+// [RepositorioRepertorio] tiene ObraPorID y no PorID-.
 type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
-	PorID(ctx context.Context, id string) (Asiento, error)
+	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
+//
+// Los tres metodos son los que pide el issue #35; el detalle de por que la
+// cola es una tabla propia y no River esta en el ADR 0015.
+//
+// El contrato tiene una obligacion que no se ve en las firmas: Tomar reclama
+// en exclusiva. Dos workers que llamen a la vez tienen que recibir trabajos
+// distintos o ErrSinTrabajo, nunca el mismo. El adaptador de PostgreSQL lo
+// resuelve con SELECT ... FOR UPDATE SKIP LOCKED; cualquier otro tiene que
+// dar la misma garantia, porque el nucleo no la comprueba.
 type ColaTrabajos interface {
-	Encolar(ctx context.Context, tipo string, payload []byte) error
-	Tomar(ctx context.Context) (Trabajo, error)
-	Cerrar(ctx context.Context, id int64, errMsg string) error
+	// Encolar es IDEMPOTENTE por clave natural. Devuelve false, sin error,
+	// cuando el trabajo ya estaba encolado: reintentar el encolado no es un
+	// fallo, y duplicarlo pagaria un periodo dos veces.
+	Encolar(ctx context.Context, clave ClaveTrabajo, payload []byte) (encolado bool, err error)
+
+	// Tomar reclama el trabajo pendiente mas antiguo cuya espera de reintento
+	// ya vencio, lo marca en curso y suma uno a Intentos. Devuelve
+	// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a
+	// la vez para decir lo mismo.
+	//
+	// `ahora` entra por parametro y no de now() por lo mismo que en Sesiones:
+	// una espera de reintento que solo se puede probar esperando no se prueba.
+	Tomar(ctx context.Context, ahora time.Time) (Trabajo, error)
+
+	// Cerrar termina un trabajo EN CURSO. Cerrar uno que no lo esta devuelve
+	// ErrNoEncontrado: un cierre por duplicado es un defecto del worker, no
+	// algo que convenga tragarse.
+	Cerrar(ctx context.Context, id int64, c Cierre) error
 }
 
-// Trabajo es una unidad de trabajo tomada de la cola. Tomar devuelve
-// ErrSinTrabajo cuando no hay ninguno: no hacen falta un ok y un error a la
-// vez para decir lo mismo.
+// Trabajo es una unidad de trabajo tomada de la cola.
+//
+// Intentos es el numero de veces que se ha tomado ESTE trabajo, ya contando la
+// actual. Clave.Corrida es otra cosa: cual corrida logica del periodo es. Ver
+// [ClaveTrabajo].
 type Trabajo struct {
-	ID      int64
-	Tipo    string
-	Payload []byte
+	ID       int64
+	Clave    ClaveTrabajo
+	Payload  []byte
+	Intentos int
 }
 
 // Calendario dispara las corridas segun RD 10 y RD 12.
+//
+// Es dato que administra el Consejo Directivo, no configuracion de operacion
+// (ADR 0004): por eso las fechas se leen de aqui y no de un cron del sistema
+// operativo.
 type Calendario interface {
+	// Pendientes devuelve los periodos cuya fecha de apertura ya llego y que
+	// todavia no se han disparado.
 	Pendientes(ctx context.Context, hoy time.Time) ([]string, error)
+
+	// MarcarDisparado deja constancia de que el periodo ya se encolo.
+	// Devuelve ErrNoEncontrado si el periodo no esta en el calendario.
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 

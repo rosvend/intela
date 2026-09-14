@@ -35,7 +35,7 @@ func main() {
 // ejecutar devuelve error en vez de llamar a log.Fatal.
 //
 // log.Fatal llama a os.Exit(1), que NO corre los defer: con el patron
-// anterior, el defer store.Cerrar() era codigo muerto y el pool nunca se
+// anterior, el defer store.CerrarPool() era codigo muerto y el pool nunca se
 // cerraba limpiamente.
 func ejecutar(log *slog.Logger) error {
 	// NotifyContext cancela el contexto al recibir SIGINT o SIGTERM, que es
@@ -55,7 +55,7 @@ func ejecutar(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer store.Cerrar()
+	defer store.CerrarPool()
 
 	// Aqui es donde se juntan las dos orillas: el nucleo declara los puertos y
 	// este es el unico sitio del binario que sabe que adaptador satisface cada
@@ -70,7 +70,33 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	api := httpapi.Nueva(store, autenticacion, httpapi.Opciones{
+	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
+	// puertos separados: que el adaptador sea uno solo es asunto suyo.
+	catalogo := aplicacion.Catalogo{Obras: store}
+
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
+	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
+	// por que poder registrar dinero.
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	api := httpapi.Nueva(store, httpapi.Casos{
+		Auth:          autenticacion,
+		Catalogo:      catalogo,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})

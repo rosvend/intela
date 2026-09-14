@@ -7,8 +7,11 @@ extends:
   - recommended
 
 rules:
-  # Los servidores SON localhost: el sistema se despliega con docker compose y
-  # todavia no hay entorno publicado. Cuando lo haya, esta regla vuelve.
+  # Se queda apagada, y ya no por falta de entorno publicado: desde el ADR 0014
+  # el contrato declara el de produccion. Es que la regla marca TAMBIEN los
+  # servidores `localhost`, y esos son legitimos y permanentes aqui: levantar el
+  # sistema entero con `docker compose` es un entregable del proyecto
+  # (`docs/context.md`), asi que el contrato tiene que seguir describiendolo.
   no-server-example.com: off
 
   # /health y /ready no reciben entrada, no llevan autenticacion y no tienen

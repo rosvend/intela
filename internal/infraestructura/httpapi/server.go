@@ -31,6 +31,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/rosvend/intela/internal/aplicacion"
 )
 
 // Salud responde si las dependencias del proceso estan vivas.
@@ -52,24 +54,42 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud Salud
-	auth  Autenticacion
-	opts  Opciones
-	log   *slog.Logger
+	salud         Salud
+	auth          Autenticacion
+	catalogo      Catalogo
+	declaraciones Declaraciones
+	recaudo       Recaudo
+	opts          Opciones
+	log           *slog.Logger
+}
+
+// Casos agrupa los casos de uso que Nueva necesita.
+//
+// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
+// se cablea en cmd/api. El comentario que este struct reemplaza decia "cuando
+// la lista pase de tres, se agrupa"; con Declaraciones ya son tres.
+type Casos struct {
+	Auth          Autenticacion
+	Catalogo      Catalogo
+	Declaraciones Declaraciones
+	Recaudo       Recaudo
 }
 
 // Nueva construye el adaptador.
-//
-// Los casos de uso van como parametros y no dentro de Opciones porque son
-// dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
-// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con uno todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, opts Opciones) *API {
+func Nueva(salud Salud, casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, opts: opts, log: log}
+	return &API{
+		salud:         salud,
+		auth:          casos.Auth,
+		catalogo:      casos.Catalogo,
+		declaraciones: casos.Declaraciones,
+		recaudo:       casos.Recaudo,
+		opts:          opts,
+		log:           log,
+	}
 }
 
 func (a *API) Router() http.Handler {
@@ -104,6 +124,65 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+
+		// Los grupos de rol van DENTRO de conSesion: sin sesion la
+		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
+		// docs/architecture/roles.md; quien anada un endpoint lo mete
+		// en el grupo que le corresponde y no escribe el chequeo a mano.
+		protegido.Route("/admin", func(admin chi.Router) {
+			admin.Use(requiereRol(aplicacion.RolAdministrador))
+			admin.Get("/pipeline", superficieOK)
+		})
+		protegido.Route("/auditoria", func(audit chi.Router) {
+			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
+			audit.Get("/asientos", superficieOK)
+		})
+
+		// El catalogo maestro. Las cuatro rutas piden `administrador`,
+		// lectura incluida: el catalogo es el cubo contra el que resuelve
+		// todo el matching, y quien lo lee entero ve el repertorio completo
+		// de la sociedad. Abrirlo a `auditor` -que tiene lectura de todo- o
+		// recortarlo para `titular` con SoloPropiasObras (OE-6) son
+		// decisiones de los issues que traigan esos paneles, no de este.
+		protegido.Route("/obras", func(cat chi.Router) {
+			cat.Use(requiereRol(aplicacion.RolAdministrador))
+			cat.Get("/", a.buscarObras)
+			cat.Post("/", a.registrarObra)
+			cat.Get("/{id}", a.obraPorID)
+			cat.Patch("/{id}", a.actualizarObra)
+
+			// El editor de splits de la #30. Mismo rol que el resto del
+			// catalogo: es la misma superficie -quien edita una declaracion
+			// ve el repertorio entero-.
+			cat.Post("/{id}/declaracion", a.declararObra)
+			cat.Put("/{id}/declaracion", a.editarDeclaracion)
+			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
+		})
+
+		// El lado del ingreso (#27). Entra dinero, asi que escribe
+		// `contabilidad` -- que es quien factura (roles.md, `RD 13.5`)-- y
+		// `administrador`. Ni `distribucion` ni `auditor` registran recaudo:
+		// distribucion es la OTRA firma de las compuertas y auditor no opera
+		// el pipeline.
+		protegido.Route("/recaudo", func(rec chi.Router) {
+			rec.Use(requiereRol(aplicacion.RolContabilidad, aplicacion.RolAdministrador))
+			rec.Post("/", a.registrarRecaudo)
+			rec.Get("/usuarios", a.listarUsuariosRecaudo)
+			rec.Post("/usuarios", a.registrarUsuarioRecaudo)
+		})
+
+		// Las bolsas se leen desde mas sitios de los que se escriben:
+		// `distribucion` necesita la bolsa para correr el reparto y `auditor`
+		// tiene lectura de todo. Sigue fuera `titular`, que solo ve las obras
+		// donde participa (OE-6) y no el ingreso de la sociedad.
+		protegido.Route("/bolsas", func(bol chi.Router) {
+			bol.Use(requiereRol(
+				aplicacion.RolContabilidad, aplicacion.RolAdministrador,
+				aplicacion.RolDistribucion, aplicacion.RolAuditor,
+			))
+			bol.Get("/", a.listarBolsas)
+			bol.Get("/{id}", a.bolsaPorID)
+		})
 	})
 
 	return r

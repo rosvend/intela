@@ -45,7 +45,7 @@ func (a *autenticacionFalsa) CerrarSesion(_ context.Context, token string) error
 
 func servidor(t *testing.T, auth Autenticacion) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, Opciones{}).Router()
+	return Nueva(nil, Casos{Auth: auth}, Opciones{}).Router()
 }
 
 func pedir(t *testing.T, h http.Handler, metodo, ruta, cuerpo, token string) *httptest.ResponseRecorder {
@@ -283,7 +283,7 @@ func TestElEsquemaBearerNoDistingueMayusculas(t *testing.T) {
 	}
 }
 
-// Lo que #17 va a consumir: el Usuario puesto en el contexto por conSesion.
+// Lo que requiereRol consume: el Usuario puesto en el contexto por conSesion.
 func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 	quiero := aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolDistribucion}
 	auth := &autenticacionFalsa{usuario: quiero}
@@ -291,7 +291,7 @@ func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 	var visto aplicacion.Usuario
 	var hubo bool
 
-	api := Nueva(nil, auth, Opciones{})
+	api := Nueva(nil, Casos{Auth: auth}, Opciones{})
 	h := api.conSesion(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		visto, hubo = UsuarioDe(r.Context())
 	}))
@@ -309,8 +309,8 @@ func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 }
 
 // Sin sesion no hay usuario, y el segundo valor lo dice. Un cero silencioso
-// seria un Usuario con rol vacio, que #17 podria comparar contra un rol y
-// dejar pasar.
+// seria un Usuario con rol vacio, que requiereRol podria comparar contra un
+// rol y dejar pasar.
 func TestUsuarioDeSinSesionDevuelveFalso(t *testing.T) {
 	if _, hubo := UsuarioDe(context.Background()); hubo {
 		t.Fatal("sin sesion en el contexto, UsuarioDe tiene que devolver false")

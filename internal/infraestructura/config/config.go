@@ -52,6 +52,25 @@ func Duracion(clave string, pordefecto time.Duration) time.Duration {
 	return d
 }
 
+// Entero lee un entero. Un valor ilegible avisa y usa el de por defecto, igual
+// que Duracion: un worker no arranca menos por una variable mal escrita, pero
+// que lo haga en silencio esconde la causa cuando alguien mire por que la
+// politica de reintentos no es la que configuro.
+func Entero(clave string, pordefecto int) int {
+	v := strings.TrimSpace(os.Getenv(clave))
+	if v == "" {
+		return pordefecto
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("entero invalido, se usa el valor por defecto",
+			slog.String("clave", clave), slog.String("valor", v),
+			slog.Int("pordefecto", pordefecto))
+		return pordefecto
+	}
+	return n
+}
+
 // Bool acepta lo que entiende strconv.ParseBool.
 func Bool(clave string, pordefecto bool) bool {
 	v := strings.TrimSpace(os.Getenv(clave))

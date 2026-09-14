@@ -12,6 +12,10 @@ x-backend: &backend
   build:
     context: .
     dockerfile: Dockerfile
+    # La etapa del servicio, que NO contiene el binario del seed. Es la etapa
+    # final del Dockerfile y por tanto la de por defecto; se nombra igual para
+    # que se lea al lado del `target: seed` de mas abajo.
+    target: runtime
   environment: &backend-env
     DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
     OBJECT_DIR: /objetos
@@ -49,6 +53,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     entrypoint: ["/app/migrate", "up"]
     environment:
       DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
@@ -56,6 +61,35 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  # Paso opcional, a mano. No entra en `up`.
+  #   docker compose run --rm seed
+  # SEED_RESET=true recarga. Cada rol tiene su clave (ARRANQUE.md).
+  #
+  # `target: seed` es una IMAGEN DISTINTA de la de la API, no un entrypoint
+  # distinto de la misma. El binario borra 21 tablas con SEED_RESET=true y
+  # reescribe `usuarios` con una clave publicada: no viaja en la imagen que
+  # atiende produccion. Aqui es un servicio mas porque este compose es el
+  # entorno de desarrollo.
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: seed
+    entrypoint: ["/app/seed"]
+    environment:
+      DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
+      OBJECT_DIR: /objetos
+      LOG_FORMATO: texto
+      SEED_RESET: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes: [objetos:/objetos]
     restart: "no"
 
   api:

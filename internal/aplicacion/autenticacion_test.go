@@ -42,6 +42,10 @@ func (h *hasherEspia) Verificar(hash, _ string) bool {
 
 func (h *hasherEspia) Hash(clave string) (string, error) { return clave, nil }
 
+// EsHash: el espia acepta cualquier cosa no vacia. Este doble existe para las
+// pruebas del login, donde la forma del hash no es lo que se comprueba.
+func (h *hasherEspia) EsHash(posible string) bool { return posible != "" }
+
 type sesionesMemoria struct {
 	guardadas map[string]string
 	expira    map[string]time.Time

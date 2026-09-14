@@ -72,6 +72,42 @@ var (
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
+	d := DSN(t)
+
+	// pool_max_conns acotado a proposito. pgxpool sin configurar abre hasta
+	// max(4, NumCPU) conexiones, y hay pruebas -las de blancos por celda- que
+	// piden un pool por subprueba: quince pools de ese tamano contra el
+	// max_connections de un contenedor agotan el servidor, y la victima no es
+	// quien lo agota sino la siguiente prueba del binario. Salio asi en CI,
+	// como `too many clients already (SQLSTATE 53300)` en sesiones_test.go.
+	//
+	// Dos bastan: ninguna prueba de este paquete usa concurrencia contra su
+	// propio pool -las que tocan Pool no pueden llamar a t.Parallel()-, y
+	// acotarlo aqui lo arregla para todas de una vez en vez de pedirle a cada
+	// prueba que se acuerde. Ademas hace mas fiable el DROP DATABASE de
+	// Restore, que no convive con conexiones vivas.
+	pool, err := pgxpool.New(t.Context(), d+"&pool_max_conns=2")
+	if err != nil {
+		t.Fatalf("abrir pool: %v", err)
+	}
+	// Cerrar antes del Restore de la prueba siguiente: DROP DATABASE no
+	// convive con conexiones vivas.
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// DSN devuelve la cadena de conexion a una base recien migrada y vacia.
+//
+// Existe porque no todo lo que se prueba contra Postgres real habla por un
+// pool: el runner de migraciones abre su propia conexion con database/sql, y lo
+// que se prueba de el es justamente COMO interpreta el DSN. Recibir un pool ya
+// construido daria por bueno el paso que se quiere comprobar.
+//
+// Quien la use tiene que cerrar lo que abra antes de que otra prueba pida base,
+// por la misma razon que [Pool] cierra el suyo.
+func DSN(t *testing.T) string {
+	t.Helper()
+
 	if testing.Short() {
 		t.Skip("prueba de integracion: necesita Docker")
 	}
@@ -81,19 +117,10 @@ func Pool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("levantar postgres: %v", errArranque)
 	}
 
-	ctx := t.Context()
-	if err := contenedor.Restore(ctx); err != nil {
+	if err := contenedor.Restore(t.Context()); err != nil {
 		t.Fatalf("restaurar la plantilla migrada: %v", err)
 	}
-
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("abrir pool: %v", err)
-	}
-	// Cerrar antes del Restore de la prueba siguiente: DROP DATABASE no
-	// convive con conexiones vivas.
-	t.Cleanup(pool.Close)
-	return pool
+	return dsn
 }
 
 // arrancar levanta el contenedor, migra y toma la plantilla. Corre una sola

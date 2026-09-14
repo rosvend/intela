@@ -3,6 +3,21 @@
 // primera semana de diciembre.
 //
 // Tiene reloj propio (ADR 0003). Es el unico proceso que decide "ya toca".
+//
+// # No es un cron
+//
+// Las fechas las fija el Consejo Directivo y las puede modificar por fuerza
+// mayor con re-notificacion (RD 12). Son DATO que el administrador edita, no
+// configuracion de operacion, y por eso viven en la tabla `calendario` y se
+// leen en cada pasada (ADR 0004). Una expresion cron en el sistema operativo
+// obligaria a un despliegue para mover una fecha que aprobo un organo social.
+//
+// # Encola, no ejecuta
+//
+// El calendario ABRE el proceso de reparto; no lo corre (ADR 0008). Este
+// binario deja el trabajo en la cola y se aparta; quien lo ejecuta es el
+// worker, y a partir de ahi el proceso avanza por accion humana en las
+// compuertas de doble firma.
 package main
 
 import (
@@ -44,9 +59,18 @@ func ejecutar(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer store.Cerrar()
+	defer store.CerrarPool()
 
-	var rel aplicacion.Reloj = reloj.Sistema{}
+	// El mismo *Store satisface Calendario y ColaTrabajos. Que sean el mismo
+	// tipo es asunto del adaptador: el nucleo sigue viendo dos puertos.
+	//
+	// La hora entra por el puerto y no por time.Now(): probar que una ventana
+	// se abre cuando toca no puede depender de esperar a que llegue la fecha.
+	planificador := aplicacion.Planificador{
+		Calendario: store,
+		Cola:       store,
+		Reloj:      reloj.Sistema{},
+	}
 
 	intervalo := config.Duracion("SCHEDULER_INTERVALO", time.Minute)
 	tic := time.NewTicker(intervalo)
@@ -60,19 +84,23 @@ func ejecutar(log *slog.Logger) error {
 			log.Info("senal recibida, scheduler detenido")
 			return nil
 		case <-tic.C:
-			if err := revisarCalendario(ctx, rel, log); err != nil {
-				log.Error("revision de calendario fallida", slog.Any("error", err))
-			}
+			revisarCalendario(ctx, planificador, log)
 		}
 	}
 }
 
-// revisarCalendario mirara que periodos toca disparar. El calendario entra
-// con el PR de persistencia.
+// revisarCalendario encola los periodos vencidos y los marca disparados.
 //
-// La hora entra por el puerto y no por time.Now(): probar que una ventana de
-// 15 dias se abre cuando toca no puede depender de esperar quince dias.
-func revisarCalendario(ctx context.Context, rel aplicacion.Reloj, log *slog.Logger) error {
-	log.Debug("calendario revisado", slog.Time("ahora", rel.Ahora()))
-	return nil
+// Se registran las claves encoladas ANTES del error: Disparar devuelve lo que
+// alcanzo a hacer, y perder ese dato dejaria un trabajo en la cola del que el
+// log no dice nada. Un fallo no tumba el scheduler: la operacion es
+// idempotente y la pasada siguiente reconcilia.
+func revisarCalendario(ctx context.Context, p aplicacion.Planificador, log *slog.Logger) {
+	claves, err := p.Disparar(ctx)
+	for _, c := range claves {
+		log.Info("corrida encolada", slog.String("trabajo", c.String()))
+	}
+	if err != nil {
+		log.Error("revision de calendario fallida", slog.Any("error", err))
+	}
 }

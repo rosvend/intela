@@ -1,0 +1,11 @@
+# Copy to backend.hcl (gitignored) and fill in.
+#
+#   terraform init -backend-config=backend.hcl
+#
+# The bucket is created by infra/bootstrap/, which prints its name. Moving this
+# environment to another AWS account means writing a different backend.hcl and
+# re-running init -- the Terraform itself does not change.
+
+bucket = "intela-tfstate-000000000000"
+key    = "envs/nheo/terraform.tfstate"
+region = "us-east-1"

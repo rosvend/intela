@@ -6,6 +6,19 @@
 // Reparto lee de Repertorio. Repertorio no conoce a Reparto, y depguard lo
 // impide (regla modulos-repertorio de .golangci.yml).
 //
+// # Dos tipos, dos responsabilidades que no se mezclan
+//
+// [Obra] es el catalogo maestro: identidad y metadata. [Declaracion] es el
+// reparto declarado: quien cobra y cuanto. Estan separados a proposito y la
+// separacion es normativa, no estetica.
+//
+// [Obra] lleva coautores con su rol autoral, y NINGUNO de ellos tiene
+// porcentaje. Los nombres del catalogo -igual que las columnas Autor* y
+// Guionista* de una parrilla- sirven para IDENTIFICAR la obra; el porcentaje
+// sale solo de la Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Si el
+// catalogo pudiera declarar porcentajes habria dos caminos hasta un pago, y
+// el segundo no lo firma nadie.
+//
 // # El invariante que vive aqui
 //
 // [Declaracion.Completa] es R-04 en codigo: una declaracion vale si sus

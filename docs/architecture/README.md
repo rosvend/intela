@@ -120,7 +120,7 @@ Decidido en [ADR 0010](../decisiones/0010-stack-go.md), que sustituye a
 | Infraestructura | `chi` o `net/http` estandar | Sin framework que quiera ser dueno de los handlers |
 | Puntos de entrada | Un `main` por `cmd/` | Es literalmente lo que pide `0003` |
 | Persistencia | `pgx` v5 + `sqlc`, PostgreSQL 16 | SQL primero; `NUMERIC` escanea directo a `decimal.Decimal` |
-| Cola | `River` sobre el mismo postgres | Encolado transaccional: una transaccion local por etapa |
+| Cola | Tabla `cola_trabajos` sobre el mismo postgres ([0015](../decisiones/0015-cola-de-trabajos-en-tabla-propia.md)) | Encolado idempotente —no transaccional— por clave natural `(tipo, periodo, corrida)`; reclamo con `FOR UPDATE SKIP LOCKED` |
 | Migraciones | `goose` | — |
 | Planificador | Temporizador sobre `CalendarioDeDistribucion` | `0004`: no es dueno de las fechas |
 | Similitud | `pg_trgm` + `unaccent` tras `PuertoMotorDeSimilitud` | `0007`: sustituible sin tocar la cascada |
@@ -131,7 +131,8 @@ Decidido en [ADR 0010](../decisiones/0010-stack-go.md), que sustituye a
 | Pruebas | `testing`, `testcontainers-go`, `rapid` | El motor se prueba sin infraestructura |
 | Frontera | El compilador, mas `depguard` | Los ciclos de importacion **no compilan** |
 | Observabilidad | `log/slog` + OpenTelemetry | Separada de la bitacora, que es dominio |
-| Despliegue | Binario estatico, imagen distroless, `docker compose` | Lo exige `docs/context.md` |
+| Despliegue local | Binario estatico, imagen distroless, `docker compose` | Lo exige `docs/context.md` |
+| Despliegue en nube | Lambda `provided.al2023` arm64, Amplify Hosting, RDS PostgreSQL, Terraform | `0014`: serverless, sin nada que facture por hora salvo la base |
 
 `src/scripts/` se queda en Python permanentemente (PEP 723), aunque el backend sea Go.
 
@@ -243,6 +244,7 @@ Cargar solo lo que haga falta para la tarea.
 
 | Archivo | Para que |
 | ------- | -------- |
+| [`roles.md`](roles.md) | Matriz `aplicacion.Rol` → rol del reglamento y capacidades. **Leer antes de anadir una ruta** |
 | [`glosario.md`](../dominio/glosario.md) | Lenguaje ubicuo: obra, titular, ONI, recaudo, reparto, IPI, IDA |
 | [`reglas-negocio.md`](../dominio/reglas-negocio.md) | Registro de reglas con cita al reglamento. **Empezar aqui** |
 | [`formulas.md`](../dominio/formulas.md) | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
