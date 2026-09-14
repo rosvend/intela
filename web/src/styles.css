@@ -343,12 +343,19 @@ a {
   max-width: 25rem;
 }
 
-/* Mascara pintada con el token de marca: la forma esta en el canal alfa. */
+/*
+ * Mascara pintada con el token de marca: la forma esta en el canal alfa.
+ *
+ * El margen inferior baja el logotipo en pantalla, no lo sube: la columna se
+ * centra en vertical, asi que un bloque mas corto empieza mas abajo. Con 2rem
+ * -y sin la entradilla en el modo de entrada- el logotipo queda mas cerca del
+ * formulario y mas lejos del borde de arriba.
+ */
 .acceso-logo {
   display: block;
   width: 132px;
   height: 42px; /* 132 / 3.179, el aspecto real del activo */
-  margin: 0 auto 3rem;
+  margin: 0 auto 2rem;
   background-color: var(--acento);
   mask-repeat: no-repeat;
   mask-position: center;
@@ -363,9 +370,9 @@ a {
  * sus etiquetas se quedan a la izquierda -- un formulario se lee por el borde
  * izquierdo de las etiquetas, y centrarlas obliga a buscar cada una.
  *
- * La entradilla se centra con el titulo aunque no se pidiera explicitamente:
- * es la segunda linea del mismo bloque, y dejarla a la izquierda debajo de un
- * titulo centrado se lee como un descuido.
+ * La entradilla -que solo dibuja el modo de alta- se centra con el titulo
+ * aunque no se pidiera explicitamente: es la segunda linea del mismo bloque, y
+ * dejarla a la izquierda debajo de un titulo centrado se lee como un descuido.
  */
 .acceso-titulo {
   margin: 0 0 0.5rem;
