@@ -91,4 +91,16 @@ var (
 	// comprobar, que es exactamente lo que el ADR 0006 existe para impedir. El
 	// handler de #29 tampoco lo puede mandar a un 500 generico.
 	ErrEvidenciaCorrupta = errors.New("evidencia corrupta")
+
+	// ErrTitularInexistente: la declaracion nombra un titular_id que no esta en
+	// el padron.
+	//
+	// Distinto de ErrNoEncontrado: ese centinela es "el recurso de la URL no
+	// esta" (la obra del path); este es "un dato DENTRO del cuerpo de la
+	// peticion senala una entidad que no existe" -el mismo caso que ya anticipa
+	// el comentario de esClaveForanea en postgres/errores.go sobre la FK de
+	// `declaraciones` hacia `titulares`-. Confundirlos convierte un typo de
+	// titular_id en el JSON del cliente en un 404 que dice "la obra no esta en
+	// el catalogo", que no es lo que paso.
+	ErrTitularInexistente = errors.New("ese titular no existe")
 )

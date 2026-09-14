@@ -139,7 +139,19 @@ func construir() (http.Handler, error) {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, httpapi.Opciones{
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	api := httpapi.Nueva(store, httpapi.Casos{
+		Auth:          autenticacion,
+		Catalogo:      catalogo,
+		Declaraciones: declaraciones,
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})

@@ -54,25 +54,39 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud    Salud
-	auth     Autenticacion
-	catalogo Catalogo
-	opts     Opciones
-	log      *slog.Logger
+	salud         Salud
+	auth          Autenticacion
+	catalogo      Catalogo
+	declaraciones Declaraciones
+	opts          Opciones
+	log           *slog.Logger
+}
+
+// Casos agrupa los casos de uso que Nueva necesita.
+//
+// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
+// se cablea en cmd/api. El comentario que este struct reemplaza decia "cuando
+// la lista pase de tres, se agrupa"; con Declaraciones ya son tres.
+type Casos struct {
+	Auth          Autenticacion
+	Catalogo      Catalogo
+	Declaraciones Declaraciones
 }
 
 // Nueva construye el adaptador.
-//
-// Los casos de uso van como parametros y no dentro de Opciones porque son
-// dependencias, no configuracion: Opciones se rellena desde el entorno, y esto
-// se cablea en cmd/api. Cuando la lista pase de tres, se agrupa en un struct
-// Casos; con dos todavia no hace falta.
-func Nueva(salud Salud, auth Autenticacion, catalogo Catalogo, opts Opciones) *API {
+func Nueva(salud Salud, casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{salud: salud, auth: auth, catalogo: catalogo, opts: opts, log: log}
+	return &API{
+		salud:         salud,
+		auth:          casos.Auth,
+		catalogo:      casos.Catalogo,
+		declaraciones: casos.Declaraciones,
+		opts:          opts,
+		log:           log,
+	}
 }
 
 func (a *API) Router() http.Handler {
@@ -133,6 +147,13 @@ func (a *API) Router() http.Handler {
 			cat.Post("/", a.registrarObra)
 			cat.Get("/{id}", a.obraPorID)
 			cat.Patch("/{id}", a.actualizarObra)
+
+			// El editor de splits de la #30. Mismo rol que el resto del
+			// catalogo: es la misma superficie -quien edita una declaracion
+			// ve el repertorio entero-.
+			cat.Post("/{id}/declaracion", a.declararObra)
+			cat.Put("/{id}/declaracion", a.editarDeclaracion)
+			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
 		})
 	})
 
