@@ -83,6 +83,23 @@ func ejecutar(log *slog.Logger) error {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
+	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
+	// por que poder registrar dinero.
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
 	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
@@ -104,10 +121,12 @@ func ejecutar(log *slog.Logger) error {
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:    store,
-		Auth:     autenticacion,
-		Catalogo: catalogo,
-		Ingesta:  recepcion,
+		Salud:         store,
+		Auth:          autenticacion,
+		Catalogo:      catalogo,
+		Ingesta:       recepcion,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

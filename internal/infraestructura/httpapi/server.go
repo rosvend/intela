@@ -54,12 +54,14 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud    Salud
-	auth     Autenticacion
-	catalogo Catalogo
-	ingesta  Ingesta
-	opts     Opciones
-	log      *slog.Logger
+	salud         Salud
+	auth          Autenticacion
+	catalogo      Catalogo
+	ingesta       Ingesta
+	declaraciones Declaraciones
+	recaudo       Recaudo
+	opts          Opciones
+	log           *slog.Logger
 }
 
 // Casos agrupa los casos de uso que sirve el adaptador.
@@ -70,10 +72,12 @@ type API struct {
 // pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
 // entorno, esto son dependencias.
 type Casos struct {
-	Salud    Salud
-	Auth     Autenticacion
-	Catalogo Catalogo
-	Ingesta  Ingesta
+	Salud         Salud
+	Auth          Autenticacion
+	Catalogo      Catalogo
+	Ingesta       Ingesta
+	Declaraciones Declaraciones
+	Recaudo       Recaudo
 }
 
 // Nueva construye el adaptador.
@@ -88,12 +92,14 @@ func Nueva(casos Casos, opts Opciones) *API {
 		log = slog.Default()
 	}
 	return &API{
-		salud:    casos.Salud,
-		auth:     casos.Auth,
-		catalogo: casos.Catalogo,
-		ingesta:  casos.Ingesta,
-		opts:     opts,
-		log:      log,
+		salud:         casos.Salud,
+		auth:          casos.Auth,
+		catalogo:      casos.Catalogo,
+		ingesta:       casos.Ingesta,
+		declaraciones: casos.Declaraciones,
+		recaudo:       casos.Recaudo,
+		opts:          opts,
+		log:           log,
 	}
 }
 
@@ -155,6 +161,38 @@ func (a *API) Router() http.Handler {
 			cat.Post("/", a.registrarObra)
 			cat.Get("/{id}", a.obraPorID)
 			cat.Patch("/{id}", a.actualizarObra)
+
+			// El editor de splits de la #30. Mismo rol que el resto del
+			// catalogo: es la misma superficie -quien edita una declaracion
+			// ve el repertorio entero-.
+			cat.Post("/{id}/declaracion", a.declararObra)
+			cat.Put("/{id}/declaracion", a.editarDeclaracion)
+			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
+		})
+
+		// El lado del ingreso (#27). Entra dinero, asi que escribe
+		// `contabilidad` -- que es quien factura (roles.md, `RD 13.5`)-- y
+		// `administrador`. Ni `distribucion` ni `auditor` registran recaudo:
+		// distribucion es la OTRA firma de las compuertas y auditor no opera
+		// el pipeline.
+		protegido.Route("/recaudo", func(rec chi.Router) {
+			rec.Use(requiereRol(aplicacion.RolContabilidad, aplicacion.RolAdministrador))
+			rec.Post("/", a.registrarRecaudo)
+			rec.Get("/usuarios", a.listarUsuariosRecaudo)
+			rec.Post("/usuarios", a.registrarUsuarioRecaudo)
+		})
+
+		// Las bolsas se leen desde mas sitios de los que se escriben:
+		// `distribucion` necesita la bolsa para correr el reparto y `auditor`
+		// tiene lectura de todo. Sigue fuera `titular`, que solo ve las obras
+		// donde participa (OE-6) y no el ingreso de la sociedad.
+		protegido.Route("/bolsas", func(bol chi.Router) {
+			bol.Use(requiereRol(
+				aplicacion.RolContabilidad, aplicacion.RolAdministrador,
+				aplicacion.RolDistribucion, aplicacion.RolAuditor,
+			))
+			bol.Get("/", a.listarBolsas)
+			bol.Get("/{id}", a.bolsaPorID)
 		})
 
 		// La ingesta manual de reportes de uso. Pide `administrador` por lo

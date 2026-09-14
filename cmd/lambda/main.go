@@ -139,6 +139,22 @@ func construir() (http.Handler, error) {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	// El lado del ingreso (#27). Mismo cableado que cmd/api: este binario es un
+	// adaptador primario mas, hermano suyo, y comparte el Router().
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
 	//
 	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
@@ -149,9 +165,11 @@ func construir() (http.Handler, error) {
 	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
 	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:    store,
-		Auth:     autenticacion,
-		Catalogo: catalogo,
+		Salud:         store,
+		Auth:          autenticacion,
+		Catalogo:      catalogo,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

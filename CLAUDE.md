@@ -62,6 +62,9 @@ Cargar solo lo que haga falta para la tarea.
 | `docs/dominio/formulas.md` | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
 | `docs/dominio/identificadores.md` | Por que los IDs de fuente no cruzan y como resolver obras |
 | `docs/dominio/fuentes-datos.md` | Perfil real de los archivos del cliente y que falta pedir |
+| `docs/dominio/fichas-fuente.md` | Ficha por fuente: formato, acceso, periodicidad, dueno, estado |
+| `docs/dominio/preguntas-cliente.md` | Que falta preguntarle a REDES, con dueno y estado. Que respuesta es provisional |
+| `docs/dominio/fixtures.md` | Forma de los datos sinteticos y como se marcan. Los valores viven en el sembrador |
 | `docs/reglamentos/` | Texto verbatim de los reglamentos, citable por numeral |
 | `docs/decisiones/` | Por que el sistema quedo modelado asi |
 | `docs/ci.md` | Etapas de CI, la compuerta `ci`, filtrado por ruta y hooks locales |
@@ -120,8 +123,8 @@ El andamiaje vive en `cmd/`, `internal/` y `web/`. Es andamiaje: fronteras y pun
 no el motor. El reparto, la identificacion y la persistencia entran en PRs propios.
 
 Antes de construir el motor de matching o el de distribucion faltan datos del cliente: ver las
-preguntas abiertas al final de [`docs/dominio/reglas-negocio.md`](docs/dominio/reglas-negocio.md)
-y [`docs/dominio/fuentes-datos.md`](docs/dominio/fuentes-datos.md). Y no tratar las cifras del
-seed como datos reales.
+preguntas abiertas de [`docs/dominio/preguntas-cliente.md`](docs/dominio/preguntas-cliente.md),
+que es el registro unico y marca cuales tienen respuesta solo provisional. Y no tratar las
+cifras del seed como datos reales.
 
 El equivalente para Cursor esta en `AGENTS.md`.
