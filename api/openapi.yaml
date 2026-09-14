@@ -1018,7 +1018,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
-                error: "bolsa invalida: periodo \"enero\", se esperaba AAAA o AAAA-MM"
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -1125,12 +1125,6 @@ paths:
       responses:
         "201":
           description: El pagador quedo dado de alta.
-          headers:
-            Location:
-              description: Ruta del pagador recien creado.
-              schema:
-                type: string
-              example: /recaudo/usuarios/caracol
           content:
             application/json:
               schema:
@@ -1192,13 +1186,14 @@ paths:
           in: query
           required: false
           description: |
-            Periodo exacto, `AAAA` o `AAAA-MM`. Un valor mal formado se
-            rechaza con 400 en vez de ignorarse: ignorado devolveria todas las
-            bolsas y quien pregunta lo leeria como "no hay ninguna de ese
-            periodo".
+            Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y
+            `12`. Un valor mal formado se rechaza con 400 en vez de ignorarse:
+            ignorado devolveria todas las bolsas, y un mes imposible como
+            `2025-13` devolveria una lista vacia que quien pregunta leeria como
+            "ese mes no tuvo recaudo" en vez de "ese mes no existe".
           schema:
             type: string
-            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+            pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: 2025-01
       responses:
         "200":
@@ -1225,7 +1220,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
-                error: "bolsa invalida: periodo \"enero\", se esperaba AAAA o AAAA-MM"
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -1640,10 +1635,13 @@ components:
           example: caracol
         periodo:
           type: string
-          pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           description: |
-            Periodo al que corresponde lo cobrado: `AAAA` o `AAAA-MM`. Es el
-            mismo formato que usan los reportes y las corridas de reparto.
+            Periodo al que corresponde lo cobrado: `AAAA` o `AAAA-MM`, con
+            el mes entre `01` y `12`. Es el mismo formato que usan los reportes
+            y las corridas de reparto, con el mes acotado: guardar dinero bajo
+            `2025-13` produce un periodo que no cuadra con ningun corte del
+            reglamento (`R-34`) y que ningun reparto sabe cerrar.
           example: 2025-01
         circuito:
           type: string
@@ -1658,26 +1656,33 @@ components:
             usuario y periodo puede haber una de cada uno.
           example: nacional
         bruto:
-          type: string
-          format: decimal
-          pattern: '^[0-9]+(\.[0-9]{1,2})?$'
           description: |
             Importe cobrado en COP, antes de deducciones.
 
-            **Cadena y no numero**, y es deliberado: un numero JSON es un
-            `double` IEEE-754 en la mayoria de los clientes, y el ADR 0005
-            exige aritmetica decimal exacta sobre dinero de terceros. Como
-            cadena, la cifra llega al cliente tal cual se recaudo. En la
-            PETICION se acepta tambien un numero JSON, por comodidad; la
-            RESPUESTA siempre es cadena.
+            **La respuesta es siempre una cadena**, y es deliberado: un numero
+            JSON es un `double` IEEE-754 en la mayoria de los clientes, y el
+            ADR 0005 exige aritmetica decimal exacta sobre dinero de terceros.
+            Como cadena, la cifra llega al cliente tal cual se recaudo.
 
-            La columna es `NUMERIC(18,2)`, asi que caben hasta dos decimales:
-            un tercero se rechaza con 400 en vez de redondearse, porque una
-            cifra validada como $100,555 y guardada como $100,56 es medio
-            centavo que el reparto distribuye y que nadie recaudo.
+            En la PETICION se aceptan las dos formas -de ahi el `oneOf`-, pero
+            **mandar la cadena es lo correcto**: un numero con muchos decimales
+            puede perder precision en el cliente antes de salir.
+
+            El maximo es `9999999999999999.99`, que es lo que cabe en la
+            columna `NUMERIC(18,2)`, y se admiten hasta dos decimales: un
+            tercero se rechaza con 400 en vez de redondearse, porque una cifra
+            validada como $100,555 y guardada como $100,56 es medio centavo que
+            el reparto distribuye y que nadie recaudo.
 
             Cero es un valor valido: que un usuario no pagara nada en el
             periodo es un hecho, no un dato que falte.
+          oneOf:
+            - type: string
+              format: decimal
+              pattern: '^[0-9]+(\.[0-9]{1,2})?$'
+            - type: number
+              format: decimal
+              minimum: 0
           example: "1000000.00"
         convenio:
           type: string

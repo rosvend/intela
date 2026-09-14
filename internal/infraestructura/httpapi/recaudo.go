@@ -243,7 +243,12 @@ func (a *API) registrarUsuarioRecaudo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Location", "/recaudo/usuarios/"+usuario.ID())
+	// Sin cabecera Location, a diferencia del alta de una bolsa: no hay
+	// `GET /recaudo/usuarios/{id}` que apuntar. Un Location hacia una ruta que
+	// no existe es peor que ninguno -- el cliente que lo siga recibe un 404 y no
+	// tiene forma de saber si el alta funciono-. El pagador recien creado sale
+	// en el cuerpo y en `GET /recaudo/usuarios`; cuando algun panel necesite la
+	// lectura individual, entra con su ruta y su Location.
 	escribirJSON(w, http.StatusCreated, aUsuarioRecaudoJSON(usuario))
 }
 

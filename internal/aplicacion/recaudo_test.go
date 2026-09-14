@@ -178,6 +178,37 @@ func TestRegistrarSinIDEsErrBolsaInvalida(t *testing.T) {
 	}
 }
 
+func TestRegistrarRechazaUnIDQueNoCabeEnUnaRuta(t *testing.T) {
+	// El id viene del reporte de recaudo de REDES y termina en `/bolsas/{id}`.
+	// Uno con barra deja la fila ESCRITA Y NO LEIBLE: el router solo casa un
+	// segmento, asi que GET /bolsas/reporte/2025 da 404 y la bolsa no se puede
+	// consultar por id nunca mas.
+	casos := map[string]string{
+		"con barra":        "reporte/2025",
+		"con barra final":  "bolsa-1/",
+		"con interrogante": "bolsa?1",
+		"con almohadilla":  "bolsa#1",
+		"solo una barra":   "/",
+	}
+
+	for nombre, id := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			gestion := &gestionRecaudoFalsa{}
+			r := Recaudo{Gestion: gestion, Reloj: relojDePrueba(t)}
+
+			entrada := bolsaDePrueba()
+			entrada.ID = id
+
+			if _, err := r.Registrar(t.Context(), entrada, "usr-contabilidad"); !errors.Is(err, recaudo.ErrBolsaInvalida) {
+				t.Fatalf("err = %v, se esperaba ErrBolsaInvalida", err)
+			}
+			if len(gestion.bolsas) != 0 {
+				t.Fatal("se escribio una bolsa que no se va a poder leer por id")
+			}
+		})
+	}
+}
+
 func TestRegistrarDevuelveElCentinelaDelPuertoSinTaparlo(t *testing.T) {
 	// Quien llama lo distingue con errors.Is para responder 409 en vez de 500.
 	gestion := &gestionRecaudoFalsa{err: ErrBolsaDuplicada}
@@ -221,14 +252,44 @@ func TestListarConPeriodoMalFormadoNoTocaElPuerto(t *testing.T) {
 	// Ignorarlo devolveria el listado entero, y quien pregunta lo leeria como
 	// "no hay ninguna de ese periodo". Es el mismo criterio que BuscarObras
 	// aplica a `anio`.
-	repo := &repoRecaudoFalso{}
-	r := Recaudo{Bolsas: repo}
+	//
+	// Los meses imposibles son el caso que de verdad enganaba: `2025-13` pasaba
+	// el patron de esta capa -que usa [0-9]{2}- y devolvia una lista VACIA con
+	// 200, que se lee como "ese mes no tuvo recaudo" en vez de "ese mes no
+	// existe". Por eso la validacion es ahora la del dominio, la misma que
+	// aplica NuevaBolsa, y no una copia de este paquete.
+	casos := []string{"enero de 2025", "2025-1", "2025-01-15", "2025-00", "2025-13", "2025-99"}
 
-	if _, err := r.Listar(t.Context(), "enero de 2025"); !errors.Is(err, recaudo.ErrBolsaInvalida) {
-		t.Fatalf("err = %v, se esperaba ErrBolsaInvalida", err)
+	for _, periodo := range casos {
+		t.Run(periodo, func(t *testing.T) {
+			repo := &repoRecaudoFalso{}
+			r := Recaudo{Bolsas: repo}
+
+			if _, err := r.Listar(t.Context(), periodo); !errors.Is(err, recaudo.ErrBolsaInvalida) {
+				t.Fatalf("err = %v, se esperaba ErrBolsaInvalida", err)
+			}
+			if repo.llamadasListar != 0 {
+				t.Fatal("se consulto la base con un periodo que no es un periodo")
+			}
+		})
 	}
-	if repo.llamadasListar != 0 {
-		t.Fatal("se consulto la base con un periodo que no es un periodo")
+}
+
+func TestListarAceptaLosPeriodosQueAceptaElDominio(t *testing.T) {
+	// La otra direccion: el filtro no puede ser mas estricto que el
+	// constructor, o habria bolsas que se pueden escribir y no consultar.
+	for _, periodo := range []string{"2025", "2025-01", "2025-12"} {
+		t.Run(periodo, func(t *testing.T) {
+			repo := &repoRecaudoFalso{}
+			r := Recaudo{Bolsas: repo}
+
+			if _, err := r.Listar(t.Context(), periodo); err != nil {
+				t.Fatalf("Listar(%q): %v", periodo, err)
+			}
+			if repo.periodoRecibido != periodo {
+				t.Fatalf("periodo recibido = %q, se esperaba %q", repo.periodoRecibido, periodo)
+			}
+		})
 	}
 }
 

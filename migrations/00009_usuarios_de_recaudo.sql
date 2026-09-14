@@ -96,6 +96,16 @@ ALTER TABLE bolsas
 --
 -- Esto sube al esquema el invariante que hasta ahora solo comprobaba
 -- semilla/dataset_test.go sobre la fixture.
+--
+-- Si la base ya tuviera una repeticion, este ALTER FALLA y goose revierte la
+-- migracion entera. Es el comportamiento que se quiere y no se le pone remedio
+-- automatico: cada fila de `bolsas` es dinero, asi que elegir por su cuenta cual
+-- de dos bolsas repetidas sobra es precisamente lo que un despliegue no debe
+-- hacer. Se reconcilia a mano -- comparando contra la cuenta de cobro-- y se
+-- vuelve a desplegar. Para saber si hay algo que reconciliar, antes de desplegar:
+--
+--     SELECT usuario_id, periodo, circuito, count(*), sum(bruto)
+--       FROM bolsas GROUP BY 1,2,3 HAVING count(*) > 1;
 -- +goose StatementBegin
 ALTER TABLE bolsas
   ADD CONSTRAINT bolsas_usuario_periodo_circuito_key

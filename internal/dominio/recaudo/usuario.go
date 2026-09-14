@@ -119,18 +119,15 @@ func (u Usuario) ID() string { return u.id }
 // valido.
 func (u Usuario) Datos() Datos { return u.datos }
 
-// ConDatos devuelve una copia con otros datos, validados por la misma puerta.
-func (u Usuario) ConDatos(d Datos) (Usuario, error) {
-	d, err := normalizar(d)
-	if err != nil {
-		return Usuario{}, err
-	}
-	return Usuario{id: u.id, datos: d}, nil
-}
+// No hay ConDatos, a diferencia de [repertorio.Obra.ConMetadatos]. No hace falta
+// todavia: nada edita un pagador -- no hay PATCH-, y el que habia no lo llamaba
+// nadie. Un metodo de correccion sin caso de uso solo abre la puerta a usarlo
+// sobre el valor cero de [Usuario] y obtener una entidad con datos validos e id
+// vacio, que es un agujero en la invariante a cambio de nada (YAGNI). Cuando
+// entre la edicion, entra con su prueba y validando tambien el id.
 
-// normalizar recorta y valida. Es la unica puerta: [NuevoUsuario] y
-// [Usuario.ConDatos] pasan las dos por aqui, asi que un usuario corregido
-// cumple lo mismo que uno recien creado.
+// normalizar recorta y valida. Es la unica puerta de [NuevoUsuario], asi que
+// todo Usuario construido cumple lo mismo.
 func normalizar(d Datos) (Datos, error) {
 	d.Nombre = strings.TrimSpace(d.Nombre)
 	d.NIT = strings.TrimSpace(d.NIT)

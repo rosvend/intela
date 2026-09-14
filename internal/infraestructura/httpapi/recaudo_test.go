@@ -274,6 +274,13 @@ func TestRegistrarUsuarioDeRecaudoDevuelve201(t *testing.T) {
 	if falso.usuarioRecibido.Datos().Categoria != recaudo.TVAbierta {
 		t.Fatalf("categoria recibida = %q", falso.usuarioRecibido.Datos().Categoria)
 	}
+	// Sin Location, a diferencia del alta de una bolsa: no hay
+	// GET /recaudo/usuarios/{id} que apuntar, y una cabecera hacia una ruta
+	// inexistente manda al cliente a un 404 sin forma de saber si el alta
+	// funciono.
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q, y la ruta que apunta no esta registrada", loc)
+	}
 }
 
 func TestRegistrarUsuarioDeRecaudoTraduceLosErrores(t *testing.T) {

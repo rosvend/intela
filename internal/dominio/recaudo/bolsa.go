@@ -55,15 +55,58 @@ func Circuitos() []Circuito {
 // se recaudo.
 const precisionBruto = 2
 
-// periodoValido es el mismo patron que el CHECK de las tablas `reportes`,
-// `bolsas`, `procesos` y `cola_trabajos`, y el mismo que aplicacion valida al
-// encolar un trabajo.
+// brutoMaximo es el importe mas grande que cabe en `bolsas.bruto`
+// (NUMERIC(18,2)): 18 digitos en total menos 2 de escala son 16 enteros, o sea
+// 9.999.999.999.999.999,99.
+//
+// Sin esta cota, un importe de 17 digitos enteros pasaba la comprobacion de
+// escala -- tiene dos decimales, es positivo -- y lo rechazaba Postgres al
+// insertar. El error salia como violacion de restriccion numerica y no como
+// "este importe no cabe", que es lo que de verdad pasa. Mismo criterio que
+// [precisionBruto]: lo que este constructor acepta ya cabe exacto en la
+// columna.
+var brutoMaximo = decimal.RequireFromString("9999999999999999.99")
+
+// periodoValido es el patron de un periodo de recaudo: un ano, o un ano y un
+// mes REAL.
+//
+// Mas estricto que el CHECK de las tablas `reportes`, `bolsas`, `procesos` y
+// `cola_trabajos`, y que aplicacion.periodoValido, que usan `[0-9]{2}` para el
+// mes y por tanto admiten `2025-00` y `2025-13`. Que el dominio sea mas
+// estricto que el esquema es la direccion segura: el constructor es la puerta,
+// y guardar dinero bajo un mes que no existe produce un periodo que no cuadra
+// con ningun corte del reglamento (`R-34`) y que ningun reparto sabe cerrar.
+//
+// Los otros dos validadores tienen el mismo hueco y no se tocan aqui:
+// estrecharlos pide una migracion sobre cuatro tablas y un repaso de la cola de
+// trabajos, que no es el alcance de este PR.
 //
 // Duplicado a proposito, por lo que ya explica aplicacion.periodoValido: la
 // base lo comprueba porque una fila mal formada no se puede permitir aunque
 // la escriba otro cliente, y el nucleo porque rechazar un periodo invalido
 // antes de la insercion es mas barato que leerlo en una violacion de CHECK.
-var periodoValido = regexp.MustCompile(`^[0-9]{4}(-[0-9]{2})?$`)
+var periodoValido = regexp.MustCompile(`^[0-9]{4}(-(0[1-9]|1[0-2]))?$`)
+
+// ValidarPeriodo recorta un periodo y devuelve el normalizado, o
+// [ErrBolsaInvalida].
+//
+// Exportada porque el FILTRO de lectura tiene que aceptar exactamente lo mismo
+// que acepta [NuevaBolsa], y con dos copias del patron no lo hacia: la capa de
+// aplicacion validaba con su propio `[0-9]{2}`, asi que `GET /bolsas?periodo=2025-13`
+// respondia 200 con una lista vacia. Quien pregunta lee eso como "ese mes no
+// tuvo recaudo", cuando lo que pasa es que ese mes no existe.
+//
+// Un filtro mas estricto que el constructor seria igual de malo por el otro
+// lado: habria bolsas escribibles que no se pueden consultar. Una sola funcion
+// para las dos cosas es lo que impide las dos derivas.
+func ValidarPeriodo(periodo string) (string, error) {
+	periodo = strings.TrimSpace(periodo)
+	if !periodoValido.MatchString(periodo) {
+		return "", fmt.Errorf("%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
+			ErrBolsaInvalida, periodo)
+	}
+	return periodo, nil
+}
 
 // Bolsa a repartir en un periodo. Es lo unico que Recaudo pasa aguas abajo:
 // Reparto no conoce Usuario, Convenio ni Tarifa (ADR 0003).
@@ -101,10 +144,9 @@ func NuevaBolsa(usuarioID, periodo string, circuito Circuito, bruto decimal.Deci
 		return Bolsa{}, fmt.Errorf("%w: falta el usuario que pago", ErrBolsaInvalida)
 	}
 
-	periodo = strings.TrimSpace(periodo)
-	if !periodoValido.MatchString(periodo) {
-		return Bolsa{}, fmt.Errorf("%w: periodo %q, se esperaba AAAA o AAAA-MM",
-			ErrBolsaInvalida, periodo)
+	periodo, err := ValidarPeriodo(periodo)
+	if err != nil {
+		return Bolsa{}, err
 	}
 
 	if !slices.Contains(Circuitos(), circuito) {
@@ -119,6 +161,10 @@ func NuevaBolsa(usuarioID, periodo string, circuito Circuito, bruto decimal.Deci
 	if !bruto.Equal(bruto.Round(precisionBruto)) {
 		return Bolsa{}, fmt.Errorf("%w: el bruto %s admite hasta %d decimales",
 			ErrBolsaInvalida, bruto.String(), precisionBruto)
+	}
+	if bruto.GreaterThan(brutoMaximo) {
+		return Bolsa{}, fmt.Errorf("%w: el bruto %s no cabe en la columna, el maximo es %s",
+			ErrBolsaInvalida, bruto.String(), brutoMaximo.String())
 	}
 
 	return Bolsa{UsuarioID: usuarioID, Periodo: periodo, Circuito: circuito, Bruto: bruto}, nil

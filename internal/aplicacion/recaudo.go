@@ -51,6 +51,17 @@ func (r Recaudo) Registrar(ctx context.Context, b BolsaPersistida, actorID strin
 		return BolsaPersistida{}, fmt.Errorf("%w: falta el identificador de la bolsa",
 			recaudo.ErrBolsaInvalida)
 	}
+	// El id lo trae el reporte de recaudo de REDES y termina formando la ruta
+	// `/bolsas/{id}`. Uno con barra o con delimitador de URL deja la fila
+	// ESCRITA Y NO LEIBLE: el router casa un solo segmento, asi que
+	// `GET /bolsas/reporte/2025` responde 404 y esa bolsa no se puede consultar
+	// por id nunca mas. Rechazarlo aqui es lo unico que lo impide -- la validacion
+	// no puede vivir en el dominio, que no sabe que la bolsa se sirve por HTTP.
+	if strings.ContainsAny(b.ID, "/?#%") {
+		return BolsaPersistida{}, fmt.Errorf(
+			"%w: el identificador %q no puede llevar / ? # ni %%, porque la bolsa se lee por /bolsas/{id}",
+			recaudo.ErrBolsaInvalida, b.ID)
+	}
 
 	bolsa, err := recaudo.NuevaBolsa(b.UsuarioID, b.Periodo, b.Circuito, b.Bruto)
 	if err != nil {
@@ -81,8 +92,7 @@ func (r Recaudo) Registrar(ctx context.Context, b BolsaPersistida, actorID strin
 // quien pregunta lo leeria como "no hay ninguna de ese periodo". Es el mismo
 // criterio que [Catalogo.BuscarObras] aplica a `anio`.
 func (r Recaudo) Listar(ctx context.Context, periodo string) ([]BolsaPersistida, error) {
-	periodo = strings.TrimSpace(periodo)
-	if periodo == "" {
+	if strings.TrimSpace(periodo) == "" {
 		bolsas, err := r.Bolsas.ListarBolsas(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("listar bolsas: %w", err)
@@ -90,9 +100,14 @@ func (r Recaudo) Listar(ctx context.Context, periodo string) ([]BolsaPersistida,
 		return bolsas, nil
 	}
 
-	if !periodoValido.MatchString(periodo) {
-		return nil, fmt.Errorf("%w: periodo %q, se esperaba AAAA o AAAA-MM",
-			recaudo.ErrBolsaInvalida, periodo)
+	// Valida con el MISMO validador que [recaudo.NuevaBolsa] y no con
+	// `periodoValido` de este paquete, que usa `[0-9]{2}` para el mes: con esa
+	// copia, `?periodo=2025-13` pasaba el filtro y devolvia una lista vacia con
+	// 200, que se lee como "ese mes no tuvo recaudo" en vez de "ese mes no
+	// existe".
+	periodo, err := recaudo.ValidarPeriodo(periodo)
+	if err != nil {
+		return nil, err
 	}
 
 	bolsas, err := r.Bolsas.BolsasDePeriodo(ctx, periodo)
