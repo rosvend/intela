@@ -5,6 +5,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -132,12 +133,30 @@ type UsoPersistido struct {
 	RechazoMotivo string
 }
 
+// BolsaPersistida es una [recaudo.Bolsa] con lo que la fila anade: su
+// identificador y su procedencia.
+//
+// El ID vive aqui y no en el dominio por lo mismo que la vigencia de
+// [VersionDeclaracion]: al motor de reparto la bolsa le llega como dato de
+// entrada de una funcion pura y no necesita saber en que fila estaba.
+//
+// Convenio, Tarifa y Factura son PROCEDENCIA, no insumos de calculo. Bajo P-08
+// Intela recibe el importe ya cobrado y no liquida tarifas, asi que estos tres
+// campos no se usan para computar nada: responden la pregunta 1 del ADR 0006
+// -de donde salio este dinero- y son lo que un auditor sigue hasta la cuenta
+// de cobro. Los tres son opcionales: `T-11` dice que la tarifa publicada es el
+// valor por defecto CUANDO NO HAY convenio, asi que exigir un convenio seria
+// afirmar algo que el reglamento no afirma.
 type BolsaPersistida struct {
 	ID        string
 	UsuarioID string
 	Periodo   string
-	Circuito  reparto.Circuito
+	Circuito  recaudo.Circuito
 	Bruto     decimal.Decimal
+
+	Convenio string
+	Tarifa   string
+	Factura  string
 }
 
 // Asiento de la bitacora. Append-only (ADR 0006): no se actualiza, no se

@@ -47,8 +47,15 @@ func Nuevo(pool *pgxpool.Pool) *Store {
 }
 
 // Pool expone el pool. cmd/seed escribe con SQL directo las tablas cuyo puerto
-// todavia es de solo lectura -RepositorioRepertorio, RepositorioRecaudo y
-// ParametrosNormativos-; el Store sigue siendo el dueno de la conexion.
+// todavia es de solo lectura -RepositorioRepertorio y ParametrosNormativos-; el
+// Store sigue siendo el dueno de la conexion.
+//
+// `bolsas` y `usuarios_recaudo` YA tienen adaptador de escritura desde la #27
+// ([Store.RegistrarBolsa], [Store.RegistrarUsuario]) y aun asi el seed las
+// escribe por aqui. No es un olvido: esos dos metodos asientan en bitacora en
+// la misma transaccion (ADR 0006) y el seed tiene que terminar con la bitacora
+// vacia, porque `semilla.vaciar` se niega a recargar con SEED_RESET si hay un
+// solo asiento. Esta escrito tambien en semilla/cargar.go, donde se decide.
 //
 // Las `obras` NO son de esas: tienen adaptador de escritura -[Store.Registrar],
 // que mete la obra y sus coautores en una transaccion- y el seed pasa por el,

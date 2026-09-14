@@ -8,6 +8,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -176,6 +177,53 @@ func TestBolsasPorUsuarioPeriodoCircuito(t *testing.T) {
 	}
 	if !nacional || !internacional {
 		t.Fatal("hace falta al menos una bolsa nacional y una internacional")
+	}
+}
+
+func TestCadaBolsaTieneSuPagadorEnElDataset(t *testing.T) {
+	// Desde la migracion 00009 hay clave foranea. Una bolsa que cite un
+	// `usuario_id` sin fila en `usuarios_recaudo` no falla al construir el
+	// dataset -- es dato plano -- sino al sembrar, y este test lo adelanta a la
+	// prueba de unidad.
+	d := Construir()
+	pagadores := map[string]bool{}
+	for _, u := range d.UsuariosDeRecaudo {
+		if pagadores[u.ID] {
+			t.Fatalf("pagador duplicado: %s", u.ID)
+		}
+		pagadores[u.ID] = true
+	}
+	for _, b := range d.Bolsas {
+		if !pagadores[b.UsuarioID] {
+			t.Fatalf("la bolsa %s cita al pagador %q, que no esta en el dataset", b.ID, b.UsuarioID)
+		}
+	}
+}
+
+func TestPagadoresSonUsuariosValidosDelDominio(t *testing.T) {
+	// La categoria decide que formula de reparto aplica aguas abajo, asi que un
+	// valor fuera del enum no es un detalle cosmetico. El constructor del
+	// dominio es la misma puerta que usa el cargador.
+	for _, u := range Construir().UsuariosDeRecaudo {
+		if _, err := recaudo.NuevoUsuario(u.ID, recaudo.Datos{
+			Nombre:    u.Nombre,
+			NIT:       u.NIT,
+			Categoria: u.Categoria,
+		}); err != nil {
+			t.Fatalf("el pagador %s del dataset no es valido: %v", u.ID, err)
+		}
+	}
+}
+
+func TestCadaBolsaTieneProcedencia(t *testing.T) {
+	// La pregunta 1 del ADR 0006: de donde salio este dinero. Una bolsa de demo
+	// sin convenio ni factura no es explicable hasta su origen, que es lo que
+	// el reglamento exige de toda cifra que el sistema produzca.
+	for _, b := range Construir().Bolsas {
+		if b.Convenio == "" || b.Tarifa == "" || b.Factura == "" {
+			t.Fatalf("bolsa %s sin procedencia: convenio=%q tarifa=%q factura=%q",
+				b.ID, b.Convenio, b.Tarifa, b.Factura)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -65,14 +66,30 @@ const (
 // Dataset es el juego completo, listo para persistir. No lleva hashes de
 // contrasena: bcrypt no es determinista, y el hash se calcula al cargar.
 type Dataset struct {
-	Periodo       string
-	Titulares     []Titular
-	Usuarios      []Usuario
-	Obras         []Obra
-	Declaraciones []repertorio.Declaracion
-	Reportes      []Reporte
-	Bolsas        []aplicacion.BolsaPersistida
-	Parametros    []Parametro
+	Periodo   string
+	Titulares []Titular
+	// Usuarios son las CUENTAS que inician sesion; UsuariosDeRecaudo son los
+	// PAGADORES. El reglamento llama "usuario" al segundo (`RT 2`), y de ahi la
+	// colision: son dos tablas distintas y ninguna referencia a la otra.
+	Usuarios          []Usuario
+	UsuariosDeRecaudo []UsuarioDeRecaudo
+	Obras             []Obra
+	Declaraciones     []repertorio.Declaracion
+	Reportes          []Reporte
+	Bolsas            []aplicacion.BolsaPersistida
+	Parametros        []Parametro
+}
+
+// UsuarioDeRecaudo es el pagador que siembra el seed.
+//
+// No usa recaudo.Usuario porque ese tipo tiene el id privado y solo se
+// construye por su constructor: el dataset es dato plano y determinista, y la
+// construccion -- con su validacion -- ocurre al cargar, igual que con las obras.
+type UsuarioDeRecaudo struct {
+	ID        string
+	Nombre    string
+	NIT       string
+	Categoria recaudo.CategoriaUsuario
 }
 
 // Obra es la entrada del catalogo que siembra el seed.
@@ -149,6 +166,7 @@ func Construir() Dataset {
 	d.usuarios()
 	d.obrasYDeclaraciones()
 	d.reportes()
+	d.usuariosDeRecaudo()
 	d.bolsas()
 	d.parametros()
 	return d
@@ -331,13 +349,52 @@ func evidenciaAlias(fuente, tipoID, valor string) string {
 	return "semilla: alias " + fuente + "/" + tipoID + "=" + valor
 }
 
+// usuariosDeRecaudo son los cuatro pagadores que las bolsas citan.
+//
+// Existen como tabla desde la migracion 00009 (#27): antes `bolsas.usuario_id`
+// era texto libre sin nada al otro lado. La categoria no es decorativa -- decide
+// que formula de reparto aplica aguas abajo (formulas.md 9.1, 9.2, 9.7)-- y por
+// eso cada uno lleva la que le corresponde y no una generica.
+//
+// `dago-films` es el del circuito internacional y va como `sin_clasificar` a
+// proposito: el recaudo internacional no lo paga un usuario colombiano de una
+// categoria del `RT`, llega discriminado por una sociedad hermana (`RD 7.4`).
+// Inventarle una categoria seria afirmar algo que el reglamento no dice.
+//
+// No llevan marca sintetica: no son parametros normativos, son datos de negocio
+// de ejemplo, igual que las declaraciones. Los NIT si son inventados y por eso
+// van vacios en vez de con un numero de aspecto real que alguien pudiera creer.
+func (d *Dataset) usuariosDeRecaudo() {
+	d.UsuariosDeRecaudo = []UsuarioDeRecaudo{
+		{ID: "caracol", Nombre: "Caracol Television (sintetico)", Categoria: recaudo.TVAbierta},
+		{ID: "procinal", Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
+		{ID: "netflix", Nombre: "Netflix Colombia (sintetico)", Categoria: recaudo.MediosDigitales},
+		{ID: "dago-films", Nombre: "Dago Films (sintetico)", Categoria: recaudo.SinClasificar},
+	}
+}
+
 func (d *Dataset) bolsas() {
 	bruto := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+	// Convenio, tarifa y factura son la PROCEDENCIA de cada bolsa: la pregunta
+	// 1 del ADR 0006, de donde salio este dinero. No son insumos de calculo --
+	// bajo P-08 Intela recibe el importe ya cobrado y no liquida tarifas --,
+	// pero sin ellas la cifra no se puede seguir hasta su origen, que es lo que
+	// el reglamento exige de toda cifra del sistema.
+	proc := func(usuario string) (string, string, string) {
+		return "convenio-" + usuario + "-sintetico", "RT-VI-sintetica", "factura-" + usuario + "-sintetica"
+	}
+	bolsa := func(id, usuario string, c recaudo.Circuito, monto string) aplicacion.BolsaPersistida {
+		conv, tar, fac := proc(usuario)
+		return aplicacion.BolsaPersistida{
+			ID: id, UsuarioID: usuario, Periodo: Periodo, Circuito: c, Bruto: bruto(monto),
+			Convenio: conv, Tarifa: tar, Factura: fac,
+		}
+	}
 	d.Bolsas = []aplicacion.BolsaPersistida{
-		{ID: "bolsa-caracol-" + Periodo + "-nacional", UsuarioID: "caracol", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("1000000.00")},
-		{ID: "bolsa-procinal-" + Periodo + "-nacional", UsuarioID: "procinal", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("1000000.00")},
-		{ID: "bolsa-netflix-" + Periodo + "-nacional", UsuarioID: "netflix", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("500000.00")},
-		{ID: "bolsa-dago-" + Periodo + "-internacional", UsuarioID: "dago-films", Periodo: Periodo, Circuito: reparto.Internacional, Bruto: bruto("200000.00")},
+		bolsa("bolsa-caracol-"+Periodo+"-nacional", "caracol", recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-procinal-"+Periodo+"-nacional", "procinal", recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-netflix-"+Periodo+"-nacional", "netflix", recaudo.Nacional, "500000.00"),
+		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "200000.00"),
 	}
 }
 

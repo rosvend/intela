@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -245,9 +246,34 @@ type RepositorioONI interface {
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
 // Usuario, Convenio y Tarifa; aguas abajo solo circula la bolsa (ADR 0003).
+//
+// BolsasDePeriodo existe aparte de ListarBolsas -y no como un filtro opcional-
+// por lo mismo que UsosDePeriodo en [RepositorioIngesta]: es la lectura que
+// pide el motor de reparto, va por el indice `bolsas_periodo`, y un listado
+// entero de todos los periodos no es lo que nadie quiere cuando pregunta por
+// uno.
 type RepositorioRecaudo interface {
 	ListarBolsas(ctx context.Context) ([]BolsaPersistida, error)
+	BolsasDePeriodo(ctx context.Context, periodo string) ([]BolsaPersistida, error)
 	BolsaPorID(ctx context.Context, id string) (BolsaPersistida, error)
+	ListarUsuarios(ctx context.Context) ([]recaudo.Usuario, error)
+}
+
+// GestionRecaudo registra lo que se cobro. Es el lado de escritura de
+// [RepositorioRecaudo], separado por la misma razon que [GestionDeclaraciones]
+// lo esta de [RepositorioRepertorio]: quien solo lee no tiene por que poder
+// escribir dinero.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico que la
+// escritura, y por eso `ahora` y `actorID` son parametros de estos metodos y no
+// una segunda llamada a [BitacoraAuditoria] que el caso de uso orqueste. Una
+// bolsa escrita sin asiento es dinero que entro sin que nadie pueda decir de
+// donde salio, que es la pregunta 1 del ADR 0006.
+//
+// `ahora` viene del puerto [Reloj]; el adaptador no llama a time.Now().
+type GestionRecaudo interface {
+	RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora time.Time, actorID string) error
+	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
 }
 
 // ParametrosNormativos resuelve los parametros con vigencia y organo

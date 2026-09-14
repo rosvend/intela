@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
@@ -236,6 +237,7 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"obra_coautores",
 		"declaraciones",
 		"bolsas",
+		"usuarios_recaudo",
 		"parametros",
 		"sesiones",
 		"usuarios",
@@ -376,12 +378,47 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 	}
 
+	// Los pagadores van ANTES de las bolsas: desde la migracion 00009,
+	// `bolsas.usuario_id` tiene clave foranea a `usuarios_recaudo`.
+	//
+	// Se construyen por el constructor del dominio antes de insertar, como las
+	// obras: un dataset con una categoria que el reglamento no tiene falla al
+	// sembrar y nombrando al pagador, en vez de reventar mas tarde con una
+	// violacion de CHECK que no dice cual es el valor malo.
+	for _, u := range d.UsuariosDeRecaudo {
+		usuario, err := recaudo.NuevoUsuario(u.ID, recaudo.Datos{
+			Nombre:    u.Nombre,
+			NIT:       u.NIT,
+			Categoria: u.Categoria,
+		})
+		if err != nil {
+			return fmt.Errorf("el usuario de recaudo %s del dataset no es valido: %w", u.ID, err)
+		}
+		datos := usuario.Datos()
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO usuarios_recaudo (id, nombre, nit, categoria)
+			VALUES ($1, $2, $3, $4)`,
+			usuario.ID(), datos.Nombre, datos.NIT, string(datos.Categoria)); err != nil {
+			return fmt.Errorf("insertar usuario de recaudo %s: %w", u.ID, err)
+		}
+	}
+
+	// Las bolsas siguen por SQL directo y NO por Store.RegistrarBolsa, aunque
+	// ese adaptador ya existe desde la #27. No es un descuido:
+	// RegistrarBolsa escribe su asiento de bitacora en la misma transaccion
+	// (ADR 0006), y el seed tiene que dejar la bitacora VACIA -- `vaciar` se
+	// niega a recargar con SEED_RESET si hay un solo asiento, y con razon:
+	// borrar el libro no es una opcion-. Sembrar por el adaptador haria que la
+	// primera siembra impidiera para siempre la segunda.
+	//
+	// Es la misma razon por la que `obras` si pasa por su adaptador: aquel no
+	// asienta.
 	for _, b := range d.Bolsas {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto, convenio, tarifa, factura)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 			b.ID, b.UsuarioID, b.Periodo, string(b.Circuito), b.Bruto,
-			"convenio-sintetico", "tarifa-sintetica", "factura-sintetica"); err != nil {
+			b.Convenio, b.Tarifa, b.Factura); err != nil {
 			return fmt.Errorf("insertar bolsa %s: %w", b.ID, err)
 		}
 	}
@@ -440,10 +477,13 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 // razon por la que la lectura falla en vez de servir la fila: contra este
 // catalogo resuelve todo el matching.
 //
-// El resto del padron sigue por Store.Pool(): `titulares`, `usuarios`,
-// `declaraciones`, `bolsas` y `parametros` no tienen todavia adaptador de
-// escritura, y inventarle un puerto al sembrador para taparlo seria
-// indireccion sin requisito.
+// El resto del padron sigue por Store.Pool(). `titulares`, `usuarios` y
+// `parametros` no tienen todavia adaptador de escritura, e inventarle un puerto
+// al sembrador para taparlo seria indireccion sin requisito. `declaraciones`,
+// `bolsas` y `usuarios_recaudo` SI lo tienen ya, y aun asi van por SQL: sus
+// adaptadores asientan en bitacora dentro de la misma transaccion, y el seed
+// tiene que terminar con la bitacora vacia para que SEED_RESET siga siendo
+// posible -- ver el comentario en insertarPadron.
 func registrarObras(ctx context.Context, store *postgres.Store, obras []Obra) error {
 	for _, o := range obras {
 		obra, err := repertorio.NuevaObra(o.ID, repertorio.Metadatos{
