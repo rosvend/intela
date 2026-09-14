@@ -356,8 +356,12 @@ func TestIdentificarEsAtomico(t *testing.T) {
 //
 // Los seis usos salian con escalon='alias' y `alias_obra` VACIA: un auditor que
 // siguiera el escalon no encontraba nada. La consulta de abajo es exactamente
-// ese camino -de la fila de uso a la fila de alias por (fuente, valor)- y con
-// la tabla vacia no casa ninguna.
+// ese camino -de la fila de uso a la fila de alias por (fuente, tipo=valor)- y
+// con la tabla vacia no casa ninguna.
+//
+// ids_fuente se compara contra "tipo_id=valor" y no contra el valor solo: es
+// el formato del contrato (ADR 0018), el que lee la cascada. Un seed que
+// volviera a escribir el valor sin clave dejaria todos los usos huerfanos.
 func TestCargarSiembraElAliasDeCadaUso(t *testing.T) {
 	store, pool := abrir(t)
 	ctx := t.Context()
@@ -373,7 +377,7 @@ func TestCargarSiembraElAliasDeCadaUso(t *testing.T) {
 		   AND NOT EXISTS (
 		         SELECT 1 FROM alias_obra a
 		          WHERE a.fuente  = u.fuente
-		            AND a.valor   = u.ids_fuente
+		            AND a.tipo_id || '=' || a.valor = u.ids_fuente
 		            AND a.obra_id = u.obra_id)`).Scan(&huerfanos); err != nil {
 		t.Fatalf("cruzar usos con alias_obra: %v", err)
 	}

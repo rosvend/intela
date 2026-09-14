@@ -230,14 +230,16 @@ Estado: Firme. Fuente: `RD 10.3`
 Sobre los ingresos vinculados a la utilizacion del repertorio.
 Estado: Firme. Fuente: `RT 3.1.1`, `RT 3.1.2`
 
-### T-02 Salas de cine: 4% con base contradictoria
-Estado: **Conflicto**.
-`RT 3.2` dice: 4% de los ingresos netos de explotacion del exhibidor, comprendiendo taquilla,
-publicidad y servicios de restauracion.
-`RT 4` (tabla resumen) dice: el 4% se calcula **a partir del 50% del recaudo de taquilla**,
-porque el 50% restante va al distribuidor.
-Las dos bases dan resultados muy distintos y ninguna referencia a la otra.
-Accion: **preguntar al cliente cual aplica** antes de implementar el calculo de cine.
+### T-02 Salas de cine: 4% sobre el 50% de la taquilla
+Estado: **Resuelto provisional** (P-01). Fuente: `RT 4`.
+El conflicto era: `RT 3.2` dice 4% de los ingresos netos de explotacion del exhibidor
+-taquilla, publicidad y servicios de restauracion-, mientras que `RT 4` (tabla resumen) dice que
+el 4% se calcula **a partir del 50% del recaudo de taquilla**, porque el 50% restante va al
+distribuidor. Ninguna referencia a la otra y las dos bases dan resultados muy distintos.
+Decision: aplica **`RT 4`**, la base mas estrecha. Sin confirmar con REDES SGC; ver
+[`preguntas-cliente.md`](preguntas-cliente.md).
+Implementacion: hoy **no afecta a ningun calculo**. Con P-08 resuelta, Intela recibe el recaudo
+ya cobrado y no liquida tarifas.
 
 ### T-03 Transporte aereo: $1.492 COP por plaza utilizada
 Estado: Firme. Fuente: `RT 3.3`
@@ -251,15 +253,21 @@ Estado: Firme. Fuente: `RT 3.4.1`
 1 a 500 pasajeros USD 100; 501 a 1000 USD 200; 1001 a 2000 USD 400; 2001 a 3000 USD 600;
 3001 a 4000 USD 800; 4001 a 5000 USD 1000; 5001 en adelante USD 1200.
 Estado: Firme. Fuente: `RT 3.4.2`
-Implementacion: tarifa en dolares dentro de un sistema en pesos. Definir fuente y fecha de
-la TRM aplicable.
+Implementacion: tarifa en dolares dentro de un sistema en pesos. **TRM de la fecha de
+facturacion, fuente Banco de la Republica** (P-09, provisional).
+Cautela: es la opcion menos reproducible de las consideradas. Reliquidar anos despues obliga a
+**conservar la TRM que se uso**, no a recalcularla (ADR 0005). Hoy no afecta a ningun calculo:
+con P-08, Intela recibe el importe ya convertido.
 
-### T-06 Hoteles: tarifa mensual por habitacion, con un vacio
+### T-06 Hoteles: tarifa mensual por habitacion
 La tabla cruza numero de habitaciones con categoria de precio de la habitacion estandar.
-Estado: **Confirmar**. Fuente: `RT 3.5`
-El tramo **71 a 100 habitaciones** define Categoria 4 hasta $42.000 y Categoria 5 desde
-$160.001, y deja **sin tarifa el rango $42.001 a $160.000**. El tramo *100 en adelante* solo
-define desde $42.000. Accion: pedir al cliente la tabla corregida.
+Estado: **Resuelto provisional** (P-02). Fuente: `RT 3.5`
+El vacio era: el tramo **71 a 100 habitaciones** define Categoria 4 hasta $42.000 y Categoria 5
+desde $160.001, dejando **sin tarifa el rango $42.001 a $160.000**.
+Decision: es una **errata**. Categoria 5 arranca en **$42.001**. Lo confirma el tramo *100 en
+adelante*, que solo define desde $42.000: el $160.001 es el error tipografico, no un rango real
+sin tarifa. Sin confirmar con REDES SGC.
+Implementacion: igual que `T-02`, hoy no afecta a ningun calculo.
 
 ### T-07 Establecimientos de salud: tarifa mensual por habitacion
 1 a 20 habitaciones $1.150; 21 a 50 $2.410; 51 a 70 $3.417; 71 a 100 $4.545; 100 en adelante
@@ -287,10 +295,18 @@ no asumir la tarifa publicada.
 
 ## Preguntas abiertas para el cliente
 
-1. `T-02` Base de calculo real para salas de cine.
-2. `T-06` Tarifa hotelera para el rango sin cubrir en 71 a 100 habitaciones.
-3. Relacion entre REDES-SYS, AVSYS e Intela. Ver `glosario.md`.
-4. Coeficientes `Wa`, `Wb`, `Wc` de la formula OTT. Ver `formulas.md`.
-5. Mapeo entre los tipos de obra del reglamento y los generos de las parrillas. Ver
-   `fuentes-datos.md`.
-6. Proveedor y formato del dato de rating por franja horaria.
+El registro unico esta en [`preguntas-cliente.md`](preguntas-cliente.md), con dueno, estado y
+respuesta por pregunta. Antes esta lista y la de `fuentes-datos.md` eran dos listas distintas que
+no coincidian.
+
+Lo que sigue **abierto de verdad** y bloquea una cifra defendible:
+
+- **P-10** Tasas de deduccion y reserva aprobadas por Asamblea. `R-06` y `R-07` fijan techos, no
+  tasas. Sin el acta, ninguna cifra del reparto es citable en auditoria.
+- **P-04** Coeficientes `Wa`, `Wb`, `Wc` de `RD 9.7`.
+- **P-06** Proveedor y formato del rating por franja -- bloquea `RD 9.1.1` completo.
+- **P-08** Formato del reporte de recaudo cobrado.
+
+Con respuesta **provisional del equipo**, no del cliente: `T-02` (P-01), `T-06` (P-02), la
+relacion REDES-SYS/AVSYS (P-03), el mapeo de generos (P-05), las declaraciones (P-07), la TRM
+(P-09) y el origen del IPI (P-11).

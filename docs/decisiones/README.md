@@ -29,6 +29,7 @@ proposito.
 | [0015 La cola de trabajos es una tabla propia, no River](0015-cola-de-trabajos-en-tabla-propia.md) | Vigente |
 | [0016 El log de rechazos de la ingesta vive en una tabla aparte](0016-log-de-rechazos-en-tabla-aparte.md) | Vigente |
 | [0017 La provision del primer administrador es una orden de la Lambda de migraciones](0017-provision-del-primer-administrador.md) | Vigente |
+| [0018 El contrato de `usos.ids_fuente`](0018-contrato-de-ids-fuente.md) | Vigente |
 
 Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
 nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico

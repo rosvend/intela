@@ -54,42 +54,47 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud       Salud
-	auth        Autenticacion
-	catalogo    Catalogo
-	listadoONI  LecturaONI
-	publicarONI EscrituraONI
-	opts        Opciones
-	log         *slog.Logger
+	salud         Salud
+	auth          Autenticacion
+	catalogo      Catalogo
+	listadoONI    LecturaONI
+	publicarONI   EscrituraONI
+	declaraciones Declaraciones
+	recaudo       Recaudo
+	opts          Opciones
+	log           *slog.Logger
 }
 
-// Casos de uso que el adaptador expone. Van juntos porque Nueva ya no puede
-// seguir creciendo parametro a parametro: el comentario de abajo lo pedia
-// a partir del tercero.
+// Casos agrupa los casos de uso que Nueva necesita.
+//
+// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
+// se cablea en cmd/api. Van juntos porque Nueva ya no puede seguir creciendo
+// parametro a parametro.
 type Casos struct {
-	Catalogo    Catalogo
-	ListadoONI  LecturaONI
-	PublicarONI EscrituraONI
+	Auth          Autenticacion
+	Catalogo      Catalogo
+	ListadoONI    LecturaONI
+	PublicarONI   EscrituraONI
+	Declaraciones Declaraciones
+	Recaudo       Recaudo
 }
 
 // Nueva construye el adaptador.
-//
-// Los casos de uso van en Casos y no dentro de Opciones porque son
-// dependencias, no configuracion: Opciones se rellena desde el entorno, y
-// esto se cablea en cmd/api.
-func Nueva(salud Salud, auth Autenticacion, casos Casos, opts Opciones) *API {
+func Nueva(salud Salud, casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
 	return &API{
-		salud:       salud,
-		auth:        auth,
-		catalogo:    casos.Catalogo,
-		listadoONI:  casos.ListadoONI,
-		publicarONI: casos.PublicarONI,
-		opts:        opts,
-		log:         log,
+		salud:         salud,
+		auth:          casos.Auth,
+		catalogo:      casos.Catalogo,
+		listadoONI:    casos.ListadoONI,
+		publicarONI:   casos.PublicarONI,
+		declaraciones: casos.Declaraciones,
+		recaudo:       casos.Recaudo,
+		opts:          opts,
+		log:           log,
 	}
 }
 
@@ -163,6 +168,38 @@ func (a *API) Router() http.Handler {
 			cat.Post("/", a.registrarObra)
 			cat.Get("/{id}", a.obraPorID)
 			cat.Patch("/{id}", a.actualizarObra)
+
+			// El editor de splits de la #30. Mismo rol que el resto del
+			// catalogo: es la misma superficie -quien edita una declaracion
+			// ve el repertorio entero-.
+			cat.Post("/{id}/declaracion", a.declararObra)
+			cat.Put("/{id}/declaracion", a.editarDeclaracion)
+			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
+		})
+
+		// El lado del ingreso (#27). Entra dinero, asi que escribe
+		// `contabilidad` -- que es quien factura (roles.md, `RD 13.5`)-- y
+		// `administrador`. Ni `distribucion` ni `auditor` registran recaudo:
+		// distribucion es la OTRA firma de las compuertas y auditor no opera
+		// el pipeline.
+		protegido.Route("/recaudo", func(rec chi.Router) {
+			rec.Use(requiereRol(aplicacion.RolContabilidad, aplicacion.RolAdministrador))
+			rec.Post("/", a.registrarRecaudo)
+			rec.Get("/usuarios", a.listarUsuariosRecaudo)
+			rec.Post("/usuarios", a.registrarUsuarioRecaudo)
+		})
+
+		// Las bolsas se leen desde mas sitios de los que se escriben:
+		// `distribucion` necesita la bolsa para correr el reparto y `auditor`
+		// tiene lectura de todo. Sigue fuera `titular`, que solo ve las obras
+		// donde participa (OE-6) y no el ingreso de la sociedad.
+		protegido.Route("/bolsas", func(bol chi.Router) {
+			bol.Use(requiereRol(
+				aplicacion.RolContabilidad, aplicacion.RolAdministrador,
+				aplicacion.RolDistribucion, aplicacion.RolAuditor,
+			))
+			bol.Get("/", a.listarBolsas)
+			bol.Get("/{id}", a.bolsaPorID)
 		})
 	})
 

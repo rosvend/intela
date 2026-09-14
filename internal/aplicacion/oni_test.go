@@ -95,7 +95,7 @@ func (b *bitacoraMem) De(_ context.Context, _, _ string) ([]Asiento, error) {
 	return b.asientos, nil
 }
 
-func (b *bitacoraMem) PorID(_ context.Context, _ string) (Asiento, error) {
+func (b *bitacoraMem) AsientoPorID(_ context.Context, _ string) (Asiento, error) {
 	return Asiento{}, ErrNoEncontrado
 }
 

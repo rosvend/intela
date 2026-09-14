@@ -39,7 +39,7 @@ func (p *publicarONIFalso) Ejecutar(_ context.Context, periodo, actorID string) 
 
 func servidorONI(t *testing.T, auth Autenticacion, lectura LecturaONI, escritura EscrituraONI) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, Casos{ListadoONI: lectura, PublicarONI: escritura}, Opciones{}).Router()
+	return Nueva(nil, Casos{Auth: auth, ListadoONI: lectura, PublicarONI: escritura}, Opciones{}).Router()
 }
 
 func publicacionEjemplo() aplicacion.PublicacionONI {

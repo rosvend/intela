@@ -135,10 +135,17 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store cubre bitacora y ONI. CatalogoObras va por un
-	// envoltorio: BitacoraAuditoria.PorID y CatalogoObras.PorID no pueden
-	// convivir en el mismo tipo. El nucleo sigue viendo puertos separados.
+	// El mismo *Store cubre bitacora, ONI, declaraciones y recaudo.
+	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): el nucleo
+	// sigue viendo puertos separados.
+	//
+	// El asiento de auditoria de declaraciones y recaudo lo escribe el
+	// propio adaptador dentro de la misma transaccion -no un
+	// BitacoraAuditoria aparte-, ver puertos.go. Mismo cableado que
+	// cmd/api: este binario es un adaptador primario mas y comparte el
+	// Router().
 	casos := httpapi.Casos{
+		Auth:       autenticacion,
 		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{
@@ -149,9 +156,18 @@ func construir() (http.Handler, error) {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
+		Declaraciones: aplicacion.Declaraciones{
+			Gestion: store,
+			Reloj:   reloj.Sistema{},
+		},
+		Recaudo: aplicacion.Recaudo{
+			Bolsas:  store,
+			Gestion: store,
+			Reloj:   reloj.Sistema{},
+		},
 	}
 
-	api := httpapi.Nueva(store, autenticacion, casos, httpapi.Opciones{
+	api := httpapi.Nueva(store, casos, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})

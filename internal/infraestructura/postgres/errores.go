@@ -43,6 +43,36 @@ func esClaveDuplicada(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == codigoUnicidad
 }
 
+// codigoForanea es el SQLSTATE 23503, foreign_key_violation.
+const codigoForanea = "23503"
+
+// esClaveForanea dice si el error es una violacion de FOREIGN KEY.
+//
+// Misma logica que [esClaveDuplicada] y el mismo motivo para no vivir dentro
+// de traducirError: una FK rota no significa lo mismo en todas las tablas -en
+// `declaracion_versiones` es "esa obra no existe" (404); en la FK de
+// `declaraciones` hacia `titulares` seria "ese titular no existe", que no es
+// el mismo caso-. Cada sitio de llamada decide que centinela le corresponde a
+// SU tabla.
+func esClaveForanea(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoForanea
+}
+
+// esClaveForaneaDe es [esClaveForanea] pero para una tabla con MAS de una FK,
+// donde "es una violacion de FK" no basta para saber cual: hace falta
+// preguntar por el nombre de la restriccion.
+//
+// Ver [Store.Guardar] en declaraciones.go: `declaraciones` tiene la FK hacia
+// `titulares` (declaraciones_titular_id_fkey) y, desde la migracion 00008,
+// tambien hacia `declaracion_versiones` (declaraciones_version_fkey). Sin
+// discriminar, un fallo en la segunda se traduciria como "titular inexistente"
+// -que no es lo que paso- solo porque las dos comparten codigo SQLSTATE.
+func esClaveForaneaDe(err error, restriccion string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoForanea && pgErr.ConstraintName == restriccion
+}
+
 // traducirError lleva un error de pgx al vocabulario de aplicacion.
 //
 // pgx.ErrNoRows significa "la consulta fue bien y no hay fila", que es justo
