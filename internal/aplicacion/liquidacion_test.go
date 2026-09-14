@@ -55,7 +55,7 @@ func (r *repoLiqMemoria) DeProceso(_ context.Context, procesoID string) ([]liqui
 	return out, nil
 }
 
-func (r *repoLiqMemoria) Guardar(_ context.Context, ordenes []liquidacion.OrdenDePago) error {
+func (r *repoLiqMemoria) GuardarOrdenes(_ context.Context, ordenes []liquidacion.OrdenDePago) error {
 	r.guardadas++
 	porID := map[string]int{}
 	for i, o := range r.ordenes {

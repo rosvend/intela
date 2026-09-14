@@ -340,11 +340,14 @@ type RepositorioResultados interface {
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
 // corrida. DeTitular es el camino del panel del titular (#42).
+//
+// GuardarOrdenes y no Guardar: el mismo *Store satisface tambien
+// [GestionDeclaraciones], que ya tiene un Guardar con otra firma.
 type RepositorioLiquidacion interface {
 	DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
 	Listar(ctx context.Context) ([]liquidacion.OrdenDePago, error)
 	DeProceso(ctx context.Context, procesoID string) ([]liquidacion.OrdenDePago, error)
-	Guardar(ctx context.Context, ordenes []liquidacion.OrdenDePago) error
+	GuardarOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDePago) error
 	DocumentosDe(ctx context.Context, titularID string) (liquidacion.Documentos, error)
 	Documentos(ctx context.Context) (map[string]liquidacion.Documentos, error)
 	InsumoDeProceso(ctx context.Context, procesoID string) (InsumoLiquidacion, error)

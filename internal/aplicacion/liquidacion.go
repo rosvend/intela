@@ -107,7 +107,7 @@ func (l Liquidaciones) GenerarLiquidacion(ctx context.Context, procesoID string)
 
 	aGuardar := append([]liquidacion.OrdenDePago{}, ordenes...)
 	aGuardar = append(aGuardar, acumuladas...)
-	if err := l.Ordenes.Guardar(ctx, aGuardar); err != nil {
+	if err := l.Ordenes.GuardarOrdenes(ctx, aGuardar); err != nil {
 		return nil, fmt.Errorf("guardar liquidacion del proceso %s: %w", procesoID, err)
 	}
 	return l.conDocumentos(ctx, ordenes)
@@ -163,7 +163,7 @@ func (l Liquidaciones) conPlazoYDocumentos(ctx context.Context, ordenes []liquid
 		}
 	}
 	if len(cambiadas) > 0 {
-		if err := l.Ordenes.Guardar(ctx, cambiadas); err != nil {
+		if err := l.Ordenes.GuardarOrdenes(ctx, cambiadas); err != nil {
 			return nil, fmt.Errorf("persistir transicion de silencio: %w", err)
 		}
 	}

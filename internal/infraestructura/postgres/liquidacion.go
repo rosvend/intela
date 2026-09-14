@@ -53,7 +53,7 @@ func (s *Store) DeProceso(ctx context.Context, procesoID string) ([]liquidacion.
 	return escanearOrdenes(ctx, s, filas, "liquidaciones del proceso %q", procesoID)
 }
 
-func (s *Store) Guardar(ctx context.Context, ordenes []liquidacion.OrdenDePago) error {
+func (s *Store) GuardarOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDePago) error {
 	if len(ordenes) == 0 {
 		return nil
 	}
