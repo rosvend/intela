@@ -23,6 +23,21 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
+| `/recaudo/*` | `contabilidad`, `administrador` |
+| `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+
+`/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
+corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
+`contabilidad` —quien factura (`RD 13.5`)— y nadie mas. `/bolsas/*` solo lee,
+y ahi entra `distribucion`, que necesita la bolsa para correr el reparto, y
+`auditor`, que lee todo.
+
+`distribucion` no registra recaudo a proposito. Es la **otra** firma de las
+compuertas del `RD 13.5`, y una sola persona no puede ostentar las dos: quien
+co-firma la salida del dinero no debe poder declarar cuanto entro.
+
+`titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
+participa (`OE-6`), no el ingreso de la sociedad.
 
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
 LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo

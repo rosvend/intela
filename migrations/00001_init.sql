@@ -89,6 +89,16 @@ CREATE INDEX obras_imdb ON obras (imdb) WHERE imdb <> '';
 -- Que las partes sumen exactamente 100 no se puede expresar como CHECK de
 -- fila: es un invariante de agregado y vive en repertorio.Declaracion.Completa
 -- (R-04, RD 13.1.3). Si no suma, se retiene el total en reserva.
+--
+-- La escala de `porcentaje` -4 decimales- es una decision de dominio y no un
+-- detalle de esta tabla: la fija repertorio.precisionPorcentaje y la hace
+-- cumplir NuevaDeclaracion, que RECHAZA con ErrDeclaracionInvalida lo que no
+-- quepa, en vez de redondearlo. Desde aqui no se puede exigir: Postgres
+-- coacciona el valor a NUMERIC(8,4) ANTES de evaluar el CHECK, asi que un
+-- 0.00004 llega a la restriccion ya convertido en 0.0000 y lo que falla es
+-- `porcentaje > 0`, con un error que no distingue un dato mal formado de un
+-- fallo de la base (issue #109). Cambiar la escala de la columna obliga a
+-- cambiar esa constante en el mismo commit.
 -- +goose StatementBegin
 CREATE TABLE declaraciones (
   obra_id    TEXT NOT NULL REFERENCES obras(id) ON DELETE CASCADE,
@@ -364,6 +374,11 @@ CREATE TABLE resultados_obra (
 -- Antes no tenia PK: se podia insertar dos veces la misma linea de titular
 -- para la misma obra y el mismo proceso, y el total dejaba de cuadrar sin que
 -- nada lo detectara.
+--
+-- `porcentaje` es la misma escala y la misma decision que en `declaraciones`:
+-- se copia de ahi, ya validado por repertorio.NuevaDeclaracion. Quien escriba
+-- esta tabla -el motor de reparto- no debe reintroducir precision que la
+-- columna no guarda; ver el comentario de `declaraciones` (issue #109).
 -- +goose StatementBegin
 CREATE TABLE resultados_titular (
   proceso_id TEXT NOT NULL REFERENCES procesos(id) ON DELETE CASCADE,
