@@ -106,6 +106,11 @@ func sembrarProceso(t *testing.T, s *Store, bolsaID, procesoID, periodo, bruto, 
 		}
 	}
 
+	// Desde 00009, `bolsas.usuario_id` apunta a `usuarios_recaudo`.
+	// ON CONFLICT: este helper se llama dos veces en el mismo test.
+	ejecutar(`INSERT INTO usuarios_recaudo (id, nombre, categoria)
+	          VALUES ('usr-canal', 'Canal de prueba', 'tv_abierta')
+	          ON CONFLICT (id) DO NOTHING`)
 	ejecutar(`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
 	          VALUES ($1, 'usr-canal', $2, 'nacional', $3)`,
 		bolsaID, periodo, bruto)
