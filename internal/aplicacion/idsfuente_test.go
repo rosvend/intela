@@ -63,6 +63,12 @@ func TestEscribirIDsFuenteSinIDsEsVacio(t *testing.T) {
 	}
 }
 
+func TestEsClaveIDsFuente(t *testing.T) {
+	if !EsClaveIDsFuente(ClaveShowID) || EsClaveIDsFuente("ID_Ficha") || EsClaveIDsFuente("") {
+		t.Fatal("la lista cerrada tiene que aceptar las constantes y rechazar el encabezado del archivo")
+	}
+}
+
 func TestLeerIDsFuenteEsEstricto(t *testing.T) {
 	leido := LeerIDsFuente("871732\nID_Ficha=1\nfoo=bar\nid_ficha=\n=2\nimdb = tt1 ")
 	esperado := map[string]string{ClaveIMDB: "tt1"}
