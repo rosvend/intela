@@ -46,14 +46,14 @@ const (
 	FuenteCine = "procinal"
 	FuenteOTT  = "netflix"
 
-	// La columna de la que sale el id de obra en el archivo de cada fuente, y
-	// la segunda mitad de la clave de `alias_obra`. Los nombres son los que
-	// documenta identificadores.md para las fuentes reales; el de Procinal es
-	// sintetico como el resto de su reporte, porque el cliente no ha entregado
-	// el formato de las salas.
-	TipoIDCaracol  = "ID_Ficha"
-	TipoIDProcinal = "id_pelicula"
-	TipoIDNetflix  = "show_id"
+	// La clave de ids_fuente (ADR 0018) con que viaja el id de obra de cada
+	// fuente, y la segunda mitad de la clave de `alias_obra`. Salen del
+	// contrato y no se escriben a mano: un alias sembrado con otra grafia no lo
+	// encontraria nunca la cascada. La de Procinal es sintetica como el resto de
+	// su reporte, porque el cliente no ha entregado el formato de las salas.
+	TipoIDCaracol  = aplicacion.ClaveIDFicha
+	TipoIDProcinal = aplicacion.ClaveIDPelicula
+	TipoIDNetflix  = aplicacion.ClaveShowID
 
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
@@ -294,15 +294,26 @@ func (d *Dataset) reportes() {
 		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
 	}
 
-	// La fuente y la evidencia se estampan aqui y no en los constructores de
-	// arriba porque las dos son propiedades de la ENTREGA, no de la fila: la
-	// misma "PX-1" viaja en el reporte de Caracol y en el de Procinal, y lo que
-	// la distingue -y lo que la resuelve- es de que fuente viene.
+	// La fuente, ids_fuente y la evidencia se estampan aqui y no en los
+	// constructores de arriba porque son propiedades de la ENTREGA, no de la
+	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de Procinal,
+	// y lo que la distingue -la clave con que viaja y lo que la resuelve- es de
+	// que fuente viene. Los constructores dejan en IDsFuente el valor solo, y
+	// aqui se reescribe en el formato del contrato.
 	for i := range d.Reportes {
 		r := &d.Reportes[i]
 		for j := range r.Usos {
-			r.Usos[j].Fuente = r.Fuente
-			r.Usos[j].Evidencia = evidenciaAlias(r.Fuente, r.TipoID, r.Usos[j].IDsFuente)
+			u := &r.Usos[j]
+			valor := u.IDsFuente
+			ids, err := aplicacion.EscribirIDsFuente(aplicacion.IDFuente{Clave: r.TipoID, Valor: valor})
+			if err != nil {
+				// Como en coautor: el dataset es una constante del binario, y un
+				// id que no cumple el contrato es un error de programacion.
+				panic("semilla: " + err.Error())
+			}
+			u.Fuente = r.Fuente
+			u.IDsFuente = ids
+			u.Evidencia = evidenciaAlias(r.Fuente, r.TipoID, valor)
 		}
 		r.Bytes = csvDe(r.Usos)
 	}
