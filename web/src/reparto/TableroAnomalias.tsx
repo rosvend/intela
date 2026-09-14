@@ -24,7 +24,14 @@ export default function TableroAnomalias() {
   }, [procesos]);
 
   const periodo = periodoParam || periodos[0] || "";
-  const alertas = useRecurso<Alerta[]>(RUTAS_REPARTO.alertas(periodo), true);
+  // Sin esperar a `procesos` el primer render pediria `/api/alertas` sin
+  // filtro y pintaria el conteo de todos los periodos bajo una cabecera que
+  // ya nombra uno. Con `?periodo` en la URL no hay nada que esperar.
+  const periodoResuelto = periodoParam !== "" || procesos.tipo !== "cargando";
+  const alertas = useRecurso<Alerta[]>(
+    RUTAS_REPARTO.alertas(periodo),
+    periodoResuelto,
+  );
 
   const lista = alertas.tipo === "listo" ? pendientes(alertas.datos) : [];
 
@@ -120,7 +127,12 @@ export default function TableroAnomalias() {
                   <td>{alerta.detalle}</td>
                   <td>{alerta.referencia ?? alerta.periodo ?? "—"}</td>
                   <td>
-                    <Link to="#bandeja">Resolver</Link>
+                    {/*
+                     * Ancla de solo-hash, como en `Tarjeta`: un `Link` con un
+                     * `to` sin `search` descarta el `?periodo` de la URL y la
+                     * bandeja se repuebla con otro periodo sin avisar.
+                     */}
+                    <a href="#bandeja">Resolver</a>
                   </td>
                 </tr>
               ))}

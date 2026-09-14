@@ -63,8 +63,11 @@ export function useDashboard(rol: Rol): Tablero {
 
 /**
  * `recarga` fuerza un refetch (sondeo del panel de corridas, o tras firmar).
- * Si el path no cambio y ya habia datos, no se pinta "Cargando…" otra vez:
- * un parpadeo cada 15s haria ilegible el pipeline.
+ * Si el path no cambio y el recurso ya estaba resuelto, no se pinta
+ * "Cargando…" otra vez: un parpadeo cada 15s haria ilegible el pipeline.
+ * Resuelto incluye `ausente` y `error`, que hoy son los estados que el
+ * usuario ve mientras el backend no exista; remontar su mensaje cada 15s
+ * parpadea igual y ademas re-anuncia el `role="alert"` en lectores.
  */
 export function useRecurso<T>(
   path: string,
@@ -87,7 +90,7 @@ export function useRecurso<T>(
 
     let vigente = true;
     setRecurso((actual) =>
-      !cambioDePath && actual.tipo === "listo" ? actual : { tipo: "cargando" },
+      !cambioDePath && esResuelto(actual) ? actual : { tipo: "cargando" },
     );
 
     (api(path) as Promise<T>)
@@ -113,4 +116,16 @@ export function useRecurso<T>(
   }, [path, habilitado, recarga]);
 
   return recurso;
+}
+
+/**
+ * `inactivo` no cuenta: viene de `habilitado: false` y al encenderse hay que
+ * pintar la carga, no el vacio que dejo el recurso apagado.
+ */
+function esResuelto<T>(recurso: Recurso<T>): boolean {
+  return (
+    recurso.tipo === "listo" ||
+    recurso.tipo === "ausente" ||
+    recurso.tipo === "error"
+  );
 }

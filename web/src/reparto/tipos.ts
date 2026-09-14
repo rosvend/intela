@@ -3,6 +3,13 @@
  * `api/openapi.yaml`; hasta entonces estas rutas 404 y el hook de #31 las
  * trata como ausencia, no como fallo. No se anaden al YAML todavia: un
  * contrato que promete rutas que devuelven 404 es peor que uno corto.
+ *
+ * Pendiente de cerrar con #34/#37 antes de que el backend empiece: el YAML
+ * ya reserva `/admin/*` para `administrador` (`GET /admin/pipeline`). Si el
+ * pipeline aterriza ahi, este panel queda en 404 permanente; y si se queda
+ * con rol `administrador`, los dos roles que firman la compuerta
+ * (`distribucion` y `contabilidad`) no llegan. Estas tres rutas tienen que
+ * ser de nivel superior y legibles por los roles de `RolDeFirma`.
  */
 export const RUTAS_REPARTO = {
   procesos: "/api/procesos",

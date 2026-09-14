@@ -324,9 +324,17 @@ a {
   cursor: default;
 }
 
-.login-demo {
-  margin-top: 1.5rem;
-  text-align: center;
+.boton-primario:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* Deshabilitado a proposito: se muestra lo que existira y se dice que aun no. */
+.enlace-tenue {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
   font-size: 0.78rem;
   color: var(--texto-suave);
   cursor: not-allowed;
@@ -854,6 +862,12 @@ td {
 .compuerta-estado-pendiente {
   color: var(--alerta);
   font-weight: 600;
+}
+
+.compuerta-advertencia {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--alerta);
 }
 
 .compuerta-acciones {

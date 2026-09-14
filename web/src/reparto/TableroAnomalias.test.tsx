@@ -1,10 +1,35 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "../api";
 import { ProveedorDeSesion } from "../sesion";
 import TableroAnomalias from "./TableroAnomalias";
-import { Alerta, RUTAS_REPARTO } from "./tipos";
+import { Alerta, Proceso, RUTAS_REPARTO } from "./tipos";
+
+const sesionAdmin = {
+  id: "usr-1",
+  email: "admin@redes.co",
+  nombre: "Admin Intela",
+  rol: "administrador",
+  titular_id: "",
+};
+
+const proc2025: Proceso = {
+  id: "proc-1",
+  circuito: "nacional",
+  etapa: "verificacion",
+  periodo: "2025",
+  revision: 1,
+  firmas: [],
+};
+
+const proc2024: Proceso = { ...proc2025, id: "proc-0", periodo: "2024" };
 
 function json(cuerpo: unknown, status = 200) {
   return new Response(JSON.stringify(cuerpo), {
@@ -112,6 +137,52 @@ describe("TableroAnomalias", () => {
     expect(
       screen.getAllByRole("link", { name: "Resolver" }).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("Resolver no descarta el ?periodo ni repuebla la bandeja con otro", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(sesionAdmin);
+      if (path === RUTAS_REPARTO.procesos) return json([proc2025, proc2024]);
+      if (path === RUTAS_REPARTO.alertas("2025")) return json(alertas);
+      if (path === RUTAS_REPARTO.alertas("2024"))
+        return json([
+          { id: "al-9", tipo: "oni", detalle: "ONI del 2024", periodo: "2024" },
+        ]);
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    await screen.findByText("Título no identificado");
+    const resolver = screen.getAllByRole("link", { name: "Resolver" })[0];
+    // Un `Link` con `to` de solo-hash conserva el pathname y tira el search.
+    expect(resolver?.getAttribute("href")).toBe("#bandeja");
+
+    fireEvent.click(resolver as HTMLElement);
+
+    expect(screen.getByText("Título no identificado")).toBeTruthy();
+    expect(screen.queryByText("ONI del 2024")).toBeNull();
+    expect((screen.getByLabelText("Periodo") as HTMLSelectElement).value).toBe(
+      "2025",
+    );
+  });
+
+  it("sin ?periodo no pide las alertas de todos los periodos", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(sesionAdmin);
+      if (path === RUTAS_REPARTO.procesos) return json([proc2025, proc2024]);
+      if (path === RUTAS_REPARTO.alertas("2024")) return json(alertas);
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar("/anomalias");
+
+    await screen.findByText("Título no identificado");
+    expect(
+      vi.mocked(fetch).mock.calls.map(([url]) => String(url)),
+    ).not.toContain(RUTAS_REPARTO.alertas());
   });
 
   it("sin backend de alertas muestra el vacio", async () => {

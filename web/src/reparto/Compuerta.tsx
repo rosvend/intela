@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useId, useState } from "react";
 import { Rol } from "../sesion";
 import {
   ETIQUETA_ROL_FIRMA,
@@ -13,6 +13,7 @@ import { Proceso } from "./tipos";
 export default function Compuerta({
   proceso,
   rol,
+  advertencia,
   enviando = false,
   error,
   onFirmar,
@@ -20,6 +21,14 @@ export default function Compuerta({
 }: {
   proceso: Proceso;
   rol: Rol;
+  /**
+   * Lo que el firmante deberia saber antes de firmar (hoy: alertas abiertas
+   * del periodo). Avisa, no bloquea: ninguna alerta trae severidad y una
+   * reserva por declaracion incompleta es un estado normal del periodo
+   * (`R-04`, `RD 13.1.3`), asi que bloquear por conteo detendria toda
+   * corrida. Quien hace cumplir la regla es el backend de la compuerta.
+   */
+  advertencia?: string;
   enviando?: boolean;
   error?: string;
   onFirmar: () => void;
@@ -27,6 +36,7 @@ export default function Compuerta({
 }) {
   const [rechazando, setRechazando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  const idMotivo = useId();
 
   if (!esCompuerta(proceso.etapa)) return null;
 
@@ -66,6 +76,12 @@ export default function Compuerta({
         ))}
       </ul>
 
+      {ofreceAccion && advertencia && (
+        <p className="compuerta-advertencia" role="status">
+          {advertencia}
+        </p>
+      )}
+
       {ofreceAccion && !rechazando && (
         <div className="compuerta-acciones">
           <button
@@ -89,9 +105,9 @@ export default function Compuerta({
 
       {ofreceAccion && rechazando && (
         <form className="compuerta-rechazo" onSubmit={confirmarRechazo}>
-          <label htmlFor="motivo-rechazo">Motivo del rechazo</label>
+          <label htmlFor={idMotivo}>Motivo del rechazo</label>
           <textarea
-            id="motivo-rechazo"
+            id={idMotivo}
             value={motivo}
             onChange={(evento) => setMotivo(evento.target.value)}
             required

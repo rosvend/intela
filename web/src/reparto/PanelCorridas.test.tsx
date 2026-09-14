@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -195,6 +196,176 @@ describe("PanelCorridas", () => {
       expect(screen.getByRole("alert").textContent).toBe("no autorizado"),
     );
     expect(screen.getByText("Importe de la obra")).toBeTruthy();
+  });
+
+  it("un id inexistente nunca ofrece firmar otra corrida", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+      return json([]);
+    });
+    montar("/distribucion/no-existe");
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("no encontrado"),
+    );
+    expect(screen.queryByRole("button", { name: "Firmar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rechazar" })).toBeNull();
+  });
+
+  it("navegar a otra corrida descarta el motivo y actúa sobre el id visible", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos)
+        return json([nacional, { ...internacional, etapa: "verificacion" }]);
+      return json([]);
+    });
+    montar("/distribucion/proc-nac");
+    await screen.findByRole("button", { name: "Rechazar" });
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar" }));
+    fireEvent.change(screen.getByLabelText("Motivo del rechazo"), {
+      target: { value: "Problema nacional" },
+    });
+    fireEvent.click(screen.getByRole("link", { name: "2025-06" }));
+    expect(screen.queryByLabelText("Motivo del rechazo")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar" }));
+    expect(
+      (screen.getByLabelText("Motivo del rechazo") as HTMLTextAreaElement)
+        .value,
+    ).toBe("");
+    fireEvent.change(screen.getByLabelText("Motivo del rechazo"), {
+      target: { value: "Problema internacional" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar rechazo" }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(
+          ([url, init]) =>
+            String(url) === RUTAS_REPARTO.firmar("proc-int") &&
+            init?.body ===
+              JSON.stringify({
+                accion: "rechazar",
+                motivo: "Problema internacional",
+              }),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([url]) => String(url) === RUTAS_REPARTO.firmar("proc-nac"),
+        ),
+    ).toBe(false);
+  });
+
+  it("una firma tardía no muestra su error en otra corrida", async () => {
+    let responder!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos)
+        return json([nacional, { ...internacional, etapa: "verificacion" }]);
+      if (path === RUTAS_REPARTO.firmar("proc-nac"))
+        return new Promise<Response>((resolve) => {
+          responder = resolve;
+        });
+      return json([]);
+    });
+    montar("/distribucion/proc-nac");
+    fireEvent.click(await screen.findByRole("button", { name: "Firmar" }));
+    fireEvent.click(screen.getByRole("link", { name: "2025-06" }));
+    await act(async () => {
+      responder(json({ error: "Error nacional" }, 409));
+    });
+    expect(screen.queryByText("Error nacional")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Firmar" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("contabilidad no pide las alertas: no tiene /anomalias y el 403 pintaria las tarjetas en rojo", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("contabilidad"));
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+      if (path.startsWith("/api/alertas"))
+        return json({ error: "no autorizado" }, 403);
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    await screen.findByRole("button", { name: "Firmar" });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).startsWith("/api/alertas")),
+    ).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Ni tarjetas de conteo que nunca se van a poder rellenar.
+    expect(screen.queryByText("Alertas abiertas del periodo")).toBeNull();
+  });
+
+  it("firmar con alertas abiertas avisa, pero no bloquea la compuerta", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+      if (path.startsWith("/api/alertas"))
+        return json([
+          {
+            id: "al-1",
+            tipo: "oni",
+            detalle: "Sin identificar",
+            periodo: "2025",
+          },
+          {
+            id: "al-2",
+            tipo: "reserva_declaracion_incompleta",
+            detalle: "80% declarado",
+            periodo: "2025",
+          },
+        ]);
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    await screen.findByText(
+      "Revisa las 2 alertas abiertas del periodo antes de firmar.",
+    );
+    expect(
+      (screen.getByRole("button", { name: "Firmar" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("volver a una corrida no revive el error de firma que quedo atras", async () => {
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.firmar("proc-nac") && init?.method === "POST")
+        return json({ error: "Error nacional" }, 409);
+      if (path === RUTAS_REPARTO.procesos)
+        return json([nacional, { ...internacional, etapa: "verificacion" }]);
+      return json([]);
+    });
+
+    montar("/distribucion/proc-nac");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Firmar" }));
+    await waitFor(() =>
+      expect(screen.getByText("Error nacional")).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "2025-06" }));
+    expect(screen.queryByText("Error nacional")).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: "2025" }));
+    expect(screen.queryByText("Error nacional")).toBeNull();
   });
 
   it("sin backend de procesos muestra el vacio, no un crash", async () => {

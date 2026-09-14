@@ -23,8 +23,7 @@ export default function PanelCorridas() {
   const { id } = useParams<{ id: string }>();
   const { usuario } = useSesion();
   const [recarga, setRecarga] = useState(0);
-  const [enviando, setEnviando] = useState(false);
-  const [errorDeFirma, setErrorDeFirma] = useState("");
+  const [firma, setFirma] = useState({ clave: "", enviando: false, error: "" });
 
   const procesos = useRecurso<Proceso[]>(RUTAS_REPARTO.procesos, true, recarga);
 
@@ -41,23 +40,40 @@ export default function PanelCorridas() {
     [procesos],
   );
   const seleccionado = useMemo(
-    () => lista.find((proceso) => proceso.id === id) ?? lista[0],
+    () =>
+      id === undefined ? lista[0] : lista.find((proceso) => proceso.id === id),
     [lista, id],
   );
 
+  const clave = seleccionado
+    ? `${seleccionado.id}:${seleccionado.revision}:${seleccionado.etapa}`
+    : "";
   const periodo = seleccionado?.periodo;
+  // Ver /distribucion no implica poder leer /alertas: contabilidad firma la
+  // compuerta pero no esta en los roles de /anomalias. Pedirlas igual dejaria
+  // las cinco tarjetas en rojo con el 403, que `esAusente` no trata como vacio.
+  const verAnomalias = usuario ? puedeVer(usuario.rol, "/anomalias") : false;
   const alertas = useRecurso<Alerta[]>(
     RUTAS_REPARTO.alertas(periodo),
-    Boolean(periodo),
+    Boolean(periodo) && verAnomalias,
     recarga,
   );
+
+  useEffect(() => {
+    // Un error de firma pertenece a la corrida/revision en la que ocurrio:
+    // al cambiar de clave se descarta, no se revive al volver.
+    setFirma({ clave: "", enviando: false, error: "" });
+  }, [clave]);
+
+  const abiertas =
+    alertas.tipo === "listo" ? totalPendientes(alertas.datos) : 0;
+  const enlaceAnomalias = `/anomalias?periodo=${encodeURIComponent(periodo ?? "")}`;
 
   if (!usuario) return null;
 
   async function actuar(accion: "firmar" | "rechazar", motivo?: string) {
-    if (!seleccionado) return;
-    setEnviando(true);
-    setErrorDeFirma("");
+    if (!seleccionado || (firma.clave === clave && firma.enviando)) return;
+    setFirma({ clave, enviando: true, error: "" });
     try {
       await firmarProceso(seleccionado.id, { accion, motivo });
       setRecarga((n) => n + 1);
@@ -66,9 +82,13 @@ export default function PanelCorridas() {
         error instanceof ApiError
           ? error.message
           : "no se pudo registrar la firma";
-      setErrorDeFirma(mensaje);
+      setFirma((actual) =>
+        actual.clave === clave ? { ...actual, error: mensaje } : actual,
+      );
     } finally {
-      setEnviando(false);
+      setFirma((actual) =>
+        actual.clave === clave ? { ...actual, enviando: false } : actual,
+      );
     }
   }
 
@@ -96,7 +116,10 @@ export default function PanelCorridas() {
           reparto esté expuesto.
         </p>
       )}
-      {procesos.tipo === "listo" && lista.length === 0 && (
+      {procesos.tipo === "listo" && id !== undefined && !seleccionado && (
+        <p role="alert">Proceso de reparto no encontrado.</p>
+      )}
+      {procesos.tipo === "listo" && id === undefined && lista.length === 0 && (
         <p className="muted">No hay procesos de reparto abiertos.</p>
       )}
 
@@ -122,7 +145,7 @@ export default function PanelCorridas() {
                     >
                       <td>
                         <Link
-                          to={`/distribucion/${proceso.id}`}
+                          to={`/distribucion/${encodeURIComponent(proceso.id)}`}
                           aria-current={activo ? "true" : undefined}
                         >
                           {proceso.periodo}
@@ -164,49 +187,56 @@ export default function PanelCorridas() {
                 etapa={seleccionado.etapa}
               />
               <Compuerta
+                key={clave}
                 proceso={seleccionado}
                 rol={usuario.rol}
-                enviando={enviando}
-                error={errorDeFirma}
+                advertencia={
+                  abiertas > 0
+                    ? `Revisa las ${formatearEntero(abiertas)} alertas abiertas del periodo antes de firmar.`
+                    : ""
+                }
+                enviando={firma.clave === clave && firma.enviando}
+                error={firma.clave === clave ? firma.error : ""}
                 onFirmar={() => void actuar("firmar")}
                 onRechazar={(motivo) => void actuar("rechazar", motivo)}
               />
             </article>
 
-            <section className="tablero-kpis">
-              {TIPOS_DE_ALERTA.map((tipo) => (
-                <Tarjeta
-                  key={tipo}
-                  titulo={etiquetaDeTipo(tipo)}
-                  descripcion="Alertas abiertas del periodo"
-                  to={
-                    puedeVer(usuario.rol, "/anomalias")
-                      ? `/anomalias?periodo=${encodeURIComponent(seleccionado.periodo)}`
-                      : undefined
-                  }
-                  etiquetaEnlace="Ir a resolución"
-                  recurso={conteoDeTipo(alertas, tipo)}
-                >
-                  {(datos) => (
-                    <p className="tarjeta-valor">
-                      {formatearEntero(datos.total)}
-                    </p>
-                  )}
-                </Tarjeta>
-              ))}
-            </section>
-            {alertas.tipo === "listo" &&
-              totalPendientes(alertas.datos) > 0 &&
-              puedeVer(usuario.rol, "/anomalias") && (
-                <p>
-                  <Link
-                    to={`/anomalias?periodo=${encodeURIComponent(seleccionado.periodo)}`}
-                  >
-                    Hay {formatearEntero(totalPendientes(alertas.datos))}{" "}
-                    alertas abiertas en este periodo. Ir a resolución.
-                  </Link>
-                </p>
-              )}
+            {/*
+             * Sin acceso a /anomalias no se piden las alertas, asi que las
+             * tarjetas solo podrian quedar vacias para siempre: se omiten en
+             * vez de prometer un conteo que este rol nunca va a ver.
+             */}
+            {verAnomalias && (
+              <>
+                <section className="tablero-kpis">
+                  {TIPOS_DE_ALERTA.map((tipo) => (
+                    <Tarjeta
+                      key={tipo}
+                      titulo={etiquetaDeTipo(tipo)}
+                      descripcion="Alertas abiertas del periodo"
+                      to={enlaceAnomalias}
+                      etiquetaEnlace="Ir a resolución"
+                      recurso={conteoDeTipo(alertas, tipo)}
+                    >
+                      {(datos) => (
+                        <p className="tarjeta-valor">
+                          {formatearEntero(datos.total)}
+                        </p>
+                      )}
+                    </Tarjeta>
+                  ))}
+                </section>
+                {abiertas > 0 && (
+                  <p>
+                    <Link to={enlaceAnomalias}>
+                      Hay {formatearEntero(abiertas)} alertas abiertas en este
+                      periodo. Ir a resolución.
+                    </Link>
+                  </p>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
