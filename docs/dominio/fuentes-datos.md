@@ -105,25 +105,47 @@ Candidatos difusos sobre 0.6 de similitud: **0**.
 No es una senal de alarma: por diseno las fuentes se cruzan **contra el catalogo maestro**, no
 entre si. Ver `identificadores.md`.
 
+## Declaraciones de Obra: el formulario de REDES-SYS
+
+No es un archivo sino un aplicativo web, y **el equipo no tiene acceso**. Se perfilo a partir de
+una captura del formulario real (`RegistroObraCine.aspx`, REDES-SYS v1.0.0.7).
+
+Lo que condiciona el diseno, en corto:
+
+- Es **una declaracion jurada por autor**, no un formulario conjunto. El 100% se arma sumando
+  declaraciones independientes, y por eso `declaracion_incompleta` (`R-04`) es el estado
+  intermedio normal.
+- **`Otros autores` es un unico campo de texto libre**: `Juan Perez (30%), Pedro Lopez (10%)`.
+- **No pide IPI** y **no hay identificador de obra**: el autor escribe el titulo. Tampoco `IDA`,
+  `EIDR` ni `IMDB`.
+
+Consecuencia: una declaracion se ata a una obra **por titulo** y sus coautores al padron **por
+nombre**. Es el problema difuso de `identificadores.md` aplicado tambien a personas.
+
+Ficha completa, con la lista de metadatos que si captura, en
+[`fichas-fuente.md`](fichas-fuente.md#f-04-declaraciones-de-obra-redes-sys).
+
 ## Lo que falta pedir al cliente
 
-Ordenado por impacto sobre el alcance.
+El registro unico, con dueno y estado por pregunta, esta en
+[`preguntas-cliente.md`](preguntas-cliente.md). Los nueve items que estaban aqui se fusionaron
+ahi con las seis preguntas de `reglas-negocio.md`, que eran otra lista distinta.
 
-1. **Export de Declaraciones de Obra desde REDES-SYS.** Sin autores y porcentajes no hay
-   reparto posible (`R-03`, `R-04`). Es el dato mas critico y no esta en ninguna muestra.
-2. **Reportes de recaudo por usuario y periodo.** La bolsa a repartir. Ningun archivo actual
-   contiene importes.
-3. **Feed de rating por franja horaria** del proveedor especializado. Bloquea `RD 9.1.1`
-   completo.
-4. **Coeficientes `Wa`, `Wb`, `Wc`** de `RD 9.7`. Bloquean el calculo OTT.
-5. **Tabla de mapeo** entre generos y subgeneros de parrilla y las cuatro categorias de tipo
-   de obra, mas el criterio de repertorio por programa.
-6. **`eidr` poblado** por parte de Netflix, o acceso a IDA.
-7. **Campos de episodio** en la parrilla de Caracol, para poder identificar capitulos de
-   series.
-8. **Extractos del mismo periodo** en ambas fuentes, y de mayor volumen.
-9. Padron de socios y titulares administrados con numero **IPI**, poblado y al dia.
-   Matiz: `data/IPI - form to report members to IPI 01-03-24.xls` ya esta en el repositorio — es
-   el formato con el que se reportan miembros al sistema IPI de SUISA. **No esta perfilado**:
-   `src/scripts/sample.py` solo recorre `data/files/`. Antes de pedirlo al cliente hay que
-   perfilarlo y determinar que le falta.
+Por impacto sobre el alcance, lo que sigue **abierto**:
+
+1. **Feed de rating por franja horaria** (P-06). Bloquea `RD 9.1.1` completo.
+2. **Coeficientes `Wa`, `Wb`, `Wc`** (P-04). Bloquean el calculo OTT.
+3. **Formato del reporte de recaudo** (P-08). Ningun archivo actual contiene importes.
+4. **Tasas de deduccion y reserva** aprobadas por Asamblea (P-10).
+5. **`eidr` poblado** por Netflix, o acceso a IDA (P-12).
+6. **Campos de episodio** en la parrilla de Caracol (P-13).
+7. **Extractos del mismo periodo** en ambas fuentes y de mayor volumen (P-14).
+8. **Padron con IPI** poblado y al dia (P-15). Matiz:
+   `data/IPI - form to report members to IPI 01-03-24.xls` ya esta en el repositorio -- es el
+   formato con el que se reportan miembros al sistema IPI de SUISA. **No esta perfilado**:
+   `src/scripts/sample.py` solo recorre `data/files/`. Antes de pedirlo hay que perfilarlo y
+   determinar que le falta.
+
+Ya **no** estan en esta lista, porque tienen respuesta provisional del equipo: el export de
+declaraciones (P-07: no hay acceso, Intela asume que el autor ya declaro) y la tabla de mapeo de
+generos (P-05: ver [`fixtures.md`](fixtures.md#mapeo-de-generos)).

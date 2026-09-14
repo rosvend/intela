@@ -8,6 +8,7 @@ import (
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -165,6 +166,40 @@ type CatalogoObras interface {
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
 }
 
+// GestionDeclaraciones es la escritura y el historial de la Declaracion de
+// Obra: el ABM de la #23 y lo que consume el editor de splits de la #30.
+//
+// Separado de [RepositorioRepertorio] por la misma razon que [CatalogoObras]
+// esta separado de el (ver su comentario arriba): son dos lecturas del mismo
+// dato para dos consumidores distintos. RepositorioRepertorio sirve al motor
+// de reparto y al estado del catalogo con la declaracion VIGENTE, sin
+// versiones visibles. GestionDeclaraciones habla en versiones explicitas
+// porque el criterio de la #23 pide ver el historial y resolver la vigente en
+// un instante pasado.
+//
+// Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
+// con las partes que llegan, en una sola operacion atomica por contrato: es
+// lo mismo declarar por primera vez que editar, la unica diferencia es si
+// habia una version que cerrar. Devuelve [ErrNoEncontrado] si la obra no
+// existe en el catalogo.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico:
+// actorID es quien firma el hecho, y la implementacion lo asienta en la misma
+// transaccion que la version. No es un puerto ni una llamada aparte -eso deja
+// una version guardada sin asiento si la segunda llamada falla- sino la unica
+// forma de que "version + asiento" sea una sola cosa o ninguna.
+type GestionDeclaraciones interface {
+	// Guardar devuelve la version nueva y el vigente_desde que de verdad quedo
+	// escrito: no siempre es el ahora que llego, porque la implementacion
+	// puede ajustarlo -por ejemplo para que no coincida con el vigente_desde
+	// de la version que cierra-. Devolver el valor real y no el que se envio
+	// es lo que evita que el llamador informe una ventana de vigencia que la
+	// base nunca tuvo.
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
+	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+}
+
 // FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
 // NO filtra, y los que vienen se combinan con Y.
 //
@@ -186,11 +221,15 @@ type FiltroObras struct {
 // ObraPorIDGlobal recibe los tres identificadores y devuelve ErrNoEncontrado
 // si los tres llegan vacios: llamarla sin datos no puede pasar por "no hay
 // match".
+//
+// GuardarMatch escribe r solo si la fila sigue en escalonPrevio, el escalon
+// con que se leyo; si no existe o ya cambio, devuelve ErrNoEncontrado sin
+// escribir nada.
 type RepositorioIdentificacion interface {
 	Alias(ctx context.Context, fuente, tipo, valor string) (obraID string, err error)
 	GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error
 	ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (obraID string, err error)
-	GuardarMatch(ctx context.Context, usoID string, r identificacion.Resultado) error
+	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
@@ -210,9 +249,34 @@ type RepositorioONI interface {
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
 // Usuario, Convenio y Tarifa; aguas abajo solo circula la bolsa (ADR 0003).
+//
+// BolsasDePeriodo existe aparte de ListarBolsas -y no como un filtro opcional-
+// por lo mismo que UsosDePeriodo en [RepositorioIngesta]: es la lectura que
+// pide el motor de reparto, va por el indice `bolsas_periodo`, y un listado
+// entero de todos los periodos no es lo que nadie quiere cuando pregunta por
+// uno.
 type RepositorioRecaudo interface {
 	ListarBolsas(ctx context.Context) ([]BolsaPersistida, error)
+	BolsasDePeriodo(ctx context.Context, periodo string) ([]BolsaPersistida, error)
 	BolsaPorID(ctx context.Context, id string) (BolsaPersistida, error)
+	ListarUsuarios(ctx context.Context) ([]recaudo.Usuario, error)
+}
+
+// GestionRecaudo registra lo que se cobro. Es el lado de escritura de
+// [RepositorioRecaudo], separado por la misma razon que [GestionDeclaraciones]
+// lo esta de [RepositorioRepertorio]: quien solo lee no tiene por que poder
+// escribir dinero.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico que la
+// escritura, y por eso `ahora` y `actorID` son parametros de estos metodos y no
+// una segunda llamada a [BitacoraAuditoria] que el caso de uso orqueste. Una
+// bolsa escrita sin asiento es dinero que entro sin que nadie pueda decir de
+// donde salio, que es la pregunta 1 del ADR 0006.
+//
+// `ahora` viene del puerto [Reloj]; el adaptador no llama a time.Now().
+type GestionRecaudo interface {
+	RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora time.Time, actorID string) error
+	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
 }
 
 // ParametrosNormativos resuelve los parametros con vigencia y organo
@@ -309,10 +373,13 @@ type InsumoLiquidacion struct {
 // La regla "ningun modulo escribe en la trazabilidad de otro" (ADR 0003) se
 // sostiene porque este puerto se inyecta por separado, no porque estuviera
 // suelto en un contrato que todos comparten.
+// AsientoPorID y no PorID: el mismo *Store satisface tambien [CatalogoObras],
+// que ya tiene un PorID con otra firma -misma razon por la que
+// [RepositorioRepertorio] tiene ObraPorID y no PorID-.
 type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
-	PorID(ctx context.Context, id string) (Asiento, error)
+	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.

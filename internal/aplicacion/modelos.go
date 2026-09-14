@@ -5,7 +5,9 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 // Rol de un actor. La autorizacion de cada caso de uso se decide contra esto,
@@ -53,6 +55,25 @@ type Obra struct {
 	IMDB       string
 	Tipo       string
 	EstadoDecl string
+}
+
+// VersionDeclaracion es una Declaracion de Obra con su ventana de vigencia.
+//
+// La vigencia vive aqui y no en [repertorio.Declaracion] porque depguard
+// deniega el paquete `time` entero dentro de internal/dominio (regla
+// dominio-sin-reloj-ni-azar de .golangci.yml), sin excepcion para "solo el
+// tipo del parametro". Es el mismo motivo por el que [FilaParametro] -que
+// tiene el mismo problema, un valor con vigencia- vive en esta capa y no en el
+// dominio. [repertorio.Declaracion] se queda pura: solo las partes y el
+// calculo de si suman 100.
+//
+// VigenteHasta en nil quiere decir que esta es la version abierta, la vigente
+// ahora mismo -la unica que puede tener otro EditarSplits por encima-.
+type VersionDeclaracion struct {
+	Version      int
+	VigenteDesde time.Time
+	VigenteHasta *time.Time
+	Declaracion  repertorio.Declaracion
 }
 
 // Reporte es el acuse de una entrega recibida.
@@ -112,12 +133,30 @@ type UsoPersistido struct {
 	RechazoMotivo string
 }
 
+// BolsaPersistida es una [recaudo.Bolsa] con lo que la fila anade: su
+// identificador y su procedencia.
+//
+// El ID vive aqui y no en el dominio por lo mismo que la vigencia de
+// [VersionDeclaracion]: al motor de reparto la bolsa le llega como dato de
+// entrada de una funcion pura y no necesita saber en que fila estaba.
+//
+// Convenio, Tarifa y Factura son PROCEDENCIA, no insumos de calculo. Bajo P-08
+// Intela recibe el importe ya cobrado y no liquida tarifas, asi que estos tres
+// campos no se usan para computar nada: responden la pregunta 1 del ADR 0006
+// -de donde salio este dinero- y son lo que un auditor sigue hasta la cuenta
+// de cobro. Los tres son opcionales: `T-11` dice que la tarifa publicada es el
+// valor por defecto CUANDO NO HAY convenio, asi que exigir un convenio seria
+// afirmar algo que el reglamento no afirma.
 type BolsaPersistida struct {
 	ID        string
 	UsuarioID string
 	Periodo   string
-	Circuito  reparto.Circuito
+	Circuito  recaudo.Circuito
 	Bruto     decimal.Decimal
+
+	Convenio string
+	Tarifa   string
+	Factura  string
 }
 
 // Asiento de la bitacora. Append-only (ADR 0006): no se actualiza, no se
