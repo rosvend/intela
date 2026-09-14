@@ -45,12 +45,15 @@ func (a *autenticacionFalsa) CerrarSesion(_ context.Context, token string) error
 
 func servidor(t *testing.T, auth Autenticacion) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, nil, &liquidacionesFalsa{
-		liq: aplicacion.Liquidacion{Lineas: []aplicacion.LineaLiquidacion{}},
-		archivo: aplicacion.Archivo{
-			Nombre:    "liquidacion.pdf",
-			TipoMIME:  "application/pdf",
-			Contenido: []byte("%PDF"),
+	return Nueva(nil, Casos{
+		Auth: auth,
+		Liquidaciones: &liquidacionesFalsa{
+			liq: aplicacion.Liquidacion{Lineas: []aplicacion.LineaLiquidacion{}},
+			archivo: aplicacion.Archivo{
+				Nombre:    "liquidacion.pdf",
+				TipoMIME:  "application/pdf",
+				Contenido: []byte("%PDF"),
+			},
 		},
 	}, Opciones{}).Router()
 }
@@ -298,7 +301,7 @@ func TestUsuarioDeDevuelveElUsuarioDelContexto(t *testing.T) {
 	var visto aplicacion.Usuario
 	var hubo bool
 
-	api := Nueva(nil, auth, nil, nil, Opciones{})
+	api := Nueva(nil, Casos{Auth: auth}, Opciones{})
 	h := api.conSesion(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		visto, hubo = UsuarioDe(r.Context())
 	}))

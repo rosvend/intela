@@ -140,6 +140,22 @@ func construir() (http.Handler, error) {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	// El lado del ingreso (#27). Mismo cableado que cmd/api: este binario es un
+	// adaptador primario mas, hermano suyo, y comparte el Router().
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	liquidaciones := aplicacion.ServicioLiquidacion{
 		Repo: store,
 		Exportador: exportacion.Combinado{
@@ -148,7 +164,13 @@ func construir() (http.Handler, error) {
 		},
 	}
 
-	api := httpapi.Nueva(store, autenticacion, catalogo, liquidaciones, httpapi.Opciones{
+	api := httpapi.Nueva(store, httpapi.Casos{
+		Auth:          autenticacion,
+		Catalogo:      catalogo,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
+		Liquidaciones: liquidaciones,
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})

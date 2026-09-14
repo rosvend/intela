@@ -97,4 +97,53 @@ var (
 	// comprobar, que es exactamente lo que el ADR 0006 existe para impedir. El
 	// handler de #29 tampoco lo puede mandar a un 500 generico.
 	ErrEvidenciaCorrupta = errors.New("evidencia corrupta")
+
+	// ErrTitularInexistente: la declaracion nombra un titular_id que no esta en
+	// el padron.
+	//
+	// Distinto de ErrNoEncontrado: ese centinela es "el recurso de la URL no
+	// esta" (la obra del path); este es "un dato DENTRO del cuerpo de la
+	// peticion senala una entidad que no existe" -el mismo caso que ya anticipa
+	// el comentario de esClaveForanea en postgres/errores.go sobre la FK de
+	// `declaraciones` hacia `titulares`-. Confundirlos convierte un typo de
+	// titular_id en el JSON del cliente en un 404 que dice "la obra no esta en
+	// el catalogo", que no es lo que paso.
+	ErrTitularInexistente = errors.New("ese titular no existe")
+
+	// ErrBolsaDuplicada: ya hay una bolsa para ese usuario, periodo y circuito.
+	//
+	// No es "no se pudo escribir" y no es un dato invalido: el alta estaba bien
+	// formada y esa bolsa ya existe. Distinguirlo es lo que deja responder 409
+	// en vez de 500, y sobre todo lo que impide que cargar dos veces el mismo
+	// reporte de recaudo DUPLIQUE la bolsa de un periodo -- que aguas abajo es
+	// repartir dos veces el mismo dinero.
+	//
+	// La decide el UNIQUE (usuario_id, periodo, circuito) del esquema, que es
+	// la unica fuente de verdad; el adaptador traduce esa violacion a este
+	// centinela. El circuito entra en la clave a proposito: nacional e
+	// internacional del mismo usuario y periodo son dos bolsas legitimas y
+	// separadas (`RD 10.3`, R-35).
+	ErrBolsaDuplicada = errors.New("ya existe una bolsa para ese usuario, periodo y circuito")
+
+	// ErrUsuarioRecaudoInexistente: la bolsa cita un pagador que no esta dado
+	// de alta.
+	//
+	// Es la hermana de ErrTitularInexistente y se distingue de ErrNoEncontrado
+	// por lo mismo: ese es "el recurso de la URL no esta", este es "un dato
+	// DENTRO del cuerpo senala una entidad que no existe". Confundirlos
+	// convierte un typo en `usuario_id` en un 404 que dice que la bolsa no
+	// existe, que no es lo que paso.
+	//
+	// Y no se crea el usuario al vuelo: un `usuario_id` mal escrito se
+	// convertiria en un pagador fantasma, y el reparto atribuiria a un canal
+	// inexistente dinero que alguien pago de verdad.
+	ErrUsuarioRecaudoInexistente = errors.New("ese usuario de recaudo no existe")
+
+	// ErrUsuarioDeRecaudoDuplicado: ese pagador ya esta dado de alta.
+	//
+	// La hermana de ErrObraDuplicada, y existe por lo mismo: el alta estaba
+	// bien formada, la tabla ya la tiene, y eso es un 409 y no un 500. Dos
+	// filas para el mismo canal partirian su recaudo en dos y cada mitad se
+	// repartiria como si fuera el total de un usuario distinto.
+	ErrUsuarioDeRecaudoDuplicado = errors.New("ya existe un usuario de recaudo con ese identificador")
 )

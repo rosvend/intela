@@ -57,6 +57,12 @@ los reportes anuales del proveedor especializado de parrillas.
 Lo suministra un proveedor especializado contratado por REDES SGC. Se actualiza anualmente.
 **No viene en los reportes de parrilla**: es una tercera fuente de datos.
 
+Se indexa por **(canal, franja horaria, ano)** (P-06, provisional). Por canal y no solo por
+franja porque el valor punto de `RD 9.1.1` se calcula **por canal**: un rating unico por franja
+haria ponderar igual a dos canales con audiencias muy distintas.
+Sigue abierto quien es el proveedor y en que formato entrega. Ver
+[`preguntas-cliente.md`](preguntas-cliente.md) y [`fixtures.md`](fixtures.md).
+
 ### Conversion a dinero
 
 ```

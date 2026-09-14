@@ -40,7 +40,7 @@ func titularAna() aplicacion.Usuario {
 
 func servidorConLiq(t *testing.T, auth Autenticacion, liq Liquidaciones) http.Handler {
 	t.Helper()
-	return Nueva(nil, auth, nil, liq, Opciones{}).Router()
+	return Nueva(nil, Casos{Auth: auth, Liquidaciones: liq}, Opciones{}).Router()
 }
 
 func TestConsultarLiquidacionesDevuelveElPanel(t *testing.T) {
