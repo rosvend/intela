@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -46,14 +47,14 @@ const (
 	FuenteCine = "procinal"
 	FuenteOTT  = "netflix"
 
-	// La columna de la que sale el id de obra en el archivo de cada fuente, y
-	// la segunda mitad de la clave de `alias_obra`. Los nombres son los que
-	// documenta identificadores.md para las fuentes reales; el de Procinal es
-	// sintetico como el resto de su reporte, porque el cliente no ha entregado
-	// el formato de las salas.
-	TipoIDCaracol  = "ID_Ficha"
-	TipoIDProcinal = "id_pelicula"
-	TipoIDNetflix  = "show_id"
+	// La clave de ids_fuente (ADR 0018) con que viaja el id de obra de cada
+	// fuente, y la segunda mitad de la clave de `alias_obra`. Salen del
+	// contrato y no se escriben a mano: un alias sembrado con otra grafia no lo
+	// encontraria nunca la cascada. La de Procinal es sintetica como el resto de
+	// su reporte, porque el cliente no ha entregado el formato de las salas.
+	TipoIDCaracol  = aplicacion.ClaveIDFicha
+	TipoIDProcinal = aplicacion.ClaveIDPelicula
+	TipoIDNetflix  = aplicacion.ClaveShowID
 
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
@@ -65,14 +66,30 @@ const (
 // Dataset es el juego completo, listo para persistir. No lleva hashes de
 // contrasena: bcrypt no es determinista, y el hash se calcula al cargar.
 type Dataset struct {
-	Periodo       string
-	Titulares     []Titular
-	Usuarios      []Usuario
-	Obras         []Obra
-	Declaraciones []repertorio.Declaracion
-	Reportes      []Reporte
-	Bolsas        []aplicacion.BolsaPersistida
-	Parametros    []Parametro
+	Periodo   string
+	Titulares []Titular
+	// Usuarios son las CUENTAS que inician sesion; UsuariosDeRecaudo son los
+	// PAGADORES. El reglamento llama "usuario" al segundo (`RT 2`), y de ahi la
+	// colision: son dos tablas distintas y ninguna referencia a la otra.
+	Usuarios          []Usuario
+	UsuariosDeRecaudo []UsuarioDeRecaudo
+	Obras             []Obra
+	Declaraciones     []repertorio.Declaracion
+	Reportes          []Reporte
+	Bolsas            []aplicacion.BolsaPersistida
+	Parametros        []Parametro
+}
+
+// UsuarioDeRecaudo es el pagador que siembra el seed.
+//
+// No usa recaudo.Usuario porque ese tipo tiene el id privado y solo se
+// construye por su constructor: el dataset es dato plano y determinista, y la
+// construccion -- con su validacion -- ocurre al cargar, igual que con las obras.
+type UsuarioDeRecaudo struct {
+	ID        string
+	Nombre    string
+	NIT       string
+	Categoria recaudo.CategoriaUsuario
 }
 
 // Obra es la entrada del catalogo que siembra el seed.
@@ -149,6 +166,7 @@ func Construir() Dataset {
 	d.usuarios()
 	d.obrasYDeclaraciones()
 	d.reportes()
+	d.usuariosDeRecaudo()
 	d.bolsas()
 	d.parametros()
 	return d
@@ -294,15 +312,26 @@ func (d *Dataset) reportes() {
 		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
 	}
 
-	// La fuente y la evidencia se estampan aqui y no en los constructores de
-	// arriba porque las dos son propiedades de la ENTREGA, no de la fila: la
-	// misma "PX-1" viaja en el reporte de Caracol y en el de Procinal, y lo que
-	// la distingue -y lo que la resuelve- es de que fuente viene.
+	// La fuente, ids_fuente y la evidencia se estampan aqui y no en los
+	// constructores de arriba porque son propiedades de la ENTREGA, no de la
+	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de Procinal,
+	// y lo que la distingue -la clave con que viaja y lo que la resuelve- es de
+	// que fuente viene. Los constructores dejan en IDsFuente el valor solo, y
+	// aqui se reescribe en el formato del contrato.
 	for i := range d.Reportes {
 		r := &d.Reportes[i]
 		for j := range r.Usos {
-			r.Usos[j].Fuente = r.Fuente
-			r.Usos[j].Evidencia = evidenciaAlias(r.Fuente, r.TipoID, r.Usos[j].IDsFuente)
+			u := &r.Usos[j]
+			valor := u.IDsFuente
+			ids, err := aplicacion.EscribirIDsFuente(aplicacion.IDFuente{Clave: r.TipoID, Valor: valor})
+			if err != nil {
+				// Como en coautor: el dataset es una constante del binario, y un
+				// id que no cumple el contrato es un error de programacion.
+				panic("semilla: " + err.Error())
+			}
+			u.Fuente = r.Fuente
+			u.IDsFuente = ids
+			u.Evidencia = evidenciaAlias(r.Fuente, r.TipoID, valor)
 		}
 		r.Bytes = csvDe(r.Usos)
 	}
@@ -320,13 +349,52 @@ func evidenciaAlias(fuente, tipoID, valor string) string {
 	return "semilla: alias " + fuente + "/" + tipoID + "=" + valor
 }
 
+// usuariosDeRecaudo son los cuatro pagadores que las bolsas citan.
+//
+// Existen como tabla desde la migracion 00009 (#27): antes `bolsas.usuario_id`
+// era texto libre sin nada al otro lado. La categoria no es decorativa -- decide
+// que formula de reparto aplica aguas abajo (formulas.md 9.1, 9.2, 9.7)-- y por
+// eso cada uno lleva la que le corresponde y no una generica.
+//
+// `dago-films` es el del circuito internacional y va como `sin_clasificar` a
+// proposito: el recaudo internacional no lo paga un usuario colombiano de una
+// categoria del `RT`, llega discriminado por una sociedad hermana (`RD 7.4`).
+// Inventarle una categoria seria afirmar algo que el reglamento no dice.
+//
+// No llevan marca sintetica: no son parametros normativos, son datos de negocio
+// de ejemplo, igual que las declaraciones. Los NIT si son inventados y por eso
+// van vacios en vez de con un numero de aspecto real que alguien pudiera creer.
+func (d *Dataset) usuariosDeRecaudo() {
+	d.UsuariosDeRecaudo = []UsuarioDeRecaudo{
+		{ID: "caracol", Nombre: "Caracol Television (sintetico)", Categoria: recaudo.TVAbierta},
+		{ID: "procinal", Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
+		{ID: "netflix", Nombre: "Netflix Colombia (sintetico)", Categoria: recaudo.MediosDigitales},
+		{ID: "dago-films", Nombre: "Dago Films (sintetico)", Categoria: recaudo.SinClasificar},
+	}
+}
+
 func (d *Dataset) bolsas() {
 	bruto := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+	// Convenio, tarifa y factura son la PROCEDENCIA de cada bolsa: la pregunta
+	// 1 del ADR 0006, de donde salio este dinero. No son insumos de calculo --
+	// bajo P-08 Intela recibe el importe ya cobrado y no liquida tarifas --,
+	// pero sin ellas la cifra no se puede seguir hasta su origen, que es lo que
+	// el reglamento exige de toda cifra del sistema.
+	proc := func(usuario string) (string, string, string) {
+		return "convenio-" + usuario + "-sintetico", "RT-VI-sintetica", "factura-" + usuario + "-sintetica"
+	}
+	bolsa := func(id, usuario string, c recaudo.Circuito, monto string) aplicacion.BolsaPersistida {
+		conv, tar, fac := proc(usuario)
+		return aplicacion.BolsaPersistida{
+			ID: id, UsuarioID: usuario, Periodo: Periodo, Circuito: c, Bruto: bruto(monto),
+			Convenio: conv, Tarifa: tar, Factura: fac,
+		}
+	}
 	d.Bolsas = []aplicacion.BolsaPersistida{
-		{ID: "bolsa-caracol-" + Periodo + "-nacional", UsuarioID: "caracol", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("1000000.00")},
-		{ID: "bolsa-procinal-" + Periodo + "-nacional", UsuarioID: "procinal", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("1000000.00")},
-		{ID: "bolsa-netflix-" + Periodo + "-nacional", UsuarioID: "netflix", Periodo: Periodo, Circuito: reparto.Nacional, Bruto: bruto("500000.00")},
-		{ID: "bolsa-dago-" + Periodo + "-internacional", UsuarioID: "dago-films", Periodo: Periodo, Circuito: reparto.Internacional, Bruto: bruto("200000.00")},
+		bolsa("bolsa-caracol-"+Periodo+"-nacional", "caracol", recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-procinal-"+Periodo+"-nacional", "procinal", recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-netflix-"+Periodo+"-nacional", "netflix", recaudo.Nacional, "500000.00"),
+		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "200000.00"),
 	}
 }
 
@@ -359,7 +427,7 @@ func (d *Dataset) parametros() {
 		// una etiqueta cosmetica: un reparto calculado con un 20% de deduccion
 		// se defenderia en auditoria citando un acta que no existe. Van
 		// sinteticos hasta que llegue el acta de la Asamblea con la tasa real,
-		// que es una de las preguntas abiertas de reglas-negocio.md.
+		// que es la pregunta P-10 de docs/dominio/preguntas-cliente.md.
 		sintetico("deduccion.administrativa", "0.20"),
 		sintetico("deduccion.social", "0.10"),
 		sintetico("reserva.errores_tecnicos", "0.05"),

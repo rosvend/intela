@@ -39,6 +39,9 @@ Cargar solo lo que haga falta para la tarea. Skills en `.claude/skills/`. Cursor
 | `docs/dominio/formulas.md` | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
 | `docs/dominio/identificadores.md` | Por que los IDs de fuente no cruzan y como resolver obras |
 | `docs/dominio/fuentes-datos.md` | Perfil real de los archivos del cliente y que falta pedir |
+| `docs/dominio/fichas-fuente.md` | Ficha por fuente: formato, acceso, periodicidad, dueno, estado |
+| `docs/dominio/preguntas-cliente.md` | Que falta preguntarle a REDES, con dueno y estado. Que respuesta es provisional |
+| `docs/dominio/fixtures.md` | Forma de los datos sinteticos y como se marcan. Los valores viven en el sembrador |
 | `docs/reglamentos/` | Texto verbatim de los reglamentos, citable por numeral |
 | `docs/decisiones/` | Por que el sistema quedo modelado asi |
 | `docs/context.md` | Planteamiento academico original del proyecto |
