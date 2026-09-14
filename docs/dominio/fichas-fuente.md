@@ -81,8 +81,9 @@ P-14.
 | Dueno manual | REDES SGC. |
 | Estado | **En el repo, sin perfilar.** `sample.py` solo recorre `data/files/`. |
 
-Alimenta `titulares` y el IPI de cada parte declarada. Con P-11 resuelta, **el IPI sale de aqui**,
-no de la Declaracion de Obra: el formulario de REDES-SYS no tiene campo de IPI.
+Alimenta `titulares` y el IPI de cada parte declarada. Segun la respuesta **provisional** de
+P-11, **el IPI sale de aqui** y no de la Declaracion de Obra: el formulario de REDES-SYS no tiene
+campo de IPI. Sin confirmar con REDES SGC.
 
 Accion pendiente: extender `sample.py` para perfilarlo -no escribir un script paralelo- y
 determinar que le falta antes de pedirle nada al cliente. Pregunta abierta: P-15.
@@ -130,7 +131,7 @@ personas.
 | Nombre | Sin identificar |
 | Formato | Desconocido |
 | Ruta de acceso | **Ninguna.** |
-| Periodicidad | Anual, segun `formulas.md`. |
+| Periodicidad | `formulas.md` la documenta como anual. **Sin confirmar** con el proveedor (P-06). |
 | Dueno manual | Proveedor especializado contratado por REDES SGC, sin nombrar. |
 | Estado | **No disponible.** |
 
