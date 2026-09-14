@@ -42,11 +42,22 @@ func sembrarCorridas(t *testing.T) *Store {
 	            ($1, 'Solo de Beto',     'Drama',  2024, 'unitario'),
 	            ($2, 'El Segundo Guion', 'Drama',  1991, 'serie')`,
 		obraBeto, obraAna2)
-	ejecutar(`INSERT INTO declaraciones (obra_id, titular_id, ipi, porcentaje) VALUES
-	            ($1, $2, 'IPI-00000002', 100.0000),
-	            ($3, $4, 'IPI-00000001', 100.0000)`,
+
+	// Cabecera de version (migracion 00008): toda fila de `declaraciones`
+	// referencia (obra_id, version). `sembrar` solo abre version 1 para las
+	// tres obras del fixture comun; estas dos hay que abrirlas aqui.
+	ejecutar(`INSERT INTO declaracion_versiones (obra_id, version, vigente_desde) VALUES
+	            ($1, 1, now()), ($2, 1, now())`,
+		obraBeto, obraAna2)
+	ejecutar(`INSERT INTO declaraciones (obra_id, version, titular_id, ipi, porcentaje) VALUES
+	            ($1, 1, $2, 'IPI-00000002', 100.0000),
+	            ($3, 1, $4, 'IPI-00000001', 100.0000)`,
 		obraBeto, titularBeto, obraAna2, titularAna)
 
+	// Desde 00009, `bolsas.usuario_id` apunta a `usuarios_recaudo`.
+	ejecutar(`INSERT INTO usuarios_recaudo (id, nombre, categoria) VALUES
+	            ('usr-caracol', 'Caracol Television S.A.', 'tv_abierta'),
+	            ('usr-netflix', 'Netflix Colombia',        'medios_digitales')`)
 	ejecutar(`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto, convenio, tarifa, factura) VALUES
 	            ($1, 'usr-caracol', '2026-01', 'nacional', 10000.00, 'conv-1', 'T-01', 'FAC-1'),
 	            ($2, 'usr-netflix', '2026-02', 'nacional',  2000.00, 'conv-2', 'T-08', 'FAC-2')`,

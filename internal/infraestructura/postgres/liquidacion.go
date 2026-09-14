@@ -108,8 +108,13 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 		JOIN procesos p ON p.id = rt.proceso_id
 		JOIN obras o ON o.id = rt.obra_id
 		JOIN resultados_proceso rp ON rp.proceso_id = rt.proceso_id
+		-- Desde 00008 hay varias filas por (obra_id, titular_id). Sin filtrar
+		-- la version abierta, QueryRow devolveria mas de una y el Scan
+		-- abortaria. Mismo criterio que clausulaVigente en repertorio.go.
+		LEFT JOIN declaracion_versiones dv
+		  ON dv.obra_id = rt.obra_id AND dv.vigente_hasta IS NULL
 		LEFT JOIN declaraciones d
-		  ON d.obra_id = rt.obra_id AND d.titular_id = rt.titular_id
+		  ON d.obra_id = dv.obra_id AND d.version = dv.version AND d.titular_id = rt.titular_id
 		WHERE rt.proceso_id = $1 AND rt.obra_id = $2 AND rt.titular_id = $3`,
 		procesoID, obraID, titularID,
 	).Scan(
