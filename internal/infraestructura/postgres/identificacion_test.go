@@ -581,6 +581,9 @@ func (i ingestaDePrueba) UsosSinResolver(context.Context) ([]aplicacion.UsoPersi
 func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersistido, error) {
 	return aplicacion.UsoPersistido{}, nil
 }
+func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
 
 func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion.UsoPersistido, error) {
 	filas, err := i.pool.Query(ctx,
