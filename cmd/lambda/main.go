@@ -147,10 +147,19 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// El lado del ingreso (#27). Mismo cableado que cmd/api: este binario es un
+	// adaptador primario mas, hermano suyo, y comparte el Router().
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	api := httpapi.Nueva(store, httpapi.Casos{
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
 		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

@@ -41,7 +41,8 @@ es lo que permite decir "esta cifra es de demo" sin tener que leer el codigo.
 | Insumo | Fixture | Marcada | Falta |
 | ------ | ------- | ------- | ----- |
 | Declaraciones de Obra | Si | n/a | -- |
-| Recaudo / bolsa | Si | n/a | El formato real (P-08) |
+| Recaudo / bolsa | Si | n/a | El formato real del reporte (P-08) |
+| Usuarios de recaudo | Si | n/a | La categoria real de cada pagador |
 | Coeficientes OTT `Wa/Wb/Wc` | Si | Si | El valor real (P-04) |
 | Rating por franja | **Parcial** | **No** | La tabla y la marca |
 | Mapeo de generos | **No existe** | -- | Todo |
@@ -82,17 +83,43 @@ REDES-SYS no tiene campo de IPI.
 
 ## Recaudo / bolsa
 
-Fixture: `Dataset.bolsas()`.
+Fixtures: `Dataset.usuariosDeRecaudo()` y `Dataset.bolsas()`.
 
-Forma: `(id, usuario_id, periodo, circuito, bruto)`. Cuatro bolsas del periodo `2025-01`, tres
-`nacional` y una `internacional` -- los dos circuitos importan porque el internacional **no se
-valoriza por puntos** (`RD 7.4`), se reparte tal como lo discrimino la sociedad hermana.
+Forma de la bolsa: `(id, usuario_id, periodo, circuito, bruto, convenio, tarifa, factura)`.
+Cuatro bolsas del periodo `2025-01`, tres `nacional` y una `internacional` -- los dos circuitos
+importan porque el internacional **no se valoriza por puntos** (`RD 7.4`), se reparte tal como
+lo discrimino la sociedad hermana.
 
 Rangos: importes redondos del orden de $200.000 a $1.000.000 COP. Son redondos a proposito.
 
 Alcance (P-08): Intela **recibe** el importe cobrado; no lo calcula ni factura. La bolsa es un
-dato de entrada, no un resultado. Por eso la fixture no modela tarifa, convenio ni cuenta de
-cobro.
+dato de entrada, no un resultado. Por eso no hay fixture de tarifa ni de convenio como
+entidades: `convenio`, `tarifa` y `factura` son **procedencia** de la bolsa -- la pregunta 1 del
+ADR 0006, de donde salio este dinero -- y van en la propia fila, marcadas `-sintetica`.
+
+### Los pagadores
+
+Desde la migracion 00009 (#27), `bolsas.usuario_id` tiene clave foranea a `usuarios_recaudo`, y
+el dataset da de alta los cuatro pagadores que sus bolsas citan:
+
+| `id` | Categoria | Por que esa |
+| ---- | --------- | ----------- |
+| `caracol` | `tv_abierta` | `RT 3.1.1`; se reparte por puntos (`RD 9.1.1`) |
+| `procinal` | `cine` | `RT 3.2`; proporcional a taquilla (`RD 9.2`) |
+| `netflix` | `medios_digitales` | `RT 3.6`; formula OTT (`RD 9.7`) |
+| `dago-films` | `sin_clasificar` | Es el del circuito internacional |
+
+La categoria **no** sirve para tarifar -- Intela no factura -- sino para saber que formula de
+`formulas.md` aplica aguas abajo. Por eso cada uno lleva la suya y no una generica.
+
+`dago-films` va `sin_clasificar` a proposito: el recaudo internacional no lo paga un usuario
+colombiano de una categoria del `RT`, llega ya discriminado por una sociedad hermana. Ponerle
+una categoria seria afirmar algo que el reglamento no dice (ADR 0004).
+
+Los nombres llevan `(sintetico)` y los NIT van **vacios**: un NIT de aspecto real es
+exactamente el tipo de dato que alguien puede llegar a creerse. No llevan las columnas `organo`
+/ `reglamento` porque no son parametros normativos, son datos de negocio de ejemplo, igual que
+las declaraciones.
 
 ## Coeficientes OTT `Wa`, `Wb`, `Wc`
 

@@ -82,10 +82,20 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
+	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
+	// por que poder registrar dinero.
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	api := httpapi.Nueva(store, httpapi.Casos{
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
 		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
