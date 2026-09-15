@@ -145,6 +145,7 @@ func construir() (http.Handler, error) {
 	// cmd/api: este binario es un adaptador primario mas y comparte el
 	// Router().
 	casos := httpapi.Casos{
+		Salud:      store,
 		Auth:       autenticacion,
 		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
@@ -167,7 +168,16 @@ func construir() (http.Handler, error) {
 		},
 	}
 
-	api := httpapi.Nueva(store, casos, httpapi.Opciones{
+	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
+	//
+	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
+	// exige inmutabilidad y retencion. El sistema de ficheros de Lambda es de
+	// solo lectura salvo /tmp, y /tmp se recicla con el contenedor: montar la
+	// boveda ahi daria un acuse que certifica una evidencia que desaparece a la
+	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
+	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
+	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
+	api := httpapi.Nueva(casos, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})
