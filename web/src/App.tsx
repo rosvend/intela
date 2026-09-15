@@ -1,3 +1,4 @@
+import { ReactElement } from "react";
 import { Route, Routes } from "react-router-dom";
 import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
@@ -7,6 +8,17 @@ import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import RutaProtegida from "./RutaProtegida";
 import { RUTAS } from "./navegacion";
+import PanelCorridas from "./reparto/PanelCorridas";
+import TableroAnomalias from "./reparto/TableroAnomalias";
+
+/**
+ * Pantallas reales que sustituyen el placeholder de Sprint 3-5. Quien
+ * aterrice un modulo nuevo solo toca esta tabla (issue #19).
+ */
+const PANTALLAS: Record<string, ReactElement> = {
+  "/distribucion": <PanelCorridas />,
+  "/anomalias": <TableroAnomalias />,
+};
 
 /**
  * Shell del tablero.
@@ -32,9 +44,12 @@ export default function App() {
             <Route
               key={ruta.to}
               path={ruta.to}
-              element={<EnConstruccion titulo={ruta.label} />}
+              element={
+                PANTALLAS[ruta.to] ?? <EnConstruccion titulo={ruta.label} />
+              }
             />
           ))}
+          <Route path="/distribucion/:id" element={<PanelCorridas />} />
         </Route>
       </Route>
       <Route path="*" element={<NoEncontrado />} />
