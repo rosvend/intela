@@ -49,7 +49,10 @@ export function conflictoExclusividad(
   return null;
 }
 
-export function errorDeClave(clave: string, confirmacion: string): string | null {
+export function errorDeClave(
+  clave: string,
+  confirmacion: string,
+): string | null {
   if (clave.length < 8 || clave.length > 72) return MENSAJE_CLAVE;
   if (clave !== confirmacion) return MENSAJE_CLAVE_DISTINTA;
   return null;
@@ -84,4 +87,3 @@ export function errorDelPaso(paso: number, d: DatosAlta): string | null {
       return null;
   }
 }
-

@@ -318,7 +318,10 @@ export default function WizardAfiliacion() {
               <dt>Clave</dt>
               <dd>Definida (no se muestra)</dd>
               <dt>IPI</dt>
-              <dd>{datos.ipi.trim() || "No informado (se puede completar después)"}</dd>
+              <dd>
+                {datos.ipi.trim() ||
+                  "No informado (se puede completar después)"}
+              </dd>
               <dt>Vínculo</dt>
               <dd>
                 {datos.subtipo === "socio"
@@ -386,10 +389,9 @@ function ConfirmacionSolicitud({
       </p>
       <p className="muted">Referencia: {creada.id}</p>
       <p className="muted">
-        Vínculo:{" "}
-        {creada.subtipo === "socio" ? "Socio" : "Titular administrado"}. El
-        anticipo solo procede si, una vez admitido, el vínculo es societario
-        (R-30).
+        Vínculo: {creada.subtipo === "socio" ? "Socio" : "Titular administrado"}
+        . El anticipo solo procede si, una vez admitido, el vínculo es
+        societario (R-30).
       </p>
       <p className="muted">
         Cuando el Consejo admita la solicitud, entra al portal con el correo y
@@ -398,10 +400,7 @@ function ConfirmacionSolicitud({
       {creada.ipi?.trim() ? (
         <p className="muted">IPI informado: {creada.ipi}</p>
       ) : (
-        <FormularioIPI
-          idSolicitud={creada.id}
-          onCompletada={onCompletada}
-        />
+        <FormularioIPI idSolicitud={creada.id} onCompletada={onCompletada} />
       )}
     </section>
   );
@@ -412,19 +411,10 @@ function CompletarIPIConReferencia() {
   const [creada, setCreada] = useState<AfiliacionCreada | null>(null);
 
   if (creada?.ipi?.trim()) {
-    return (
-      <p role="status">
-        IPI guardado en la solicitud {creada.id}.
-      </p>
-    );
+    return <p role="status">IPI guardado en la solicitud {creada.id}.</p>;
   }
   if (creada) {
-    return (
-      <FormularioIPI
-        idSolicitud={creada.id}
-        onCompletada={setCreada}
-      />
-    );
+    return <FormularioIPI idSolicitud={creada.id} onCompletada={setCreada} />;
   }
 
   return (
@@ -486,7 +476,9 @@ function FormularioIPI({
       })) as AfiliacionCreada;
       onCompletada(r);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo completar el IPI.");
+      setError(
+        err instanceof Error ? err.message : "No se pudo completar el IPI.",
+      );
     } finally {
       setEnviando(false);
     }
