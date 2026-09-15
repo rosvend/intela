@@ -42,18 +42,18 @@ const (
 	// varias sin ella tendria que partirse en varios archivos.
 	CampoModalidad Campo = "modalidad"
 
-	CampoTipoObra        Campo = "tipo_obra"
-	CampoDuracionMin     Campo = "duracion_min"
-	CampoEmisiones       Campo = "emisiones"
-	CampoRating          Campo = "rating"
-	CampoTaquilla        Campo = "taquilla"
-	CampoVistas          Campo = "vistas"
-	CampoMinutosVistos   Campo = "minutos_vistos"
-	CampoPB              Campo = "pb"
-	CampoFecha           Campo = "fecha"
-	CampoHora            Campo = "hora"
-	CampoMoneda          Campo = "moneda"
-	CampoUnidadDuracion  Campo = "unidad_duracion"
+	CampoTipoObra       Campo = "tipo_obra"
+	CampoDuracionMin    Campo = "duracion_min"
+	CampoEmisiones      Campo = "emisiones"
+	CampoRating         Campo = "rating"
+	CampoTaquilla       Campo = "taquilla"
+	CampoVistas         Campo = "vistas"
+	CampoMinutosVistos  Campo = "minutos_vistos"
+	CampoPB             Campo = "pb"
+	CampoFecha          Campo = "fecha"
+	CampoHora           Campo = "hora"
+	CampoMoneda         Campo = "moneda"
+	CampoUnidadDuracion Campo = "unidad_duracion"
 )
 
 // tipo es como se convierte el texto de la celda al llegar a este campo.

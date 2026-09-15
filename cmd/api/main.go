@@ -115,9 +115,9 @@ func ejecutar(log *slog.Logger) error {
 	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
 	recepcion := aplicacion.Ingesta{
-		Reportes: store,
-		Almacen:  objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
-		Lectores: lectores,
+		Reportes:              store,
+		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Lectores:              lectores,
 		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 

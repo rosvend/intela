@@ -135,35 +135,35 @@ type CargaReporte struct {
 //
 // Igual que reparto.Uso, no tiene campo de dinero, y por la misma razon.
 type UsoPersistido struct {
-	ID            string
-	ReporteID     string
-	Fuente        string
-	Titulo        string
-	TituloOrig    string
-	IDsFuente     string
-	ObraID        string
-	Escalon       string
-	Evidencia     string
-	ONI           bool
-	Modalidad     reparto.Modalidad
-	TipoObra      string
-	Fecha         string
-	Hora          string
-	Moneda        string
+	ID             string
+	ReporteID      string
+	Fuente         string
+	Titulo         string
+	TituloOrig     string
+	IDsFuente      string
+	ObraID         string
+	Escalon        string
+	Evidencia      string
+	ONI            bool
+	Modalidad      reparto.Modalidad
+	TipoObra       string
+	Fecha          string
+	Hora           string
+	Moneda         string
 	UnidadDuracion string
 	// DuracionTexto y EmisionesTexto conservan el crudo del adaptador cuando
 	// el campo viaja como texto hacia [normalizacion.Fila]. Si estan vacios,
 	// aFila re-serializa DuracionMin / Emisiones.
 	DuracionTexto  string
 	EmisionesTexto string
-	DuracionMin   decimal.Decimal
-	Emisiones     int64
-	Rating        decimal.Decimal
-	Taquilla      decimal.Decimal
-	Vistas        decimal.Decimal
-	MinutosVistos decimal.Decimal
-	PB            decimal.Decimal
-	Autopromo     bool
+	DuracionMin    decimal.Decimal
+	Emisiones      int64
+	Rating         decimal.Decimal
+	Taquilla       decimal.Decimal
+	Vistas         decimal.Decimal
+	MinutosVistos  decimal.Decimal
+	PB             decimal.Decimal
+	Autopromo      bool
 
 	// RechazoMotivo: por que esta fila no se pudo normalizar.
 	//
