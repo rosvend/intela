@@ -49,7 +49,7 @@ func TestObraPorIDNoEncontrada(t *testing.T) {
 func TestListarObrasDerivaElEstadoDeLaDeclaracion(t *testing.T) {
 	s, _ := sembrar(t)
 
-	obras, err := s.ListarObras(t.Context())
+	obras, err := s.ListarObras(t.Context(), aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarObras: %v", err)
 	}
@@ -91,12 +91,34 @@ func TestListarObrasSinObrasNoEsError(t *testing.T) {
 		t.Fatalf("vaciar: %v", err)
 	}
 
-	obras, err := s.ListarObras(t.Context())
+	obras, err := s.ListarObras(t.Context(), aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("una tabla vacia no es un error: %v", err)
 	}
 	if len(obras) != 0 {
 		t.Fatalf("se esperaba lista vacia, llegaron %d", len(obras))
+	}
+}
+
+func TestListarObrasRespetaLimiteYDesplazamiento(t *testing.T) {
+	s, _ := sembrar(t)
+
+	pagina, err := s.ListarObras(t.Context(), aplicacion.Paginacion{Limite: 2, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarObras: %v", err)
+	}
+	if len(pagina) != 2 {
+		t.Fatalf("se esperaban 2 obras, llegaron %d", len(pagina))
+	}
+	// ORDER BY id: con las cuatro sembradas, saltar la primera deja la
+	// segunda y la tercera.
+	todas, err := s.ListarObras(t.Context(), aplicacion.Paginacion{Limite: 10})
+	if err != nil {
+		t.Fatalf("ListarObras completo: %v", err)
+	}
+	if pagina[0].ID != todas[1].ID || pagina[1].ID != todas[2].ID {
+		t.Fatalf("pagina = [%s %s], se esperaba [%s %s]",
+			pagina[0].ID, pagina[1].ID, todas[1].ID, todas[2].ID)
 	}
 }
 

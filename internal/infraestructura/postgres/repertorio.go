@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -24,26 +26,35 @@ const clausulaVigente = `
 	  JOIN declaracion_versiones dv
 	    ON dv.obra_id = d.obra_id AND dv.version = d.version AND dv.vigente_hasta IS NULL`
 
-// ListarObras devuelve el catalogo con el estado de cada declaracion.
+// ListarObras devuelve una pagina del catalogo con el estado de cada
+// declaracion. La forma de paginacion es la misma que [Store.Buscar]
+// (issue #90).
 //
 // Dos consultas y no una por obra: con N obras, preguntar las partes de cada
 // una es N+1 viajes contra la base. Con dos, el coste no depende de N.
-func (s *Store) ListarObras(ctx context.Context) ([]aplicacion.Obra, error) {
+func (s *Store) ListarObras(ctx context.Context, p aplicacion.Paginacion) ([]aplicacion.Obra, error) {
+	p = p.ConDefecto()
 	// ORDER BY id: el ADR 0005 exige que una corrida se reproduzca bit a bit,
 	// y una lista sin orden explicito no lo es -PostgreSQL no promete ninguno.
-	filas, err := s.pool.Query(ctx, `SELECT `+columnasObra+` FROM obras ORDER BY id`)
+	filas, err := s.pool.Query(ctx,
+		`SELECT `+columnasObra+` FROM obras ORDER BY id LIMIT $1 OFFSET $2`,
+		p.Limite, p.Desplazamiento)
 	if err != nil {
 		return nil, traducirError(err, "listar obras")
 	}
 	defer filas.Close()
 
-	var obras []aplicacion.Obra
+	var (
+		obras []aplicacion.Obra
+		ids   []string
+	)
 	for filas.Next() {
 		var o aplicacion.Obra
 		if err := filas.Scan(&o.ID, &o.Titulo, &o.IDA, &o.EIDR, &o.IMDB, &o.Tipo); err != nil {
 			return nil, traducirError(err, "escanear obra")
 		}
 		obras = append(obras, o)
+		ids = append(ids, o.ID)
 	}
 	// No es opcional: un fallo a mitad de stream sale por aqui, y sin esta
 	// comprobacion una lista TRUNCADA se devuelve como lista completa.
@@ -51,7 +62,7 @@ func (s *Store) ListarObras(ctx context.Context) ([]aplicacion.Obra, error) {
 		return nil, traducirError(err, "listar obras")
 	}
 
-	partes, err := s.todasLasPartes(ctx)
+	partes, err := s.partesDeObras(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -152,17 +163,38 @@ func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.P
 }
 
 // todasLasPartes trae las partes de todas las obras de una vez, agrupadas por
-// obra. Es la mitad que evita el N+1 de ListarObras y Declaraciones.
+// obra. Es la mitad que evita el N+1 de Declaraciones.
 func (s *Store) todasLasPartes(ctx context.Context) (map[string][]repertorio.Parte, error) {
-	filas, err := s.pool.Query(ctx,
-		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
-		  ORDER BY d.obra_id, d.titular_id`)
+	return s.partesDeObras(ctx, nil)
+}
+
+// partesDeObras trae las partes de las obras pedidas, agrupadas por obra.
+// ids nil pide todas -es lo que usa Declaraciones-; un slice vacio no consulta.
+func (s *Store) partesDeObras(ctx context.Context, ids []string) (map[string][]repertorio.Parte, error) {
+	partes := map[string][]repertorio.Parte{}
+	if ids != nil && len(ids) == 0 {
+		return partes, nil
+	}
+
+	var (
+		filas pgx.Rows
+		err   error
+	)
+	if ids == nil {
+		filas, err = s.pool.Query(ctx,
+			`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+			  ORDER BY d.obra_id, d.titular_id`)
+	} else {
+		filas, err = s.pool.Query(ctx,
+			`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+			  WHERE d.obra_id = ANY($1)
+			  ORDER BY d.obra_id, d.titular_id`, ids)
+	}
 	if err != nil {
 		return nil, traducirError(err, "listar declaraciones")
 	}
 	defer filas.Close()
 
-	partes := map[string][]repertorio.Parte{}
 	for filas.Next() {
 		var (
 			obraID string

@@ -91,9 +91,9 @@ func (c Catalogo) ObraPorID(ctx context.Context, id string) (repertorio.Obra, er
 
 // BuscarObras resuelve una consulta del catalogo.
 //
-// Un filtro vacio devuelve el catalogo entero, que es el listado. No es un
-// caso aparte: "sin recorte" es un recorte mas, y tener dos operaciones para
-// eso duplicaria el orden, la traduccion y la autorizacion.
+// Un filtro vacio devuelve la primera pagina del catalogo: "sin recorte" de
+// titulo/genero/IPI/anio sigue siendo un recorte mas, y la paginacion es el
+// tope que evita servir el catalogo entero de REDES SGC de un golpe.
 func (c Catalogo) BuscarObras(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error) {
 	obras, err := c.Obras.Buscar(ctx, f)
 	if err != nil {
