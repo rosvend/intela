@@ -42,14 +42,18 @@ const (
 	// varias sin ella tendria que partirse en varios archivos.
 	CampoModalidad Campo = "modalidad"
 
-	CampoTipoObra      Campo = "tipo_obra"
-	CampoDuracionMin   Campo = "duracion_min"
-	CampoEmisiones     Campo = "emisiones"
-	CampoRating        Campo = "rating"
-	CampoTaquilla      Campo = "taquilla"
-	CampoVistas        Campo = "vistas"
-	CampoMinutosVistos Campo = "minutos_vistos"
-	CampoPB            Campo = "pb"
+	CampoTipoObra       Campo = "tipo_obra"
+	CampoDuracionMin    Campo = "duracion_min"
+	CampoEmisiones      Campo = "emisiones"
+	CampoRating         Campo = "rating"
+	CampoTaquilla       Campo = "taquilla"
+	CampoVistas         Campo = "vistas"
+	CampoMinutosVistos  Campo = "minutos_vistos"
+	CampoPB             Campo = "pb"
+	CampoFecha          Campo = "fecha"
+	CampoHora           Campo = "hora"
+	CampoMoneda         Campo = "moneda"
+	CampoUnidadDuracion Campo = "unidad_duracion"
 )
 
 // tipo es como se convierte el texto de la celda al llegar a este campo.
@@ -69,17 +73,21 @@ const (
 // de campos validos -- [Mapa.Validar] consulta este mapa -- garantiza que las
 // dos cosas no se puedan separar.
 var tipos = map[Campo]tipo{
-	CampoTitulo:        texto,
-	CampoIDsFuente:     texto,
-	CampoModalidad:     texto,
-	CampoTipoObra:      texto,
-	CampoDuracionMin:   numero,
-	CampoEmisiones:     entero,
-	CampoRating:        numero,
-	CampoTaquilla:      numero,
-	CampoVistas:        numero,
-	CampoMinutosVistos: numero,
-	CampoPB:            numero,
+	CampoTitulo:         texto,
+	CampoIDsFuente:      texto,
+	CampoModalidad:      texto,
+	CampoTipoObra:       texto,
+	CampoDuracionMin:    numero,
+	CampoEmisiones:      entero,
+	CampoRating:         numero,
+	CampoTaquilla:       numero,
+	CampoVistas:         numero,
+	CampoMinutosVistos:  numero,
+	CampoPB:             numero,
+	CampoFecha:          texto,
+	CampoHora:           texto,
+	CampoMoneda:         texto,
+	CampoUnidadDuracion: texto,
 }
 
 // Columna ata una columna del archivo a un campo canonico.
@@ -262,9 +270,9 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 
 	// La clave de registro se resuelve contra la cabecera del archivo, no
 	// contra los campos canonicos: identifica el REGISTRO tal como lo declara
-	// la fuente, y sus columnas pueden no estar mapeadas -- `Fecha` y `Hora` de
-	// Caracol no van a ningun campo canonico y son justo las que distinguen dos
-	// emisiones del mismo programa.
+	// la fuente. Sus columnas PUEDEN estar tambien mapeadas (Fecha y Hora de
+	// Caracol van a campos canonicos para normalizacion y a la vez distinguen
+	// dos emisiones del mismo programa).
 	clave, err := m.indicesClave(t)
 	if err != nil {
 		return nil, err
@@ -441,6 +449,14 @@ func (m Mapa) asignarTexto(u *aplicacion.UsoPersistido, c Campo, v string) {
 		u.Titulo = v
 	case CampoTipoObra:
 		u.TipoObra = v
+	case CampoFecha:
+		u.Fecha = v
+	case CampoHora:
+		u.Hora = v
+	case CampoMoneda:
+		u.Moneda = v
+	case CampoUnidadDuracion:
+		u.UnidadDuracion = v
 	case CampoModalidad:
 		// Una celda vacia deja la modalidad fija del mapa. Es lo que hace que
 		// un archivo que trae la columna a medias no se convierta en medio

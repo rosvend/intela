@@ -161,6 +161,9 @@ func (s usosDelPeriodo) UsosDePeriodo(context.Context, string) ([]aplicacion.Uso
 func (s usosDelPeriodo) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
+func (s usosDelPeriodo) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
 
 type identificacionMemoria struct {
 	alias   map[string]string
