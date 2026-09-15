@@ -42,7 +42,7 @@ func servidorConDeclaraciones(t *testing.T, d Declaraciones) http.Handler {
 	auth := &autenticacionFalsa{
 		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
 	}
-	return Nueva(nil, Casos{Auth: auth, Declaraciones: d}, Opciones{}).Router()
+	return Nueva(Casos{Auth: auth, Declaraciones: d}, Opciones{}).Router()
 }
 
 const cuerpoPartes = `[
@@ -57,7 +57,7 @@ func TestDeclaracionesExigenElRolAdministrador(t *testing.T) {
 		{http.MethodGet, "/obras/obra-1/declaracion/historial", ""},
 	}
 	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolTitular}}
-	h := Nueva(nil, Casos{Auth: auth, Declaraciones: &declaracionesFalso{}}, Opciones{}).Router()
+	h := Nueva(Casos{Auth: auth, Declaraciones: &declaracionesFalso{}}, Opciones{}).Router()
 
 	for _, p := range peticiones {
 		t.Run(p.metodo+" "+p.ruta, func(t *testing.T) {
