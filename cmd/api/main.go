@@ -79,14 +79,6 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store cubre bitacora, ONI, declaraciones y recaudo.
-	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): el nucleo
-	// sigue viendo puertos separados.
-	//
-	// El asiento de auditoria de declaraciones y recaudo lo escribe el
-	// propio adaptador dentro de la misma transaccion -no un
-	// BitacoraAuditoria aparte-, ver puertos.go.
-	//
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
 	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
@@ -101,10 +93,36 @@ func ejecutar(log *slog.Logger) error {
 	}
 	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
-	casos := httpapi.Casos{
+	// El mismo *Store cubre bitacora, ONI, declaraciones y recaudo.
+	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): el nucleo
+	// sigue viendo puertos separados.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras()}
+
+	// El asiento de auditoria de declaraciones y recaudo lo escribe el
+	// propio adaptador dentro de la misma transaccion -no un
+	// BitacoraAuditoria aparte-, ver puertos.go.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	recepcion := aplicacion.Ingesta{
+		Reportes:              store,
+		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Lectores:              lectores,
+		SnapshotNormalizacion: store.SnapshotNormalizacion,
+	}
+
+	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
-		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
+		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{
 			ONI:         store,
@@ -114,23 +132,11 @@ func ejecutar(log *slog.Logger) error {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
-		Ingesta: aplicacion.Ingesta{
-			Reportes: store,
-			Almacen:  objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
-			Lectores: lectores,
-		},
-		Declaraciones: aplicacion.Declaraciones{
-			Gestion: store,
-			Reloj:   reloj.Sistema{},
-		},
-		Recaudo: aplicacion.Recaudo{
-			Bolsas:  store,
-			Gestion: store,
-			Reloj:   reloj.Sistema{},
-		},
-	}
-
-	api := httpapi.Nueva(casos, httpapi.Opciones{
+		Ingesta:       recepcion,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
 	})

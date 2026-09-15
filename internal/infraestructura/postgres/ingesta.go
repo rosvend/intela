@@ -3,8 +3,10 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -22,7 +24,7 @@ var _ aplicacion.RepositorioIngesta = (*Store)(nil)
 // No hay columna de dinero que proyectar, y no la va a haber: un reporte de uso
 // PONDERA la bolsa, no la aporta.
 const columnasUso = `id, reporte_id, fuente, titulo, ids_fuente, COALESCE(obra_id, ''),
-	escalon, evidencia, oni, modalidad, tipo_obra,
+	escalon, evidencia, oni, modalidad, tipo_obra, fecha, hora,
 	duracion_min, emisiones, rating, taquilla, vistas, minutos_vistos, pb`
 
 // escanearUso lee columnasUso. Una sola funcion para las tres consultas que la
@@ -40,7 +42,7 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 	// conviene que dependa de que plan de escaneo elija la libreria.
 	err := fila.Scan(
 		&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
-		&u.Escalon, &u.Evidencia, &u.ONI, &modalidad, &u.TipoObra,
+		&u.Escalon, &u.Evidencia, &u.ONI, &modalidad, &u.TipoObra, &u.Fecha, &u.Hora,
 		&u.DuracionMin, &u.Emisiones, &u.Rating, &u.Taquilla, &u.Vistas,
 		&u.MinutosVistos, &u.PB,
 	)
@@ -246,13 +248,13 @@ func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) err
 	_, err := tx.Exec(ctx,
 		`INSERT INTO usos (
 		   id, reporte_id, fuente, titulo, ids_fuente, obra_id, escalon, evidencia,
-		   oni, modalidad, tipo_obra,
+		   oni, modalidad, tipo_obra, fecha, hora,
 		   duracion_min, emisiones, rating, taquilla, vistas, minutos_vistos, pb)
 		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8,
-		         $9, $10, $11,
-		         $12, $13, $14, $15, $16, $17, $18)`,
+		         $9, $10, $11, $12, $13,
+		         $14, $15, $16, $17, $18, $19, $20)`,
 		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, u.ObraID, u.Escalon, u.Evidencia,
-		u.ONI, string(u.Modalidad), u.TipoObra,
+		u.ONI, string(u.Modalidad), u.TipoObra, u.Fecha, u.Hora,
 		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Vistas, u.MinutosVistos, u.PB)
 	return err
 }
@@ -263,10 +265,18 @@ func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) err
 // rechazada no pondera, y sin las medidas aqui no hay forma de que una consulta
 // futura la sume "solo para ver" (ADR 0016).
 func insertarRechazo(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) error {
+	tipo := u.RechazoTipo
+	if tipo == "" {
+		tipo = aplicacion.TipoRevisionAdaptador
+	}
+	codigo := u.RechazoCodigo
+	if codigo == "" {
+		codigo = aplicacion.CodigoRechazoFormato
+	}
 	_, err := tx.Exec(ctx,
-		`INSERT INTO usos_rechazados (id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(u.Modalidad), u.RechazoMotivo)
+		`INSERT INTO usos_rechazados (id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo, tipo, codigo)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(u.Modalidad), u.RechazoMotivo, tipo, codigo)
 	return err
 }
 
@@ -310,6 +320,120 @@ func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersisti
 		return aplicacion.UsoPersistido{}, traducirError(err, "uso por id %q", id)
 	}
 	return u, nil
+}
+
+// ListarRechazos es la cola de revision de OE-1. Devuelve lo que no se pudo
+// normalizar, cada fila con su motivo y discriminante tipado. Un log vacio es
+// una lista vacia, no un error: la cola encoge cuando el cliente manda el
+// archivo bien.
+//
+// LIMIT 1000: sin cota, /admin/cola-revision devolveria el log entero (S5).
+func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
+	filas, err := s.pool.Query(ctx,
+		`SELECT id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo, tipo, codigo
+		   FROM usos_rechazados
+		  ORDER BY id
+		  LIMIT 1000`)
+	if err != nil {
+		return nil, traducirError(err, "listar rechazos")
+	}
+	defer filas.Close()
+
+	usos := make([]aplicacion.UsoPersistido, 0)
+	for filas.Next() {
+		var (
+			u         aplicacion.UsoPersistido
+			modalidad string
+		)
+		if err := filas.Scan(
+			&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &modalidad,
+			&u.RechazoMotivo, &u.RechazoTipo, &u.RechazoCodigo,
+		); err != nil {
+			return nil, traducirError(err, "escanear rechazo")
+		}
+		u.Modalidad = reparto.Modalidad(modalidad)
+		usos = append(usos, u)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar rechazos")
+	}
+	return usos, nil
+}
+
+// UsosPorIDs resuelve un lote de ids en un solo viaje (S5). Los que no
+// existen simplemente no aparecen en el mapa.
+func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplicacion.UsoPersistido, error) {
+	out := make(map[string]aplicacion.UsoPersistido, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	filas, err := s.pool.Query(ctx,
+		`SELECT `+columnasUso+` FROM usos WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, traducirError(err, "usos por ids")
+	}
+	defer filas.Close()
+	for filas.Next() {
+		u, err := escanearUso(filas)
+		if err != nil {
+			return nil, traducirError(err, "escanear uso")
+		}
+		out[u.ID] = u
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "usos por ids")
+	}
+	return out, nil
+}
+
+// SnapshotNormalizacion lee de `parametros` los coeficientes que la ingesta
+// necesita para aplicar RD 9.1.1 y las tasas de cambio. No es el
+// SnapshotEnFecha completo del proceso de reparto: solo lo que #26 cablea.
+//
+// MonedaBase es COP porque las claves cambio.* se siembran como factor a
+// pesos. La lista de monedas NO vive en Go: solo se convierten las que
+// tengan fila cambio.<ISO>.
+func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, error) {
+	filas, err := s.pool.Query(ctx, `
+		SELECT clave, valor FROM parametros
+		 WHERE vigente_hasta IS NULL
+		    OR vigente_hasta > CURRENT_DATE
+		 ORDER BY clave, vigente_desde DESC`)
+	if err != nil {
+		return reparto.Snapshot{}, traducirError(err, "leer parametros de normalizacion")
+	}
+	defer filas.Close()
+
+	snap := reparto.Snapshot{
+		MonedaBase: "COP",
+		Tasas:      map[string]decimal.Decimal{},
+	}
+	vistos := map[string]bool{}
+	for filas.Next() {
+		var clave string
+		var valor decimal.Decimal
+		if err := filas.Scan(&clave, &valor); err != nil {
+			return reparto.Snapshot{}, traducirError(err, "escanear parametro")
+		}
+		if vistos[clave] {
+			continue
+		}
+		vistos[clave] = true
+		switch clave {
+		case "duracion.artistica_pct":
+			snap.DuracionArtisticaPct = valor
+		case "duracion.minutos_hora_tv":
+			snap.MinutosHoraTV = valor
+		default:
+			if codigo, ok := strings.CutPrefix(clave, "cambio."); ok && codigo != "" {
+				snap.Tasas[strings.ToUpper(codigo)] = valor
+			}
+		}
+	}
+	if err := filas.Err(); err != nil {
+		return reparto.Snapshot{}, traducirError(err, "leer parametros de normalizacion")
+	}
+	return snap, nil
 }
 
 // consultarUsos comparte el recorrido de las dos lecturas de lista.

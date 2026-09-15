@@ -166,6 +166,7 @@ func construir() (http.Handler, error) {
 			Gestion: store,
 			Reloj:   reloj.Sistema{},
 		},
+		Cola: aplicacion.Normalizacion{Reportes: store},
 	}
 
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.

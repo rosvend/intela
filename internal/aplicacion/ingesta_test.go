@@ -129,6 +129,19 @@ func (r *repoIngestaMemoria) UsoPorID(_ context.Context, id string) (UsoPersisti
 	return UsoPersistido{}, ErrNoEncontrado
 }
 
+func (r *repoIngestaMemoria) ListarRechazos(context.Context) ([]UsoPersistido, error) {
+	var us []UsoPersistido
+	for _, u := range r.usos {
+		if u.RechazoMotivo != "" {
+			us = append(us, u)
+		}
+	}
+	if us == nil {
+		us = []UsoPersistido{}
+	}
+	return us, nil
+}
+
 // ListarCargas imita la proyeccion del adaptador real: una fila por entrega,
 // con los dos recuentos sacados de las filas que se le guardaron.
 //
@@ -1523,6 +1536,38 @@ func TestIngerirReporteDejaLaEvidenciaYLasFilasCanonicas(t *testing.T) {
 	}
 	if len(repo.usos) != 2 {
 		t.Errorf("usos guardados = %d, se esperaban 2", len(repo.usos))
+	}
+}
+
+// B1: con SnapshotNormalizacion cableado, la duracion cruda no llega a usos.
+func TestIngerirReporteAplicaElOchentaPorCientoDeTV(t *testing.T) {
+	fila := usoBueno("Rebelde")
+	fila.DuracionMin = decimal.NewFromInt(45)
+	fila.Fecha = "20241231"
+	fila.Hora = "20:00"
+	lec := &lectorFalso{filas: []UsoPersistido{fila}}
+	ingesta, repo, _ := ingestaConLector(lec)
+	ingesta.SnapshotNormalizacion = func(context.Context) (reparto.Snapshot, error) {
+		return reparto.Snapshot{
+			DuracionArtisticaPct: decimal.RequireFromString("0.80"),
+			MinutosHoraTV:        decimal.NewFromInt(48),
+			MonedaBase:           "COP",
+		}, nil
+	}
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-norm"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Aceptados != 1 {
+		t.Fatalf("aceptados = %d", rec.Aceptados)
+	}
+	got := repo.canonicos()[0]
+	if !got.DuracionMin.Equal(decimal.RequireFromString("36")) {
+		t.Fatalf("DuracionMin = %s, se esperaba 36 (80%% de 45)", got.DuracionMin)
+	}
+	if got.Fecha != "2024-12-31" {
+		t.Fatalf("Fecha = %q, se esperaba 2024-12-31", got.Fecha)
 	}
 }
 
