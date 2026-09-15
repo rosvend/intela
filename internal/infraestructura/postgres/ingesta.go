@@ -61,16 +61,112 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 // eso basta con mirar el codigo de unicidad y no hace falta distinguir que
 // restriccion salto.
 func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, fuente, periodo, sha, claveObjeto, nbytes)
+	_, err := s.pool.Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
+	return traducirErrorDeReporte(err, fuente, periodo)
+}
 
+// sqlInsertarReporte lo comparten [Store.GuardarReporte] y
+// [Store.GuardarEntrega]: la misma fila, escrita fuera o dentro de una
+// transaccion. Una constante y no dos literales para que no puedan divergir --
+// una columna anadida en un sitio y olvidada en el otro no falla, escribe una
+// entrega incompleta por uno de los dos caminos.
+const sqlInsertarReporte = `INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+	 VALUES ($1, $2, $3, $4, $5, $6)`
+
+// traducirErrorDeReporte pone el duplicado por huella en vocabulario del
+// negocio, y lo demas en el traductor general.
+func traducirErrorDeReporte(err error, fuente, periodo string) error {
 	if esClaveDuplicada(err) {
 		return fmt.Errorf("guardar reporte de %q, periodo %q: %w",
 			fuente, periodo, aplicacion.ErrReporteDuplicado)
 	}
 	return traducirError(err, "guardar reporte de %q, periodo %q", fuente, periodo)
+}
+
+// GuardarEntrega escribe el acuse de una entrega y sus filas en UNA transaccion.
+//
+// # Por que existe, teniendo GuardarReporte y GuardarUsos
+//
+// Porque llamarlos en fila no es lo mismo. El acuse QUEMA la huella: el
+// duplicado lo decide el UNIQUE (sha256, fuente), asi que un acuse escrito y un
+// lote que falla despues dejan la entrega registrada con CERO usos y la huella
+// gastada. El cliente reenvia el mismo archivo -- que es justo lo que hace
+// cuando le dicen que su carga fallo -- y se lleva un ErrReporteDuplicado para
+// siempre; de la boveda no se borra (ADR 0006) y la fila de `reportes` no la
+// quita nadie. Dentro de una transaccion, un lote que falla no deja acuse, y el
+// reenvio entra.
+//
+// # Que NO entra en la transaccion
+//
+// La boveda. De un fichero escrito no se hace rollback, y meterlo aqui daria la
+// ilusion de atomicidad y no la propiedad. El resto que eso deja -- un objeto sin
+// acuse -- es inerte y se recupera solo, porque la clave del objeto es su
+// contenido. Lo explica [aplicacion.Ingesta.GuardarReporte].
+//
+// El limite lo elige el caso de uso llamando a este metodo en vez de a los otros
+// dos; la transaccion la abre el adaptador porque el nucleo no puede tocar pgx.
+// Es la misma forma que [Store.Registrar] con la obra y sus coautores.
+func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
+	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, sqlInsertarReporte,
+			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
+		if err != nil {
+			return traducirErrorDeReporte(err, rep.Fuente, rep.Periodo)
+		}
+		return escribirLote(ctx, tx, usos)
+	})
+}
+
+// ListarCargas devuelve las entregas recibidas con sus dos recuentos.
+//
+// # Por que subconsultas escalares y no dos LEFT JOIN
+//
+// `usos` y `usos_rechazados` son dos tablas distintas colgando del mismo
+// reporte. Unirlas las dos a la vez con JOIN multiplica las filas -- 3 usos y
+// 2 rechazos dan 6 combinaciones -- y a partir de ahi los dos COUNT salen
+// inflados sin que nada falle. Se puede arreglar con COUNT(DISTINCT ...), pero
+// entonces la correccion del recuento depende de que nadie quite ese DISTINCT
+// mas adelante. Con una subconsulta por tabla cada COUNT cuenta lo suyo y no
+// hay forma de que se contaminen; las dos van por `usos_reporte` y
+// `usos_rechazados_reporte`, que son indices que ya existen.
+//
+// El periodo se filtra con un parametro que puede ser vacio, no concatenando
+// otro WHERE: una sola sentencia, un solo plan, y ningun camino en el que el
+// texto del SQL dependa de la entrada.
+//
+// El orden es por `creado` descendente y desempata por id. Sin el desempate,
+// dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
+// produccion -- salen en orden arbitrario y el listado cambia entre lecturas.
+func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
+	filas, err := s.pool.Query(ctx, `
+		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
+		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
+		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
+		  FROM reportes r
+		 WHERE $1 = '' OR r.periodo = $1
+		 ORDER BY r.creado DESC, r.id`, periodo)
+	if err != nil {
+		return nil, traducirError(err, "listar cargas del periodo %q", periodo)
+	}
+	defer filas.Close()
+
+	var cargas []aplicacion.CargaReporte
+	for filas.Next() {
+		var c aplicacion.CargaReporte
+		if err := filas.Scan(
+			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.Recibido,
+			&c.Aceptados, &c.Rechazados,
+		); err != nil {
+			return nil, traducirError(err, "escanear carga")
+		}
+		cargas = append(cargas, c)
+	}
+	// Igual que en consultarUsos: sin esto una lista TRUNCADA por un fallo a
+	// mitad de stream se devuelve como lista completa.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar cargas del periodo %q", periodo)
+	}
+	return cargas, nil
 }
 
 // GuardarUsos escribe un lote de filas, canonicas y rechazadas.
@@ -100,19 +196,30 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 	}
 
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
-		for _, u := range usos {
-			var err error
-			if u.RechazoMotivo != "" {
-				err = insertarRechazo(ctx, tx, u)
-			} else {
-				err = insertarUso(ctx, tx, u)
-			}
-			if err != nil {
-				return traducirError(err, "guardar la fila %q del reporte %q", u.ID, u.ReporteID)
-			}
-		}
-		return nil
+		return escribirLote(ctx, tx, usos)
 	})
+}
+
+// escribirLote encamina cada fila a su tabla, DENTRO de la transaccion que le
+// den.
+//
+// Extraido de GuardarUsos para que [Store.GuardarEntrega] escriba las filas
+// exactamente igual: con dos copias del bucle, el encaminamiento del ADR 0016
+// -- que es lo que mantiene los rechazos fuera de las lecturas canonicas --
+// tendria que acordarse de cambiar en dos sitios.
+func escribirLote(ctx context.Context, tx pgx.Tx, usos []aplicacion.UsoPersistido) error {
+	for _, u := range usos {
+		var err error
+		if u.RechazoMotivo != "" {
+			err = insertarRechazo(ctx, tx, u)
+		} else {
+			err = insertarUso(ctx, tx, u)
+		}
+		if err != nil {
+			return traducirError(err, "guardar la fila %q del reporte %q", u.ID, u.ReporteID)
+		}
+	}
+	return nil
 }
 
 // insertarUso escribe una fila canonica.
