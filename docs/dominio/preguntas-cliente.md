@@ -49,6 +49,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-13 | Campos de episodio en la parrilla de Caracol | @rosvend | **Abierta** |
 | P-14 | Extractos del mismo periodo y de mayor volumen | @rosvend | **Abierta** |
 | P-15 | Padron de titulares con IPI poblado y al dia | @rosvend | **Abierta** |
+| P-16 | Alcance del 80% artistico de `RD 9.1.1` | @rosvend | **Abierta** |
 
 ## Respuestas
 
@@ -154,8 +155,8 @@ Consecuencia: **afecta a la PR #106.** Exigir IPI en la entrada es incorrecto: e
 fuente no lo tiene. Si conviene conservar una instantanea del IPI para reproducibilidad
 (ADR 0005) es una decision aparte.
 
-### P-12 a P-15
-Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`:
+### P-12 a P-16
+Abiertas, sin decision provisional, tomadas de `fuentes-datos.md` y del cableado de #26:
 - **P-12** `eidr` poblado por Netflix, o acceso a IDA. Sin uno de los dos, el escalon 2 de la
   cascada (#28) solo funciona sobre lo que ya tenga el catalogo.
 - **P-13** Campos de episodio en la parrilla de Caracol, para identificar capitulos de series.
@@ -163,6 +164,10 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`:
   cruzar de verdad: cero coincidencias de titulo entre las dos muestras.
 - **P-15** Padron de titulares con IPI poblado y al dia. `data/IPI - form to report members to
   IPI 01-03-24.xls` ya esta en el repo pero **no esta perfilado**.
+- **P-16** Alcance del 80% artistico de `RD 9.1.1`: ¿aplica a los minutos de la parrilla del
+  canal o solo a la cifra del proveedor especializado de audiencia? El codigo hoy asume lo
+  primero para toda fila de TV/hotel sin `unidad_duracion`. Si es lo segundo, hay que dejar de
+  transformar la parrilla y esperar el feed de audiencia.
 
 ## Agenda para la reunion con REDES
 
@@ -179,4 +184,5 @@ cifra defendible.
 5. **Confirmar P-03**: que Intela ocupa el lugar de AVSYS y que REDES-SYS sigue como esta.
 6. **Confirmar P-01, P-02, P-05, P-07, P-09 y P-11**, que hoy van con respuesta del equipo.
 7. **Entretenimientos**: es o no repertorio (P-05).
-8. Pedir P-12 a P-15: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI.
+8. Pedir P-12 a P-16: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI,
+   alcance del 80% artistico.

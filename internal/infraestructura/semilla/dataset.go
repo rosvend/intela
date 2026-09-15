@@ -416,6 +416,18 @@ func (d *Dataset) parametros() {
 		publicado("ponderacion.unitario", "2.8", "Consejo Directivo", "RD 9.1.1"),
 		publicado("ponderacion.serie", "1.3", "Consejo Directivo", "RD 9.1.1"),
 		publicado("ponderacion.sketches", "0.8", "Consejo Directivo", "RD 9.1.1"),
+		// RD 9.1.1(c): duracion artistica y hora televisiva. Son cifras del
+		// reglamento, no techos "hasta X": el texto dice "el 80%" y "48
+		// minutos". Viven aqui y no en el codigo (ADR 0004).
+		publicado("duracion.artistica_pct", "0.80", "Consejo Directivo", "RD 9.1.1"),
+		publicado("duracion.minutos_hora_tv", "48", "Consejo Directivo", "RD 9.1.1"),
+
+		// Tasas a COP. Viven aqui y no en una lista Go (ADR 0004 / B4).
+		// USD es P-09 provisional (TRM de facturacion). EUR es sintetica
+		// hasta que haya tasa propia: sin fila, normalizacion manda EUR a
+		// revision en vez de multiplicar por la del dolar.
+		sintetico("cambio.USD", "4000"),
+		sintetico("cambio.EUR", "4300"),
 
 		// El reglamento fija un TECHO, no la tasa. `R-06` dice "hasta 20% para
 		// gastos administrativos" y "hasta 10% para programas de inversion

@@ -125,6 +125,8 @@ func TestParametrosSinteticosVanEtiquetados(t *testing.T) {
 		"matching.umbral": true,
 		// No publicados (RD 9.7, ADR 0004).
 		"ott.wa": true, "ott.wb": true, "ott.wc": true,
+		// Tasas a COP: USD es P-09 provisional; EUR sintetica hasta tasa propia.
+		"cambio.USD": true, "cambio.EUR": true,
 	}
 
 	sinteticos := map[string]bool{}
