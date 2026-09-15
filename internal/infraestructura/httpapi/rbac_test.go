@@ -35,7 +35,11 @@ func TestMatrizRolRuta(t *testing.T) {
 
 	for _, rol := range roles {
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol, TitularID: "tit-1"}}
-		h := servidor(t, auth)
+		// Liquidaciones no es superficie vacia: el handler llama al caso de
+		// uso. El doble basta para comprobar el middleware, no el payload.
+		h := servidorConLiq(t, auth, &liquidacionesFalsa{
+			archivo: aplicacion.Archivo{Nombre: "liq.pdf", TipoMIME: "application/pdf", Contenido: []byte("%PDF")},
+		})
 		for ruta, codigoOK := range exito {
 			codigo := http.StatusForbidden
 			for _, p := range permitido[ruta] {

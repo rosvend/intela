@@ -225,10 +225,9 @@ type Anticipo struct {
 }
 
 // Formatos de exportacion que entiende [Exportador]. Cualquier otro es
-// ErrFormatoInvalido.
+// ErrFormatoInvalido. FormatoXLSX vive en puertos.go (mismo paquete).
 const (
-	FormatoPDF  = "pdf"
-	FormatoXLSX = "xlsx"
+	FormatoPDF = "pdf"
 )
 
 // FilaLiquidacion es lo que el repositorio lee de una corrida: el neto del
