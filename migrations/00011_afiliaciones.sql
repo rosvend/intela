@@ -19,9 +19,10 @@
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00010: el 00009 lo ocupo #27 (`usuarios_de_recaudo`) en
--- `main`, y goose aborta con "duplicate version 9" si coexisten. El mayor
--- aplicado en main al renumerar era 00009. Un ADR admite huecos; una
+-- Se toma el 00011: el 00009 lo ocupo #27 (`usuarios_de_recaudo`) en
+-- `main`, y goose aborta con "duplicate version 9" si coexisten. Al
+-- mergear `main`, #26 (`normalizacion_fecha_y_rechazo_tipado`) ocupo el
+-- 00010; esta migracion sube al siguiente libre. Un ADR admite huecos; una
 -- migracion no.
 
 -- +goose Up

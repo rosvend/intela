@@ -44,6 +44,9 @@ func (i *ingestaFalsa) UsosDePeriodo(_ context.Context, periodo string) ([]UsoPe
 	i.usosLlamadas = append(i.usosLlamadas, periodo)
 	return i.usos, i.err
 }
+func (i *ingestaFalsa) ListarRechazos(context.Context) ([]UsoPersistido, error) {
+	return nil, nil
+}
 
 type llamadaAlias struct {
 	Fuente, Tipo, Valor, ObraID, Quien string

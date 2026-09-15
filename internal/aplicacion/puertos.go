@@ -304,6 +304,7 @@ type RepositorioIngesta interface {
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
+	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
 
 	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
 	// mas antigua. Un periodo vacio NO filtra.
