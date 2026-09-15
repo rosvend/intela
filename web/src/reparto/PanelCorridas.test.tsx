@@ -313,7 +313,8 @@ describe("PanelCorridas", () => {
         .mocked(fetch)
         .mock.calls.some(([url]) => String(url).startsWith("/api/alertas")),
     ).toBe(true);
-    expect(screen.getByText("Alertas abiertas del periodo")).toBeTruthy();
+    // Una tarjeta por tipo de alerta; todas comparten la misma descripción.
+    expect(screen.getAllByText("Alertas abiertas del periodo")).toHaveLength(5);
   });
 
   it("firmar con alertas abiertas avisa, pero no bloquea la compuerta", async () => {
