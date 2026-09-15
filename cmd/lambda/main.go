@@ -180,6 +180,7 @@ func construir() (http.Handler, error) {
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Liquidaciones: liquidaciones,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

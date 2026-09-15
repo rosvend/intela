@@ -12,6 +12,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/normalizacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -54,6 +55,11 @@ type Ingesta struct {
 	// que no se puede es ingerir un archivo, y eso lo dice IngerirReporte con
 	// su nombre y con la lista de lo que si sabe leer.
 	Lectores map[ClaveLector]LectorReporte
+
+	// SnapshotNormalizacion resuelve los coeficientes de RD 9.1.1 y las tasas
+	// de cambio para el paso de esquema. Si es nil, IngerirReporte no aplica
+	// el 80%/hora televisiva (tests que construyen filas ya canonicas).
+	SnapshotNormalizacion func(ctx context.Context) (reparto.Snapshot, error)
 }
 
 // IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
@@ -129,6 +135,10 @@ func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo st
 	// El acuse sale de prepararReporte, que ya exigio la fuente y derivo el id:
 	// normalizarAcuse seria un no-op y su unica rama de error, inalcanzable. Es
 	// el UNICO sitio del fichero donde eso es cierto por construccion.
+	filas, err = i.aplicarNormalizacion(ctx, filas)
+	if err != nil {
+		return Recepcion{}, err
+	}
 	lote, rechazados := prepararLote(rep, filas)
 
 	// Las dos escrituras, en UNA. Separadas -- el acuse por un lado y las filas
@@ -625,12 +635,11 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 			// paso lo normaliza, deja de ser prueba de nada.
 			u.ONI = true
 		}
-		if u.Emisiones == 0 {
+		if u.Emisiones == 0 && u.EmisionesTexto != "0" {
 			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
-			// porque insertarUso manda el valor siempre. Una parrilla real
-			// nunca declara cero emisiones -la granularidad es la emision, no
-			// la obra, y RD 9.1.1 las multiplica-, asi que el cero es el valor
-			// vacio de Go, no un dato.
+			// porque insertarUso manda el valor siempre. Una celda vacia es el
+			// cero de Go, no un dato. Un "0" explicito (S4) llega con
+			// EmisionesTexto=="0" desde normalizacion y se respeta.
 			u.Emisiones = 1
 		}
 		if u.RechazoMotivo == "" {
@@ -641,6 +650,9 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 			// rechazos.
 			u.RechazoMotivo = validarUso(u)
 		}
+		if u.RechazoMotivo != "" && u.RechazoTipo == "" {
+			MarcarRechazoAdaptador(&u)
+		}
 
 		lote[n] = u
 		if u.RechazoMotivo != "" {
@@ -648,6 +660,37 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 	}
 	return lote, rechazados
+}
+
+// aplicarNormalizacion lleva las filas del adaptador por el dominio de
+// esquema (#26) antes de prepararLote. Las ya rechazadas por el mapa de
+// columnas no se re-procesan: conservan su motivo y reciben tipo=adaptador.
+func (i Ingesta) aplicarNormalizacion(ctx context.Context, filas []UsoPersistido) ([]UsoPersistido, error) {
+	if i.SnapshotNormalizacion == nil {
+		for n := range filas {
+			MarcarRechazoAdaptador(&filas[n])
+		}
+		return filas, nil
+	}
+	snap, err := i.SnapshotNormalizacion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolver parametros de normalizacion: %w", err)
+	}
+	p, err := ParametrosDesde(snap)
+	if err != nil {
+		return nil, fmt.Errorf("armar parametros de normalizacion: %w", err)
+	}
+	out := make([]UsoPersistido, 0, len(filas))
+	for _, u := range filas {
+		if u.RechazoMotivo != "" {
+			MarcarRechazoAdaptador(&u)
+			out = append(out, u)
+			continue
+		}
+		uso, rev := normalizacion.Normalizar(aFila(u), p)
+		out = append(out, aPersistido(uso, rev))
+	}
+	return out, nil
 }
 
 // validarUso devuelve el motivo por el que una fila no es canonica, o "" si lo

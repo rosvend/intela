@@ -61,6 +61,7 @@ type API struct {
 	declaraciones Declaraciones
 	recaudo       Recaudo
 	liq           Liquidaciones
+	cola          ColaRevision
 	opts          Opciones
 	log           *slog.Logger
 }
@@ -80,6 +81,14 @@ type Casos struct {
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
 	Liquidaciones Liquidaciones
+	Cola          ColaRevision
+}
+
+// ColaRevision lista lo que espera ojo humano: filas que no se pudieron
+// normalizar, y mas adelante las anomalias del #37. Se declara en el
+// consumidor, igual que [Catalogo].
+type ColaRevision interface {
+	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
 
 // Nueva construye el adaptador.
@@ -101,6 +110,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
 		liq:           casos.Liquidaciones,
+		cola:          casos.Cola,
 		opts:          opts,
 		log:           log,
 	}
@@ -146,6 +156,7 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/admin", func(admin chi.Router) {
 			admin.Use(requiereRol(aplicacion.RolAdministrador))
 			admin.Get("/pipeline", superficieOK)
+			admin.Get("/cola-revision", a.listarColaRevision)
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))

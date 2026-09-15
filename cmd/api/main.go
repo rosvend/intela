@@ -124,9 +124,10 @@ func ejecutar(log *slog.Logger) error {
 	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
 	recepcion := aplicacion.Ingesta{
-		Reportes: store,
-		Almacen:  objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
-		Lectores: lectores,
+		Reportes:              store,
+		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Lectores:              lectores,
+		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
@@ -137,6 +138,7 @@ func ejecutar(log *slog.Logger) error {
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Liquidaciones: liquidaciones,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

@@ -135,24 +135,35 @@ type CargaReporte struct {
 //
 // Igual que reparto.Uso, no tiene campo de dinero, y por la misma razon.
 type UsoPersistido struct {
-	ID            string
-	ReporteID     string
-	Fuente        string
-	Titulo        string
-	IDsFuente     string
-	ObraID        string
-	Escalon       string
-	Evidencia     string
-	ONI           bool
-	Modalidad     reparto.Modalidad
-	TipoObra      string
-	DuracionMin   decimal.Decimal
-	Emisiones     int64
-	Rating        decimal.Decimal
-	Taquilla      decimal.Decimal
-	Vistas        decimal.Decimal
-	MinutosVistos decimal.Decimal
-	PB            decimal.Decimal
+	ID             string
+	ReporteID      string
+	Fuente         string
+	Titulo         string
+	TituloOrig     string
+	IDsFuente      string
+	ObraID         string
+	Escalon        string
+	Evidencia      string
+	ONI            bool
+	Modalidad      reparto.Modalidad
+	TipoObra       string
+	Fecha          string
+	Hora           string
+	Moneda         string
+	UnidadDuracion string
+	// DuracionTexto y EmisionesTexto conservan el crudo del adaptador cuando
+	// el campo viaja como texto hacia [normalizacion.Fila]. Si estan vacios,
+	// aFila re-serializa DuracionMin / Emisiones.
+	DuracionTexto  string
+	EmisionesTexto string
+	DuracionMin    decimal.Decimal
+	Emisiones      int64
+	Rating         decimal.Decimal
+	Taquilla       decimal.Decimal
+	Vistas         decimal.Decimal
+	MinutosVistos  decimal.Decimal
+	PB             decimal.Decimal
+	Autopromo      bool
 
 	// RechazoMotivo: por que esta fila no se pudo normalizar.
 	//
@@ -167,6 +178,29 @@ type UsoPersistido struct {
 	// CON su razon. Donde acaba cada una de las dos clases de fila lo decide
 	// el adaptador (ADR 0016).
 	RechazoMotivo string
+
+	// RechazoTipo y RechazoCodigo son el discriminante tipado de la cola de
+	// revision (B3). Sin columnas propias, cortar el motivo por ": " inventaba
+	// codigos a partir de prosa del adaptador y afirmaba origen normalizacion
+	// sobre filas que nunca pasaron por ese detector.
+	RechazoTipo   string
+	RechazoCodigo string
+}
+
+// ItemRevision es una fila de la cola de revision: lo que no se pudo
+// normalizar, y mas adelante las anomalias del #37.
+//
+// Tipo discrimina el origen ("normalizacion" | "anomalia") para que un solo
+// listado sirva a las dos colas sin mezclar los vocabularios. Codigo es el
+// motivo tipado; Motivo es el texto que nombra el campo.
+type ItemRevision struct {
+	ID        string
+	Tipo      string
+	Codigo    string
+	Motivo    string
+	Fuente    string
+	Titulo    string
+	ReporteID string
 }
 
 // BolsaPersistida es una [recaudo.Bolsa] con lo que la fila anade: su
