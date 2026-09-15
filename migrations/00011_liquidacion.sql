@@ -18,10 +18,10 @@
 -- antes de aplicar nada, y el despliegue condiciona el rollout a que
 -- goose termine bien. Por eso no se rellena el hueco 00003/00004.
 --
--- Se toma el 00010: el 2026-09-14 el mayor en `main` es 00009
--- (`usuarios_de_recaudo`). #87 (`oni_publicacion`) y #88 (`afiliaciones`)
--- siguen reclamando 00008/00009, que ya estan en main, y tendran que
--- subir por encima de este numero. Un ADR admite huecos; una migracion no.
+-- Se toma el 00011: main mergeo `00010_normalizacion_fecha_y_rechazo_tipado.sql`
+-- y goose aborta con `duplicate version 10` si dos archivos llevan el mismo
+-- numero. El 2026-09-15 el mayor en `main` es 00010. Un ADR admite huecos;
+-- una migracion no.
 
 -- +goose Up
 
