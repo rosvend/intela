@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -92,6 +93,25 @@ func (r *repoIngestaMemoria) GuardarUsos(_ context.Context, usos []UsoPersistido
 	return nil
 }
 
+// GuardarEntrega imita lo que da la transaccion del adaptador real: si las
+// filas no entran, el acuse TAMPOCO queda, y la huella no se gasta.
+//
+// El orden de este doble es lo que lo hace un doble honesto. Comprobar errUsos
+// al final -- guardando el acuse primero y fallando despues -- seria imitar la
+// version SIN transaccion, y entonces la prueba de la huella quemada pasaria por
+// el motivo equivocado.
+func (r *repoIngestaMemoria) GuardarEntrega(ctx context.Context, rep Reporte, usos []UsoPersistido) error {
+	if r.errUsos != nil {
+		return r.errUsos
+	}
+	if err := r.GuardarReporte(
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+	); err != nil {
+		return err
+	}
+	return r.GuardarUsos(ctx, usos)
+}
+
 func (r *repoIngestaMemoria) UsosSinResolver(context.Context) ([]UsoPersistido, error) {
 	return r.canonicos(), nil
 }
@@ -107,6 +127,39 @@ func (r *repoIngestaMemoria) UsoPorID(_ context.Context, id string) (UsoPersisti
 		}
 	}
 	return UsoPersistido{}, ErrNoEncontrado
+}
+
+// ListarCargas imita la proyeccion del adaptador real: una fila por entrega,
+// con los dos recuentos sacados de las filas que se le guardaron.
+//
+// El orden es por id y no por instante de recepcion: este doble no tiene reloj,
+// y un orden estable es lo que hace comprobable el listado.
+func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string) ([]CargaReporte, error) {
+	ids := make([]string, 0, len(r.reportes))
+	for id := range r.reportes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	var cargas []CargaReporte
+	for _, id := range ids {
+		rep := r.reportes[id]
+		if periodo != "" && rep.Periodo != periodo {
+			continue
+		}
+		c := CargaReporte{Reporte: rep}
+		for _, u := range r.usos {
+			switch {
+			case u.ReporteID != rep.ID:
+			case u.RechazoMotivo != "":
+				c.Rechazados++
+			default:
+				c.Aceptados++
+			}
+		}
+		cargas = append(cargas, c)
+	}
+	return cargas, nil
 }
 
 // canonicos deja fuera las filas rechazadas, igual que el adaptador real: las
@@ -1419,5 +1472,280 @@ func TestValidarUsoRechazaLaMedidaQueNoCabeEnLaColumna(t *testing.T) {
 				t.Fatalf("motivo = %q, se esperaba %q", motivo, c.motivo)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// IngerirReporte: la entrega entera
+// ---------------------------------------------------------------------------
+
+// lectorFalso es el doble del puerto LectorReporte. Devuelve lo que se le
+// ponga y cuenta las veces que lo llamaron.
+//
+// Cuenta las llamadas porque una de las propiedades que hay que fijar es de
+// ORDEN -- se parsea ANTES de tocar la boveda --, y el orden no se ve en el
+// resultado: se ve en que la boveda siga sin escribirse cuando el parseo falla.
+type lectorFalso struct {
+	filas    []UsoPersistido
+	err      error
+	lecturas int
+}
+
+func (l *lectorFalso) Leer([]byte) ([]UsoPersistido, error) {
+	l.lecturas++
+	return l.filas, l.err
+}
+
+func ingestaConLector(l LectorReporte) (Ingesta, *repoIngestaMemoria, *almacenMemoria) {
+	ing, repo, almacen := nuevaIngesta()
+	ing.Lectores = map[ClaveLector]LectorReporte{
+		{Fuente: "caracol", Formato: FormatoXLSX}: l,
+	}
+	return ing, repo, almacen
+}
+
+func TestIngerirReporteDejaLaEvidenciaYLasFilasCanonicas(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde"), usoBueno("La Casa")}}
+	ingesta, repo, almacen := ingestaConLector(lec)
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Aceptados != 2 || len(rec.Rechazados) != 0 {
+		t.Fatalf("aceptados/rechazados = %d/%d, se esperaba 2/0", rec.Aceptados, len(rec.Rechazados))
+	}
+	if len(almacen.objetos) != 1 {
+		t.Errorf("la evidencia cruda no se congelo: %v", almacen.objetos)
+	}
+	if _, hay := repo.reportes[rec.Reporte.ID]; !hay {
+		t.Errorf("no quedo acuse de la entrega")
+	}
+	if len(repo.usos) != 2 {
+		t.Errorf("usos guardados = %d, se esperaban 2", len(repo.usos))
+	}
+}
+
+func TestIngerirReporteNoPersisteNadaSiElArchivoNoTieneLaColumna(t *testing.T) {
+	// El criterio de aceptacion es literal: "nothing is persisted". Y no es
+	// cosmetico -- de la boveda no se borra (ADR 0006), y escribir el acuse
+	// QUEMA la huella para esa fuente: la correccion que el cliente mande
+	// despues chocaria con ErrReporteDuplicado si resulta ser el mismo archivo.
+	lec := &lectorFalso{err: fmt.Errorf(
+		"%w: falta la columna requerida Duracion_total", ErrReporteInvalido)}
+	ingesta, repo, almacen := ingestaConLector(lec)
+
+	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if !errors.Is(err, ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+	if !strings.Contains(err.Error(), "Duracion_total") {
+		t.Errorf("el error no nombra la columna que falta: %v", err)
+	}
+	if almacen.puestas != 0 {
+		t.Errorf("se toco la boveda con un archivo estructuralmente invalido")
+	}
+	if len(repo.reportes) != 0 || len(repo.usos) != 0 {
+		t.Errorf("se persistio algo: %d reportes, %d usos", len(repo.reportes), len(repo.usos))
+	}
+}
+
+func TestIngerirReporteGuardaLasBuenasYAnotaLasMalas(t *testing.T) {
+	mala := usoBueno("Con fallo")
+	mala.RechazoMotivo = "fila 3, duracion_min (columna \"Duracion_total\"): \"x\" no es un numero"
+
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Buena"), mala, usoBueno("Otra buena")}}
+	ingesta, repo, _ := ingestaConLector(lec)
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Aceptados != 2 {
+		t.Errorf("aceptados = %d, se esperaban 2", rec.Aceptados)
+	}
+	if len(rec.Rechazados) != 1 {
+		t.Fatalf("rechazados = %d, se esperaba 1", len(rec.Rechazados))
+	}
+	// El motivo que puso el adaptador NO se pisa con el generico: es la unica
+	// explicacion util del log de rechazos.
+	if !strings.Contains(rec.Rechazados[0].RechazoMotivo, "Duracion_total") {
+		t.Errorf("se perdio el motivo del adaptador: %q", rec.Rechazados[0].RechazoMotivo)
+	}
+	// Las tres viajan al repositorio: ninguna se descarta.
+	if len(repo.usos) != 3 {
+		t.Errorf("usos guardados = %d, se esperaban 3", len(repo.usos))
+	}
+}
+
+func TestIngerirReporteSinAdaptadorDiceCualesHay(t *testing.T) {
+	ingesta, _, almacen := ingestaConLector(&lectorFalso{})
+
+	_, err := ingesta.IngerirReporte(t.Context(), "hbo", FormatoCSV, "2026-01", []byte("x"))
+	if !errors.Is(err, ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+	// Sin la lista, quien sube el archivo no sabe si se equivoco de fuente, de
+	// formato o de las dos.
+	if !strings.Contains(err.Error(), "caracol/xlsx") {
+		t.Errorf("el error no lista los adaptadores disponibles: %v", err)
+	}
+	if almacen.puestas != 0 {
+		t.Errorf("se toco la boveda sin saber siquiera leer el archivo")
+	}
+}
+
+func TestIngerirReporteRechazaUnArchivoSinFilas(t *testing.T) {
+	// Un export que salio vacio es exactamente el caso en el que el cliente
+	// vuelve a mandar el bueno. Aceptarlo escribiria un acuse con cero usos y
+	// dejaria la huella quemada.
+	ingesta, repo, almacen := ingestaConLector(&lectorFalso{filas: nil})
+
+	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if !errors.Is(err, ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+	if almacen.puestas != 0 || len(repo.reportes) != 0 {
+		t.Errorf("se persistio algo de un archivo sin filas")
+	}
+}
+
+func TestIngerirReporteRecortaLaFuenteAntesDeBuscarElAdaptador(t *testing.T) {
+	// La fuente se usa para DOS cosas -- elegir el lector y componer el id de la
+	// entrega -- y con dos criterios distintos " caracol " no encontraria lector
+	// y el mensaje culparia a la fuente equivocada.
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde")}}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "  caracol ", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Reporte.Fuente != "caracol" {
+		t.Errorf("fuente = %q, se esperaba recortada", rec.Reporte.Fuente)
+	}
+}
+
+func TestIngerirReporteRechazaLaResubidaSinVolverAParsear(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde")}}
+	ingesta, _, _ := ingestaConLector(lec)
+	datos := []byte("xlsx")
+
+	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos); err != nil {
+		t.Fatalf("primera entrega: %v", err)
+	}
+	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos)
+	if !errors.Is(err, ErrReporteDuplicado) {
+		t.Fatalf("err = %v, se esperaba ErrReporteDuplicado", err)
+	}
+	// El duplicado por huella lo decide el UNIQUE (sha256, fuente), o sea
+	// DESPUES del parseo: las dos lecturas son correctas, y dejarlo escrito
+	// evita que alguien "optimice" moviendo el parseo detras del acuse.
+	if lec.lecturas != 2 {
+		t.Errorf("lecturas = %d, se esperaban 2", lec.lecturas)
+	}
+}
+
+// La huella no se puede quemar por un fallo de escritura, que es la otra puerta
+// del mismo agujero que el orden de IngerirReporte cierra.
+//
+// El orden -parsear antes de tocar la boveda- cubre el archivo ROTO. Este caso
+// es el contrario: el archivo esta bien, se parsea bien, y lo que falla es
+// guardar las filas. Con el acuse y el lote en dos escrituras separadas queda
+// una entrega registrada con CERO usos y la huella gastada para esa fuente,
+// porque el duplicado lo decide el UNIQUE (sha256, fuente). A partir de ahi el
+// cliente reenvia el mismo archivo -que es exactamente lo que hace cuando le
+// dicen que su carga fallo- y se lleva ErrReporteDuplicado para siempre, sin un
+// solo uso registrado y sin forma de arreglarlo fuera de la base.
+func TestIngerirReporteNoQuemaLaHuellaSiLasFilasNoEntran(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde"), usoBueno("La Casa")}}
+	ingesta, repo, almacen := ingestaConLector(lec)
+	datos := []byte("xlsx")
+
+	repo.errUsos = errors.New("la base se cayo a mitad del lote")
+	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos); err == nil {
+		t.Fatal("se esperaba error: el lote no se pudo guardar")
+	}
+	// Ni acuse ni filas: la entrega no ocurrio.
+	if len(repo.reportes) != 0 || len(repo.usos) != 0 {
+		t.Fatalf("quedo media entrega: %d reportes, %d usos", len(repo.reportes), len(repo.usos))
+	}
+	// El objeto de la boveda SI queda, y esta bien que quede: de un fichero
+	// escrito no se hace rollback, y un objeto sin acuse es evidencia inerte que
+	// la resubida vuelve a poner bajo la misma clave -que es su contenido- sin
+	// cambiar nada.
+	if len(almacen.objetos) != 1 {
+		t.Errorf("objetos en la boveda = %d, se esperaba 1", len(almacen.objetos))
+	}
+
+	// El cliente reenvia el MISMO archivo, byte a byte.
+	repo.errUsos = nil
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos)
+	if errors.Is(err, ErrReporteDuplicado) {
+		t.Fatal("la huella quedo quemada: la reentrega del mismo archivo choca con el duplicado")
+	}
+	if err != nil {
+		t.Fatalf("reentrega: %v", err)
+	}
+	if rec.Aceptados != 2 {
+		t.Errorf("aceptados = %d, se esperaban 2", rec.Aceptados)
+	}
+	if len(repo.usos) != 2 {
+		t.Errorf("usos guardados = %d, se esperaban 2", len(repo.usos))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cargas
+// ---------------------------------------------------------------------------
+
+func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
+	mala := usoBueno("Con fallo")
+	mala.RechazoMotivo = "duracion_min: \"x\" no es un numero"
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Buena"), mala}}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	if _, err := ingesta.IngerirReporte(
+		t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero")); err != nil {
+		t.Fatalf("enero: %v", err)
+	}
+	if _, err := ingesta.IngerirReporte(
+		t.Context(), "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
+		t.Fatalf("febrero: %v", err)
+	}
+
+	todas, err := ingesta.Cargas(t.Context(), "")
+	if err != nil {
+		t.Fatalf("Cargas: %v", err)
+	}
+	if len(todas) != 2 {
+		t.Fatalf("cargas = %d, se esperaban 2", len(todas))
+	}
+
+	enero, err := ingesta.Cargas(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("Cargas(2026-01): %v", err)
+	}
+	if len(enero) != 1 {
+		t.Fatalf("cargas de enero = %d, se esperaba 1", len(enero))
+	}
+	if enero[0].Periodo != "2026-01" {
+		t.Errorf("periodo = %q", enero[0].Periodo)
+	}
+	// Los dos recuentos son el punto del listado: sin ellos no se puede
+	// responder "¿entro completo lo que subi?".
+	if enero[0].Aceptados != 1 || enero[0].Rechazados != 1 {
+		t.Errorf("aceptados/rechazados = %d/%d, se esperaba 1/1",
+			enero[0].Aceptados, enero[0].Rechazados)
+	}
+}
+
+func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
+	ingesta, _, _ := nuevaIngesta()
+
+	// "2026-1" no casa con ninguna fila y devolveria una lista vacia
+	// indistinguible de "ese periodo no tuvo cargas".
+	if _, err := ingesta.Cargas(t.Context(), "2026-1"); !errors.Is(err, ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
 	}
 }
