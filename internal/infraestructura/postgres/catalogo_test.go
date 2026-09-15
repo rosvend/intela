@@ -331,8 +331,8 @@ func TestBuscarCombinaLosFiltrosConY(t *testing.T) {
 	}
 }
 
-// Un filtro vacio es el listado del catalogo. Y el orden es explicito: el ADR
-// 0005 exige que una corrida se reproduzca bit a bit.
+// Un filtro vacio es el listado del catalogo (primera pagina). Y el orden es
+// explicito: el ADR 0005 exige que una corrida se reproduzca bit a bit.
 func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	s, _ := sembrar(t)
 
@@ -345,6 +345,26 @@ func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	}
 	if got := ids(obras); !slices.IsSorted(got) {
 		t.Fatalf("el catalogo no viene ordenado por id: %v", got)
+	}
+}
+
+func TestBuscarRespetaLimiteYDesplazamiento(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 2, Desplazamiento: 1},
+	})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	todas, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 10},
+	})
+	if err != nil {
+		t.Fatalf("Buscar completo: %v", err)
+	}
+	if got := ids(obras); !slices.Equal(got, []string{todas[1].ID(), todas[2].ID()}) {
+		t.Fatalf("ids = %v, se esperaba [%s %s]", got, todas[1].ID(), todas[2].ID())
 	}
 }
 

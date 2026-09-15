@@ -126,7 +126,7 @@ type Sesiones interface {
 
 // RepositorioRepertorio cubre el catalogo maestro y las declaraciones.
 type RepositorioRepertorio interface {
-	ListarObras(ctx context.Context) ([]Obra, error)
+	ListarObras(ctx context.Context, p Paginacion) ([]Obra, error)
 	ObraPorID(ctx context.Context, id string) (Obra, error)
 	Declaraciones(ctx context.Context) (map[string]repertorio.Declaracion, error)
 	DeclaracionDeObra(ctx context.Context, obraID string) (repertorio.Declaracion, error)
@@ -197,6 +197,37 @@ type GestionDeclaraciones interface {
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
 }
 
+// Paginacion es el recorte comun de [CatalogoObras.Buscar] y
+// [RepositorioRepertorio.ListarObras]. Misma forma a proposito: la nota 4 de
+// #86 pide que GET /obras y ListarObras paginen juntos, no cada uno a su aire.
+//
+// Limite cero significa "usar el por defecto" ([LimiteObrasPorDefecto]): es el
+// tope que cierra el catalogo real de REDES SGC. Desplazamiento cero es el
+// inicio. Los valores ilegales -limite negativo, por encima del maximo, o
+// desplazamiento negativo- los rechaza el adaptador HTTP con 400; el
+// repositorio solo aplica el defecto.
+type Paginacion struct {
+	Limite         int
+	Desplazamiento int
+}
+
+const (
+	// LimiteObrasPorDefecto es el tope cuando quien llama no pide otro.
+	LimiteObrasPorDefecto = 100
+	// LimiteObrasMaximo es el techo que acepta GET /obras. Por encima es 400,
+	// no un silencio que lo recorte: quien pide 10_000 tiene que saber que no.
+	LimiteObrasMaximo = 500
+)
+
+// ConDefecto pone LimiteObrasPorDefecto cuando Limite llega en cero. No
+// recorta ni rechaza: eso es del adaptador HTTP.
+func (p Paginacion) ConDefecto() Paginacion {
+	if p.Limite == 0 {
+		p.Limite = LimiteObrasPorDefecto
+	}
+	return p
+}
+
 // FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
 // NO filtra, y los que vienen se combinan con Y.
 //
@@ -205,11 +236,15 @@ type GestionDeclaraciones interface {
 // el titulo localizado y el original difieren en 16 de 59 filas de Caracol-.
 // Los otros tres son exactos: un genero, un anio y un IPI se conocen enteros
 // o no se conocen.
+//
+// La paginacion viaja embebida: Buscar y ListarObras comparten la misma forma
+// (issue #90, seguimiento de #86).
 type FiltroObras struct {
 	Titulo string
 	Genero string
 	IPI    string
 	Anio   int
+	Paginacion
 }
 
 // RepositorioIdentificacion cubre alias, identificadores globales y el
