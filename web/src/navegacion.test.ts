@@ -31,6 +31,11 @@ describe("itemsDeNav", () => {
     );
   });
 
+  it("contabilidad ve /anomalias: es la segunda firma y necesita el aviso de alertas", () => {
+    expect(itemsDeNav("contabilidad").map((r) => r.to)).toContain("/anomalias");
+    expect(puedeVer("contabilidad", "/anomalias")).toBe(true);
+  });
+
   it("las dos firmas no se solapan en reportes: distribucion no los ve", () => {
     expect(itemsDeNav("contabilidad").map((r) => r.to)).toContain("/reportes");
     expect(itemsDeNav("distribucion").map((r) => r.to)).not.toContain(

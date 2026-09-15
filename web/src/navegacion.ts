@@ -65,7 +65,10 @@ export const RUTAS: readonly ItemDeNav[] = [
   {
     to: "/anomalias",
     label: "Anomalías",
-    roles: ["administrador", "distribucion", "auditor"],
+    // Contabilidad es la segunda firma de la compuerta: sin /anomalias no
+    // ve el aviso de alertas abiertas antes de firmar. Roles a alinear con
+    // el `requiereRol` de #17 cuando aterrice el middleware.
+    roles: ["administrador", "distribucion", "contabilidad", "auditor"],
     seccion: "principal",
   },
   {

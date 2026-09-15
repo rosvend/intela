@@ -286,27 +286,34 @@ describe("PanelCorridas", () => {
     ).toBe(false);
   });
 
-  it("contabilidad no pide las alertas: no tiene /anomalias y el 403 pintaria las tarjetas en rojo", async () => {
+  it("contabilidad pide las alertas y ve el aviso antes de firmar", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/auth/session") return json(usuario("contabilidad"));
       if (path === RUTAS_REPARTO.procesos) return json([nacional]);
       if (path.startsWith("/api/alertas"))
-        return json({ error: "no autorizado" }, 403);
+        return json([
+          {
+            id: "al-1",
+            tipo: "oni",
+            detalle: "Sin identificar",
+            periodo: "2025",
+          },
+        ]);
       return json({ error: "ruta no encontrada" }, 404);
     });
 
     montar();
 
-    await screen.findByRole("button", { name: "Firmar" });
+    await screen.findByText(
+      "Revisa las 1 alertas abiertas del periodo antes de firmar.",
+    );
     expect(
       vi
         .mocked(fetch)
         .mock.calls.some(([url]) => String(url).startsWith("/api/alertas")),
-    ).toBe(false);
-    expect(screen.queryByRole("alert")).toBeNull();
-    // Ni tarjetas de conteo que nunca se van a poder rellenar.
-    expect(screen.queryByText("Alertas abiertas del periodo")).toBeNull();
+    ).toBe(true);
+    expect(screen.getByText("Alertas abiertas del periodo")).toBeTruthy();
   });
 
   it("firmar con alertas abiertas avisa, pero no bloquea la compuerta", async () => {

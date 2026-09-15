@@ -24,13 +24,13 @@ export default function TableroAnomalias() {
   }, [procesos]);
 
   const periodo = periodoParam || periodos[0] || "";
-  // Sin esperar a `procesos` el primer render pediria `/api/alertas` sin
-  // filtro y pintaria el conteo de todos los periodos bajo una cabecera que
-  // ya nombra uno. Con `?periodo` en la URL no hay nada que esperar.
-  const periodoResuelto = periodoParam !== "" || procesos.tipo !== "cargando";
+  // Solo pedimos alertas con un periodo concreto. Sin `?periodo` esperamos a
+  // `procesos` para tomar el primero; si falla o la lista viene vacia, no
+  // pedimos `/api/alertas` sin filtro (hoy, sin backend, eso pintaba el
+  // conteo global bajo una cabecera que no nombra ningun periodo).
   const alertas = useRecurso<Alerta[]>(
     RUTAS_REPARTO.alertas(periodo),
-    periodoResuelto,
+    periodo !== "",
   );
 
   const lista = alertas.tipo === "listo" ? pendientes(alertas.datos) : [];
@@ -77,7 +77,7 @@ export default function TableroAnomalias() {
           <Tarjeta
             key={tipo}
             titulo={etiquetaDeTipo(tipo)}
-            descripcion="Abiertas en el periodo"
+            descripcion={periodo ? "Abiertas en el periodo" : "Abiertas"}
             to="#bandeja"
             etiquetaEnlace="Ir a resolución"
             recurso={conteoDeTipo(alertas, tipo)}
@@ -102,11 +102,15 @@ export default function TableroAnomalias() {
             {alertas.mensaje}
           </p>
         )}
-        {alertas.tipo === "ausente" && (
+        {(alertas.tipo === "ausente" || alertas.tipo === "inactivo") && (
           <p className="muted">Sin datos todavía.</p>
         )}
         {alertas.tipo === "listo" && lista.length === 0 && (
-          <p className="muted">No hay alertas abiertas en este periodo.</p>
+          <p className="muted">
+            {periodo
+              ? "No hay alertas abiertas en este periodo."
+              : "No hay alertas abiertas."}
+          </p>
         )}
         {alertas.tipo === "listo" && lista.length > 0 && (
           <table>

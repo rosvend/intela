@@ -49,9 +49,9 @@ export default function PanelCorridas() {
     ? `${seleccionado.id}:${seleccionado.revision}:${seleccionado.etapa}`
     : "";
   const periodo = seleccionado?.periodo;
-  // Ver /distribucion no implica poder leer /alertas: contabilidad firma la
-  // compuerta pero no esta en los roles de /anomalias. Pedirlas igual dejaria
-  // las cinco tarjetas en rojo con el 403, que `esAusente` no trata como vacio.
+  // Solo quien puede ver /anomalias lee /api/alertas. Contabilidad firma y
+  // tambien llega a /anomalias (para ver el aviso antes de firmar); pedirlas
+  // con un rol sin acceso dejaria las cinco tarjetas en rojo con el 403.
   const verAnomalias = usuario ? puedeVer(usuario.rol, "/anomalias") : false;
   const alertas = useRecurso<Alerta[]>(
     RUTAS_REPARTO.alertas(periodo),

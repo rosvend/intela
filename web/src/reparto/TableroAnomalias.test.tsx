@@ -206,5 +206,10 @@ describe("TableroAnomalias", () => {
         0,
       ),
     );
+    // Sin periodo resuelto no se pide el listado global.
+    expect(
+      vi.mocked(fetch).mock.calls.map(([url]) => String(url)),
+    ).not.toContain(RUTAS_REPARTO.alertas());
+    expect(screen.getAllByText("Abiertas").length).toBeGreaterThan(0);
   });
 });
