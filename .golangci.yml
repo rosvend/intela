@@ -156,6 +156,22 @@ linters:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
               desc: "ADR 0003: reparto reads from recaudo. recaudo does not know reparto."
 
+        # Normalizacion produces the canonical Uso the engine consumes; it
+        # does not touch money, recaudo or the matching cascade.
+        modulos-normalizacion:
+          files:
+            - "**/internal/dominio/normalizacion/*.go"
+            - "**/internal/dominio/normalizacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: normalizacion does not touch money. It yields a canonical row; reparto consumes it."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: normalizacion does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: normalizacion does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/identificacion
+              desc: "ADR 0007: identifying the obra is a later cascade, not a schema transform."
+
         # ADR 0003: "Identificacion escribe alias y emite ONI, y no toca dinero."
         modulos-identificacion:
           files:
