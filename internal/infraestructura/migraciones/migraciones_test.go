@@ -85,24 +85,6 @@ func TestAplicarDSNInvalido(t *testing.T) {
 // La numeracion de las migraciones
 // ---------------------------------------------------------------------------
 
-// desplegadas son los ficheros de migracion que `main` ya tiene APLICADOS en
-// la base de produccion.
-//
-// Se enumeran a mano, y eso es lo que hace util la prueba de abajo: son un
-// hecho sobre el DESPLIEGUE, no sobre este arbol de trabajo. Derivarlas de
-// migrations.FS -"las que no anade esta rama"- haria que la prueba pasara
-// siempre, porque compararia el arbol consigo mismo.
-//
-// Hoy la lista es 1, 2 y 5: el PR #85 renumero su migracion a 00005 y su
-// despliegue corrio `goose up` de verdad, asi que produccion esta en la
-// version 5 con el hueco 3-4 libre PARA SIEMPRE. Cuando main avance, esta
-// lista avanza con ella.
-var desplegadas = []string{
-	"00001_init.sql",
-	"00002_catalogo_obras.sql",
-	"00005_cola_clave_natural.sql",
-}
-
 // TestAplicarSobreLaVersionDesplegada es la regresion de la numeracion.
 //
 // `Aplicar` llama a goose.RunContext SIN opciones, asi que corre con
@@ -110,7 +92,7 @@ var desplegadas = []string{
 // version que la base ya tiene aplicada no es una migracion que llegue tarde:
 // es un error que para a goose en seco antes de aplicar NADA.
 //
-//	found N missing migrations before current version 5
+//	found N missing migrations before current version X
 //
 // Y no para solo el esquema. El despliegue corre las migraciones ANTES de sacar
 // la API y condiciona el rollout a que terminen bien, asi que una version libre
@@ -121,9 +103,17 @@ var desplegadas = []string{
 // hace falta escribirlo: contra una base recien creada -la que da testhelp- las
 // migraciones se aplican de la 1 a la ultima en orden, no falta ninguna, y todo
 // pasa. El hueco solo existe contra una base que YA vivio el despliegue de main.
+//
+// Las desplegadas se derivan de MIGRACIONES_BASE_REF (main), no de una lista a
+// mano: esa lista se quedo en 1/2/5 mientras produccion avanzaba (#110).
 func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	ctx := t.Context()
 	dsn := testhelp.DSN(t)
+
+	desplegadas, err := migrations.DesplegadasEn(migrations.BaseRef())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	// testhelp entrega la base con TODAS las migraciones de esta rama
 	// aplicadas, que es justo el estado en el que el hueco no se nota. Volver a
@@ -131,7 +121,7 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	if err := migraciones.Aplicar(ctx, dsn, "reset", mudo()); err != nil {
 		t.Fatalf("volver la base a cero: %v", err)
 	}
-	ponerEnLaVersionDesplegada(ctx, t, dsn)
+	ponerEnLaVersionDesplegada(ctx, t, dsn, desplegadas)
 
 	if err := migraciones.Aplicar(ctx, dsn, "up", mudo()); err != nil {
 		t.Fatalf("una base en la version ya desplegada tiene que poder migrar, "+
@@ -139,16 +129,16 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	}
 }
 
-// ponerEnLaVersionDesplegada aplica SOLO las migraciones de [desplegadas].
+// ponerEnLaVersionDesplegada aplica SOLO las migraciones de desplegadas.
 //
-// Con un FS recortado y no con `up-to`: `up-to 5` aplicaria tambien cualquier
+// Con un FS recortado y no con `up-to`: `up-to N` aplicaria tambien cualquier
 // version intermedia que anada esta rama, que es exactamente el hueco que hay
 // que dejar sin tapar para que la prueba signifique algo.
 //
 // Con Provider y no con las funciones globales de goose porque [migraciones.Aplicar]
 // usa esas globales: pisarlas aqui dejaria la prueba siguiente montada sobre el
 // FS recortado.
-func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string) {
+func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, desplegadas []string) {
 	t.Helper()
 
 	soloMain := fstest.MapFS{}
