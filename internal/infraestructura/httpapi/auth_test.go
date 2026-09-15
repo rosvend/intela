@@ -48,6 +48,11 @@ func servidor(t *testing.T, auth Autenticacion) http.Handler {
 	return Nueva(Casos{Auth: auth}, Opciones{}).Router()
 }
 
+func servidorCon(t *testing.T, auth Autenticacion, ingresos ConsultaIngresos, explicar ExplicarCifra) http.Handler {
+	t.Helper()
+	return Nueva(Casos{Auth: auth, Ingresos: ingresos, Explicar: explicar}, Opciones{}).Router()
+}
+
 func pedir(t *testing.T, h http.Handler, metodo, ruta, cuerpo, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	var lector io.Reader

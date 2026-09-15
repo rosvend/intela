@@ -124,6 +124,8 @@ func ejecutar(log *slog.Logger) error {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
+		Ingresos:      aplicacion.ConsultaIngresos{Repo: store},
+		Explicar:      aplicacion.ExplicarCifra{Repo: store},
 		Catalogo:      catalogo,
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
