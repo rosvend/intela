@@ -610,6 +610,85 @@ td {
   color: var(--acento);
 }
 
+/* ---------- alta de titular (afiliacion/Wizard.tsx) ---------- */
+
+.wizard {
+  max-width: 38rem;
+  margin: 2rem auto;
+  padding: 0 1.5rem 2rem;
+}
+.wizard fieldset {
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  padding: 1rem 1.2rem;
+  margin: 0 0 1rem;
+}
+.wizard legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+.wizard label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.7rem 0;
+}
+.wizard label.opcion {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.wizard input[type="radio"] {
+  margin-top: 0.25rem;
+}
+.pasos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0;
+  margin: 0 0 1.2rem;
+  list-style: none;
+  font-size: 0.85rem;
+}
+.pasos li {
+  color: var(--texto-suave);
+}
+.pasos li[aria-current="step"] {
+  color: var(--acento);
+  font-weight: 600;
+}
+.wizard-retorno {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+}
+.wizard-retorno summary {
+  cursor: pointer;
+  color: var(--texto-suave);
+}
+.revision {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+}
+.revision dt {
+  color: var(--texto-suave);
+}
+.revision dd {
+  margin: 0;
+}
+.acciones {
+  display: flex;
+  gap: 0.6rem;
+}
+.alerta {
+  color: #7a2a22;
+  background: #f8ebe6;
+  border: 1px solid #e3c7be;
+  padding: 0.6rem 0.8rem;
+}
+
 /* ---------- tablero (Inicio, reutilizado por #40 / #42) ---------- */
 
 .tablero {
