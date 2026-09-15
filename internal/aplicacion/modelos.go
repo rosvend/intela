@@ -139,6 +139,7 @@ type UsoPersistido struct {
 	ReporteID     string
 	Fuente        string
 	Titulo        string
+	TituloOrig    string
 	IDsFuente     string
 	ObraID        string
 	Escalon       string
@@ -146,6 +147,15 @@ type UsoPersistido struct {
 	ONI           bool
 	Modalidad     reparto.Modalidad
 	TipoObra      string
+	Fecha         string
+	Hora          string
+	Moneda        string
+	UnidadDuracion string
+	// DuracionTexto y EmisionesTexto conservan el crudo del adaptador cuando
+	// el campo viaja como texto hacia [normalizacion.Fila]. Si estan vacios,
+	// aFila re-serializa DuracionMin / Emisiones.
+	DuracionTexto  string
+	EmisionesTexto string
 	DuracionMin   decimal.Decimal
 	Emisiones     int64
 	Rating        decimal.Decimal
@@ -153,6 +163,7 @@ type UsoPersistido struct {
 	Vistas        decimal.Decimal
 	MinutosVistos decimal.Decimal
 	PB            decimal.Decimal
+	Autopromo     bool
 
 	// RechazoMotivo: por que esta fila no se pudo normalizar.
 	//
@@ -167,6 +178,13 @@ type UsoPersistido struct {
 	// CON su razon. Donde acaba cada una de las dos clases de fila lo decide
 	// el adaptador (ADR 0016).
 	RechazoMotivo string
+
+	// RechazoTipo y RechazoCodigo son el discriminante tipado de la cola de
+	// revision (B3). Sin columnas propias, cortar el motivo por ": " inventaba
+	// codigos a partir de prosa del adaptador y afirmaba origen normalizacion
+	// sobre filas que nunca pasaron por ese detector.
+	RechazoTipo   string
+	RechazoCodigo string
 }
 
 // ItemRevision es una fila de la cola de revision: lo que no se pudo

@@ -78,8 +78,12 @@ type Snapshot struct {
 	// ya la duracion transformada.
 	DuracionArtisticaPct decimal.Decimal
 	MinutosHoraTV        decimal.Decimal
-	MonedaBase           string
-	TRM                  decimal.Decimal
+
+	// Moneda base del periodo y tasas a esa base (clave ISO → factor).
+	// No hay lista de monedas en codigo: solo se convierten las que traen
+	// tasa. EUR sin entrada propia no hereda la del dolar.
+	MonedaBase string
+	Tasas      map[string]decimal.Decimal
 }
 
 // Uso de una obra en un periodo, ya identificado.

@@ -99,13 +99,18 @@ func parsearSerialExcel(s string) (Fecha, bool) {
 	}
 	// YYYYMMDD son 8 digitos y ya se intentaron. Un serial de 2024 ronda
 	// los 45000. Por encima de 100000 no es una fecha de parrilla.
-	if entero < 1 || entero > 100000 {
+	//
+	// Suelo en 61: el serial 60 es el 29 de febrero inventado de Excel, y
+	// 1..59 (y un "5" perdido en la columna) caerian en 1899-1900 sin que
+	// nadie lo pidiera. OE-1 manda eso a revision, no a una fecha inventada.
+	if entero < 61 || entero > 100000 {
 		return Fecha{}, false
 	}
-	if entero == 60 {
+	f := diasDesdeEpochExcel(entero)
+	if !f.valida() {
 		return Fecha{}, false
 	}
-	return diasDesdeEpochExcel(entero), true
+	return f, true
 }
 
 // 25569 es el serial de Excel del 1970-01-01 (epoch Unix en dias). Contar

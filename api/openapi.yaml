@@ -304,8 +304,9 @@ paths:
         de un periodo (ONI, duplicados, declaraciones que no suman 100%).
 
         Un solo listado y un solo schema. `tipo` discrimina el origen
-        (`normalizacion` | `anomalia`); `codigo` es el motivo tipado; `motivo`
-        nombra el campo. La fila no se descarto: esta aqui, con su razon.
+        (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
+        tipado persistido, no re-derivado del texto; `motivo` nombra el
+        campo. La fila no se descarto: esta aqui, con su razon.
 
         Sin sesion responde 401. Con sesion de otro rol responde 403.
       operationId: listarColaRevision
@@ -2100,9 +2101,10 @@ components:
       required: [id, tipo, codigo, motivo, fuente, titulo, reporte_id]
       description: |
         Una fila de la cola de revision. El mismo schema sirve a la
-        normalizacion (OE-1) y a las anomalias (OE-5 / #37): `tipo` dice de
-        cual detector salio, `codigo` es el motivo tipado y `motivo` nombra
-        el campo. No hay importes: una fila en revision no pondera.
+        normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
+        y a las anomalias (OE-5 / #37): `tipo` dice de cual detector salio,
+        `codigo` es el motivo tipado (columna propia) y `motivo` nombra el
+        campo. No hay importes: una fila en revision no pondera.
       properties:
         id:
           type: string
@@ -2110,13 +2112,14 @@ components:
         tipo:
           type: string
           description: Origen del item.
-          enum: [normalizacion, anomalia]
+          enum: [normalizacion, anomalia, adaptador]
         codigo:
           type: string
           description: |
             Motivo tipado (`fecha_inparseable`, `moneda_desconocida`,
-            `parametro_ausente`, y los del #37). Permite filtrar sin parsear
-            prosa.
+            `parametro_ausente`, `rechazo_formato`, y los del #37). Permite
+            filtrar sin parsear prosa. Se persiste en columna propia; no se
+            re-deriva cortando el texto del motivo.
         motivo:
           type: string
           description: Texto que nombra el campo y explica que falta o esta mal.

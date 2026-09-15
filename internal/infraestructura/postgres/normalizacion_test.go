@@ -17,7 +17,7 @@ func TestNormalizarUnLoteMixtoDejaCanonicasYRevision(t *testing.T) {
 		DuracionArtisticaPct: decimal.RequireFromString("0.80"),
 		MinutosHoraTV:        decimal.NewFromInt(48),
 		MonedaBase:           "COP",
-		MonedasReconocidas:   []string{"COP", "USD", "EUR"},
+		Tasas:                map[string]decimal.Decimal{},
 	}
 	rep := aplicacion.Reporte{ID: reporteEnero, Fuente: "caracol"}
 

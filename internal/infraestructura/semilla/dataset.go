@@ -422,6 +422,13 @@ func (d *Dataset) parametros() {
 		publicado("duracion.artistica_pct", "0.80", "Consejo Directivo", "RD 9.1.1"),
 		publicado("duracion.minutos_hora_tv", "48", "Consejo Directivo", "RD 9.1.1"),
 
+		// Tasas a COP. Viven aqui y no en una lista Go (ADR 0004 / B4).
+		// USD es P-09 provisional (TRM de facturacion). EUR es sintetica
+		// hasta que haya tasa propia: sin fila, normalizacion manda EUR a
+		// revision en vez de multiplicar por la del dolar.
+		sintetico("cambio.USD", "4000"),
+		sintetico("cambio.EUR", "4300"),
+
 		// El reglamento fija un TECHO, no la tasa. `R-06` dice "hasta 20% para
 		// gastos administrativos" y "hasta 10% para programas de inversion
 		// social" (Ley 44/1993 Art. 21); `R-07`, "se puede retener hasta 5% ...

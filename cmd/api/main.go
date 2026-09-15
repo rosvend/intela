@@ -118,6 +118,7 @@ func ejecutar(log *slog.Logger) error {
 		Reportes: store,
 		Almacen:  objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
 		Lectores: lectores,
+		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{

@@ -12,8 +12,9 @@ func params() Parametros {
 		DuracionArtisticaPct: decimal.RequireFromString("0.80"),
 		MinutosHoraTV:        decimal.NewFromInt(48),
 		MonedaBase:           "COP",
-		MonedasReconocidas:   []string{"COP", "USD", "EUR"},
-		TRM:                  decimal.RequireFromString("4000"),
+		Tasas: map[string]decimal.Decimal{
+			"USD": decimal.RequireFromString("4000"),
+		},
 	}
 }
 
@@ -101,6 +102,42 @@ func TestNormalizarNoEncadena80Y48(t *testing.T) {
 	}
 }
 
+func TestHotelAplicaLaMismaDuracionQueTV(t *testing.T) {
+	// RD 9.5/9.6 remiten a la formula de 9.1.1.
+	f := Fila{
+		Modalidad: ModalidadHotel, Titulo: "Programa hotel",
+		Duracion: "60", UnidadDuracion: "horas",
+	}
+	u, rev := Normalizar(f, params())
+	if rev != nil {
+		t.Fatalf("revision: %s", rev.Motivo())
+	}
+	if !u.DuracionMin.Equal(d("2880")) {
+		t.Fatalf("hotel horas: DuracionMin = %s, se esperaba 60*48", u.DuracionMin)
+	}
+
+	f.UnidadDuracion = ""
+	u, rev = Normalizar(f, params())
+	if rev != nil {
+		t.Fatalf("revision: %s", rev.Motivo())
+	}
+	if !u.DuracionMin.Equal(d("48")) {
+		t.Fatalf("hotel minutos: DuracionMin = %s, se esperaba 80%% de 60", u.DuracionMin)
+	}
+}
+
+func TestEmisionesCeroExplicitoNoSeConvierteEnUno(t *testing.T) {
+	f := filaTV()
+	f.Emisiones = "0"
+	u, rev := Normalizar(f, params())
+	if rev != nil {
+		t.Fatalf("revision: %s", rev.Motivo())
+	}
+	if u.Emisiones != 0 {
+		t.Fatalf("Emisiones = %d, se esperaba 0 (dato, no ausencia)", u.Emisiones)
+	}
+}
+
 func TestAutopromoNoComputaYNoSeDescarta(t *testing.T) {
 	f := filaTV()
 	f.Autopromo = true
@@ -157,6 +194,9 @@ func TestParsearFecha(t *testing.T) {
 		{"mes 13", "20241301", Fecha{}, true},
 		{"prosa", "ayer", Fecha{}, true},
 		{"serial 60, el 29 de febrero inventado de Excel", "60", Fecha{}, true},
+		{"serial 1 no es una fecha de parrilla", "1", Fecha{}, true},
+		{"serial 5 no es una fecha de parrilla", "5", Fecha{}, true},
+		{"serial 99999 fuera de 1900-2100", "99999", Fecha{}, true},
 	}
 
 	for _, c := range casos {
@@ -292,7 +332,8 @@ func TestMonedaDesconocidaNoSePoneACero(t *testing.T) {
 			}
 			if !strings.Contains(rev.Motivo(), "no se pone a cero") &&
 				!strings.Contains(rev.Motivo(), "no trae importes") &&
-				!strings.Contains(rev.Motivo(), "sin moneda") {
+				!strings.Contains(rev.Motivo(), "sin moneda") &&
+				!strings.Contains(rev.Motivo(), "sin tasa") {
 				t.Fatalf("el motivo tiene que dejar claro que no se silencia: %s", rev.Motivo())
 			}
 			if u.Titulo == "" {
@@ -302,7 +343,7 @@ func TestMonedaDesconocidaNoSePoneACero(t *testing.T) {
 	}
 }
 
-func TestTaquillaEnMonedaBaseYConversionPorTRM(t *testing.T) {
+func TestTaquillaEnMonedaBaseYConversionPorTasa(t *testing.T) {
 	t.Run("ya en COP", func(t *testing.T) {
 		u, rev := Normalizar(Fila{
 			Modalidad: ModalidadCine, Titulo: "Pelicula X",
@@ -315,7 +356,7 @@ func TestTaquillaEnMonedaBaseYConversionPorTRM(t *testing.T) {
 			t.Fatalf("Taquilla = %s", u.Taquilla)
 		}
 	})
-	t.Run("USD por TRM", func(t *testing.T) {
+	t.Run("USD por su tasa", func(t *testing.T) {
 		u, rev := Normalizar(Fila{
 			Modalidad: ModalidadCine, Titulo: "Pelicula X",
 			Taquilla: "10", Moneda: "USD",
@@ -327,15 +368,43 @@ func TestTaquillaEnMonedaBaseYConversionPorTRM(t *testing.T) {
 			t.Fatalf("Taquilla = %s, se esperaba 10 * 4000", u.Taquilla)
 		}
 	})
-	t.Run("USD sin TRM", func(t *testing.T) {
+	t.Run("USD sin tasa", func(t *testing.T) {
 		p := params()
-		p.TRM = decimal.Zero
+		p.Tasas = nil
 		_, rev := Normalizar(Fila{
 			Modalidad: ModalidadCine, Titulo: "Pelicula X",
 			Taquilla: "10", Moneda: "USD",
 		}, p)
-		if rev == nil || rev.Codigo != CodigoParametroAusente {
-			t.Fatalf("sin TRM no se inventa un tipo de cambio: %+v", rev)
+		if rev == nil || rev.Codigo != CodigoMonedaDesconocida {
+			t.Fatalf("sin tasa no se inventa un tipo de cambio: %+v", rev)
+		}
+	})
+	t.Run("EUR no hereda la tasa del dolar", func(t *testing.T) {
+		// B4: reconocer EUR en una lista y multiplicar por TRM del USD
+		// ponderaba RD 9.2 en silencio con una cifra inexplicable.
+		_, rev := Normalizar(Fila{
+			Modalidad: ModalidadCine, Titulo: "Pelicula X",
+			Taquilla: "10", Moneda: "EUR",
+		}, params())
+		if rev == nil || rev.Codigo != CodigoMonedaDesconocida {
+			t.Fatalf("EUR sin tasa propia tiene que ir a revision: %+v", rev)
+		}
+	})
+	t.Run("EUR con su propia tasa", func(t *testing.T) {
+		p := params()
+		p.Tasas = map[string]decimal.Decimal{
+			"USD": d("4000"),
+			"EUR": d("4300"),
+		}
+		u, rev := Normalizar(Fila{
+			Modalidad: ModalidadCine, Titulo: "Pelicula X",
+			Taquilla: "10", Moneda: "EUR",
+		}, p)
+		if rev != nil {
+			t.Fatalf("revision: %s", rev.Motivo())
+		}
+		if !u.Taquilla.Equal(d("43000")) {
+			t.Fatalf("Taquilla = %s, se esperaba 10 * 4300", u.Taquilla)
 		}
 	})
 }

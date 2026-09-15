@@ -66,15 +66,19 @@ type Fila struct {
 // Parametros son los coeficientes normativos que este paquete necesita,
 // resueltos contra la vigencia del periodo (ADR 0004).
 //
-// Ninguno tiene valor por defecto aqui: un cero o una lista vacia es
+// Ninguno tiene valor por defecto aqui: un cero o un mapa vacio es
 // "ausente", y una fila de TV que los necesite va a revision en vez de
 // calcularse con un 80% o un 48 inventados por el codigo.
+//
+// Tasas son tipos de cambio a la moneda base, indexados por codigo ISO
+// (USD, EUR, ...). La base misma no necesita entrada: se reconoce por
+// MonedaBase. Una moneda sin tasa va a revision; no se multiplica por la
+// tasa de otra (B4).
 type Parametros struct {
 	DuracionArtisticaPct decimal.Decimal
 	MinutosHoraTV        decimal.Decimal
 	MonedaBase           string
-	MonedasReconocidas   []string
-	TRM                  decimal.Decimal
+	Tasas                map[string]decimal.Decimal
 }
 
 // Fecha civil. Existe para no importar `time`: el nucleo recibe instantes

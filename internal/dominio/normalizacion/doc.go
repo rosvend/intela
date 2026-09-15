@@ -27,9 +27,20 @@
 // artistica es el 80% de la reportada por el proveedor. Los coeficientes
 // llegan en [Parametros], no estan escritos en el codigo (ADR 0004). Las dos
 // transformaciones NO se encadenan: 80% de 60 minutos ES 48 minutos, que es
-// la hora televisiva del ejemplo de `formulas.md` 9.1.
+// la hora televisiva del ejemplo de `formulas.md` 9.1. La norma escrita esta
+// en `docs/dominio/formulas.md` (seccion Duracion) y no solo en este
+// comentario.
+//
+// Hotel aplica la misma transformacion (RD 9.5/9.6 remiten a 9.1.1). OTT no.
 //
 // Los avances publicitarios de programacion propia no computan: la fila
 // queda canonica con duracion cero, no va a revision. Descartarla seria
 // perder la evidencia de que el canal la reporto.
+//
+// # Fecha y hora canonicas
+//
+// [Uso.Fecha] y [Uso.Hora] se calculan aqui. Persistirlas en `usos` es
+// responsabilidad de la capa de aplicacion/migracion; si la tabla aun no
+// tiene columnas, el orquestador las copia a [aplicacion.UsoPersistido] y
+// el adaptador las escribe cuando existan.
 package normalizacion

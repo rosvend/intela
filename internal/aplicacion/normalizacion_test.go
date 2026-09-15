@@ -15,8 +15,9 @@ func paramsNormativos() normalizacion.Parametros {
 		DuracionArtisticaPct: decimal.RequireFromString("0.80"),
 		MinutosHoraTV:        decimal.NewFromInt(48),
 		MonedaBase:           "COP",
-		MonedasReconocidas:   []string{"COP", "USD", "EUR"},
-		TRM:                  decimal.RequireFromString("4000"),
+		Tasas: map[string]decimal.Decimal{
+			"USD": decimal.RequireFromString("4000"),
+		},
 	}
 }
 
@@ -158,6 +159,10 @@ func TestListarRevisionLeeElLogDeRechazos(t *testing.T) {
 		if it.Codigo == "" || it.Motivo == "" || it.Titulo == "" {
 			t.Fatalf("item incompleto: %+v", it)
 		}
+		if it.Codigo != normalizacion.CodigoFechaInparseable &&
+			it.Codigo != normalizacion.CodigoMonedaDesconocida {
+			t.Fatalf("codigo no tipado: %q", it.Codigo)
+		}
 	}
 }
 
@@ -171,11 +176,43 @@ func TestParametrosDesdeExigeLosCoeficientesDeTV(t *testing.T) {
 		DuracionArtisticaPct: decimal.RequireFromString("0.80"),
 		MinutosHoraTV:        decimal.NewFromInt(48),
 		MonedaBase:           "COP",
+		Tasas: map[string]decimal.Decimal{
+			"USD": decimal.RequireFromString("4000"),
+		},
 	})
 	if err != nil {
 		t.Fatalf("snapshot completo: %v", err)
 	}
 	if !p.DuracionArtisticaPct.Equal(decimal.RequireFromString("0.80")) {
 		t.Fatalf("pct = %s", p.DuracionArtisticaPct)
+	}
+	if _, ok := p.Tasas["USD"]; !ok {
+		t.Fatal("las tasas del snapshot no pueden inventarse en Go")
+	}
+}
+
+// S6: normalizacion duplica el vocabulario de modalidad por depguard.
+// Si manana entra una quinta modalidad en reparto y no en normalizacion,
+// las filas empiezan a rechazarse en silencio.
+func TestVocabularioDeModalidadAlineadoConReparto(t *testing.T) {
+	repartoMods := map[string]bool{
+		string(reparto.TV):    true,
+		string(reparto.Cine):  true,
+		string(reparto.OTT):   true,
+		string(reparto.Hotel): true,
+	}
+	normMods := map[string]bool{
+		normalizacion.ModalidadTV:    true,
+		normalizacion.ModalidadCine:  true,
+		normalizacion.ModalidadOTT:   true,
+		normalizacion.ModalidadHotel: true,
+	}
+	if len(repartoMods) != len(normMods) {
+		t.Fatalf("reparto tiene %d modalidades, normalizacion %d", len(repartoMods), len(normMods))
+	}
+	for m := range repartoMods {
+		if !normMods[m] {
+			t.Fatalf("reparto.Modalidad %q no esta en normalizacion", m)
+		}
 	}
 }

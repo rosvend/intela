@@ -105,13 +105,26 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 		return u, nil
 	}
 
-	if u.Modalidad == ModalidadTV {
+	// RD 9.5/9.6 aplican la misma formula de 9.1.1 dentro de cada grupo /
+	// establecimiento: hotel reparte como TV por suscripcion, asi que la
+	// duracion artistica y la hora de 48 minutos valen igual. OTT no.
+	switch u.Modalidad {
+	case ModalidadTV, ModalidadHotel:
 		min, rev := duracionTV(duracion, f.UnidadDuracion, p)
 		if rev != nil {
 			return u, rev
 		}
 		u.DuracionMin = min
-	} else {
+	default:
+		if uni := strings.ToLower(strings.TrimSpace(f.UnidadDuracion)); uni == unidadHoras {
+			// En modalidades sin 9.1.1, "horas" no se lee como minutos en
+			// silencio: a revision, no a un numero inventado.
+			return u, &Revision{
+				Codigo:  CodigoMedidaInvalida,
+				Campo:   "unidad_duracion",
+				Detalle: "unidad_duracion horas en modalidad " + u.Modalidad + ": solo TV y hotel aplican la hora televisiva",
+			}
+		}
 		u.DuracionMin = duracion
 	}
 
@@ -182,8 +195,7 @@ func parsearEmisiones(s string) (int64, *Revision) {
 			Detalle: "emisiones negativas: " + s + ": no se pone a cero",
 		}
 	}
-	if n == 0 {
-		return 1, nil
-	}
+	// Cero explicito es dato, no ausencia: la fuente reporto cero emisiones.
+	// Solo la cadena vacia se convierte en 1 (arriba).
 	return n, nil
 }
