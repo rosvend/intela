@@ -11,7 +11,20 @@ import (
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
-var _ aplicacion.CatalogoObras = (*Store)(nil)
+// catalogo presenta *Store como [aplicacion.CatalogoObras].
+//
+// *Store no puede satisfacer CatalogoObras y BitacoraAuditoria a la vez:
+// ambos puertos declaran PorID y Go no admite dos metodos con el mismo
+// nombre y distinta firma. Registrar, Actualizar y Buscar se promocionan
+// del embed; PorID se define aqui y tapa el de la bitacora.
+type catalogo struct{ *Store }
+
+var _ aplicacion.CatalogoObras = catalogo{}
+
+// CatalogoObras es *Store visto por el puerto del catalogo maestro.
+func (s *Store) CatalogoObras() aplicacion.CatalogoObras {
+	return catalogo{s}
+}
 
 // columnasCatalogo es la obra ENTERA, la que reconstruye la entidad.
 //
@@ -108,12 +121,12 @@ func (s *Store) escribirCoautores(ctx context.Context, tx pgx.Tx, o repertorio.O
 }
 
 // PorID reconstruye una obra del catalogo.
-func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
+func (c catalogo) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
 		fila fila
 		tipo string
 	)
-	err := s.pool.QueryRow(ctx,
+	err := c.pool.QueryRow(ctx,
 		`SELECT `+columnasCatalogo+` FROM obras WHERE id = $1`, id).
 		Scan(&fila.id, &fila.titulo, &fila.genero, &fila.anio, &tipo,
 			&fila.ida, &fila.eidr, &fila.imdb)
@@ -122,7 +135,7 @@ func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	}
 	fila.tipo = repertorio.TipoObra(tipo)
 
-	coautores, err := s.coautoresDeObras(ctx, []string{id})
+	coautores, err := c.coautoresDeObras(ctx, []string{id})
 	if err != nil {
 		return repertorio.Obra{}, err
 	}
