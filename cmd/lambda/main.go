@@ -135,6 +135,11 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes: store,
+		Reloj:   reloj.Sistema{},
+	}
+
 	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
@@ -167,6 +172,7 @@ func construir() (http.Handler, error) {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
+		Liq:           liquidaciones,
 		Catalogo:      catalogo,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
