@@ -1,0 +1,55 @@
+# Reusable stage: migration version numbering.
+#
+# Goose loads every `migrations/*.sql` by the numeric prefix in the filename.
+# Two failure modes reach production only at `terraform apply` (#110):
+#
+#   1. Duplicate version — two files, different names, same number. Git merges
+#      clean; goose panics inside lambda-migrate.
+#   2. Number at or below the version already applied in production — goose
+#      runs with allowMissing=false, refuses the up, and module.api never
+#      rolls out because it depends_on module.migrations.
+#
+# The Go suite under `migrations/` catches both without Postgres. The applied
+# version is derived from MIGRACIONES_BASE_REF (the PR base SHA, or
+# origin/main), not from a hand-maintained list that goes stale.
+#
+# Kept as its own stage so a red check says "numbering", not "some Go test".
+# test-go still runs TestAplicarSobreLaVersionDesplegada (needs Postgres) when
+# Go or migrations change.
+
+name: Migration versions
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: version numbering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Need the PR base (or origin/main) reachable for DesplegadasEn.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # On a pull_request the base SHA is exactly "what main had when this PR
+      # targeted it". On push / workflow_dispatch, HEAD is main after the
+      # merge: comparing the tree to itself makes the gap check vacuously
+      # green, and the duplicate check still runs against the embedded FS.
+      - name: go test migrations numbering
+        env:
+          MIGRACIONES_BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          go test -count=1 ./migrations/ -run 'TestSinVersionesDuplicadas|TestNuevasPorEncimaDeLaAplicada|TestNumeracionDetectaDuplicadoYHueco'

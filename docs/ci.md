@@ -28,6 +28,25 @@ if: always()
 > El nombre del job `ci` es el contrato con la proteccion de rama. Renombrarlo deja `main`
 > esperando un check que ya no existe, y no se puede mergear nada hasta arreglarlo.
 
+### Numeracion de migraciones
+
+Goose toma la version del prefijo del fichero. Dos modos de fallo solo aparecian en el
+`terraform apply` ([#110](https://github.com/rosvend/intela/issues/110)):
+
+1. **Version duplicada** — dos `.sql` con el mismo numero y distinto nombre se mergean en git y
+   goose entra en panic dentro de `lambda-migrate`.
+2. **Numero por debajo de la version aplicada** — con `allowMissing = false`, goose rechaza el
+   `up` y `module.api` no se actualiza porque depende de `module.migrations`.
+
+La etapa `Migration versions` corre las pruebas estaticas de `migrations/` (sin Postgres). La
+version aplicada se deriva de `MIGRACIONES_BASE_REF` (el SHA base del PR, o el commit en `main`),
+no de una lista a mano. `Test (Go)` sigue corriendo `TestAplicarSobreLaVersionDesplegada` contra
+Postgres, y su filtro de rutas incluye `migrations/` para que un PR que solo anade un `.sql` no
+se salte la suite.
+
+La regla utilizable: **el primero libre por encima de la version aplicada, y se reasigna al
+mergear**.
+
 ## Etapas
 
 | Etapa | Que corre | Cuando |
@@ -38,6 +57,7 @@ if: always()
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
+| `Migration versions` | Versiones goose unicas y ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
 | `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` |
 | `Test (frontend)` | `npm test` | Hay `web/package.json` y el PR toca `web/` |
