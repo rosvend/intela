@@ -57,34 +57,45 @@ type API struct {
 	salud         Salud
 	auth          Autenticacion
 	catalogo      Catalogo
+	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
 	opts          Opciones
 	log           *slog.Logger
 }
 
-// Casos agrupa los casos de uso que Nueva necesita.
+// Casos agrupa los casos de uso que sirve el adaptador.
 //
-// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
-// se cablea en cmd/api. El comentario que este struct reemplaza decia "cuando
-// la lista pase de tres, se agrupa"; con Declaraciones ya son tres.
+// Iban como parametros sueltos de [Nueva] mientras fueron dos. Con el tercero
+// la lista deja de ser legible en la llamada -- tres interfaces seguidas se
+// pueden cruzar sin que el compilador diga nada si dos comparten forma -- y
+// pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
+// entorno, esto son dependencias.
 type Casos struct {
+	Salud         Salud
 	Auth          Autenticacion
 	Catalogo      Catalogo
+	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
 }
 
 // Nueva construye el adaptador.
-func Nueva(salud Salud, casos Casos, opts Opciones) *API {
+//
+// Un caso de uso nil no es un fallo de arranque: su ruta responde 503. Ver
+// [API.conIngesta]. Es lo que permite que un binario que todavia no cablea la
+// boveda -- cmd/lambda, cuyo sistema de ficheros es de solo lectura -- siga
+// sirviendo el resto de la API.
+func Nueva(casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         salud,
+		salud:         casos.Salud,
 		auth:          casos.Auth,
 		catalogo:      casos.Catalogo,
+		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
 		opts:          opts,
@@ -183,9 +194,37 @@ func (a *API) Router() http.Handler {
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
 		})
+
+		// La ingesta manual de reportes de uso. Pide `administrador` por lo
+		// mismo que el catalogo: una entrega pondera el reparto de un periodo
+		// entero, y el listado de cargas deja ver de que fuentes vive la
+		// sociedad. Cuando entre el panel de operacion (#29), el rol que le
+		// toque lo decide ese issue.
+		protegido.Route("/reportes", func(rep chi.Router) {
+			rep.Use(requiereRol(aplicacion.RolAdministrador))
+			rep.Post("/", a.conIngesta(a.subirReporte))
+			rep.Get("/", a.conIngesta(a.listarCargas))
+		})
 	})
 
 	return r
+}
+
+// conIngesta responde 503 si el binario no cableo el caso de uso de ingesta.
+//
+// Sin esto, la ruta existe y el handler llama a una interfaz nil: el Recoverer
+// lo convierte en un 500 sin cuerpo, que se lee como "el servidor esta roto"
+// cuando lo que pasa es que a ESA instalacion le falta la boveda. 503 lo dice,
+// y ademas es lo que un balanceador entiende.
+func (a *API) conIngesta(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.ingesta == nil {
+			escribirError(w, http.StatusServiceUnavailable,
+				"la ingesta de reportes no esta configurada en esta instalacion")
+			return
+		}
+		h(w, r)
+	}
 }
 
 // health dice que el proceso esta vivo. No toca la base: si lo hiciera, una
