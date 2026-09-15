@@ -44,12 +44,13 @@ done | sed 's|.*/||' | sort -u
 ```
 
 Es la misma politica que la de las migraciones de `goose` (cabecera de
-`migrations/00002_catalogo_obras.sql`), pero alli el error es mas duro y de otra forma: `goose`
+`migrations/00007_uso_excluido_no_es_oni.sql`), pero alli el error es mas duro y de otra forma: `goose`
 corre con `allowMissing = false`, asi que **no solo falla un numero repetido, tambien falla un
 numero LIBRE por debajo de la version ya aplicada**. Reservar un hueco para una rama que aun no ha
 entrado no funciona: en cuanto se despliega una version mayor, ese hueco ya no se puede rellenar y
 la migracion que lo ocupe rompe el despliegue. Un ADR admite huecos; una migracion no. Para una
-migracion nueva, el numero se toma SIEMPRE por encima del mayor que exista, nunca en un hueco.
+migracion nueva, el numero se toma como **el primero libre por encima de la version aplicada, y
+se reasigna al mergear**. La etapa `Migration versions` de CI (#110) es la compuerta.
 
 El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.
 Documenta la intencion; lo que `0002` y `0003` prometen se hace cumplir sobre el codigo con
