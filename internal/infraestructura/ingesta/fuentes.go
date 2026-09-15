@@ -95,8 +95,14 @@ func MapaCaracol() Mapa {
 			// mapea: es constante en 0, relleno, no dato.
 			{Campo: CampoIDsFuente, Nombre: "Programa ID_IMDB", Requerida: false, ClaveID: aplicacion.ClaveIMDB},
 			// Minutos. Poblada en las 59 filas. Alimenta `Duracion` de
-			// `RD 9.1.1`.
+			// `RD 9.1.1`. La transformacion del 80% la aplica normalizacion
+			// (#26), no este mapa.
 			{Campo: CampoDuracionMin, Nombre: "Duracion_total", Requerida: true},
+			// Fecha y hora de la emision. Van al esquema canonico para que
+			// normalizacion produzca YYYY-MM-DD / HH:MM:SS; tambien forman
+			// parte de ClaveRegistro.
+			{Campo: CampoFecha, Nombre: "Fecha", Requerida: false},
+			{Campo: CampoHora, Nombre: "Hora", Requerida: false},
 		},
 		// La emision, que es la granularidad real. `ID_Ficha` sola mandaria 30
 		// emisiones legitimas al log de rechazos; con la fecha y la hora, las 59
@@ -193,6 +199,10 @@ func MapaCine() Mapa {
 			{Campo: CampoTipoObra, Nombre: "tipo_obra", Requerida: false},
 			// La metrica de la modalidad. Sin ella la fila no pondera nada.
 			{Campo: CampoTaquilla, Nombre: "taquilla", Requerida: true},
+			// Moneda de la taquilla. Sin ella, normalizacion manda a revision
+			// (no pone a cero). La muestra sintetica trae COP; el archivo real
+			// del cliente fijara el nombre de columna cuando llegue.
+			{Campo: CampoMoneda, Nombre: "moneda", Requerida: false},
 		},
 		ClaveRegistro: []string{"id"},
 	}

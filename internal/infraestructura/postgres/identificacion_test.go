@@ -584,6 +584,9 @@ func (i ingestaDePrueba) UsosSinResolver(context.Context) ([]aplicacion.UsoPersi
 func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersistido, error) {
 	return aplicacion.UsoPersistido{}, nil
 }
+func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
 func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
