@@ -29,6 +29,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -155,6 +156,14 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	liquidaciones := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
 	//
 	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
@@ -170,6 +179,7 @@ func construir() (http.Handler, error) {
 		Catalogo:      catalogo,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
+		Liquidaciones: liquidaciones,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
