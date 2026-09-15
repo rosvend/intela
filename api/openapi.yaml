@@ -66,6 +66,43 @@ tags:
       porcentajes: el uso vive en los reportes y los porcentajes salen solo
       de la Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Por eso un
       coautor de este catalogo no tiene campo de participacion.
+  - name: recaudo
+    description: |
+      El lado del ingreso: los usuarios que pagan y lo que pagaron.
+
+      Intela **recibe** el importe ya cobrado, por usuario y periodo. No
+      calcula lo que cada usuario debe y no factura: la tabla de tarifas del
+      `RT` (`T-01` a `T-11`) es documentacion de referencia, no logica de este
+      servicio. Por eso `convenio`, `tarifa` y `factura` son PROCEDENCIA -de
+      donde salio este dinero- y no insumos de calculo.
+
+      El dinero no llega por fila. Ningun reporte de uso trae importes: REDES
+      SGC cobra una bolsa a cada usuario y los reportes solo **ponderan** como
+      se reparte esa bolsa entre las obras.
+
+      Escribe `contabilidad`, que es quien factura (`RD 13.5`), o
+      `administrador`. Las bolsas las lee ademas `distribucion` -necesita la
+      bolsa para correr el reparto- y `auditor`.
+  - name: bolsas
+    description: |
+      Lectura de las bolsas: lo unico que el modulo de recaudo pasa aguas
+      abajo. Una bolsa por usuario, periodo y circuito.
+
+      Nacional e internacional no se mezclan (`RD 10.3`, `R-35`): son dos
+      circuitos que se gestionan por separado, con reservas y fechas de corte
+      distintas.
+
+  - name: ingesta
+    description: |
+      Recepcion de reportes de uso: la subida manual y el listado de cargas
+      hechas. Solo `administrador`.
+
+      Ningun reporte de uso trae importes. Estos archivos PONDERAN la bolsa
+      que se cobro en Recaudo, no la aportan: por eso ni la entrega ni sus
+      filas tienen campo de dinero.
+
+      Una fila que no se puede normalizar no se descarta: queda con su motivo
+      en el log de rechazos (ADR 0016). Es criterio de aceptacion de OE-1.
 
 paths:
   /health:
@@ -649,6 +686,832 @@ paths:
               example:
                 error: esa obra no esta en el catalogo
 
+  /obras/{id}/declaracion:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Identificador de la obra.
+        schema:
+          type: string
+        example: obra-1
+
+    post:
+      tags: [repertorio]
+      summary: Declarar la obra
+      description: |
+        Abre una version nueva de la Declaracion de Obra (`R-03`, `RD 7.3.1`,
+        `RD 7.3.4`): el UNICO origen valido de los porcentajes de reparto,
+        nunca los reportes de uso ni los contratos de escritura.
+
+        Es la misma operacion que `PUT` en este mismo path -las dos cierran la
+        version abierta si la hay y abren una nueva-; la unica diferencia es
+        el codigo de exito, no el numero de version que resulta. Si la obra ya
+        tenia una declaracion, este `POST` la sustituye igual que lo haria un
+        `PUT`: no es exclusivo de "la primera vez", aunque ese sea el uso mas
+        comun. Se ofrecen los dos verbos porque distinguir alta de edicion es
+        util para quien integra, aunque el nucleo no necesite la distincion.
+
+        Una suma menor a 100 SI se acepta: es el estado `declaracion_incompleta`
+        valido de `R-04` (`RD 13.1.3`), y REDES SGC retiene el importe completo
+        de la obra hasta que se complete. Una suma mayor a 100 se rechaza.
+      operationId: declararObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Parte"
+            example:
+              - titular_id: tit-1
+                ipi: IPI-00000001
+                porcentaje: 60
+              - titular_id: tit-2
+                ipi: IPI-00000002
+                porcentaje: 40
+      responses:
+        "201":
+          description: |
+            La version nueva, recien creada. Es version 1 solo si la obra no
+            tenia ninguna declaracion previa; si ya tenia una, esta la cierra
+            y el numero sigue la secuencia.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                version: 1
+                vigente_desde: "2026-01-15T10:00:00Z"
+                vigente_hasta: null
+                estado: completa
+                partes:
+                  - titular_id: tit-1
+                    ipi: IPI-00000001
+                    porcentaje: 60
+                  - titular_id: tit-2
+                    ipi: IPI-00000002
+                    porcentaje: 40
+        "400":
+          description: |
+            El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
+            que no es positivo o que trae mas de 4 decimales, un titular
+            repetido, la suma se pasa de 100, o nombra un titular_id que no
+            esta en el padron.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "declaracion invalida: la suma de porcentajes es 120.0000%, no puede superar 100"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
+    put:
+      tags: [repertorio]
+      summary: Editar la Declaracion de Obra
+      description: |
+        Cierra la version vigente y abre una nueva con las partes que llegan.
+        La version anterior NO se borra ni se modifica: sigue consultable en
+        `GET .../historial`, porque un reparto de un periodo pasado tiene que
+        poder reproducirse con el split que estaba vigente ENTONCES.
+
+        Mismas reglas de validacion que el alta: suma > 100 se rechaza, suma
+        < 100 se acepta como `declaracion_incompleta`.
+      operationId: editarDeclaracion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Parte"
+            example:
+              - titular_id: tit-1
+                ipi: IPI-00000001
+                porcentaje: 70
+              - titular_id: tit-2
+                ipi: IPI-00000002
+                porcentaje: 30
+      responses:
+        "200":
+          description: La nueva version, ya vigente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                version: 2
+                vigente_desde: "2026-03-01T09:00:00Z"
+                vigente_hasta: null
+                estado: completa
+                partes:
+                  - titular_id: tit-1
+                    ipi: IPI-00000001
+                    porcentaje: 70
+                  - titular_id: tit-2
+                    ipi: IPI-00000002
+                    porcentaje: 30
+        "400":
+          description: |
+            El cuerpo no es JSON, trae una parte sin IPI o con un porcentaje
+            que no es positivo o que trae mas de 4 decimales, un titular
+            repetido, la suma se pasa de 100, o nombra un titular_id que no
+            esta en el padron.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "declaracion invalida: al titular \"tit-1\" le falta el IPI"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna obra con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa obra no esta en el catalogo
+
+  /obras/{id}/declaracion/historial:
+    get:
+      tags: [repertorio]
+      summary: Ver todas las versiones de la Declaracion de Obra
+      description: |
+        Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
+        una con su ventana de vigencia. Es de solo lectura: no hay forma de
+        editar una version pasada, unicamente de abrir una nueva -eso es
+        `PUT .../declaracion`-.
+
+        Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
+        un 404: mismo criterio que `GET /obras`.
+      operationId: historialDeclaracion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la obra.
+          schema:
+            type: string
+          example: obra-1
+      responses:
+        "200":
+          description: Las versiones de la declaracion, en orden.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VersionDeclaracion"
+              example:
+                - version: 1
+                  vigente_desde: "2026-01-15T10:00:00Z"
+                  vigente_hasta: "2026-03-01T09:00:00Z"
+                  estado: completa
+                  partes:
+                    - titular_id: tit-1
+                      ipi: IPI-00000001
+                      porcentaje: 60
+                    - titular_id: tit-2
+                      ipi: IPI-00000002
+                      porcentaje: 40
+                - version: 2
+                  vigente_desde: "2026-03-01T09:00:00Z"
+                  vigente_hasta: null
+                  estado: completa
+                  partes:
+                    - titular_id: tit-1
+                      ipi: IPI-00000001
+                      porcentaje: 70
+                    - titular_id: tit-2
+                      ipi: IPI-00000002
+                      porcentaje: 30
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /recaudo:
+    post:
+      tags: [recaudo]
+      summary: Registrar lo cobrado a un usuario en un periodo
+      description: |
+        Da de alta una bolsa: el importe que un usuario ya pago en un periodo.
+
+        **No calcula la tarifa.** Intela recibe el importe ya cobrado; el
+        `bruto` viene del reporte de recaudo de REDES, no de aplicar la tabla
+        del `RT` a una base de calculo.
+
+        El `id` lo trae el cuerpo porque sale de ese mismo reporte y no de
+        aqui. Por eso un segundo alta del mismo usuario, periodo y circuito
+        responde 409 y no crea una segunda bolsa: duplicarla repartiria dos
+        veces el mismo dinero.
+
+        El `usuario_id` tiene que estar dado de alta antes
+        (`POST /recaudo/usuarios`). No se crea al vuelo: un identificador mal
+        escrito se convertiria en un pagador fantasma al que el reparto
+        atribuiria dinero que alguien pago de verdad.
+
+        Deja asiento en la bitacora en la misma transaccion (ADR 0006): una
+        bolsa sin asiento es dinero que entro sin que nadie pueda decir de
+        donde salio.
+      operationId: registrarRecaudo
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad, administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Bolsa"
+            example:
+              id: bolsa-caracol-2025-01-nacional
+              usuario_id: caracol
+              periodo: 2025-01
+              circuito: nacional
+              bruto: "1000000.00"
+              convenio: conv-caracol-2025
+              tarifa: RT-VI-2026
+              factura: FE-1024
+      responses:
+        "201":
+          description: La bolsa quedo registrada.
+          headers:
+            Location:
+              description: Ruta de la bolsa recien creada.
+              schema:
+                type: string
+              example: /bolsas/bolsa-caracol-2025-01-nacional
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bolsa"
+              example:
+                id: bolsa-caracol-2025-01-nacional
+                usuario_id: caracol
+                periodo: 2025-01
+                circuito: nacional
+                bruto: "1000000.00"
+                convenio: conv-caracol-2025
+                tarifa: RT-VI-2026
+                factura: FE-1024
+        "400":
+          description: |
+            Lo que llego no forma una bolsa -falta el usuario, el periodo no es
+            `AAAA` ni `AAAA-MM`, el circuito no es uno de los dos, el importe
+            es negativo o trae mas de dos decimales-, o el `usuario_id` no esta
+            dado de alta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            Ya hay una bolsa para ese usuario, periodo y circuito. El circuito
+            entra en la clave: el nacional y el internacional del mismo usuario
+            y periodo son dos bolsas legitimas (`RD 10.3`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ya existe una bolsa para ese usuario, periodo y circuito
+
+  /recaudo/usuarios:
+    get:
+      tags: [recaudo]
+      summary: Listar los usuarios que pagan recaudo
+      description: |
+        Devuelve los pagadores dados de alta, ordenados por identificador. Sin
+        ninguno devuelve una lista vacia, no un 404.
+
+        No son las cuentas que inician sesion. El reglamento llama "usuario" a
+        quien explota el repertorio y paga por ello (`RT 2`): un canal, una
+        sala de cine, un hotel, una plataforma OTT.
+      operationId: listarUsuariosRecaudo
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad, administrador]
+      responses:
+        "200":
+          description: Los pagadores, ordenados por identificador.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UsuarioRecaudo"
+              example:
+                - id: caracol
+                  nombre: Caracol Television S.A.
+                  nit: 860025674-2
+                  categoria: tv_abierta
+                - id: procinal
+                  nombre: Procinal S.A.
+                  nit: 800123456-1
+                  categoria: cine
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+    post:
+      tags: [recaudo]
+      summary: Dar de alta un usuario que paga recaudo
+      description: |
+        Registra un pagador. Tiene que existir antes de su primera bolsa.
+
+        La `categoria` no es decorativa y no sirve para tarifar: decide con que
+        formula se pondera la bolsa de ese usuario aguas abajo -television por
+        puntos (`RD 9.1.1`), cine y teatro proporcional a taquilla (`RD 9.2`,
+        `RD 9.3`), OTT por la ecuacion de `RD 9.7`, hoteles por remision a
+        `RD 9.5`-.
+      operationId: registrarUsuarioRecaudo
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad, administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsuarioRecaudo"
+            example:
+              id: caracol
+              nombre: Caracol Television S.A.
+              nit: 860025674-2
+              categoria: tv_abierta
+      responses:
+        "201":
+          description: El pagador quedo dado de alta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsuarioRecaudo"
+              example:
+                id: caracol
+                nombre: Caracol Television S.A.
+                nit: 860025674-2
+                categoria: tv_abierta
+        "400":
+          description: |
+            Falta el identificador o el nombre, o la categoria no es una de las
+            del reglamento.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "usuario de recaudo invalido: falta el nombre"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: Ya hay un pagador con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ya existe un usuario de recaudo con ese identificador
+
+  /bolsas:
+    get:
+      tags: [bolsas]
+      summary: Listar las bolsas
+      description: |
+        Devuelve las bolsas, ordenadas por identificador. Sin el parametro
+        devuelve todas: "sin recorte" es un recorte mas y no merece una ruta
+        aparte. Sin coincidencias devuelve una lista vacia, no un 404.
+      operationId: listarBolsas
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad, administrador, distribucion, auditor]
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          description: |
+            Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y
+            `12`. Un valor mal formado se rechaza con 400 en vez de ignorarse:
+            ignorado devolveria todas las bolsas, y un mes imposible como
+            `2025-13` devolveria una lista vacia que quien pregunta leeria como
+            "ese mes no tuvo recaudo" en vez de "ese mes no existe".
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2025-01
+      responses:
+        "200":
+          description: Las bolsas que cuadran, ordenadas por identificador.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bolsa"
+              example:
+                - id: bolsa-caracol-2025-01-nacional
+                  usuario_id: caracol
+                  periodo: 2025-01
+                  circuito: nacional
+                  bruto: "1000000.00"
+                  convenio: conv-caracol-2025
+                  tarifa: RT-VI-2026
+                  factura: FE-1024
+        "400":
+          description: El periodo esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /bolsas/{id}:
+    get:
+      tags: [bolsas]
+      summary: Leer una bolsa
+      description: |
+        Devuelve una bolsa por su identificador, con su procedencia -de donde
+        salio ese dinero (ADR 0006)-.
+      operationId: bolsaPorID
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad, administrador, distribucion, auditor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la bolsa.
+          schema:
+            type: string
+          example: bolsa-caracol-2025-01-nacional
+      responses:
+        "200":
+          description: La bolsa.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bolsa"
+              example:
+                id: bolsa-caracol-2025-01-nacional
+                usuario_id: caracol
+                periodo: 2025-01
+                circuito: nacional
+                bruto: "1000000.00"
+                convenio: conv-caracol-2025
+                tarifa: RT-VI-2026
+                factura: FE-1024
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna bolsa con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa bolsa no existe
+
+  /reportes:
+    get:
+      tags: [ingesta]
+      summary: Cargas hechas
+      description: |
+        El listado de entregas recibidas, de la mas reciente a la mas antigua.
+        Es la unica lectura que responde "¿entro completo lo que subi?": el
+        recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
+
+        Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
+        de la que salio (`sha256`, `clave_objeto`), que es lo que permite
+        volver al archivo EXACTO que pondero una corrida y no "al archivo de
+        esa fuente" (ADR 0006).
+      operationId: listarCargas
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          description: |
+            Periodo de recaudo, `AAAA` o `AAAA-MM`. Ausente o vacio no filtra.
+
+            Un periodo mal escrito se rechaza con 400 en vez de ignorarse: no
+            casaria con ninguna fila y devolveria una lista vacia
+            indistinguible de "ese periodo no tuvo cargas".
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          example: 2026-01
+      responses:
+        "200":
+          description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Carga"
+        "400":
+          description: El periodo no tiene la forma AAAA o AAAA-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: periodo "2026-1", se esperaba AAAA o AAAA-MM'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: |
+            Esta instalacion no cablea la ingesta. Es el caso de `cmd/lambda`,
+            cuyo sistema de ficheros no sirve de boveda inmutable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
+    post:
+      tags: [ingesta]
+      summary: Subir un reporte de uso
+      description: |
+        La subida manual, que el criterio de aceptacion de OE-1 declara
+        "fallback permanente": la adquisicion autonoma es otro issue.
+
+        El archivo se PARSEA antes de tocar nada. Un fallo estructural -el
+        libro no se abre, falta una columna requerida- responde 400 sin
+        persistir NADA, ni siquiera la evidencia cruda: de la boveda no se
+        borra (ADR 0006), y escribir el acuse quemaria la huella de ese archivo
+        para esa fuente, de modo que la correccion que el cliente mande despues
+        chocaria con 409 si resulta ser el mismo archivo.
+
+        Un lote con filas malas NO es un error: es el caso normal. Las buenas
+        se persisten y las malas vuelven en `rechazados`, cada una con su
+        motivo nombrando el campo y la columna. Ninguna se descarta.
+
+        El formato sale de la extension de `archivo` salvo que se mande
+        `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
+        que de el sale UNICAMENTE esa decision: la clave del objeto de la
+        boveda se deriva de la huella del contenido, no del nombre.
+      operationId: subirReporte
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [fuente, periodo, archivo]
+              properties:
+                fuente:
+                  type: string
+                  description: |
+                    Quien entrego. Es lo que se estampa en cada fila y lo que
+                    indexa la tabla de alias, asi que tiene que ser una de las
+                    fuentes con adaptador dado de alta; si no, 400 con la lista
+                    de las que hay.
+                  example: caracol
+                periodo:
+                  type: string
+                  description: Periodo de recaudo al que pondera la entrega.
+                  pattern: '^[0-9]{4}(-[0-9]{2})?$'
+                  example: 2026-01
+                formato:
+                  type: string
+                  description: |
+                    Opcional. Si falta, se deduce de la extension de `archivo`.
+                  enum: [xlsx, csv, json]
+                archivo:
+                  type: string
+                  format: binary
+                  description: |
+                    El reporte tal como lo entrego la fuente. Tope de 32 MiB;
+                    el streaming de archivos grandes es el issue #46.
+      responses:
+        "201":
+          description: |
+            La entrega quedo congelada y sus filas persistidas. `rechazados`
+            puede venir con contenido: eso no es un fallo de la peticion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entrega"
+        "400":
+          description: |
+            La entrega no cumple la estructura minima: falta una columna
+            requerida, el archivo no se puede abrir, no hay adaptador para ese
+            par (fuente, formato), el periodo esta mal escrito o el archivo no
+            trae ninguna fila. NADA se persistio.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: a la entrega de "caracol" le faltan columnas requeridas: Duracion_total. El archivo trae: Canal, Titulo, ID_Ficha'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            Esa fuente ya entrego exactamente esos bytes -lo decide el
+            UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
+            tiene contenido distinto bajo esa huella.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa fuente ya entrego exactamente ese archivo
+        "413":
+          description: |
+            El archivo pasa del tope de 32 MiB. El cuerpo de la peticion se
+            corta en el tope mas el margen de la envoltura multipart, asi que
+            una subida mayor deja de leerse en cuanto se pasa en vez de
+            recibirse entera para rechazarla despues.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el archivo pasa de 32 MiB
+        "503":
+          description: Esta instalacion no cablea la ingesta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
 components:
   securitySchemes:
     bearerAuth:
@@ -664,6 +1527,119 @@ components:
         matriz Rol -> capacidad esta en docs/architecture/roles.md.
 
   schemas:
+    Entrega:
+      type: object
+      description: |
+        El acuse de una entrega ingerida entera.
+
+        No hay campo de dinero, y no lo va a haber: un reporte de uso PONDERA
+        la bolsa, no la aporta.
+      required:
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la entrega. Se deriva del par (fuente, huella), no
+            del nombre del archivo.
+          example: rep-9f2c...
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          description: |
+            Huella de los bytes crudos. Es como se cita una evidencia en toda
+            la trazabilidad (ADR 0006).
+          pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: Donde quedaron los bytes en la boveda. Se deriva de la huella.
+          example: reportes/9f2c...
+        nbytes:
+          type: integer
+          example: 21032
+        aceptados:
+          type: integer
+          description: Filas que entraron a la forma canonica.
+          example: 58
+        rechazados:
+          type: array
+          description: |
+            Las filas que no se pudieron normalizar, con su motivo. Lista vacia
+            si no hubo ninguna, nunca `null`.
+          items:
+            $ref: "#/components/schemas/Rechazo"
+
+    Rechazo:
+      type: object
+      description: |
+        Una fila que no se pudo normalizar. Lleva lo identificatorio y el
+        motivo, y NINGUNA columna de medida: una fila rechazada no pondera, y
+        sin las medidas nadie las puede sumar "solo para ver" (ADR 0016).
+      required: [id, titulo, ids_fuente, motivo]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la fila. Vive en el log de rechazos y no en `usos`:
+            un id esta en una de las dos tablas, nunca en las dos.
+        titulo:
+          type: string
+        ids_fuente:
+          type: string
+          description: El identificador de la fuente, tal como venia.
+        motivo:
+          type: string
+          description: |
+            Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
+            archivo, que es lo que permite volver a pedirle al cliente
+            exactamente eso.
+          example: 'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero'
+
+    Carga:
+      type: object
+      description: Una entrega en el listado de cargas hechas.
+      required:
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, recibido, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: |
+            Donde quedaron los bytes en la boveda. Se deriva de la huella, igual
+            que en el acuse de POST. Sin ella, tras recargar, el listado no
+            permite volver a la evidencia exacta (ADR 0006).
+          example: reportes/9f2c...
+        nbytes:
+          type: integer
+        recibido:
+          type: string
+          format: date-time
+          description: |
+            Cuando llego. Sale del reloj de la base: es la marca de un hecho de
+            almacenamiento, no de negocio. Nada del reparto se calcula con el.
+        aceptados:
+          type: integer
+        rechazados:
+          type: integer
+          description: |
+            Cuantas filas quedaron en el log de rechazos. Junto con `aceptados`
+            es lo que responde si la carga entro completa.
+
     Estado:
       type: object
       required: [estado]
@@ -828,6 +1804,233 @@ components:
               type: string
               description: Identificador de la obra. Opaco, unico e inmutable.
         - $ref: "#/components/schemas/MetadatosObra"
+
+    Parte:
+      type: object
+      required: [titular_id, ipi, porcentaje]
+      description: |
+        Lo que un titular declaro sobre una obra. El unico origen valido de un
+        porcentaje de reparto es este (`R-03`) -nunca un reporte de uso ni un
+        contrato de escritura-.
+      properties:
+        titular_id:
+          type: string
+          description: Identificador del titular al que corresponde esta parte.
+        ipi:
+          type: string
+          description: IPI del titular. Obligatorio, igual que en un coautor del catalogo.
+        porcentaje:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 100
+          # No exclusiveMinimum aqui a proposito: redocly-cli@1 (el que fija
+          # CI en contract.yml) lo exige boolean para la regla `struct` de
+          # OAS 3.0 pero numerico para el Ajv que usa
+          # `no-invalid-media-type-examples` al validar los ejemplos -ninguna
+          # de las dos formas satisface a la otra regla, y las dos estan en
+          # `error` en redocly.yaml-. La restriccion real -estrictamente
+          # positivo- la sigue exigiendo el backend, no el esquema.
+          description: |
+            Porcentaje declarado por este titular. El esquema solo exige no
+            negativo: la regla real -estrictamente positivo, un titular al 0%
+            no es titular, hasta 4 decimales- la aplica el backend
+            (`ErrDeclaracionInvalida`), que es la fuente autoritativa. Mas de
+            4 decimales se rechaza y no se redondea: es la precision que
+            `declaraciones.porcentaje` puede guardar sin perderla en
+            silencio. La SUMA de todas las partes de una declaracion puede dar
+            menos de 100 -es `declaracion_incompleta`, un estado valido de
+            `R-04`- pero nunca mas.
+
+    VersionDeclaracion:
+      type: object
+      required: [version, vigente_desde, vigente_hasta, estado, partes]
+      description: |
+        Una version de la Declaracion de Obra, con la ventana de tiempo en la
+        que rigio. Un reparto de un periodo pasado usa la version vigente
+        ENTONCES, no la mas reciente -es lo que hace consultable `.../historial`-.
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: Numero de version, consecutivo por obra empezando en 1.
+        vigente_desde:
+          type: string
+          format: date-time
+          description: Instante en que esta version empezo a regir.
+        vigente_hasta:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Instante en que dejo de regir. `null` quiere decir que esta es la
+            version vigente ahora mismo.
+        estado:
+          type: string
+          enum: [completa, incompleta]
+          description: |
+            `completa` si las partes suman exactamente 100; `incompleta` en
+            cualquier otro caso -incluida una obra sin ninguna parte-. Nunca
+            se reparte una obra `incompleta`: se retiene el total (`R-04`).
+        partes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Parte"
+
+    UsuarioRecaudo:
+      type: object
+      required: [id, nombre, categoria]
+      description: |
+        Quien explota el repertorio y PAGA por ello: un canal, una sala de cine,
+        un hotel, una plataforma OTT, una empresa de transporte (`RT 2`).
+
+        No confundir con `Usuario`, que es la cuenta que inicia sesion en
+        Intela. La colision viene del lenguaje del reglamento, que llama
+        "usuario" al que usa las obras; son dos entidades distintas y ninguna
+        referencia a la otra.
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador del pagador. Lo asigna quien lo da de alta, no el
+            sistema: asi un segundo alta con el mismo identificador se rechaza
+            en vez de crear una segunda fila para el mismo canal.
+          example: caracol
+        nombre:
+          type: string
+          description: Razon social del pagador. No puede estar en blanco.
+          example: Caracol Television S.A.
+        nit:
+          type: string
+          description: |
+            NIT del pagador. Opcional: el circuito internacional lo alimentan
+            sociedades hermanas, que no tienen NIT colombiano.
+          example: 860025674-2
+        categoria:
+          type: string
+          description: |
+            Categoria del usuario segun el Reglamento de Tarifas. Son las diez
+            de la tabla resumen `RT 4`, que es la operativa -`RT 3` anuncia
+            seis tipos y enumera siete; la discrepancia esta en el documento
+            fuente-.
+
+            No sirve para tarifar: Intela no factura. Decide con que formula se
+            pondera la bolsa de ese usuario aguas abajo.
+
+            `sin_clasificar` es el hueco declarado, no una categoria del
+            reglamento: lo llevan los pagadores que ya citaban las bolsas antes
+            de que existiera esta tabla, y los del circuito internacional. El
+            ADR 0004 pide que el hueco se vea en vez de rellenarlo con una
+            categoria comoda.
+          enum:
+            - tv_abierta
+            - tv_cerrada
+            - cine
+            - transporte_aereo
+            - transporte_terrestre
+            - transporte_fluvial
+            - hotel
+            - salud
+            - medios_digitales
+            - otros_establecimientos
+            - sin_clasificar
+          example: tv_abierta
+
+    Bolsa:
+      type: object
+      required: [id, usuario_id, periodo, circuito, bruto]
+      description: |
+        Lo que un usuario pago en un periodo, y lo unico que el modulo de
+        recaudo pasa aguas abajo: el reparto no conoce usuario, convenio ni
+        tarifa (ADR 0003).
+
+        El dinero no llega por fila. Ningun reporte de uso trae importes: esta
+        bolsa es lo que se cobro, y los reportes solo **ponderan** como se
+        reparte entre las obras comunicadas.
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la bolsa. Lo trae quien la registra, porque sale
+            del reporte de recaudo de REDES.
+          example: bolsa-caracol-2025-01-nacional
+        usuario_id:
+          type: string
+          description: |
+            Identificador del pagador. Tiene que estar dado de alta: un
+            `usuario_id` que no existe se rechaza con 400, no se crea al vuelo.
+          example: caracol
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          description: |
+            Periodo al que corresponde lo cobrado: `AAAA` o `AAAA-MM`, con
+            el mes entre `01` y `12`. Es el mismo formato que usan los reportes
+            y las corridas de reparto, con el mes acotado: guardar dinero bajo
+            `2025-13` produce un periodo que no cuadra con ningun corte del
+            reglamento (`R-34`) y que ningun reparto sabe cerrar.
+          example: 2025-01
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+          description: |
+            Circuito del recaudo. No es una etiqueta sobre el mismo dinero:
+            `RD 10.3` (`R-35`) los invierte por separado, la reserva del 5%
+            aplica solo al nacional (`R-07`) y las fechas de corte no coinciden
+            -20 de octubre y 30 de septiembre, `R-34`-.
+
+            Nacional e internacional nunca se mezclan en una bolsa. Del mismo
+            usuario y periodo puede haber una de cada uno.
+          example: nacional
+        bruto:
+          description: |
+            Importe cobrado en COP, antes de deducciones.
+
+            **La respuesta es siempre una cadena**, y es deliberado: un numero
+            JSON es un `double` IEEE-754 en la mayoria de los clientes, y el
+            ADR 0005 exige aritmetica decimal exacta sobre dinero de terceros.
+            Como cadena, la cifra llega al cliente tal cual se recaudo.
+
+            En la PETICION se aceptan las dos formas -de ahi el `oneOf`-, pero
+            **mandar la cadena es lo correcto**: un numero con muchos decimales
+            puede perder precision en el cliente antes de salir.
+
+            El maximo es `9999999999999999.99`, que es lo que cabe en la
+            columna `NUMERIC(18,2)`, y se admiten hasta dos decimales: un
+            tercero se rechaza con 400 en vez de redondearse, porque una cifra
+            validada como $100,555 y guardada como $100,56 es medio centavo que
+            el reparto distribuye y que nadie recaudo.
+
+            Cero es un valor valido: que un usuario no pagara nada en el
+            periodo es un hecho, no un dato que falte.
+          oneOf:
+            - type: string
+              format: decimal
+              pattern: '^[0-9]+(\.[0-9]{1,2})?$'
+            - type: number
+              format: decimal
+              minimum: 0
+          example: "1000000.00"
+        convenio:
+          type: string
+          description: |
+            Convenio que origino el cobro. PROCEDENCIA, no insumo de calculo
+            (ADR 0006, pregunta 1: de donde salio este dinero).
+
+            Opcional a proposito: `T-11` dice que la tarifa publicada es el
+            valor por defecto CUANDO NO HAY convenio, asi que exigirlo
+            afirmaria algo que el reglamento no afirma.
+          example: conv-caracol-2025
+        tarifa:
+          type: string
+          description: |
+            Version de la tarifa aplicada, como referencia. Intela no la aplica:
+            recibe el importe ya cobrado.
+          example: RT-VI-2026
+        factura:
+          type: string
+          description: Cuenta de cobro con la que se recaudo este importe.
+          example: FE-1024
 
     Error:
       type: object

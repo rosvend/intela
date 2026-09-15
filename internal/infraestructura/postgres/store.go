@@ -5,8 +5,17 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ejecutor es la parte comun entre *pgxpool.Pool y pgx.Tx que necesita un
+// escritor que a veces corre suelto y a veces DENTRO de la transaccion de
+// otro puerto -ver [asentar] en bitacora.go-. Las dos implementaciones
+// cumplen esta firma sin adaptador de por medio.
+type ejecutor interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
 
 // Store es el adaptador de PostgreSQL. Un solo tipo puede satisfacer varios
 // puertos; lo que importa es que cada caso de uso declare solo el que usa.
@@ -38,8 +47,15 @@ func Nuevo(pool *pgxpool.Pool) *Store {
 }
 
 // Pool expone el pool. cmd/seed escribe con SQL directo las tablas cuyo puerto
-// todavia es de solo lectura -RepositorioRepertorio, RepositorioRecaudo y
-// ParametrosNormativos-; el Store sigue siendo el dueno de la conexion.
+// todavia es de solo lectura -RepositorioRepertorio y ParametrosNormativos-; el
+// Store sigue siendo el dueno de la conexion.
+//
+// `bolsas` y `usuarios_recaudo` YA tienen adaptador de escritura desde la #27
+// ([Store.RegistrarBolsa], [Store.RegistrarUsuario]) y aun asi el seed las
+// escribe por aqui. No es un olvido: esos dos metodos asientan en bitacora en
+// la misma transaccion (ADR 0006) y el seed tiene que terminar con la bitacora
+// vacia, porque `semilla.vaciar` se niega a recargar con SEED_RESET si hay un
+// solo asiento. Esta escrito tambien en semilla/cargar.go, donde se decide.
 //
 // Las `obras` NO son de esas: tienen adaptador de escritura -[Store.Registrar],
 // que mete la obra y sus coautores en una transaccion- y el seed pasa por el,

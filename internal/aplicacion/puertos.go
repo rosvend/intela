@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -162,6 +163,40 @@ type CatalogoObras interface {
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
 }
 
+// GestionDeclaraciones es la escritura y el historial de la Declaracion de
+// Obra: el ABM de la #23 y lo que consume el editor de splits de la #30.
+//
+// Separado de [RepositorioRepertorio] por la misma razon que [CatalogoObras]
+// esta separado de el (ver su comentario arriba): son dos lecturas del mismo
+// dato para dos consumidores distintos. RepositorioRepertorio sirve al motor
+// de reparto y al estado del catalogo con la declaracion VIGENTE, sin
+// versiones visibles. GestionDeclaraciones habla en versiones explicitas
+// porque el criterio de la #23 pide ver el historial y resolver la vigente en
+// un instante pasado.
+//
+// Guardar cierra la version abierta de la obra -si la hay- y abre una nueva
+// con las partes que llegan, en una sola operacion atomica por contrato: es
+// lo mismo declarar por primera vez que editar, la unica diferencia es si
+// habia una version que cerrar. Devuelve [ErrNoEncontrado] si la obra no
+// existe en el catalogo.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico:
+// actorID es quien firma el hecho, y la implementacion lo asienta en la misma
+// transaccion que la version. No es un puerto ni una llamada aparte -eso deja
+// una version guardada sin asiento si la segunda llamada falla- sino la unica
+// forma de que "version + asiento" sea una sola cosa o ninguna.
+type GestionDeclaraciones interface {
+	// Guardar devuelve la version nueva y el vigente_desde que de verdad quedo
+	// escrito: no siempre es el ahora que llego, porque la implementacion
+	// puede ajustarlo -por ejemplo para que no coincida con el vigente_desde
+	// de la version que cierra-. Devolver el valor real y no el que se envio
+	// es lo que evita que el llamador informe una ventana de vigencia que la
+	// base nunca tuvo.
+	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
+	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+}
+
 // FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
 // NO filtra, y los que vienen se combinan con Y.
 //
@@ -198,9 +233,116 @@ type RepositorioIdentificacion interface {
 type RepositorioIngesta interface {
 	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
+
+	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
+	// hecho: o entran los dos o no entra ninguno.
+	//
+	// # Por que no basta con llamar a los dos metodos de arriba
+	//
+	// Porque el acuse QUEMA la huella. El duplicado lo decide el
+	// UNIQUE (sha256, fuente), asi que una fila de `reportes` escrita y un lote
+	// que falla despues dejan una entrega registrada con CERO filas y la huella
+	// gastada: el cliente vuelve a mandar el mismo archivo -- que es exactamente
+	// lo que hace cuando le dicen que su carga fallo -- y se lleva un
+	// [ErrReporteDuplicado] para siempre. La entrega no se recupera sin cirugia
+	// en la base, y de la boveda no se borra (ADR 0006).
+	//
+	// Es el mismo agujero que [Ingesta.IngerirReporte] evita parseando antes de
+	// tocar nada, por la otra puerta: alli el archivo esta roto, aqui el archivo
+	// esta bien y lo que falla es la escritura.
+	//
+	// # Por que es un metodo del puerto y no una transaccion del caso de uso
+	//
+	// Por lo mismo que la atomicidad del lote en GuardarUsos: el nucleo no puede
+	// abrir una transaccion sin aprenderse el driver, que es justo lo que este
+	// puerto oculta -- y depguard deniega `pgx` en esta capa --. Lo que el caso de
+	// uso SI decide es el limite, y lo declara eligiendo esta llamada en vez de
+	// las otras dos. Es la misma forma que [CatalogoObras.Registrar], que mete la
+	// obra y sus coautores juntas, y que [RepositorioResultados.Guardar].
+	//
+	// La boveda se queda FUERA, y no puede ser de otra manera: de un fichero
+	// escrito no se hace rollback. El resto que eso deja -- un objeto sin acuse --
+	// es inerte y se recupera solo, porque la clave del objeto es su contenido
+	// (ver [Ingesta.GuardarReporte]).
+	//
+	// Devuelve [ErrReporteDuplicado] si esa fuente ya entrego esos mismos bytes.
+	GuardarEntrega(ctx context.Context, rep Reporte, usos []UsoPersistido) error
+
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
+
+	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
+	// mas antigua. Un periodo vacio NO filtra.
+	//
+	// Devuelve tambien los dos recuentos porque separados no significan nada:
+	// una carga de la que solo se sabe que llego no dice si entro entera, y
+	// "entro entera" es justamente lo que hay que poder mirar para saber si
+	// falta pedirle algo al cliente.
+	ListarCargas(ctx context.Context, periodo string) ([]CargaReporte, error)
+}
+
+// Formatos en los que puede llegar una entrega. Son la mitad de la clave con
+// la que se elige el adaptador que sabe leerla.
+//
+// Viven en el nucleo y no en el adaptador aunque nombren formatos de archivo:
+// lo que el nucleo necesita saber es que una misma fuente puede entregar lo
+// mismo de varias maneras, no como se parsea ninguna de ellas. Que detras del
+// XLSX haya excelize y detras del CSV encoding/csv no se sabe desde aqui, y
+// depguard lo deja por escrito denegando los dos paquetes en esta capa.
+const (
+	FormatoXLSX = "xlsx"
+	FormatoCSV  = "csv"
+	FormatoJSON = "json"
+)
+
+// ClaveLector identifica al adaptador de formato de una entrega.
+//
+// Es el PAR (fuente, formato) y no la fuente sola porque son dos ejes
+// independientes y los dos varian de verdad: la parrilla de Caracol y el
+// reporte de Netflix traen columnas distintas -- no comparten ni un nombre de
+// columna, esta medido en `docs/dominio/fuentes-datos.md` --, y una misma
+// fuente puede entregar su mismo contenido en .xlsx hoy y en CSV manana sin
+// que su mapa de columnas cambie una linea.
+//
+// Con la fuente sola como clave, dar de alta el CSV de Caracol obligaria a
+// inventarse una fuente "caracol-csv", y a partir de ahi la fuente dejaria de
+// significar quien entrego -- que es lo que indexa `alias_obra` y lo que ata
+// una fila a su usuario del `RD 8` --, para significar quien entrego y como.
+type ClaveLector struct {
+	Fuente  string
+	Formato string
+}
+
+// LectorReporte convierte los bytes de una entrega en filas del esquema
+// canonico.
+//
+// Es el puerto de los adaptadores de formato. Lo satisface un adaptador por
+// PAR (fuente, formato); ver [ClaveLector].
+//
+// # Por que devuelve las rechazadas mezcladas con las buenas
+//
+// Una fila que no se puede normalizar NO se descarta: viaja en el mismo
+// resultado con su [UsoPersistido.RechazoMotivo] puesto, y es
+// [Ingesta.GuardarUsos] quien la encamina al log de rechazos. Devolver dos
+// slices dejaria al adaptador decidir que es un rechazo y que es una perdida,
+// y la unica forma de perder una fila en silencio es que alguien pueda no
+// devolverla.
+//
+// El motivo lo escribe el adaptador porque ve cosas que aguas arriba ya no se
+// ven: que celda no se pudo convertir, que placeholder traia -- el `--` de
+// `episode_nbr` --, en que fila del archivo estaba. GuardarUsos respeta el
+// motivo que ya viene puesto justamente para no perderlo.
+//
+// # Y por que el error es otra cosa
+//
+// El error es el fallo ESTRUCTURAL: el archivo no se puede abrir, la hoja no
+// esta, falta una columna requerida. Ahi no hay filas buenas que salvar, y el
+// contrato es que no se persiste NADA -- ni la boveda --. Se devuelve envuelto
+// en [ErrReporteInvalido] y nombrando el campo, que es lo que permite volver a
+// pedirle al cliente exactamente eso.
+type LectorReporte interface {
+	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
 // RepositorioONI es la cola manual. Separado de identificacion porque son dos
@@ -211,9 +353,34 @@ type RepositorioONI interface {
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
 // Usuario, Convenio y Tarifa; aguas abajo solo circula la bolsa (ADR 0003).
+//
+// BolsasDePeriodo existe aparte de ListarBolsas -y no como un filtro opcional-
+// por lo mismo que UsosDePeriodo en [RepositorioIngesta]: es la lectura que
+// pide el motor de reparto, va por el indice `bolsas_periodo`, y un listado
+// entero de todos los periodos no es lo que nadie quiere cuando pregunta por
+// uno.
 type RepositorioRecaudo interface {
 	ListarBolsas(ctx context.Context) ([]BolsaPersistida, error)
+	BolsasDePeriodo(ctx context.Context, periodo string) ([]BolsaPersistida, error)
 	BolsaPorID(ctx context.Context, id string) (BolsaPersistida, error)
+	ListarUsuarios(ctx context.Context) ([]recaudo.Usuario, error)
+}
+
+// GestionRecaudo registra lo que se cobro. Es el lado de escritura de
+// [RepositorioRecaudo], separado por la misma razon que [GestionDeclaraciones]
+// lo esta de [RepositorioRepertorio]: quien solo lee no tiene por que poder
+// escribir dinero.
+//
+// El asiento de auditoria (ADR 0006) entra en el MISMO contrato atomico que la
+// escritura, y por eso `ahora` y `actorID` son parametros de estos metodos y no
+// una segunda llamada a [BitacoraAuditoria] que el caso de uso orqueste. Una
+// bolsa escrita sin asiento es dinero que entro sin que nadie pueda decir de
+// donde salio, que es la pregunta 1 del ADR 0006.
+//
+// `ahora` viene del puerto [Reloj]; el adaptador no llama a time.Now().
+type GestionRecaudo interface {
+	RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora time.Time, actorID string) error
+	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
 }
 
 // ParametrosNormativos resuelve los parametros con vigencia y organo
@@ -290,10 +457,13 @@ type RepositorioLiquidacion interface {
 // La regla "ningun modulo escribe en la trazabilidad de otro" (ADR 0003) se
 // sostiene porque este puerto se inyecta por separado, no porque estuviera
 // suelto en un contrato que todos comparten.
+// AsientoPorID y no PorID: el mismo *Store satisface tambien [CatalogoObras],
+// que ya tiene un PorID con otra firma -misma razon por la que
+// [RepositorioRepertorio] tiene ObraPorID y no PorID-.
 type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
-	PorID(ctx context.Context, id string) (Asiento, error)
+	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
