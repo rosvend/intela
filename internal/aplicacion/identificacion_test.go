@@ -27,11 +27,17 @@ func (i *ingestaFalsa) GuardarReporte(context.Context, string, string, string, s
 	return nil
 }
 func (i *ingestaFalsa) GuardarUsos(context.Context, []UsoPersistido) error { return nil }
+func (i *ingestaFalsa) GuardarEntrega(context.Context, Reporte, []UsoPersistido) error {
+	return nil
+}
 func (i *ingestaFalsa) UsosSinResolver(context.Context) ([]UsoPersistido, error) {
 	return nil, nil
 }
 func (i *ingestaFalsa) UsoPorID(context.Context, string) (UsoPersistido, error) {
 	return UsoPersistido{}, nil
+}
+func (i *ingestaFalsa) ListarCargas(context.Context, string) ([]CargaReporte, error) {
+	return nil, nil
 }
 
 func (i *ingestaFalsa) UsosDePeriodo(_ context.Context, periodo string) ([]UsoPersistido, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -27,14 +28,160 @@ import (
 //
 // # Que NO decide
 //
-// Como se lee un .xlsx o un CSV: eso es un adaptador de formato (#25). Aqui
-// llegan bytes y filas ya mapeadas al esquema canonico.
+// Como se lee un .xlsx o un CSV: eso es un adaptador de formato, y entra por
+// el puerto [LectorReporte]. Aqui se elige CUAL adaptador atiende la entrega
+// -por el par (fuente, formato)- y se orquesta lo que pasa antes y despues,
+// pero de este paquete no sale una sola linea que sepa lo que es una hoja de
+// calculo. depguard lo deja por escrito denegando `encoding/csv` y `excelize`
+// en esta capa.
 //
 // Y a que obra corresponde cada fila: la cascada de identificacion es otro
 // modulo (ADR 0007). Todo lo que entra por aqui sale con escalon "pendiente".
 type Ingesta struct {
 	Reportes RepositorioIngesta
 	Almacen  AlmacenObjetos
+
+	// Lectores es el catalogo de adaptadores de formato, indexado por el par
+	// (fuente, formato).
+	//
+	// Es un mapa y no una lista de casos porque dar de alta una fuente nueva
+	// tiene que ser una entrada de configuracion, no una rama mas en un
+	// switch de este fichero: el issue #25 lo pide explicitamente y es lo que
+	// permite que el mapa de columnas viva como DATO en el adaptador.
+	//
+	// Puede venir vacio. Ingesta sigue sirviendo GuardarReporte y GuardarUsos
+	// -- el seed los usa asi, con las filas ya construidas en Go --; lo unico
+	// que no se puede es ingerir un archivo, y eso lo dice IngerirReporte con
+	// su nombre y con la lista de lo que si sabe leer.
+	Lectores map[ClaveLector]LectorReporte
+}
+
+// IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
+// la evidencia y persiste las filas.
+//
+// Es el camino que usa la subida manual, que el criterio de aceptacion de OE-1
+// declara "fallback permanente": la adquisicion autonoma es otro issue.
+//
+// # El orden, que es lo unico que hay que entender de este metodo
+//
+// Se parsea ANTES de tocar la boveda. Al reves parece mas natural -congela lo
+// que llego, pase lo que pase- y es un error caro, por dos razones que se
+// refuerzan:
+//
+//  1. El criterio de aceptacion es literal: un archivo al que le falta una
+//     columna requerida se rechaza "sin que se persista nada". De la boveda no
+//     se borra (ADR 0006), asi que un objeto escrito ya no se puede deshacer.
+//  2. Y peor: el duplicado se decide por el UNIQUE (sha256, fuente). Escribir
+//     el acuse de un archivo estructuralmente roto QUEMA su huella para esa
+//     fuente. La correccion que el cliente mande despues no puede entrar --
+//     ErrReporteDuplicado -- si resulta ser byte a byte la misma, y la entrega
+//     no se recupera sin cirugia en la base.
+//
+// El parseo no toca nada: es una funcion de bytes a filas. Cuesta lo mismo
+// antes que despues y solo antes tiene marcha atras.
+//
+// # Un archivo sin filas es un fallo estructural, no una carga vacia
+//
+// Por lo mismo del punto 2. Aceptarlo escribiria un acuse con cero usos y
+// dejaria la huella quemada; y un export que salio vacio es exactamente el
+// caso en el que el cliente vuelve a mandar el archivo bueno.
+func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
+	// UNA sola normalizacion, y antes de todo lo demas, por lo mismo que en
+	// GuardarReporte: la fuente se usa aqui para BUSCAR el adaptador y se pasa
+	// despues a GuardarReporte, y con dos criterios distintos " caracol " no
+	// encontraria lector y el mensaje culparia a la fuente equivocada.
+	fuente = strings.TrimSpace(fuente)
+	formato = strings.TrimSpace(formato)
+
+	lector, ok := i.Lectores[ClaveLector{Fuente: fuente, Formato: formato}]
+	if !ok {
+		// El mensaje lleva lo que SI se sabe leer. Un "no hay adaptador" pelado
+		// deja a quien sube el archivo adivinando si se equivoco de fuente, de
+		// formato o de las dos, y esta es la unica capa que conoce las dos
+		// listas. Ordenado para que el mensaje no dependa del recorrido del
+		// mapa, que en Go es aleatorio: un error que cambia de texto en cada
+		// llamada no se puede probar ni buscar en un log.
+		return Recepcion{}, fmt.Errorf(
+			"%w: no hay adaptador para la fuente %q en formato %q; hay para %s",
+			ErrReporteInvalido, fuente, formato, i.lectoresDisponibles())
+	}
+
+	filas, err := lector.Leer(datos)
+	if err != nil {
+		// Sin envolver en ErrReporteInvalido aqui: el adaptador ya devuelve ese
+		// centinela -es su contrato- y volver a envolverlo no anade nada.
+		// errors.Is sigue casando a traves de este %w.
+		return Recepcion{}, fmt.Errorf("leer la entrega de %q (%s): %w", fuente, formato, err)
+	}
+	if len(filas) == 0 {
+		return Recepcion{}, fmt.Errorf(
+			"%w: la entrega de %q (%s) no trae ninguna fila de datos", ErrReporteInvalido, fuente, formato)
+	}
+
+	rep, err := prepararReporte(fuente, periodo, datos)
+	if err != nil {
+		return Recepcion{}, err
+	}
+	if err := i.congelarEvidencia(ctx, rep, datos); err != nil {
+		return Recepcion{}, err
+	}
+
+	// El acuse sale de prepararReporte, que ya exigio la fuente y derivo el id:
+	// normalizarAcuse seria un no-op y su unica rama de error, inalcanzable. Es
+	// el UNICO sitio del fichero donde eso es cierto por construccion.
+	lote, rechazados := prepararLote(rep, filas)
+
+	// Las dos escrituras, en UNA. Separadas -- el acuse por un lado y las filas
+	// por otro -- un fallo del lote deja la entrega registrada con cero usos y la
+	// huella QUEMADA para esa fuente: el mismo archivo reenviado choca con
+	// ErrReporteDuplicado para siempre, sin que haya un solo uso registrado. Es
+	// el mismo agujero que el orden de este metodo evita por la otra puerta, y
+	// aqui no lo arregla ningun orden, porque lo que falla es la escritura.
+	if err := i.Reportes.GuardarEntrega(ctx, rep, lote); err != nil {
+		return Recepcion{}, fmt.Errorf(
+			"registrar la entrega de %q para %q: %w", rep.Fuente, rep.Periodo, err)
+	}
+	return Recepcion{
+		Reporte:    rep,
+		Aceptados:  len(lote) - len(rechazados),
+		Rechazados: rechazados,
+	}, nil
+}
+
+// lectoresDisponibles describe el catalogo para un mensaje de error, en orden
+// estable.
+func (i Ingesta) lectoresDisponibles() string {
+	if len(i.Lectores) == 0 {
+		return "ninguna"
+	}
+	pares := make([]string, 0, len(i.Lectores))
+	for c := range i.Lectores {
+		pares = append(pares, c.Fuente+"/"+c.Formato)
+	}
+	slices.Sort(pares)
+	return strings.Join(pares, ", ")
+}
+
+// Cargas lista las entregas recibidas. Un periodo vacio no filtra.
+//
+// Es el "listado de cargas hechas" del criterio de aceptacion de #25, y la
+// unica lectura del sistema que responde a "¿entro completo lo que subi?": el
+// recuento de rechazos por entrega solo se ve aqui.
+//
+// El periodo se valida aunque solo se use como filtro. No es defensa contra
+// inyeccion -- va como parametro --, es que "2026-1" no casa con ninguna fila
+// y devolveria una lista vacia indistinguible de "ese periodo no tuvo cargas".
+func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+	periodo = strings.TrimSpace(periodo)
+	if periodo != "" && !periodoValido.MatchString(periodo) {
+		return nil, fmt.Errorf(
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+	}
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	if err != nil {
+		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
+	}
+	return cargas, nil
 }
 
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
@@ -109,7 +256,42 @@ func idReporte(fuente, sha string) string {
 // llega DESPUES de tocar la boveda. No es un problema: el almacen no
 // sobrescribe, asi que una resubida de los mismos bytes deja el objeto
 // literalmente sin cambios y despues se rechaza con ErrReporteDuplicado.
+//
+// # Cuando NO usar este metodo
+//
+// Cuando detras van filas. El acuse quema la huella para esa fuente, asi que un
+// GuardarReporte seguido de un GuardarUsos que falla deja la entrega registrada
+// con cero usos y sin forma de reenviarla. Esa pareja es
+// [RepositorioIngesta.GuardarEntrega], y es lo que usa [Ingesta.IngerirReporte].
+// Este metodo se queda para el seed, que construye las filas en Go y las mete
+// aparte.
 func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, datos []byte) (Reporte, error) {
+	rep, err := prepararReporte(fuente, periodo, datos)
+	if err != nil {
+		return Reporte{}, err
+	}
+	if err := i.congelarEvidencia(ctx, rep, datos); err != nil {
+		return Reporte{}, err
+	}
+	if err := i.Reportes.GuardarReporte(
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+	); err != nil {
+		// Envuelto como los demas caminos de este fichero. errors.Is sigue
+		// casando con ErrReporteDuplicado -es lo que comprueban las pruebas-,
+		// pero el mensaje ya dice DE QUE subida se trata: con varias entregas
+		// en vuelo, un centinela pelado no distingue cual choco.
+		return Reporte{}, fmt.Errorf(
+			"registrar la entrega de %q para %q: %w", rep.Fuente, rep.Periodo, err)
+	}
+	return rep, nil
+}
+
+// prepararReporte valida una entrega y deriva su acuse.
+//
+// No toca nada: es una funcion de (fuente, periodo, bytes) a [Reporte]. Que sea
+// pura es lo que permite que [Ingesta.IngerirReporte] la llame antes de decidir
+// como persiste, sin comprometerse todavia a escribir nada.
+func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
 	// UNA sola normalizacion de la fuente, y ANTES de la validacion, por lo
 	// mismo que la de obra_id en GuardarUsos: la fuente se validaba recortada
 	// y se usaba CRUDA en los tres sitios que vienen despues -la fila de
@@ -156,7 +338,16 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 	}
 	rep.ID = idReporte(fuente, rep.SHA256)
 	rep.ClaveObjeto = claveObjeto(rep.SHA256)
+	return rep, nil
+}
 
+// congelarEvidencia deja los bytes crudos en la boveda, bajo la clave que ya
+// derivo [prepararReporte].
+//
+// Va SIEMPRE antes de escribir el acuse, por lo que explica el doc de
+// [Ingesta.GuardarReporte]: el estado que no puede existir es una fila de
+// `reportes` que apunte a una evidencia que no se llego a escribir.
+func (i Ingesta) congelarEvidencia(ctx context.Context, rep Reporte, datos []byte) error {
 	// ErrObjetoYaExiste no es un fallo por si mismo: la clave es la huella, asi
 	// que lo que ya hay bajo ella DEBERIA ser estos mismos bytes. Puede venir
 	// de una resubida -que la fila de abajo rechazara-, de otra fuente que
@@ -176,11 +367,11 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 	// la comprobacion sigue siendo cierta sin que nadie tenga que acordarse.
 	if err := i.Almacen.Poner(ctx, rep.ClaveObjeto, datos); err != nil {
 		if !errors.Is(err, ErrObjetoYaExiste) {
-			return Reporte{}, fmt.Errorf("guardar los bytes crudos de %q: %w", fuente, err)
+			return fmt.Errorf("guardar los bytes crudos de %q: %w", rep.Fuente, err)
 		}
 		ya, errLeer := i.Almacen.Obtener(ctx, rep.ClaveObjeto)
 		if errLeer != nil {
-			return Reporte{}, fmt.Errorf(
+			return fmt.Errorf(
 				"comprobar la evidencia ya presente en %q: %w", rep.ClaveObjeto, errLeer)
 		}
 		// El mensaje lleva las DOS huellas, y los dos tamanos. La version
@@ -197,24 +388,13 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 		// orden. La huella real es ademas con lo que se busca el objeto en el
 		// almacen para ver de donde salio.
 		if huellaReal := huella(ya); huellaReal != rep.SHA256 {
-			return Reporte{}, fmt.Errorf(
+			return fmt.Errorf(
 				"%w: bajo %q hay %d bytes de huella %s; la entrega son %d bytes de huella %s",
 				ErrEvidenciaCorrupta, rep.ClaveObjeto,
 				len(ya), huellaReal, rep.NBytes, rep.SHA256)
 		}
 	}
-
-	if err := i.Reportes.GuardarReporte(
-		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
-	); err != nil {
-		// Envuelto como los demas caminos de este fichero. errors.Is sigue
-		// casando con ErrReporteDuplicado -es lo que comprueban las pruebas-,
-		// pero el mensaje ya dice DE QUE subida se trata: con varias entregas
-		// en vuelo, un centinela pelado no distingue cual choco.
-		return Reporte{}, fmt.Errorf(
-			"registrar la entrega de %q para %q: %w", rep.Fuente, rep.Periodo, err)
-	}
-	return rep, nil
+	return nil
 }
 
 // GuardarUsos persiste las filas de un reporte y devuelve las RECHAZADAS, cada
@@ -252,6 +432,24 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 	if len(usos) == 0 {
 		return nil, nil
 	}
+	rep, err := normalizarAcuse(rep)
+	if err != nil {
+		return nil, err
+	}
+	lote, rechazados := prepararLote(rep, usos)
+
+	if err := i.Reportes.GuardarUsos(ctx, lote); err != nil {
+		return nil, fmt.Errorf("guardar las filas del reporte %q: %w", rep.ID, err)
+	}
+	return rechazados, nil
+}
+
+// normalizarAcuse recorta el acuse y comprueba que dice las dos cosas que cada
+// fila hereda de el.
+//
+// Aparte de [prepararLote] porque es la unica parte de este camino que puede
+// fallar, y falla ANTES de tocar nada.
+func normalizarAcuse(rep Reporte) (Reporte, error) {
 	// El acuse se validaba recortado y se estampaba CRUDO en cada fila del
 	// lote, que es la misma trampa que la de obra_id un piso mas abajo: dos
 	// criterios para el mismo campo. Con un Reporte construido a mano -este
@@ -270,7 +468,7 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 
 	switch {
 	case rep.ID == "":
-		return nil, fmt.Errorf("%w: falta el reporte del que salen las filas", ErrReporteInvalido)
+		return Reporte{}, fmt.Errorf("%w: falta el reporte del que salen las filas", ErrReporteInvalido)
 	case rep.Fuente == "":
 		// Estampar la fuente no basta si la que se estampa viene vacia.
 		// `usos.fuente` es TEXT NOT NULL SIN DEFAULT, asi que la cadena vacia
@@ -279,12 +477,27 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 		// incompleto. Un Reporte que salga de GuardarReporte siempre la trae
 		// -alli se exige-, pero este metodo es publico y el precio de
 		// comprobarlo es una cadena.
-		return nil, fmt.Errorf(
+		return Reporte{}, fmt.Errorf(
 			"%w: el reporte %q no dice de que fuente viene", ErrReporteInvalido, rep.ID)
 	}
+	return rep, nil
+}
 
-	lote := make([]UsoPersistido, len(usos))
-	var rechazados []UsoPersistido
+// prepararLote lleva las filas recien parseadas a la forma que espera el
+// esquema y aparta las que no lo cumplen.
+//
+// Devuelve el lote ENTERO -- buenas y rechazadas mezcladas, cada una con su
+// motivo -- y aparte las rechazadas. El lote va al repositorio en una sola
+// llamada precisamente para que las dos escrituras sean el mismo hecho: un lote
+// guardado a medias deja una entrega cuyo recuento no cuadra con el archivo, y
+// nadie sabria cual de las dos mitades falta.
+//
+// No toca nada y no puede fallar: lo que podia fallar lo comprobo
+// [normalizarAcuse]. Eso es lo que permite que [Ingesta.IngerirReporte] tenga el
+// lote listo ANTES de abrir la escritura, y que la escritura sea entonces una
+// sola llamada.
+func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPersistido) {
+	lote = make([]UsoPersistido, len(usos))
 
 	for n, u := range usos {
 		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
@@ -434,11 +647,7 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 			rechazados = append(rechazados, u)
 		}
 	}
-
-	if err := i.Reportes.GuardarUsos(ctx, lote); err != nil {
-		return nil, fmt.Errorf("guardar las filas del reporte %q: %w", rep.ID, err)
-	}
-	return rechazados, nil
+	return lote, rechazados
 }
 
 // validarUso devuelve el motivo por el que una fila no es canonica, o "" si lo

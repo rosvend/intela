@@ -42,6 +42,13 @@ var clavesIDsFuente = []string{
 	ClaveIDA, ClaveEIDR, ClaveIMDB,
 }
 
+// EsClaveIDsFuente dice si la clave esta en la lista cerrada. Lo usan los
+// escritores (adaptadores de ingesta, seed) al validar un mapa, para no
+// repetir la lista fuera de este fichero.
+func EsClaveIDsFuente(clave string) bool {
+	return slices.Contains(clavesIDsFuente, clave)
+}
+
 // IDFuente es un identificador de una fila de reporte.
 type IDFuente struct {
 	Clave string

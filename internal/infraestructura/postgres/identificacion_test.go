@@ -575,6 +575,9 @@ func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string,
 	return nil
 }
 func (i ingestaDePrueba) GuardarUsos(context.Context, []aplicacion.UsoPersistido) error { return nil }
+func (i ingestaDePrueba) GuardarEntrega(context.Context, aplicacion.Reporte, []aplicacion.UsoPersistido) error {
+	return nil
+}
 func (i ingestaDePrueba) UsosSinResolver(context.Context) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
@@ -582,6 +585,9 @@ func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersis
 	return aplicacion.UsoPersistido{}, nil
 }
 func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
+func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
 
