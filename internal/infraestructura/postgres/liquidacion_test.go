@@ -39,6 +39,9 @@ func sembrarCorrida(t *testing.T, conDocs bool) (*Store, *aplicacion.Liquidacion
 		}
 	}
 
+	// bolsas.usuario_id referencia usuarios_recaudo (#27), no usuarios.
+	ejecutar(`INSERT INTO usuarios_recaudo (id, nombre, nit, categoria)
+	          VALUES ('usr-caracol', 'Caracol Television S.A.', '860025674-2', 'tv_abierta')`)
 	ejecutar(`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
 	          VALUES ($1, 'usr-caracol', '2026', 'nacional', 1000000)`, bolsaNac)
 	ejecutar(`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
