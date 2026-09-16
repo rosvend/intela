@@ -1,4 +1,10 @@
-package migrations
+// Package numeracion comprueba la numeracion goose de las migraciones.
+//
+// Vive aparte de [github.com/rosvend/intela/migrations]: ese paquete solo
+// embebe los .sql y viaja en los binarios de produccion (cmd/migrate,
+// cmd/lambda-migrate). Esta herramienta importa os/exec para leer el arbol
+// de main y solo la usan las pruebas de CI (#110).
+package numeracion
 
 import (
 	"bytes"
@@ -35,11 +41,34 @@ func VersionDe(nombre string) (int64, bool) {
 	return v, true
 }
 
+// SinVersion lista los .sql de fsys cuyo nombre goose no puede parsear.
+//
+// goose.CollectMigrations falla con "could not parse SQL migration file"
+// ante nombres como `arreglo.sql`. PorVersion los ignora; esta lista es la
+// que hace fallar CI antes del despliegue.
+func SinVersion(fsys fs.FS) ([]string, error) {
+	entradas, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, err
+	}
+	var malos []string
+	for _, e := range entradas {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		if _, ok := VersionDe(e.Name()); !ok {
+			malos = append(malos, e.Name())
+		}
+	}
+	sort.Strings(malos)
+	return malos, nil
+}
+
 // PorVersion agrupa los .sql de fsys por su version goose.
 //
 // Una entrada con len > 1 es el panic "duplicate version N" que goose suelta
-// en el despliegue. Los ficheros cuyo nombre no parsea se ignoran: no son
-// migraciones.
+// en el despliegue. Los ficheros cuyo nombre no parsea no entran aqui: ver
+// [SinVersion].
 func PorVersion(fsys fs.FS) (map[int64][]string, error) {
 	entradas, err := fs.ReadDir(fsys, ".")
 	if err != nil {
@@ -87,6 +116,10 @@ func Duplicadas(fsys fs.FS) (map[int64][]string, error) {
 //
 // No se puede derivar del FS de ESTA rama: compararia el arbol consigo mismo
 // y la prueba del hueco pasaria siempre.
+//
+// Si origin/main no esta en el remoto local, falla: un fallback silencioso a
+// `main` local podia dar una version aplicada por debajo de la real y dejar
+// pasar el hueco (#110).
 func BaseRef() string {
 	if r := strings.TrimSpace(os.Getenv("MIGRACIONES_BASE_REF")); r != "" {
 		return r
@@ -98,22 +131,11 @@ func BaseRef() string {
 //
 // Son el hecho sobre el despliegue que la lista a mano dejo de seguir: cuando
 // main avanza, esta lista avanza sin que nadie la edite.
-//
-// Si ref es el por defecto (`origin/main`) y no esta en el remoto local, se
-// intenta `main` antes de fallar: en un clon fresco sin fetch suele existir
-// la rama local y no el remote-tracking.
 func DesplegadasEn(ref string) ([]string, error) {
 	if ref == "" {
 		ref = BaseRef()
 	}
-	nombres, err := listarSQLEn(ref)
-	if err != nil && ref == "origin/main" {
-		nombres, err = listarSQLEn("main")
-		if err == nil {
-			return nombres, nil
-		}
-	}
-	return nombres, err
+	return listarSQLEn(ref)
 }
 
 func listarSQLEn(ref string) ([]string, error) {
@@ -151,43 +173,42 @@ func listarSQLEn(ref string) ([]string, error) {
 	return nombres, nil
 }
 
-// VersionAplicada es la mayor version goose entre las migraciones de ref.
+// VersionAplicada es la mayor version goose entre los nombres dados.
 //
-// Una migracion NUEVA (fichero que ref no tiene) con version <= VersionAplicada
+// Recibe la lista ya resuelta por [DesplegadasEn]: asi el maximo del mensaje
+// de error es el mismo que clasifico las nuevas, sin un segundo git ls-tree.
+//
+// Una migracion NUEVA (fichero que desplegadas no tiene) con version <= esta
 // es el fallo "found N missing migrations before current version X" que goose
 // suelta con allowMissing = false.
-func VersionAplicada(ref string) (int64, error) {
-	nombres, err := DesplegadasEn(ref)
-	if err != nil {
-		return 0, err
-	}
-	var max int64
-	for _, n := range nombres {
+func VersionAplicada(desplegadas []string) (int64, error) {
+	var maxima int64
+	for _, n := range desplegadas {
 		v, ok := VersionDe(n)
 		if !ok {
-			return 0, fmt.Errorf("nombre de migracion ilegible en %s: %s", ref, n)
+			return 0, fmt.Errorf("nombre de migracion ilegible entre las desplegadas: %s", n)
 		}
-		if v > max {
-			max = v
+		if v > maxima {
+			maxima = v
 		}
 	}
-	return max, nil
+	return maxima, nil
 }
 
 // NuevasPorDebajo son los .sql de fsys que no estan en desplegadas y cuya
 // version es menor o igual que la maxima de desplegadas.
+//
+// "Nueva" se decide por nombre de fichero: un renombrado del mismo numero
+// cuenta como nueva y falla aqui. Es deliberado frente a adivinar igualdad
+// por version -renumerar al mergear es la regla-.
 func NuevasPorDebajo(fsys fs.FS, desplegadas []string) ([]string, error) {
+	maxima, err := VersionAplicada(desplegadas)
+	if err != nil {
+		return nil, err
+	}
 	ya := map[string]struct{}{}
-	var max int64
 	for _, n := range desplegadas {
 		ya[n] = struct{}{}
-		v, ok := VersionDe(n)
-		if !ok {
-			return nil, fmt.Errorf("nombre de migracion ilegible entre las desplegadas: %s", n)
-		}
-		if v > max {
-			max = v
-		}
 	}
 
 	todas, err := PorVersion(fsys)
@@ -196,7 +217,7 @@ func NuevasPorDebajo(fsys fs.FS, desplegadas []string) ([]string, error) {
 	}
 	var malas []string
 	for v, nombres := range todas {
-		if v > max {
+		if v > maxima {
 			continue
 		}
 		for _, n := range nombres {

@@ -1,4 +1,4 @@
-package migrations_test
+package numeracion_test
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/rosvend/intela/internal/infraestructura/migraciones/numeracion"
 	"github.com/rosvend/intela/migrations"
 )
 
@@ -20,7 +21,7 @@ import (
 // Eso solo se veia en el terraform apply (lambda-migrate). Aqui se lee el
 // mismo FS embebido que viaja en el binario.
 func TestSinVersionesDuplicadas(t *testing.T) {
-	dup, err := migrations.Duplicadas(migrations.FS)
+	dup, err := numeracion.Duplicadas(migrations.FS)
 	if err != nil {
 		t.Fatalf("listar migraciones: %v", err)
 	}
@@ -44,6 +45,20 @@ func TestSinVersionesDuplicadas(t *testing.T) {
 	t.Fatal(b.String())
 }
 
+// TestSinNombresMalformados cierra el hueco entre PorVersion (que ignora) y
+// goose (que falla el deploy con "could not parse SQL migration file").
+func TestSinNombresMalformados(t *testing.T) {
+	malos, err := numeracion.SinVersion(migrations.FS)
+	if err != nil {
+		t.Fatalf("listar migraciones: %v", err)
+	}
+	if len(malos) == 0 {
+		return
+	}
+	t.Fatalf("hay .sql cuyo nombre goose no parsea; tumbaran el deploy:\n  %s\n"+
+		"el patron es NNNNN_descripcion.sql", strings.Join(malos, "\n  "))
+}
+
 // TestNuevasPorEncimaDeLaAplicada es el modo de fallo 2 del issue #110.
 //
 // goose corre con allowMissing = false. Una migracion numerada por debajo de
@@ -55,16 +70,16 @@ func TestSinVersionesDuplicadas(t *testing.T) {
 // lista a mano: la que habia en migraciones_test se quedo en 00005 mientras
 // produccion avanzaba a 00006 y luego a 00007, y la prueba paso en verde.
 func TestNuevasPorEncimaDeLaAplicada(t *testing.T) {
-	ref := migrations.BaseRef()
-	desplegadas, err := migrations.DesplegadasEn(ref)
+	ref := numeracion.BaseRef()
+	desplegadas, err := numeracion.DesplegadasEn(ref)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	aplicada, err := migrations.VersionAplicada(ref)
+	aplicada, err := numeracion.VersionAplicada(desplegadas)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	malas, err := migrations.NuevasPorDebajo(migrations.FS, desplegadas)
+	malas, err := numeracion.NuevasPorDebajo(migrations.FS, desplegadas)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -79,7 +94,7 @@ func TestNuevasPorEncimaDeLaAplicada(t *testing.T) {
 		aplicada, ref, strings.Join(malas, "\n  "), aplicada)
 }
 
-// Las dos comprobaciones tienen que fallar sobre un FS fabricado: si solo se
+// Las comprobaciones tienen que fallar sobre un FS fabricado: si solo se
 // miran contra el arbol real, un bug que las deje siempre en verde no se ve.
 func TestNumeracionDetectaDuplicadoYHueco(t *testing.T) {
 	t.Run("duplicado", func(t *testing.T) {
@@ -88,7 +103,7 @@ func TestNumeracionDetectaDuplicadoYHueco(t *testing.T) {
 			"00001_b.sql": {Data: []byte("-- +goose Up\n")},
 			"00002_c.sql": {Data: []byte("-- +goose Up\n")},
 		}
-		dup, err := migrations.Duplicadas(fsys)
+		dup, err := numeracion.Duplicadas(fsys)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,12 +121,26 @@ func TestNumeracionDetectaDuplicadoYHueco(t *testing.T) {
 			"00006_ok.sql":     {Data: []byte("-- +goose Up\n")}, // nueva, por encima: vale
 		}
 		desplegadas := []string{"00001_init.sql", "00002_main.sql", "00005_cola.sql"}
-		malas, err := migrations.NuevasPorDebajo(fsys, desplegadas)
+		malas, err := numeracion.NuevasPorDebajo(fsys, desplegadas)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(malas) != 1 || malas[0] != "00003_tardia.sql" {
 			t.Fatalf("malas = %v, se esperaba solo 00003_tardia.sql", malas)
+		}
+	})
+
+	t.Run("nombre malformado", func(t *testing.T) {
+		fsys := fstest.MapFS{
+			"00001_ok.sql": {Data: []byte("-- +goose Up\n")},
+			"arreglo.sql":  {Data: []byte("-- +goose Up\n")},
+		}
+		malos, err := numeracion.SinVersion(fsys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(malos) != 1 || malos[0] != "arreglo.sql" {
+			t.Fatalf("malos = %v, se esperaba solo arreglo.sql", malos)
 		}
 	})
 }

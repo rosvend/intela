@@ -9,9 +9,10 @@
 #      runs with allowMissing=false, refuses the up, and module.api never
 #      rolls out because it depends_on module.migrations.
 #
-# The Go suite under `migrations/` catches both without Postgres. The applied
-# version is derived from MIGRACIONES_BASE_REF (the PR base SHA, or
-# origin/main), not from a hand-maintained list that goes stale.
+# The Go suite under internal/infraestructura/migraciones/numeracion/ catches
+# both (plus unparseable names) without Postgres. The applied version is
+# derived from MIGRACIONES_BASE_REF (the PR base SHA, or origin/main), not from
+# a hand-maintained list that goes stale.
 #
 # Kept as its own stage so a red check says "numbering", not "some Go test".
 # test-go still runs TestAplicarSobreLaVersionDesplegada (needs Postgres) when
@@ -34,6 +35,9 @@ jobs:
         with:
           # Need the PR base (or origin/main) reachable for DesplegadasEn.
           fetch-depth: 0
+          # Tests share the runner; do not leave the contents token in
+          # git-credentials for go test to read (fork PRs included).
+          persist-credentials: false
 
       - uses: actions/setup-go@v7
         with:
@@ -47,9 +51,12 @@ jobs:
       # targeted it". On push / workflow_dispatch, HEAD is main after the
       # merge: comparing the tree to itself makes the gap check vacuously
       # green, and the duplicate check still runs against the embedded FS.
+      #
+      # No -run filter: a typo or rename would exit 0 with "[no tests to run]".
+      # -v prints the t.Logf with the ref and applied version on green checks.
       - name: go test migrations numbering
         env:
           MIGRACIONES_BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
         run: |
           set -euo pipefail
-          go test -count=1 ./migrations/ -run 'TestSinVersionesDuplicadas|TestNuevasPorEncimaDeLaAplicada|TestNumeracionDetectaDuplicadoYHueco'
+          go test -count=1 -v ./internal/infraestructura/migraciones/numeracion/

@@ -50,7 +50,10 @@ numero LIBRE por debajo de la version ya aplicada**. Reservar un hueco para una 
 entrado no funciona: en cuanto se despliega una version mayor, ese hueco ya no se puede rellenar y
 la migracion que lo ocupe rompe el despliegue. Un ADR admite huecos; una migracion no. Para una
 migracion nueva, el numero se toma como **el primero libre por encima de la version aplicada, y
-se reasigna al mergear**. La etapa `Migration versions` de CI (#110) es la compuerta.
+se reasigna al mergear**. La etapa `Migration versions` de CI (#110) es la compuerta de lo que
+goose rechaza en el apply (duplicados, nombres ilegibles, y nuevas con version `<=` aplicada);
+la contiguidad "primero libre" es practica de equipo, no un rojo automatico si alguien salta
+numeros por encima de la aplicada. Ver [docs/ci.md](../ci.md).
 
 El diagrama que materializa `0002`, `0003`, `0008` y `0010` es `docs/diagrams/PATIC2 - Arquitectura.drawio`.
 Documenta la intencion; lo que `0002` y `0003` prometen se hace cumplir sobre el codigo con

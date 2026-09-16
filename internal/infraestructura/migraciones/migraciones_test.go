@@ -17,6 +17,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
+	"github.com/rosvend/intela/internal/infraestructura/migraciones/numeracion"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 	"github.com/rosvend/intela/migrations"
 )
@@ -110,7 +111,7 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	ctx := t.Context()
 	dsn := testhelp.DSN(t)
 
-	desplegadas, err := migrations.DesplegadasEn(migrations.BaseRef())
+	desplegadas, err := numeracion.DesplegadasEn(numeracion.BaseRef())
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -129,7 +130,15 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	}
 }
 
-// ponerEnLaVersionDesplegada aplica SOLO las migraciones de desplegadas.
+// ponerEnLaVersionDesplegada aplica SOLO las migraciones de desplegadas que
+// esta rama ya tiene embebidas.
+//
+// MIGRACIONES_BASE_REF es la punta de main al disparar el evento, no el
+// merge-base. Una rama que no ha rebasado no tiene los .sql que main gano
+// mientras tanto: leerlos del FS embebido fallaria por un motivo que no es
+// la numeracion de esta PR. La interseccion ignora esos nombres -son justo
+// las migraciones sobre las que aun no se ha rebasado- y la pregunta de la
+// prueba (¿una nueva por debajo rompe el up?) no las necesita.
 //
 // Con un FS recortado y no con `up-to`: `up-to N` aplicaria tambien cualquier
 // version intermedia que anada esta rama, que es exactamente el hueco que hay
@@ -142,12 +151,23 @@ func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, d
 	t.Helper()
 
 	soloMain := fstest.MapFS{}
+	var omitidas []string
 	for _, nombre := range desplegadas {
 		sql, err := migrations.FS.ReadFile(nombre)
 		if err != nil {
-			t.Fatalf("leer %s de las migraciones embebidas: %v", nombre, err)
+			omitidas = append(omitidas, nombre)
+			continue
 		}
 		soloMain[nombre] = &fstest.MapFile{Data: sql}
+	}
+	if len(soloMain) == 0 {
+		t.Skipf("la rama va por detras de main: ninguna de las %d migraciones "+
+			"desplegadas esta embebida; rebasa antes de confiar en esta prueba",
+			len(desplegadas))
+	}
+	if len(omitidas) > 0 {
+		t.Logf("rama por detras de main: se omiten %d migraciones aun no rebaseadas (%s)",
+			len(omitidas), strings.Join(omitidas, ", "))
 	}
 
 	db, err := sql.Open("pgx", dsn)

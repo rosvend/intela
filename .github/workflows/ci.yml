@@ -121,18 +121,21 @@ jobs:
           # migration used to skip test-go entirely, and the gap-under-applied
           # failure only showed up in terraform apply (#110).
           P_GO='(\.go$|^go\.(mod|sum)$|^migrations/|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture|migrations)\.yml$)'
-          P_MIGRATIONS='(^migrations/|internal/infraestructura/migraciones/|^\.github/workflows/(ci|migrations)\.yml$)'
+          P_MIGRATIONS='(^migrations/|^internal/infraestructura/migraciones/|^\.github/workflows/(ci|migrations)\.yml$)'
           P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
           P_CONTRACT='(^api/|^\.github/workflows/(ci|contract)\.yml$)'
           # The Go sources are in here on purpose: the backend image is built
           # FROM them, so a change to `internal/` that breaks the build has to
           # re-run this stage, not wait for the merge to main to find out.
-          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          # migrations/*.sql is embedded into /app/migrate, so a SQL-only PR
+          # must rebuild the image too.
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^migrations/|^\.github/workflows/(ci|container|deploy)\.yml$)'
           # The Go sources are in here for the same reason they are in P_DOCKER:
           # the plan hashes the Lambda zips, which are built FROM them, so a
           # change under cmd/lambda has to re-plan rather than surprise the
           # deploy. The Makefile too, since it is what builds them.
-          P_TERRAFORM='(^infra/|^Makefile$|^cmd/lambda|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|terraform|deploy)\.yml$)'
+          # migrations/*.sql is //go:embed-ed into migrate.zip, same reason.
+          P_TERRAFORM='(^infra/|^Makefile$|^cmd/lambda|\.go$|^go\.(mod|sum)$|^migrations/|^\.github/workflows/(ci|terraform|deploy)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
