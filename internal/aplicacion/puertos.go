@@ -202,10 +202,13 @@ type GestionDeclaraciones interface {
 // #86 pide que GET /obras y ListarObras paginen juntos, no cada uno a su aire.
 //
 // Limite cero significa "usar el por defecto" ([LimiteObrasPorDefecto]): es el
-// tope que cierra el catalogo real de REDES SGC. Desplazamiento cero es el
-// inicio. Los valores ilegales -limite negativo, por encima del maximo, o
-// desplazamiento negativo- los rechaza el adaptador HTTP con 400; el
-// repositorio solo aplica el defecto.
+// tope que cierra el catalogo real de REDES SGC. [LimiteSinTope] es el
+// centinela explicito para pedir el catalogo entero -"todo" se dice, no se
+// obtiene dejando el campo a cero-. Desplazamiento cero es el inicio.
+//
+// Los valores ilegales -limite negativo distinto de LimiteSinTope, por encima
+// del maximo, o desplazamiento negativo- los rechaza el adaptador HTTP con
+// 400; el repositorio solo aplica el defecto.
 type Paginacion struct {
 	Limite         int
 	Desplazamiento int
@@ -217,9 +220,14 @@ const (
 	// LimiteObrasMaximo es el techo que acepta GET /obras. Por encima es 400,
 	// no un silencio que lo recorte: quien pide 10_000 tiene que saber que no.
 	LimiteObrasMaximo = 500
+	// LimiteSinTope pide el catalogo entero. Solo tiene sentido en lecturas
+	// internas (p. ej. el motor de reparto via ListarObras); GET /obras lo
+	// rechaza como limite negativo.
+	LimiteSinTope = -1
 )
 
 // ConDefecto pone LimiteObrasPorDefecto cuando Limite llega en cero. No
+// toca [LimiteSinTope]: ese centinela ya es una eleccion explicita. No
 // recorta ni rechaza: eso es del adaptador HTTP.
 func (p Paginacion) ConDefecto() Paginacion {
 	if p.Limite == 0 {

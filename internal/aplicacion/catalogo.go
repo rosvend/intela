@@ -93,8 +93,11 @@ func (c Catalogo) ObraPorID(ctx context.Context, id string) (repertorio.Obra, er
 //
 // Un filtro vacio devuelve la primera pagina del catalogo: "sin recorte" de
 // titulo/genero/IPI/anio sigue siendo un recorte mas, y la paginacion es el
-// tope que evita servir el catalogo entero de REDES SGC de un golpe.
+// tope que evita servir el catalogo entero de REDES SGC de un golpe. El
+// defecto vive aqui -no en cada adaptador- para que cualquier
+// [CatalogoObras] lo herede y se pueda comprobar sin levantar Postgres.
 func (c Catalogo) BuscarObras(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error) {
+	f.Paginacion = f.ConDefecto()
 	obras, err := c.Obras.Buscar(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("buscar obras: %w", err)

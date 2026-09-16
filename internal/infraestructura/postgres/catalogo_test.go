@@ -368,6 +368,67 @@ func TestBuscarRespetaLimiteYDesplazamiento(t *testing.T) {
 	}
 }
 
+// IPI + otro filtro + paginacion ejercitan la rama $5 <> ” junto al LIMIT,
+// que es el camino que el UNION ALL existe para proteger.
+func TestBuscarPorIPICombinaFiltrosYPaginacion(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	casos := []struct {
+		nombre string
+		filtro aplicacion.FiltroObras
+		quiero []string
+	}{
+		{
+			nombre: "ipi solo",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001"},
+			quiero: []string{obraCompleta, obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi y genero",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Genero: "Drama"},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi y anio",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Anio: 1991},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con limite",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1},
+			},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con desplazamiento",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1, Desplazamiento: 1},
+			},
+			quiero: []string{obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi inexistente",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-99999999"},
+			quiero: nil,
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			obras, err := s.Buscar(ctx, c.filtro)
+			if err != nil {
+				t.Fatalf("Buscar: %v", err)
+			}
+			if got := ids(obras); !slices.Equal(got, c.quiero) {
+				t.Fatalf("ids = %v, se esperaba %v", got, c.quiero)
+			}
+		})
+	}
+}
+
 // Una busqueda sin coincidencias devuelve lista vacia y NINGUN error. "No hay
 // filas" solo es ErrNoEncontrado cuando se pidio una fila concreta.
 func TestBuscarSinCoincidenciasNoEsError(t *testing.T) {

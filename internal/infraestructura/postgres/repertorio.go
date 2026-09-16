@@ -30,24 +30,42 @@ const clausulaVigente = `
 // declaracion. La forma de paginacion es la misma que [Store.Buscar]
 // (issue #90).
 //
+// Paginacion{} (Limite cero) aplica [aplicacion.LimiteObrasPorDefecto]. Quien
+// necesite el censo entero -p. ej. el motor de reparto- tiene que pedirlo con
+// [aplicacion.LimiteSinTope]: "todo" se dice, no se obtiene dejando el campo
+// a cero.
+//
 // Dos consultas y no una por obra: con N obras, preguntar las partes de cada
 // una es N+1 viajes contra la base. Con dos, el coste no depende de N.
 func (s *Store) ListarObras(ctx context.Context, p aplicacion.Paginacion) ([]aplicacion.Obra, error) {
 	p = p.ConDefecto()
 	// ORDER BY id: el ADR 0005 exige que una corrida se reproduzca bit a bit,
 	// y una lista sin orden explicito no lo es -PostgreSQL no promete ninguno.
-	filas, err := s.pool.Query(ctx,
-		`SELECT `+columnasObra+` FROM obras ORDER BY id LIMIT $1 OFFSET $2`,
-		p.Limite, p.Desplazamiento)
+	var (
+		filas pgx.Rows
+		err   error
+	)
+	if p.Limite == aplicacion.LimiteSinTope {
+		filas, err = s.pool.Query(ctx,
+			`SELECT `+columnasObra+` FROM obras ORDER BY id`)
+	} else {
+		filas, err = s.pool.Query(ctx,
+			`SELECT `+columnasObra+` FROM obras ORDER BY id LIMIT $1 OFFSET $2`,
+			p.Limite, p.Desplazamiento)
+	}
 	if err != nil {
 		return nil, traducirError(err, "listar obras")
 	}
 	defer filas.Close()
 
-	var (
-		obras []aplicacion.Obra
-		ids   []string
-	)
+	// make no-nil: una pagina vacia tiene que llegar a partesDeObras como
+	// slice vacio, no como nil. nil pediria todasLasPartes por accidente.
+	capIDs := 0
+	if p.Limite > 0 {
+		capIDs = p.Limite
+	}
+	obras := make([]aplicacion.Obra, 0, capIDs)
+	ids := make([]string, 0, capIDs)
 	for filas.Next() {
 		var o aplicacion.Obra
 		if err := filas.Scan(&o.ID, &o.Titulo, &o.IDA, &o.EIDR, &o.IMDB, &o.Tipo); err != nil {
@@ -97,8 +115,9 @@ func (s *Store) ObraPorID(ctx context.Context, id string) (aplicacion.Obra, erro
 //
 // Una obra sin partes no aparece en el mapa, y no hace falta que aparezca:
 // pedir una clave ausente devuelve la Declaracion cero, cuyo Estado() ya es
-// "incompleta". Si algun caso de uso necesita enumerar obras, que las pida a
-// ListarObras; este mapa no es el censo del catalogo.
+// "incompleta". Si algun caso de uso necesita el censo de obras, que lo pida
+// a ListarObras con LimiteSinTope: Paginacion{} solo da la primera pagina, y
+// este mapa no es el catalogo.
 func (s *Store) Declaraciones(ctx context.Context) (map[string]repertorio.Declaracion, error) {
 	partes, err := s.todasLasPartes(ctx)
 	if err != nil {
@@ -163,38 +182,39 @@ func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.P
 }
 
 // todasLasPartes trae las partes de todas las obras de una vez, agrupadas por
-// obra. Es la mitad que evita el N+1 de Declaraciones.
+// obra. Es la mitad que evita el N+1 de Declaraciones. SQL propio: no comparte
+// interruptor nil con partesDeObras.
 func (s *Store) todasLasPartes(ctx context.Context) (map[string][]repertorio.Parte, error) {
-	return s.partesDeObras(ctx, nil)
-}
-
-// partesDeObras trae las partes de las obras pedidas, agrupadas por obra.
-// ids nil pide todas -es lo que usa Declaraciones-; un slice vacio no consulta.
-func (s *Store) partesDeObras(ctx context.Context, ids []string) (map[string][]repertorio.Parte, error) {
-	partes := map[string][]repertorio.Parte{}
-	if ids != nil && len(ids) == 0 {
-		return partes, nil
-	}
-
-	var (
-		filas pgx.Rows
-		err   error
-	)
-	if ids == nil {
-		filas, err = s.pool.Query(ctx,
-			`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
-			  ORDER BY d.obra_id, d.titular_id`)
-	} else {
-		filas, err = s.pool.Query(ctx,
-			`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
-			  WHERE d.obra_id = ANY($1)
-			  ORDER BY d.obra_id, d.titular_id`, ids)
-	}
+	filas, err := s.pool.Query(ctx,
+		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+		  ORDER BY d.obra_id, d.titular_id`)
 	if err != nil {
 		return nil, traducirError(err, "listar declaraciones")
 	}
 	defer filas.Close()
+	return escanearPartesPorObra(filas)
+}
 
+// partesDeObras trae las partes de las obras pedidas, agrupadas por obra.
+// Un slice vacio no consulta: evita barrer declaraciones cuando la pagina
+// de ListarObras no trajo filas.
+func (s *Store) partesDeObras(ctx context.Context, ids []string) (map[string][]repertorio.Parte, error) {
+	if len(ids) == 0 {
+		return map[string][]repertorio.Parte{}, nil
+	}
+	filas, err := s.pool.Query(ctx,
+		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
+		  WHERE d.obra_id = ANY($1)
+		  ORDER BY d.obra_id, d.titular_id`, ids)
+	if err != nil {
+		return nil, traducirError(err, "listar declaraciones")
+	}
+	defer filas.Close()
+	return escanearPartesPorObra(filas)
+}
+
+func escanearPartesPorObra(filas pgx.Rows) (map[string][]repertorio.Parte, error) {
+	partes := map[string][]repertorio.Parte{}
 	for filas.Next() {
 		var (
 			obraID string

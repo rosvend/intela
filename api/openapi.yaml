@@ -1271,8 +1271,9 @@ paths:
       summary: Listar las bolsas
       description: |
         Devuelve las bolsas, ordenadas por identificador. Sin el parametro
-        devuelve todas: "sin recorte" es un recorte mas y no merece una ruta
-        aparte. Sin coincidencias devuelve una lista vacia, no un 404.
+        `periodo` no filtra por periodo (todas las bolsas). Distinto de
+        `/obras`, que pagina siempre: aqui el listado sigue sin tope de
+        paginacion. Sin coincidencias devuelve una lista vacia, no un 404.
       operationId: listarBolsas
       security:
         - bearerAuth: []

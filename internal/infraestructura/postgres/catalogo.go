@@ -161,34 +161,52 @@ func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 // -`$5 <> ”` frente a `$5 = ”`-, asi el EXISTS suelto deja que
 // `obra_coautores_ipi` guie el Nested Loop (issue #90).
 //
-// Los coautores viajan en el mismo SELECT via LATERAL: una instantanea
-// coherente y sin el segundo viaje de coautoresDeObras.
+// La pagina se resuelve PRIMERO (ids + metadatos) y el LATERAL de coautores
+// se aplica despues, solo a las filas que sobreviven al LIMIT: si el jsonb_agg
+// corriera antes del recorte, la primera pagina costaria mas que servir el
+// catalogo entero.
+//
+// ORDER BY id nombra la clave (no la posicion): el ADR 0005 exige
+// reproducibilidad, y el UNION ALL duplica columnasCatalogoDe.
+//
+// OFFSET degrada linealmente con la profundidad (KISS hoy). Cuando el
+// catalogo sea real, el paso a keyset es una decision, no un descubrimiento.
 func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error) {
 	p := f.ConDefecto()
-	// ORDER BY id: el ADR 0005 exige que una corrida se reproduzca bit a bit,
-	// y una lista sin orden explicito no lo es.
 	const filtrosComunes = `
 		    AND ($1 = ''  OR o.titulo ILIKE $2)
 		    AND ($3 = ''  OR o.genero = $3)
 		    AND ($4 = 0   OR o.anio   = $4)`
-	filas, err := s.pool.Query(ctx,
-		`(
-		  SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
-		    FROM obras o`+lateralCoautores+`
-		   WHERE $5 <> ''
-		     AND EXISTS (SELECT 1 FROM obra_coautores c
-		                  WHERE c.obra_id = o.id AND c.ipi = $5)`+filtrosComunes+`
-		)
-		UNION ALL
-		(
-		  SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
-		    FROM obras o`+lateralCoautores+`
-		   WHERE $5 = ''`+filtrosComunes+`
-		)
-		ORDER BY 1
-		LIMIT $6 OFFSET $7`,
-		f.Titulo, patronContiene(f.Titulo), f.Genero, f.Anio, f.IPI,
-		p.Limite, p.Desplazamiento)
+	// pagina: ids + metadatos sin coautores. El LATERAL va fuera, contra
+	// las filas que pasan el LIMIT (o contra todas si LimiteSinTope).
+	pagina := `
+	     (
+	       SELECT ` + columnasCatalogoDe + `
+	         FROM obras o
+	        WHERE $5 <> ''
+	          AND EXISTS (SELECT 1 FROM obra_coautores c
+	                       WHERE c.obra_id = o.id AND c.ipi = $5)` + filtrosComunes + `
+	     )
+	     UNION ALL
+	     (
+	       SELECT ` + columnasCatalogoDe + `
+	         FROM obras o
+	        WHERE $5 = ''` + filtrosComunes + `
+	     )`
+	sql := `SELECT ` + columnasCatalogoDe + `, COALESCE(ca.coautores, '[]'::jsonb)
+	   FROM (` + pagina + `
+	     ORDER BY id`
+	args := []any{f.Titulo, patronContiene(f.Titulo), f.Genero, f.Anio, f.IPI}
+	if p.Limite != aplicacion.LimiteSinTope {
+		sql += `
+	     LIMIT $6 OFFSET $7`
+		args = append(args, p.Limite, p.Desplazamiento)
+	}
+	sql += `
+	   ) o` + lateralCoautores + `
+	 ORDER BY o.id`
+
+	filas, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, "buscar obras")
 	}

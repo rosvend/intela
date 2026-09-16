@@ -122,6 +122,36 @@ func TestListarObrasRespetaLimiteYDesplazamiento(t *testing.T) {
 	}
 }
 
+// Una pagina vacia no puede caer en "traer todas las declaraciones": el
+// slice de ids tiene que ser vacio no-nil para que partesDeObras corte.
+func TestListarObrasPaginaVaciaNoEsError(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.ListarObras(t.Context(), aplicacion.Paginacion{
+		Limite: 10, Desplazamiento: 999999,
+	})
+	if err != nil {
+		t.Fatalf("ListarObras: %v", err)
+	}
+	if len(obras) != 0 {
+		t.Fatalf("se esperaba lista vacia, llegaron %d", len(obras))
+	}
+}
+
+func TestListarObrasConLimiteSinTopeDevuelveTodas(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.ListarObras(t.Context(), aplicacion.Paginacion{
+		Limite: aplicacion.LimiteSinTope,
+	})
+	if err != nil {
+		t.Fatalf("ListarObras: %v", err)
+	}
+	if len(obras) != 4 {
+		t.Fatalf("se esperaban 4 obras, llegaron %d", len(obras))
+	}
+}
+
 func TestDeclaraciones(t *testing.T) {
 	s, _ := sembrar(t)
 
