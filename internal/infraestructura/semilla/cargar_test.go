@@ -75,8 +75,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	).Scan(&nSinteticos, &nPublicados); err != nil {
 		t.Fatalf("contar parametros por procedencia: %v", err)
 	}
-	if nSinteticos != 9 {
-		t.Fatalf("parametros con %s: %d, se esperaban 9", ReglamentoSintetico, nSinteticos)
+	if nSinteticos != 15 {
+		t.Fatalf("parametros con %s: %d, se esperaban 15", ReglamentoSintetico, nSinteticos)
 	}
 	if nPublicados != 6 {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)

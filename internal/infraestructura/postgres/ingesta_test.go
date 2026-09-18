@@ -204,7 +204,7 @@ func TestGuardarUsosSeparaElLoteEnCanonicoYRechazado(t *testing.T) {
 
 	mala := usoPendiente("uso-mala", reporteEnero, "Radio Novela")
 	mala.Modalidad = "radio"
-	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 
 	err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
 		usoPendiente("uso-1", reporteEnero, "La Casa"),
@@ -1341,7 +1341,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 	// seis combinaciones, y los dos COUNT devuelven 6 y 6 sin que nada falle.
 	mala1 := usoPendiente("uso-mala-1", reporteEnero, "Radio Novela")
 	mala1.Modalidad = "radio"
-	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 	mala2 := usoPendiente("uso-mala-2", reporteEnero, "Sin duracion")
 	mala2.RechazoMotivo = `duracion_min: "cuarenta y cinco" no es un numero`
 

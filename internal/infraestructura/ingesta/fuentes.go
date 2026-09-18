@@ -186,7 +186,7 @@ func MapaNetflix() Mapa {
 // Mapea `modalidad` desde el archivo ADEMAS de fijarla. No es redundante: la
 // muestra la trae como columna, y dejarla sin mapear haria que un archivo con
 // filas de hotel entrara entero declarado como cine. Con la columna mapeada, la
-// fila dice lo que es y `validarUso` rechaza lo que no sea una de las cuatro
+// fila dice lo que es y `validarUso` rechaza lo que no sea una de las siete
 // modalidades; la modalidad fija sigue valiendo para las celdas vacias.
 func MapaCine() Mapa {
 	return Mapa{
@@ -199,6 +199,7 @@ func MapaCine() Mapa {
 			{Campo: CampoTipoObra, Nombre: "tipo_obra", Requerida: false},
 			// La metrica de la modalidad. Sin ella la fila no pondera nada.
 			{Campo: CampoTaquilla, Nombre: "taquilla", Requerida: true},
+			{Campo: CampoEspectadores, Nombre: "espectadores", Requerida: false},
 			// Moneda de la taquilla. Sin ella, normalizacion manda a revision
 			// (no pone a cero). La muestra sintetica trae COP; el archivo real
 			// del cliente fijara el nombre de columna cuando llegue.
