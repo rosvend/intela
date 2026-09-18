@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -343,7 +344,7 @@ const esListado = (url: string) =>
 
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del
- * test, el listado con `cargas()` (leidas en cada GET) y la subida con
+ * test, el listado con `cargas(url)` (leidas en cada GET) y la subida con
  * `subida()`. Todo lo demas, 404.
  */
 function simularServidor({
@@ -352,7 +353,7 @@ function simularServidor({
   subida,
 }: {
   rol: Rol;
-  cargas?: () => Carga[];
+  cargas?: (url: string) => Carga[];
   subida?: () => Promise<Response>;
 }) {
   vi.mocked(fetch).mockImplementation((entrada, init) => {
@@ -370,7 +371,7 @@ function simularServidor({
       );
     }
     if (metodo === "GET" && esListado(url)) {
-      return Promise.resolve(json(cargas()));
+      return Promise.resolve(json(cargas(url)));
     }
     if (metodo === "POST" && url === "/api/reportes" && subida) {
       return subida();
@@ -399,6 +400,11 @@ function subidas() {
   );
 }
 
+/** Los GET del log de rechazos de alguna carga: uno por cada fila abierta sin cache. */
+function logsDeRechazos() {
+  return llamadas().filter((l) => l.url.endsWith("/rechazos"));
+}
+
 /** El valor que acompana a una etiqueta del resumen de la entrega. */
 function dato(etiqueta: string): string | null | undefined {
   return screen.getByText(etiqueta).nextElementSibling?.textContent;
@@ -425,11 +431,23 @@ function escribirPeriodo(valor: string) {
   });
 }
 
-const botonSubir = () => screen.getByRole("button", { name: "Subir reporte" });
+// El texto del boton cambia: "Subir a AAAA-MM" cuando nombra el periodo
+// destino, "Subir reporte" cuando no hay ningun periodo utilizable y
+// "Subiendo…" mientras la subida esta en vuelo. El helper los abarca todos;
+// los tests que juzgan el texto lo afirman literal.
+const botonSubir = () => screen.getByRole("button", { name: /^Subir/ });
 
 const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
 const FALTA_PERIODO =
-  "Escribe un periodo completo (AAAA o AAAA-MM) para poder subir el reporte.";
+  "Escribe un periodo válido para poder subir el reporte: AAAA, o AAAA-MM con el mes entre 01 y 12.";
+
+// El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
+// `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
+// literales para que un cambio de copy se note.
+const TITULO_FALLO_DESCONOCIDO = "No se pudo registrar la entrega";
+const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
+const PUDO_LLEGAR =
+  "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
 // Ejemplo del 400 en api/openapi.yaml: un unico string que nombra columnas.
 const MENSAJE_400 =
@@ -455,6 +473,21 @@ const entregaCaracol = {
 
 // La misma entrega, como la devuelve el listado despues de subirla.
 const cargaSubida = { ...cargaSinRechazos, rechazados: 1 } satisfies Carga;
+
+// Un 201 que no trae una `Entrega`. El primero es el cuerpo que devuelve un
+// proxy, el segundo un JSON con otra forma: los dos llegan a `api()` como un
+// resultado valido, y el panel reventaria al leer `rechazados.length`.
+const CUERPOS_QUE_NO_SON_ENTREGA: [string, () => Response][] = [
+  [
+    "HTML",
+    () =>
+      new Response("<html><body>Bad Gateway</body></html>", {
+        status: 201,
+        headers: { "content-type": "text/html" },
+      }),
+  ],
+  ["JSON sin rechazados", () => json({ id: "rep-9f2c4e1a" }, 201)],
+];
 
 describe("pantalla de ingesta (integracion con App)", () => {
   beforeEach(() => {
@@ -532,7 +565,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(dato("Filas aceptadas")).toBe("1.234");
     expect(dato("Filas rechazadas")).toBe("1");
 
-    // D-007: el listado se remonta, vuelve a pedirse y trae la carga nueva.
+    // El listado se remonta al subir, vuelve a pedirse y trae la carga nueva.
     await screen.findByRole("table", { name: "Cargas hechas" });
     expect(getsDelListado()).toHaveLength(pedidosAntes + 1);
     expect(getsDelListado().at(-1)).toBe("/api/reportes?periodo=2026-01");
@@ -561,7 +594,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(getsDelListado()).toHaveLength(1);
   });
 
-  it("con la subida en vuelo el boton queda deshabilitado y un doble clic manda un solo POST", async () => {
+  it("con la subida en vuelo el boton queda deshabilitado y dos submits seguidos mandan un solo POST", async () => {
     let responder: (respuesta: Response) => void = () => {};
     simularServidor({
       rol: "administrador",
@@ -577,8 +610,18 @@ describe("pantalla de ingesta (integracion con App)", () => {
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
     const boton = botonSubir();
-    fireEvent.click(boton);
-    fireEvent.click(boton);
+    const formulario = boton.closest("form");
+    if (!formulario) throw new Error("no se encontro el formulario");
+
+    // Los dos submits van dentro del MISMO `act`: el segundo entra antes de que
+    // React vuelva a pintar, asi que el `disabled` del render todavia no existe
+    // y el unico que puede cortarlo es el ref `enVuelo`. Con dos
+    // `fireEvent.click` sueltos cada uno cerraria su propio `act`, el boton ya
+    // estaria deshabilitado y el test pasaria tambien sin el ref.
+    act(() => {
+      fireEvent.submit(formulario);
+      fireEvent.submit(formulario);
+    });
 
     expect(subidas()).toHaveLength(1);
     expect(boton).toHaveProperty("disabled", true);
@@ -591,6 +634,46 @@ describe("pantalla de ingesta (integracion con App)", () => {
     // El listado se remonta tras el 201: se espera a que termine.
     await screen.findByText(VACIO_2026_01);
   });
+
+  it.each(CUERPOS_QUE_NO_SON_ENTREGA)(
+    "un 201 con cuerpo de %s no tumba la pantalla: cae en el fallo desconocido",
+    async (_caso, respuesta) => {
+      simularServidor({
+        rol: "administrador",
+        subida: () => Promise.resolve(respuesta()),
+      });
+
+      montarApp("/ingesta?periodo=2026-01");
+      await screen.findByText(VACIO_2026_01);
+
+      elegirFuente("caracol");
+      elegirArchivo(archivoCaracol());
+      fireEvent.click(botonSubir());
+
+      // Ni el cuerpo ni su forma llegan al panel: el 201 se lee como un fallo
+      // no clasificable, con el aviso de que la entrega pudo haber llegado.
+      const alerta = await screen.findByRole("alert");
+      expect(
+        within(alerta).getByRole("heading", {
+          name: TITULO_FALLO_DESCONOCIDO,
+        }),
+      ).toBeTruthy();
+      expect(alerta.textContent).toContain(MENSAJE_DESCONOCIDO);
+      expect(alerta.textContent).toContain(PUDO_LLEGAR);
+
+      // La pantalla sigue montada, el listado en pie y el formulario se puede
+      // reintentar.
+      expect(
+        screen.getByRole("heading", { name: "Ingesta de reportes" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("heading", { name: "Cargas hechas" }),
+      ).toBeTruthy();
+      expect(screen.getByText(VACIO_2026_01)).toBeTruthy();
+      expect(botonSubir()).toHaveProperty("disabled", false);
+      expect(subidas()).toHaveLength(1);
+    },
+  );
 
   it("sin fuente o sin archivo no se puede subir", async () => {
     simularServidor({ rol: "administrador" });
@@ -645,6 +728,99 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(ubicacion()).toBe("/ingesta");
     await screen.findByText("Aún no hay cargas registradas.");
     expect(getsDelListado()).toHaveLength(3);
+  });
+
+  it("el boton nombra el periodo destino cuando hay uno utilizable, y no cuando no lo hay", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    // El boton dice a donde va el archivo, no solo que sube.
+    expect(botonSubir().textContent).toBe("Subir a 2026-01");
+    expect(botonSubir()).toHaveProperty("disabled", false);
+
+    // Sin periodo utilizable vuelve al texto neutro.
+    escribirPeriodo("");
+    await screen.findByText("Aún no hay cargas registradas.");
+    expect(botonSubir().textContent).toBe("Subir reporte");
+    expect(botonSubir()).toHaveProperty("disabled", true);
+  });
+
+  it.each(["2026-13", "2026-00"])(
+    "con el periodo %s la subida queda bloqueada, aunque el listado si se consulte",
+    async (periodo) => {
+      simularServidor({ rol: "administrador" });
+
+      montarApp("/ingesta");
+      await screen.findByText("Aún no hay cargas registradas.");
+
+      elegirFuente("caracol");
+      elegirArchivo(archivoCaracol());
+      escribirPeriodo(periodo);
+
+      // El backend no lo frena: su validador del periodo es mas flojo que el
+      // del dominio, asi que el listado lo consulta y contesta que en ese
+      // periodo no hay cargas.
+      expect(ubicacion()).toBe(`/ingesta?periodo=${periodo}`);
+      await screen.findByText(
+        `No hay cargas registradas para el periodo ${periodo}.`,
+      );
+
+      // Pero subir a un mes que no existe no se deshace: la subida queda
+      // bloqueada y se dice por que.
+      expect(botonSubir()).toHaveProperty("disabled", true);
+      expect(botonSubir().textContent).toBe("Subir reporte");
+      expect(screen.getByText(FALTA_PERIODO)).toBeTruthy();
+
+      // Y no se cuela ni con un submit directo al formulario.
+      const formulario = botonSubir().closest("form");
+      if (!formulario) throw new Error("no se encontro el formulario");
+      fireEvent.submit(formulario);
+      expect(subidas()).toHaveLength(0);
+    },
+  );
+
+  it("al cambiar de periodo el listado se remonta: la fila abierta queda cerrada y no repite su log", async () => {
+    simularServidor({
+      rol: "administrador",
+      // Con una carga en rechazos solo en 2026-01, para que la ida y vuelta se
+      // note.
+      cargas: (url) =>
+        url.includes("periodo=2026-01") ? [cargaConRechazos] : [],
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByRole("table", { name: "Cargas hechas" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (3)" }));
+    // La carga no existe para este backend falso, pero el error queda dentro de
+    // la fila abierta: lo que importa aqui es que el log se pidio una vez.
+    await screen.findByRole("alert");
+    expect(logsDeRechazos()).toHaveLength(1);
+    expect(
+      screen
+        .getByRole("button", { name: "Ocultar rechazos" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    // Otro periodo: el listado se remonta y con el se va el estado de las filas.
+    escribirPeriodo("2026-02");
+    await screen.findByText(
+      "No hay cargas registradas para el periodo 2026-02.",
+    );
+
+    // Y al volver, la fila esta cerrada de nuevo y su log no se pide sin clic.
+    escribirPeriodo("2026-01");
+    await screen.findByRole("table", { name: "Cargas hechas" });
+    expect(
+      screen
+        .getByRole("button", { name: "Ver rechazos (3)" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(logsDeRechazos()).toHaveLength(1);
   });
 
   it("soltar un archivo en la zona lo elige, igual que el selector", async () => {

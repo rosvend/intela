@@ -8,7 +8,7 @@ import PanelResultado, {
   resultadoDeError,
 } from "./PanelResultado";
 
-// D-005: las fuentes con adaptador dado de alta en
+// Las fuentes con adaptador dado de alta en
 // internal/infraestructura/ingesta/fuentes.go. Una fuente nueva se anade alli
 // y aqui; si divergen, el 400 del backend lista los pares (fuente, formato)
 // validos.
@@ -18,10 +18,50 @@ const FUENTES = [
   { valor: "cine", etiqueta: "Cine" },
 ] as const;
 
-// D-004: repite la forma que acepta el backend (AAAA o AAAA-MM) solo para no
-// consultar ni subir con un periodo a medias. La autoridad sigue siendo el
-// backend: si algo diverge, su 400 se muestra.
+// Repite la forma que acepta el backend (AAAA o AAAA-MM) solo para decidir si
+// el periodo pasa a la URL y el listado se vuelve a pedir. Es floja a
+// proposito: mientras se teclea se pasa por formas a medias, y consultar con
+// ellas llenaria la pantalla de 400. La autoridad para consultar sigue siendo
+// el backend, que ya contesta su mensaje si el periodo es imposible.
 const FORMA_PERIODO = /^\d{4}(-\d{2})?$/;
+
+// El patron de un periodo de recaudo del dominio: un ano, o un ano y un mes
+// que existe. Es el mismo de internal/dominio/recaudo/bolsa.go, y es lo que
+// decide si se puede SUBIR.
+//
+// Hace falta porque el backend no lo va a frenar: la capa de aplicacion valida
+// el periodo con uno mas flojo (`^[0-9]{4}(-[0-9]{2})?$`, en
+// internal/aplicacion/trabajos.go), asi que `2026-00` y `2026-13` entran sin
+// un solo 400. El 0 y el 1 son teclas vecinas: `2026-03` se vuelve `2026-13`
+// con un solo error. Estrechar el del backend queda como arreglo pendiente,
+// fuera de esta pantalla.
+//
+// Y no hay vuelta atras que lo arregle: la unicidad es (sha256, fuente), la
+// huella del reporte no incluye el periodo y no hay ruta de borrado, asi que
+// un archivo subido a un mes que no existe queda quemado para siempre; volver
+// a subirlo con el periodo corregido da 409 y sus usos ponderan un periodo que
+// ningun reparto cierra.
+const FORMA_PERIODO_DOMINIO = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
+
+/**
+ * Si un cuerpo sin tipar tiene la forma minima de una `Entrega`
+ * (api/openapi.yaml): un objeto con `rechazados` como lista, que es lo unico
+ * que el panel no puede tolerar que falte. Un 2xx con un cuerpo que no es JSON
+ * (el 201 de un proxy o de un despliegue a medias), o con otra forma, tumbaba
+ * la pantalla entera al pintar `entrega.rechazados.length`; y no hay
+ * ErrorBoundary en `web/src`.
+ *
+ * Lo que no pasa el filtro cae en el fallo no clasificable: ahi el panel ya
+ * avisa de que la entrega pudo haber llegado, que es lo que corresponde cuando
+ * un 201 no se deja leer.
+ */
+function esEntrega(cuerpo: unknown): cuerpo is Entrega {
+  return (
+    typeof cuerpo === "object" &&
+    cuerpo !== null &&
+    Array.isArray((cuerpo as { rechazados?: unknown }).rechazados)
+  );
+}
 
 /**
  * Subida manual de reportes de uso (POST /reportes) y listado de las cargas
@@ -33,8 +73,9 @@ const FORMA_PERIODO = /^\d{4}(-\d{2})?$/;
  */
 export default function Ingesta() {
   const [searchParams, setSearchParams] = useSearchParams();
-  // D-004: el periodo que manda es el de la URL. Filtra el listado y va en la
-  // subida; el campo de texto solo lo escribe ahi cuando esta completo.
+  // El periodo que manda es el de la URL: filtra el listado y es el que viaja
+  // en la subida. El campo de texto solo lo escribe ahi cuando lo que dice ya
+  // tiene la forma completa.
   const periodoAplicado = searchParams.get("periodo") ?? "";
   const [textoPeriodo, setTextoPeriodo] = useState(periodoAplicado);
   // Si la URL cambia por fuera del campo (el enlace de la nav, atras), el
@@ -51,8 +92,8 @@ export default function Ingesta() {
   const [arrastrando, setArrastrando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<Resultado | null>(null);
-  // D-007: sube tras cada 201 para remontar el listado, que asi se vuelve a
-  // pedir sin tocar `useApi`.
+  // Sube tras cada 201 para remontar el listado, que asi se vuelve a pedir sin
+  // tocar `useApi`.
   const [version, setVersion] = useState(0);
   // `disabled` llega en el siguiente render; el ref corta tambien un segundo
   // clic que entre antes.
@@ -62,14 +103,26 @@ export default function Ingesta() {
   const idAyudaPeriodo = useId();
   const idFuente = useId();
   const idArchivo = useId();
-  const idFaltaPeriodo = useId();
+  const idAvisoPeriodo = useId();
 
   // Con el campo a medias el periodo de la URL no es el que se ve: no se sube
   // con uno distinto del que muestra la pantalla.
   const periodoListo =
     periodoAplicado !== "" && textoPeriodo === periodoAplicado;
+  // Que este completo no basta: el periodo tiene que ser uno que exista. La
+  // subida no se deshace, y `2026-00` o `2026-13` pasan el validador del
+  // backend sin protestar.
+  const periodoUtil =
+    periodoListo && FORMA_PERIODO_DOMINIO.test(periodoAplicado);
   const puedeSubir =
-    !enviando && periodoListo && fuente !== "" && archivo !== null;
+    !enviando && periodoUtil && fuente !== "" && archivo !== null;
+
+  /** El texto del boton, que nombra el periodo al que subiria el archivo. */
+  function etiquetaSubir(): string {
+    if (enviando) return "Subiendo…";
+    if (periodoUtil) return `Subir a ${periodoAplicado}`;
+    return "Subir reporte";
+  }
 
   function cambiarPeriodo(valor: string) {
     setTextoPeriodo(valor);
@@ -107,12 +160,16 @@ export default function Ingesta() {
 
     try {
       // Frontera sin validar, como las de sesion.tsx: el 201 trae una
-      // `Entrega` segun api/openapi.yaml.
-      const entrega = (await api("/api/reportes", {
+      // `Entrega` segun api/openapi.yaml. El cast no comprueba nada en
+      // ejecucion, asi que la forma se revisa antes de entregarsela al panel.
+      const cuerpo = await api("/api/reportes", {
         method: "POST",
         body: formulario,
-      })) as Entrega;
-      setResultado({ tipo: "entrega", entrega });
+      });
+      if (!esEntrega(cuerpo)) {
+        throw new Error("el 201 no trajo una entrega legible");
+      }
+      setResultado({ tipo: "entrega", entrega: cuerpo });
       setVersion((previa) => previa + 1);
     } catch (error) {
       setResultado(resultadoDeError(error));
@@ -207,14 +264,16 @@ export default function Ingesta() {
             type="submit"
             className="boton-primario"
             disabled={!puedeSubir}
-            aria-describedby={periodoListo ? undefined : idFaltaPeriodo}
+            aria-describedby={periodoUtil ? undefined : idAvisoPeriodo}
           >
-            {enviando ? "Subiendo…" : "Subir reporte"}
+            {etiquetaSubir()}
           </button>
-          {!periodoListo && (
-            <p id={idFaltaPeriodo} className="ingesta-ayuda">
-              Escribe un periodo completo (AAAA o AAAA-MM) para poder subir el
-              reporte.
+          {/* Un solo aviso para las dos maneras de no servir el periodo: a
+              medias o completo pero imposible (un mes que no existe). */}
+          {!periodoUtil && (
+            <p id={idAvisoPeriodo} className="ingesta-ayuda">
+              Escribe un periodo válido para poder subir el reporte: AAAA, o
+              AAAA-MM con el mes entre 01 y 12.
             </p>
           )}
         </div>
@@ -228,7 +287,13 @@ export default function Ingesta() {
 
       <section className="ingesta-cargas">
         <h2>Cargas hechas</h2>
-        <ListaCargas key={version} periodo={periodoAplicado} />
+        {/* La clave lleva el periodo ademas de `version`: al cambiar de periodo
+            el listado se remonta, y asi sus filas abiertas no se reabren solas
+            ni vuelven a pedir su log sin que nadie haga clic. */}
+        <ListaCargas
+          key={`${periodoAplicado}|${version}`}
+          periodo={periodoAplicado}
+        />
       </section>
     </section>
   );
