@@ -328,6 +328,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/titulares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Buscar en el padron de titulares
+         * @description Devuelve las entradas del padron. Sin filtros devuelve la primera
+         *     pagina: la paginacion es el tope que evita servir el padron real de
+         *     REDES SGC de un golpe, igual que en el catalogo de obras.
+         *
+         *     **Devuelve el padron entero, personas juridicas incluidas.** No es un
+         *     listado de "quien puede cobrar": `R-01` (`RD 4.5`) solo admite orden de
+         *     pago a un escritor persona natural, y esa regla se aplica al armar una
+         *     declaracion, no al leer el padron. Recortar aqui a las personas
+         *     naturales dejaria a quien edita sin poder explicar por que el titular
+         *     del padron que no le ofrecen como parte existe y no se le ofrece.
+         *
+         *     Los filtros se combinan con Y. `nombre` es PARCIAL y no distingue
+         *     mayusculas; `ipi` es exacto.
+         *
+         *     `limite` y `desplazamiento` son la misma forma que en `/obras`. Sin
+         *     `limite` el servidor aplica 100; por encima de 500 responde 400.
+         */
+        get: operations["buscarTitulares"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recaudo": {
         parameters: {
             query?: never;
@@ -804,6 +839,49 @@ export interface components {
              */
             estado: "completa" | "incompleta";
             partes: components["schemas"]["Parte"][];
+        };
+        /**
+         * @description Una entrada del padron: quien figura ante la sociedad.
+         *
+         *     **Estar en el padron no es poder cobrar.** `R-01` (`RD 4.5`) solo
+         *     admite orden de pago a un escritor persona natural, asi que una
+         *     productora aparece aqui y no puede recibir reparto. Por eso
+         *     `persona_natural` viaja en la respuesta -es lo que permite explicar la
+         *     regla- y por eso no se devuelven solo las personas naturales.
+         *
+         *     Un titular de este padron es quien puede figurar como `Parte` de una
+         *     Declaracion de Obra. Eso NO le da derecho a cobrar por si solo: el
+         *     porcentaje sale de la declaracion (`R-02`, `R-03`).
+         *
+         *     No lleva `email`, y no es un olvido: el padron se sirve para armar un
+         *     reparto, y la direccion de contacto de cada titular no es dato de
+         *     ninguna regla de reparto. Entra el dia que haya una pantalla que la
+         *     muestre.
+         */
+        Titular: {
+            /** @description Identificador del titular en el padron. Opaco y estable. */
+            id: string;
+            /** @description Nombre de la persona o de la empresa, para mostrar. */
+            nombre: string;
+            /**
+             * @description IPI del titular, el identificador de autores de la CISAC (`RD 3`).
+             *     Vacio en una persona juridica que no lo tenga: el padron solo exige
+             *     IPI a las personas naturales.
+             */
+            ipi: string;
+            /**
+             * @description Si el titular es una persona fisica. `false` es una persona
+             *     juridica, y una persona juridica NO puede recibir reparto
+             *     (`R-01`, `RD 4.5`).
+             */
+            persona_natural: boolean;
+            /**
+             * @description Tipo de afiliado, que decide quien vota (capitulo 4 del reglamento
+             *     de socios). No decide quien cobra: un administrado persona natural
+             *     cobra igual que un socio.
+             * @enum {string}
+             */
+            clase: "socio" | "administrado";
         };
         /**
          * @description Quien explota el repertorio y PAGA por ello: un canal, una sala de cine,
@@ -2136,6 +2214,124 @@ export interface operations {
                      *     ]
                      */
                     "application/json": components["schemas"]["VersionDeclaracion"][];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    buscarTitulares: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Trozo del nombre. Coincidencia parcial, sin distinguir mayusculas.
+                 * @example escritora
+                 */
+                nombre?: string;
+                /**
+                 * @description IPI exacto del titular. Un trozo de IPI no encuentra nada.
+                 * @example IPI-00000001
+                 */
+                ipi?: string;
+                /**
+                 * @description Solo `true` o `false`; cualquier otro valor se rechaza con 400 en
+                 *     vez de ignorarse. Ignorado, quien pregunta por las personas
+                 *     juridicas -que son las que NO pueden recibir reparto- recibiria el
+                 *     padron entero y leeria a las personas naturales como si fueran lo
+                 *     que pidio.
+                 *
+                 *     Ausente NO filtra: devuelve las dos clases de titular.
+                 * @example false
+                 */
+                persona_natural?: boolean;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos titulares saltarse desde el inicio del resultado ordenado
+                 *     por identificador. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Los titulares que cuadran, ordenados por identificador, recortados
+             *     a la pagina pedida. Sin coincidencias devuelve una lista vacia, no
+             *     un 404.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "tit-ana",
+                     *         "nombre": "Ana Escritora",
+                     *         "ipi": "IPI-00000001",
+                     *         "persona_natural": true,
+                     *         "clase": "socio"
+                     *       },
+                     *       {
+                     *         "id": "tit-productora",
+                     *         "nombre": "Productora del Caribe S.A.S.",
+                     *         "ipi": "IPI-00000077",
+                     *         "persona_natural": false,
+                     *         "clase": "administrado"
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Titular"][];
+                };
+            };
+            /** @description Un filtro o un parametro de paginacion esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "persona_natural tiene que ser true o false"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description Falta el token, o esta caducado o revocado. */

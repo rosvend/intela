@@ -147,6 +147,11 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
+	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
+	// al contrario que la boveda de la ingesta de abajo.
+	padron := aplicacion.Titulares{Padron: store}
+
 	// El lado del ingreso (#27). Mismo cableado que cmd/api: este binario es un
 	// adaptador primario mas, hermano suyo, y comparte el Router().
 	recaudo := aplicacion.Recaudo{
@@ -168,6 +173,7 @@ func construir() (http.Handler, error) {
 		Salud:         store,
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
+		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Cola:          aplicacion.Normalizacion{Reportes: store},

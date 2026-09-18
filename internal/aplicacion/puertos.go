@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -99,6 +100,32 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// PadronTitulares es la lectura del padron: quien puede figurar como titular
+// de una Declaracion de Obra.
+//
+// Es la PRIMERA lectura de `titulares` en produccion. Hasta aqui su unico
+// consumidor era el trigger `exigir_persona_natural`, que la consulta al
+// pagar, y lo unico que la escribia era el seed: el padron no tenia ni tipo en
+// el nucleo, ni puerto, ni adaptador, y los tres entran con el editor de
+// reparto de la #30.
+//
+// # Devuelve el padron entero, personas juridicas incluidas
+//
+// Y no solo los elegibles para cobrar (`R-01`). Filtrar aqui la haria
+// invisible: quien edita un reparto tiene que poder ver que el titular del
+// padron que el editor no le ofrece como parte existe, y que no se lo ofrece
+// por una regla -`R-01`, `RD 4.5`- y no porque falte el dato. Un padron
+// recortado en silencio convierte la regla en una rareza inexplicable.
+//
+// # Por que el metodo no se llama Buscar
+//
+// Porque el mismo *Store ya tiene un `Buscar` -el del catalogo de obras, con
+// otra firma-, y dos metodos con el mismo nombre no caben en un tipo. Es la
+// misma razon por la que [BitacoraAuditoria.AsientoPorID] no se llama PorID.
+type PadronTitulares interface {
+	BuscarTitulares(ctx context.Context, f FiltroTitulares) ([]afiliacion.Titular, error)
 }
 
 // RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
@@ -219,6 +246,11 @@ const (
 	LimiteObrasPorDefecto = 100
 	// LimiteObrasMaximo es el techo que acepta GET /obras. Por encima es 400,
 	// no un silencio que lo recorte: quien pide 10_000 tiene que saber que no.
+	//
+	// Y el mismo techo que acepta GET /titulares (#30). El nombre se queda
+	// como esta a proposito: los dos son listados del mismo sistema, 500 es
+	// correcto para los dos, y renombrarlo a algo generico tocaria todo lo que
+	// ya lo usa para no cambiar ni un valor.
 	LimiteObrasMaximo = 500
 	// LimiteSinTope pide el catalogo entero. Solo tiene sentido en lecturas
 	// internas (p. ej. el motor de reparto via ListarObras); GET /obras lo
@@ -252,6 +284,24 @@ type FiltroObras struct {
 	Genero string
 	IPI    string
 	Anio   int
+	Paginacion
+}
+
+// FiltroTitulares recorta una busqueda en el padron. Un campo en su valor cero
+// NO filtra, y los que vienen se combinan con Y, igual que [FiltroObras].
+//
+// Nombre es parcial porque por el padron se busca sin saber el nombre exacto
+// -"Ana Escritora" o "Ana Escritora de Perez"-, y sin distinguir mayusculas.
+// El IPI es exacto: un IPI se conoce entero o no se conoce.
+//
+// PersonaNatural es un PUNTERO, y no es un capricho. Con un bool a secas, "no
+// filtrar" y "solo personas juridicas" serian el mismo valor cero -`false`- y
+// no habria forma de preguntar por las productoras, que es justo la pregunta
+// que `R-01` hace: quien esta en el padron y NO puede recibir reparto.
+type FiltroTitulares struct {
+	Nombre         string
+	IPI            string
+	PersonaNatural *bool
 	Paginacion
 }
 

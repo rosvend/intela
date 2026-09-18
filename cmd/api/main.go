@@ -91,6 +91,11 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// El padron de titulares, que es de donde el editor de splits saca las
+	// partes de una declaracion. La satisface el mismo *Store, y con esto es
+	// la primera lectura de `titulares` en produccion.
+	padron := aplicacion.Titulares{Padron: store}
+
 	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
 	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
 	// por que poder registrar dinero.
@@ -125,6 +130,7 @@ func ejecutar(log *slog.Logger) error {
 		Salud:         store,
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
+		Padron:        padron,
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
