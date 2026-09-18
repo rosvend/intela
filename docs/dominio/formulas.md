@@ -97,6 +97,9 @@ la informacion suministrada por el usuario.
 Ejemplo del reglamento: bolsa de $1.000.000, Pelicula X con 10.000 espectadores (67%) recibe
 $666.667 y Pelicula Y con 5.000 (33%) recibe $333.333.
 
+La contradiccion taquilla vs espectadores es P-01: el motor acepta cualquiera de las dos
+bases via `Snapshot.BaseCineTeatro` (`espectadores` | `taquilla`), nunca fijada en codigo.
+
 ## 9.3 Teatros
 
 Mismo criterio que salas de cine: proporcional a ingresos de taquilla por obra.

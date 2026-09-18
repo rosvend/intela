@@ -1,41 +1,32 @@
 // Package reparto valoriza los usos de un periodo y reparte la bolsa neta
 // entre las obras y, a traves de las declaraciones, entre sus titulares.
 //
-// # Que hay aqui y que no
+// # Motor
 //
-// Este paquete es andamiaje: declara el vocabulario del modulo -modalidades,
-// etapas del RD 13.5, circuitos, y las lineas de un resultado- y nada mas.
-// El motor de valorizacion y la maquina de estados del proceso entran en PRs
-// propios. Ver docs/decisiones/0005 y 0008.
+// [Reparto] es una funcion pura (ADR 0005): recibe bolsa, usos, snapshot y
+// declaraciones; no hace E/S, no lee el reloj y no usa aleatoriedad. Los
+// recorridos van sobre claves ordenadas de forma estable.
 //
-// # Lo que el motor tendra que respetar
+// # Regla de redondeo
 //
-// Cuatro invariantes que no fallan con una excepcion: producen un numero, el
-// numero se paga, y aparece en una auditoria de RD 16 anos despues.
+// Los importes en dinero se redondean a dos decimales con Round
+// half-away-from-zero (shopspring/decimal.Round). El residuo de una
+// asignacion proporcional (neto - suma de lineas) queda en
+// [Resultado.Residuo]; nunca se absorbe en la ultima linea.
 //
-//   - No se suman importes por fila. [Uso] no tiene campo de dinero, asi que
-//     la operacion de sumar importes por reporte sencillamente no existe: los
-//     reportes ponderan la bolsa, no la aportan.
-//   - Ningun camino de tipos lleva de una parrilla a un porcentaje de pago.
-//     Las columnas de autoria de un reporte son evidencia de matching, jamas
-//     insumo de reparto (R-02, R-03).
-//   - Si lo declarado no suma 100%, se retiene el total en reserva. No hay
-//     reparto parcial (R-04, RD 13.1.3). Retener es mover a reserva, no
-//     descontar: la suma de neto tiene que cerrar contra lo repartido mas lo
-//     retenido mas el residuo de redondeo.
-//   - No existe firma que emita orden de pago a quien no sea escritor persona
-//     natural (R-01, RD 4.5).
+// # Modalidades
 //
-// # Deuda declarada del PR del motor
+//   - TV (`RD 9.1.1`): puntos = ponderacion * duracion * rating * emisiones.
+//   - Cine / Teatro (`RD 9.2` / `RD 9.3`): proporcional a espectadores o
+//     taquilla segun [Snapshot.BaseCineTeatro] (P-01).
+//   - Transporte (`RD 9.4`): proporcional a exhibiciones.
+//   - OTT (`RD 9.7`): Pi = PB*Wa + DU*Wb + V*Wc.
+//   - Suscripcion / Hotel (`RD 9.5` / `RD 9.6`): excluye fuera de repertorio
+//     (R-27) antes del split; reparte el neto  por porcentajes de grupo del
+//     snapshot; aplica 9.1.1 dentro de cada grupo con valor punto propio.
+//   - [AsignarPlataformaTerceros]: bolsa derivada al % del snapshot, en
+//     proporciones del padre (parrafo final de `RD 9.7`).
 //
-// El ADR 0005 exige que las pruebas de reproducibilidad con los ejemplos
-// numericos del propio reglamento -el canal Z de RD 9.1.1, las peliculas X e
-// Y de RD 9.2- esten desde el primer commit del motor, no despues. Ese PR
-// empieza por esas pruebas.
-//
-// El ADR 0008 pide dos maquinas de estado distintas, una por circuito, no una
-// con un condicional: el internacional no valoriza por puntos (RD 7.4) y
-// "Fees in Error" no pasa por deducciones (R-16, RD 13.7). Por eso aqui se
-// declaran las etapas de ambos recorridos pero no el agregado Proceso: el
-// tipo lo fija el PR que traiga las transiciones.
+// Los invariantes de [Uso] sin dinero, R-04 (retencion total) y R-01
+// (solo IPI en lineas de titular) se mantienen.
 package reparto
