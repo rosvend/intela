@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgx/v5/pgxpool"
 	// Registra el driver "pgx" de database/sql. Lo necesitan goose, que solo
 	// habla database/sql, y el WithSQLDriver("pgx") de mas abajo.
@@ -81,12 +82,17 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	// quien lo agota sino la siguiente prueba del binario. Salio asi en CI,
 	// como `too many clients already (SQLSTATE 53300)` en sesiones_test.go.
 	//
-	// Dos bastan: ninguna prueba de este paquete usa concurrencia contra su
+	// Uno basta: ninguna prueba de este paquete usa concurrencia contra su
 	// propio pool -las que tocan Pool no pueden llamar a t.Parallel()-, y
 	// acotarlo aqui lo arregla para todas de una vez en vez de pedirle a cada
 	// prueba que se acuerde. Ademas hace mas fiable el DROP DATABASE de
 	// Restore, que no convive con conexiones vivas.
-	pool, err := pgxpool.New(t.Context(), d+"&pool_max_conns=2")
+	//
+	// context.Background y no t.Context(): Go cancela el contexto de la
+	// prueba justo ANTES de los Cleanup. Si el pool nace atado a ese
+	// contexto, el cierre corre sobre un ctx ya muerto y en CI con -race
+	// quedan sesiones colgadas que acaban en 53300 en la prueba siguiente.
+	pool, err := pgxpool.New(context.Background(), d+"&pool_max_conns=1")
 	if err != nil {
 		t.Fatalf("abrir pool: %v", err)
 	}
@@ -143,6 +149,15 @@ func arrancar() {
 		// initdb, asi que la primera conexion corre contra el servidor que se
 		// esta apagando.
 		tcpostgres.BasicWaitStrategies(),
+		// CI (y Docker-in-Docker) suele tener /dev/shm chico; sin esto el
+		// servidor arranca justo de memoria compartida y el techo efectivo
+		// de conexiones cae. Con go test ./... varios paquetes levantan
+		// contenedor a la vez y el 53300 aparece en la victima, no en quien
+		// agoto. 256 MiB + max_connections alto dan margen.
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.ShmSize = 256 * 1024 * 1024
+		}),
+		testcontainers.WithCmdArgs("-c", "max_connections=200"),
 	)
 	contenedor = ctr
 	if err != nil {
