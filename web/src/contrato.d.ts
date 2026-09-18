@@ -175,8 +175,10 @@ export interface paths {
         };
         /**
          * Buscar en el catalogo maestro
-         * @description Devuelve las obras del catalogo. Sin parametros devuelve el catalogo
-         *     entero: "sin recorte" es un recorte mas y no merece una ruta aparte.
+         * @description Devuelve las obras del catalogo. Sin filtros de busqueda devuelve la
+         *     primera pagina: "sin recorte" de titulo/genero/IPI/anio sigue siendo
+         *     un listado, y la paginacion es el tope que evita servir el catalogo
+         *     real de REDES SGC de un golpe.
          *
          *     Los filtros se combinan con Y. `titulo` es PARCIAL y no distingue
          *     mayusculas -es el unico campo por el que se busca sin saber el dato
@@ -185,6 +187,10 @@ export interface paths {
          *
          *     `ipi` cruza contra los COAUTORES de la obra: el IPI identifica
          *     personas, no obras (`RD 3`).
+         *
+         *     `limite` y `desplazamiento` son la misma forma que usa `ListarObras`
+         *     en el repositorio de reparto (issue #90). Sin `limite` el servidor
+         *     aplica 100; por encima de 500 responde 400.
          */
         get: operations["buscarObras"];
         put?: never;
@@ -405,8 +411,9 @@ export interface paths {
         /**
          * Listar las bolsas
          * @description Devuelve las bolsas, ordenadas por identificador. Sin el parametro
-         *     devuelve todas: "sin recorte" es un recorte mas y no merece una ruta
-         *     aparte. Sin coincidencias devuelve una lista vacia, no un 404.
+         *     `periodo` no filtra por periodo (todas las bolsas). Distinto de
+         *     `/obras`, que pagina siempre: aqui el listado sigue sin tope de
+         *     paginacion. Sin coincidencias devuelve una lista vacia, no un 404.
          */
         get: operations["listarBolsas"];
         put?: never;
@@ -1369,6 +1376,18 @@ export interface operations {
                  * @example 1991
                  */
                 anio?: number;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas obras saltarse desde el inicio del resultado ordenado por
+                 *     identificador. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
             };
             header?: never;
             path?: never;
@@ -1377,8 +1396,9 @@ export interface operations {
         requestBody?: never;
         responses: {
             /**
-             * @description Las obras que cuadran, ordenadas por identificador. Sin
-             *     coincidencias devuelve una lista vacia, no un 404.
+             * @description Las obras que cuadran, ordenadas por identificador, recortadas a
+             *     la pagina pedida. Sin coincidencias devuelve una lista vacia, no
+             *     un 404.
              */
             200: {
                 headers: {
@@ -1409,7 +1429,7 @@ export interface operations {
                     "application/json": components["schemas"]["Obra"][];
                 };
             };
-            /** @description Un parametro de busqueda esta mal formado. */
+            /** @description Un parametro de busqueda o de paginacion esta mal formado. */
             400: {
                 headers: {
                     [name: string]: unknown;
