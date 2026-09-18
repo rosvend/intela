@@ -15,6 +15,16 @@ export type Resultado =
 // para reconocer la evidencia.
 const LARGO_HUELLA_CORTA = 12;
 
+/**
+ * El prefijo visible de una huella SHA-256. Lo usan el panel y el listado de
+ * cargas, para que las dos vistas muestren el mismo largo. Recibe la huella
+ * en hex y devuelve sus primeros 12 caracteres, o la cadena entera si es mas
+ * corta. Nunca lanza.
+ */
+export function huellaCorta(sha256: string): string {
+  return sha256.slice(0, LARGO_HUELLA_CORTA);
+}
+
 // Titulos por status del POST /reportes (api/openapi.yaml). El detalle lo da
 // siempre el mensaje del backend, que va debajo.
 const TITULO_POR_STATUS: Record<number, string> = {
@@ -78,7 +88,7 @@ function PanelEntrega({ entrega }: { entrega: Entrega }) {
           <dt>Huella</dt>
           <dd>
             <code className="huella" title={entrega.sha256}>
-              {entrega.sha256.slice(0, LARGO_HUELLA_CORTA)}
+              {huellaCorta(entrega.sha256)}
             </code>
           </dd>
         </div>

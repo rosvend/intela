@@ -824,3 +824,50 @@ td {
   font-size: 0.8rem;
   white-space: pre-line;
 }
+
+/* Listado de cargas: recuentos a la derecha y en cifras tabulares, para
+   comparar filas de un vistazo. */
+.tabla-cargas-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accion de fila con aspecto de enlace: un boton pill por fila pesaria mas
+   que los datos. */
+.tabla-cargas-boton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--acento);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tabla-cargas-boton:hover {
+  text-decoration: underline;
+}
+
+.tabla-cargas-boton:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* El log abierto se lee como parte de su carga: fondo tenue y un spinner mas
+   compacto que el de pantalla completa. */
+.tabla-cargas-log > td {
+  padding: 0.75rem 1rem 1rem;
+  background: var(--fondo);
+}
+
+.tabla-cargas-log .cargando {
+  padding: 1rem;
+}
+
+.ingesta-error {
+  margin: 0;
+  color: var(--acento);
+  overflow-wrap: anywhere;
+}
