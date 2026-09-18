@@ -15,16 +15,20 @@ const (
 	CodigoParametroAusente  = "parametro_ausente"
 	CodigoMedidaInvalida    = "medida_invalida"
 	CodigoModalidadInvalida = "modalidad_invalida"
+	CodigoTipoObraInvalido  = "tipo_obra_invalido"
 )
 
 // Modalidades del acto de comunicacion publica (RD 8). Duplicadas aqui y no
 // importadas de reparto a proposito: este paquete no toca dinero (ADR 0003)
-// y depguard le deniega el motor. Son las mismas cuatro cadenas.
+// y depguard le deniega el motor. Son las mismas siete cadenas.
 const (
-	ModalidadTV    = "tv"
-	ModalidadCine  = "cine"
-	ModalidadOTT   = "ott"
-	ModalidadHotel = "hotel"
+	ModalidadTV          = "tv"
+	ModalidadCine        = "cine"
+	ModalidadOTT         = "ott"
+	ModalidadHotel       = "hotel"
+	ModalidadTeatro      = "teatro"
+	ModalidadTransporte  = "transporte"
+	ModalidadSuscripcion = "suscripcion"
 )
 
 const (
@@ -56,10 +60,13 @@ type Fila struct {
 	Emisiones      string
 	Rating         string
 	Taquilla       string
+	Espectadores   string
+	Exhibiciones   string
 	Moneda         string
 	Vistas         string
 	MinutosVistos  string
 	PB             string
+	CanalID        string
 	Autopromo      bool
 }
 
@@ -126,9 +133,12 @@ type Uso struct {
 	Emisiones     int64
 	Rating        decimal.Decimal
 	Taquilla      decimal.Decimal
+	Espectadores  decimal.Decimal
+	Exhibiciones  int64
 	Vistas        decimal.Decimal
 	MinutosVistos decimal.Decimal
 	PB            decimal.Decimal
+	CanalID       string
 	Autopromo     bool
 }
 

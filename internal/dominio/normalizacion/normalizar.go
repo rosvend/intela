@@ -18,19 +18,31 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 		Titulo:     strings.TrimSpace(f.Titulo),
 		TituloOrig: strings.TrimSpace(f.TituloOrig),
 		IDsFuente:  strings.TrimSpace(f.IDsFuente),
-		TipoObra:   strings.TrimSpace(f.TipoObra),
+		TipoObra:   strings.ToLower(strings.TrimSpace(f.TipoObra)),
+		CanalID:    strings.TrimSpace(f.CanalID),
 		Autopromo:  f.Autopromo,
 	}
 
 	mod := strings.ToLower(strings.TrimSpace(f.Modalidad))
 	switch mod {
-	case ModalidadTV, ModalidadCine, ModalidadOTT, ModalidadHotel:
+	case ModalidadTV, ModalidadCine, ModalidadOTT, ModalidadHotel,
+		ModalidadTeatro, ModalidadTransporte, ModalidadSuscripcion:
 		u.Modalidad = mod
 	default:
 		return u, &Revision{
 			Codigo:  CodigoModalidadInvalida,
 			Campo:   "modalidad",
-			Detalle: "modalidad " + strconv.Quote(f.Modalidad) + " fuera de tv|cine|ott|hotel",
+			Detalle: "modalidad " + strconv.Quote(f.Modalidad) + " fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion",
+		}
+	}
+
+	switch u.TipoObra {
+	case "", "cinematografica", "unitario", "serie", "telenovela", "sketches":
+	default:
+		return u, &Revision{
+			Codigo:  CodigoTipoObraInvalido,
+			Campo:   "tipo_obra",
+			Detalle: "tipo_obra " + strconv.Quote(f.TipoObra) + " fuera de cinematografica|unitario|serie|telenovela|sketches",
 		}
 	}
 
@@ -75,6 +87,10 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 	if rev != nil {
 		return u, rev
 	}
+	espectadores, rev := medidaNoNegativa(f.Espectadores, "espectadores")
+	if rev != nil {
+		return u, rev
+	}
 	vistas, rev := medidaNoNegativa(f.Vistas, "vistas")
 	if rev != nil {
 		return u, rev
@@ -92,8 +108,14 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 	if rev != nil {
 		return u, rev
 	}
+	exhibiciones, rev := parsearEnteroNoNegativo(f.Exhibiciones, "exhibiciones", 0)
+	if rev != nil {
+		return u, rev
+	}
 	u.Emisiones = emisiones
 	u.Rating = rating
+	u.Espectadores = espectadores
+	u.Exhibiciones = exhibiciones
 	u.Vistas = vistas
 	u.MinutosVistos = minutos
 	u.PB = pb
@@ -106,10 +128,10 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 	}
 
 	// RD 9.5/9.6 aplican la misma formula de 9.1.1 dentro de cada grupo /
-	// establecimiento: hotel reparte como TV por suscripcion, asi que la
+	// establecimiento: hotel y suscripcion reparten como TV, asi que la
 	// duracion artistica y la hora de 48 minutos valen igual. OTT no.
 	switch u.Modalidad {
-	case ModalidadTV, ModalidadHotel:
+	case ModalidadTV, ModalidadHotel, ModalidadSuscripcion:
 		min, rev := duracionTV(duracion, f.UnidadDuracion, p)
 		if rev != nil {
 			return u, rev
@@ -122,13 +144,13 @@ func Normalizar(f Fila, p Parametros) (Uso, *Revision) {
 			return u, &Revision{
 				Codigo:  CodigoMedidaInvalida,
 				Campo:   "unidad_duracion",
-				Detalle: "unidad_duracion horas en modalidad " + u.Modalidad + ": solo TV y hotel aplican la hora televisiva",
+				Detalle: "unidad_duracion horas en modalidad " + u.Modalidad + ": solo TV, hotel y suscripcion aplican la hora televisiva",
 			}
 		}
 		u.DuracionMin = duracion
 	}
 
-	if u.Modalidad == ModalidadCine {
+	if u.Modalidad == ModalidadCine || u.Modalidad == ModalidadTeatro {
 		enBase, rev := taquillaEnBase(taquilla, f.Moneda, p)
 		if rev != nil {
 			return u, rev
@@ -172,30 +194,28 @@ func medidaNoNegativa(s, campo string) (decimal.Decimal, *Revision) {
 }
 
 func parsearEmisiones(s string) (int64, *Revision) {
+	return parsearEnteroNoNegativo(s, "emisiones", 1)
+}
+
+func parsearEnteroNoNegativo(s, campo string, porDefecto int64) (int64, *Revision) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		// La granularidad de la parrilla es la emision, no la obra. El cero
-		// de Go es "no vino", no "cero emisiones". GuardarUsos pone el mismo
-		// default; hacerlo aqui deja el Uso canonico listo sin una segunda
-		// opinion aguas abajo.
-		return 1, nil
+		return porDefecto, nil
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return 0, &Revision{
 			Codigo:  CodigoMedidaInvalida,
-			Campo:   "emisiones",
-			Detalle: "emisiones " + strconv.Quote(s) + ": no es un entero",
+			Campo:   campo,
+			Detalle: campo + " " + strconv.Quote(s) + ": no es un entero",
 		}
 	}
 	if n < 0 {
 		return 0, &Revision{
 			Codigo:  CodigoMedidaInvalida,
-			Campo:   "emisiones",
-			Detalle: "emisiones negativas: " + s + ": no se pone a cero",
+			Campo:   campo,
+			Detalle: campo + " negativas: " + s + ": no se pone a cero",
 		}
 	}
-	// Cero explicito es dato, no ausencia: la fuente reporto cero emisiones.
-	// Solo la cadena vacia se convierte en 1 (arriba).
 	return n, nil
 }
