@@ -79,9 +79,12 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// El mismo *Store satisface tambien CatalogoObras y -por el puerto
+	// GestionDeclaraciones- la lectura de la declaracion vigente que el
+	// catalogo necesita para decir en que estado esta cada obra. El nucleo
+	// sigue viendo puertos separados: que el adaptador sea uno solo es asunto
+	// suyo.
+	catalogo := aplicacion.Catalogo{Obras: store, Declaraciones: store}
 
 	// El padron de titulares, que es de donde el editor de splits saca las
 	// partes de una declaracion. La satisface el mismo *Store, y con esto es

@@ -135,9 +135,12 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// El mismo *Store satisface tambien CatalogoObras y -por el puerto
+	// GestionDeclaraciones- la lectura de la declaracion vigente que el
+	// catalogo necesita para decir en que estado esta cada obra. El nucleo
+	// sigue viendo puertos separados: que el adaptador sea uno solo es asunto
+	// suyo.
+	catalogo := aplicacion.Catalogo{Obras: store, Declaraciones: store}
 
 	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
 	// que en cmd/api: es una lectura de la base, y este binario si tiene base,

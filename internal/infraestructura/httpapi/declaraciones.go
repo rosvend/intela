@@ -26,9 +26,13 @@ type Declaraciones interface {
 // Formas de red
 
 type parteJSON struct {
-	TitularID  string          `json:"titular_id"`
-	IPI        string          `json:"ipi"`
-	Porcentaje decimal.Decimal `json:"porcentaje"`
+	TitularID string `json:"titular_id"`
+	IPI       string `json:"ipi"`
+
+	// Porcentaje va sin comillas porque el contrato lo declara `number`, y
+	// [decimalComoNumeroJSON] es la forma que lo consigue: lo que el editor de
+	// splits suma son estos numeros, y sobre una cadena la suma concatena.
+	Porcentaje decimalComoNumeroJSON `json:"porcentaje"`
 }
 
 // versionDeclaracionJSON es una version de la declaracion tal como la ve el
@@ -45,7 +49,7 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 	partes := make([]repertorio.Parte, 0, len(ps))
 	for _, p := range ps {
 		partes = append(partes, repertorio.Parte{
-			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje,
+			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: decimal.Decimal(p.Porcentaje),
 		})
 	}
 	return partes
@@ -54,7 +58,10 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 func aVersionJSON(vd aplicacion.VersionDeclaracion) versionDeclaracionJSON {
 	partes := make([]parteJSON, 0, len(vd.Declaracion.Partes))
 	for _, p := range vd.Declaracion.Partes {
-		partes = append(partes, parteJSON{TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje})
+		partes = append(partes, parteJSON{
+			TitularID: p.TitularID, IPI: p.IPI,
+			Porcentaje: decimalComoNumeroJSON(p.Porcentaje),
+		})
 	}
 	var vigenteHasta *string
 	if vd.VigenteHasta != nil {

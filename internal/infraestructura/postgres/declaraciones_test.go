@@ -176,6 +176,143 @@ func TestGuardarObraInexistenteEsNoEncontrado(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// VigentesDeObras: la lectura que sirve el catalogo.
+
+// La pagina entera del catalogo se resuelve con UNA llamada: las tres obras
+// declaradas salen con su version abierta y sus partes, y las que no tienen
+// declaracion NO salen -la ausencia es el dato, no un hueco que rellenar con
+// ceros, porque una declaracion vacia daria el mismo Estado() (`incompleta`)
+// que una obra sin declarar (R-04)-.
+func TestVigentesDeObrasLeeLaVersionAbiertaDeLaPagina(t *testing.T) {
+	s, _ := sembrar(t)
+
+	vigentes, err := s.VigentesDeObras(t.Context(), []string{
+		obraCompleta, obraIncompleta, obraSinDeclaracion, obraSinIPI, "obra-que-no-existe",
+	})
+	if err != nil {
+		t.Fatalf("VigentesDeObras: %v", err)
+	}
+
+	if len(vigentes) != 3 {
+		t.Fatalf("se esperaban 3 obras declaradas, llegaron %d: %v", len(vigentes), vigentes)
+	}
+	if _, hay := vigentes[obraSinDeclaracion]; hay {
+		t.Fatal("una obra sin declaracion no puede aparecer en el mapa")
+	}
+	if _, hay := vigentes["obra-que-no-existe"]; hay {
+		t.Fatal("un id que no existe en el catalogo no puede aparecer en el mapa")
+	}
+
+	completa := vigentes[obraCompleta]
+	if completa.Version != 1 || completa.VigenteHasta != nil {
+		t.Fatalf("obra completa = version %d, vigente_hasta %v; se esperaba la 1 abierta",
+			completa.Version, completa.VigenteHasta)
+	}
+	if len(completa.Declaracion.Partes) != 2 || !completa.Declaracion.Completa() {
+		t.Fatalf("obra completa = %+v, se esperaba 60+40", completa.Declaracion.Partes)
+	}
+	if completa.Declaracion.ObraID != obraCompleta {
+		t.Fatalf("ObraID = %q, se esperaba %q", completa.Declaracion.ObraID, obraCompleta)
+	}
+
+	incompleta := vigentes[obraIncompleta]
+	if len(incompleta.Declaracion.Partes) != 1 ||
+		!incompleta.Declaracion.Partes[0].Porcentaje.Equal(decimal.NewFromInt(60)) {
+		t.Fatalf("obra incompleta = %+v, se esperaba una parte de 60", incompleta.Declaracion.Partes)
+	}
+	if incompleta.Declaracion.Completa() {
+		t.Fatal("60 no suma 100: la declaracion es incompleta (R-04)")
+	}
+
+	// Suma 100 con una parte sin IPI: las dos partes llegan enteras, porque
+	// quien decide el estado es el dominio, no una suma en SQL.
+	sinIPI := vigentes[obraSinIPI]
+	if len(sinIPI.Declaracion.Partes) != 2 {
+		t.Fatalf("obra sin IPI = %+v, se esperaban sus dos partes", sinIPI.Declaracion.Partes)
+	}
+	if sinIPI.Declaracion.Completa() {
+		t.Fatal("una parte sin IPI deja la declaracion incompleta aunque sume 100")
+	}
+}
+
+// Editar cierra la version anterior y abre una nueva: el catalogo tiene que
+// ver la ABIERTA, no la ultima que se escribio en el historial ni una mezcla
+// de las dos.
+func TestVigentesDeObrasSoloVeLaVersionAbierta(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	t1 := time.Now().UTC().Truncate(time.Microsecond)
+
+	if _, _, err := s.Guardar(ctx, partesDePrueba(t, 60, 40), t1, usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v1: %v", err)
+	}
+	if _, _, err := s.Guardar(ctx, partesDePrueba(t, 25, 0), t1.Add(time.Hour), usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v2: %v", err)
+	}
+
+	vigentes, err := s.VigentesDeObras(ctx, []string{obraSinDeclaracion})
+	if err != nil {
+		t.Fatalf("VigentesDeObras: %v", err)
+	}
+	vd, hay := vigentes[obraSinDeclaracion]
+	if !hay {
+		t.Fatal("la obra se declaro dos veces y no aparece en el mapa")
+	}
+	if vd.Version != 2 {
+		t.Fatalf("version = %d, se esperaba la 2 (la abierta)", vd.Version)
+	}
+	if len(vd.Declaracion.Partes) != 1 ||
+		!vd.Declaracion.Partes[0].Porcentaje.Equal(decimal.NewFromInt(25)) {
+		t.Fatalf("partes = %+v, se esperaba la parte de la version 2 y no la de la 1",
+			vd.Declaracion.Partes)
+	}
+}
+
+// Una version abierta SIN partes sigue siendo una declaracion: se reporta la
+// version y cero partes, en vez de desaparecer del mapa. Con un JOIN interno
+// desapareceria, y el catalogo leeria "esta obra no tiene declaracion", que es
+// justo la confusion que `version_vigente` existe para evitar.
+func TestVigentesDeObrasReportaUnaVersionSinPartesComoDeclaracion(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO declaracion_versiones (obra_id, version, vigente_desde) VALUES ($1, 1, now())`,
+		obraSinDeclaracion); err != nil {
+		t.Fatalf("abrir una version vacia: %v", err)
+	}
+
+	vigentes, err := s.VigentesDeObras(ctx, []string{obraSinDeclaracion})
+	if err != nil {
+		t.Fatalf("VigentesDeObras: %v", err)
+	}
+	vd, hay := vigentes[obraSinDeclaracion]
+	if !hay {
+		t.Fatal("la version abierta existe y la obra no puede salir como si no tuviera declaracion")
+	}
+	if vd.Version != 1 {
+		t.Fatalf("version = %d, se esperaba 1", vd.Version)
+	}
+	if len(vd.Declaracion.Partes) != 0 {
+		t.Fatalf("partes = %+v, se esperaba ninguna", vd.Declaracion.Partes)
+	}
+}
+
+// Una lista vacia no consulta: es el caso de una pagina del catalogo sin
+// resultados, y no puede costar un viaje a la base.
+func TestVigentesDeObrasSinIDsNoConsulta(t *testing.T) {
+	s, _ := sembrar(t)
+
+	vigentes, err := s.VigentesDeObras(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("VigentesDeObras: %v", err)
+	}
+	if len(vigentes) != 0 {
+		t.Fatalf("mapa = %v, se esperaba vacio", vigentes)
+	}
+}
+
 // Un titular_id que no esta en el padron es un dato malo del CUERPO, no una
 // obra ausente: tiene centinela propio para que el adaptador HTTP lo pueda
 // separar del 404 de la obra.

@@ -59,6 +59,13 @@ func (g *gestionFalsa) VigenteEn(_ context.Context, _ string, _ time.Time) (Vers
 	return g.vigente, g.err
 }
 
+// VigentesDeObras no la usa el editor de splits -la lee el catalogo para decir
+// en que estado esta cada obra (ver catalogo_test.go)-, pero el doble
+// implementa el puerto entero, asi que tiene que estar.
+func (g *gestionFalsa) VigentesDeObras(_ context.Context, _ []string) (map[string]VersionDeclaracion, error) {
+	return nil, g.err
+}
+
 func partesValidas() []repertorio.Parte {
 	return []repertorio.Parte{
 		{TitularID: "t1", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(60)},

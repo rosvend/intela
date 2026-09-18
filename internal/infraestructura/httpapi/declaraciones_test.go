@@ -232,3 +232,129 @@ func TestHistorialDevuelveLasVersiones(t *testing.T) {
 		t.Fatalf("cuerpo = %+v", cuerpo)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Forma de red del porcentaje
+
+// versionConPartes es la version que devuelven los dobles de estas pruebas:
+// dos partes que suman 100, con los mismos porcentajes que manda
+// [cuerpoPartes], para que la respuesta y la peticion se puedan comparar.
+func versionConPartes() aplicacion.VersionDeclaracion {
+	return aplicacion.VersionDeclaracion{
+		Version:      1,
+		VigenteDesde: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Declaracion: repertorio.Declaracion{
+			ObraID: "obra-1",
+			Partes: []repertorio.Parte{
+				{TitularID: "t1", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(60)},
+				{TitularID: "t2", IPI: "IPI-2", Porcentaje: decimal.NewFromInt(40)},
+			},
+		},
+	}
+}
+
+// El contrato declara `porcentaje` como `number` y la libreria de decimales
+// serializa ENTRE COMILLAS por defecto, asi que hasta ahora `partes[].porcentaje`
+// salia como "60" -y el editor de splits de la #30, que suma estos numeros,
+// habria concatenado texto-. La prueba mira los BYTES y no el valor ya
+// decodificado: "60" y 60 se decodifican al mismo numero, pero solo uno se
+// puede sumar sin parsearlo antes.
+//
+// Las tres respuestas que llevan partes son el alta, la edicion y el
+// historial. `GET /obras/{id}` tambien trae la suma de los porcentajes, y esa
+// forma se comprueba en obras_test.go.
+func TestElPorcentajeDeUnaParteViajaComoNumero(t *testing.T) {
+	falso := &declaracionesFalso{
+		version:   versionConPartes(),
+		historial: []aplicacion.VersionDeclaracion{versionConPartes()},
+	}
+	h := servidorConDeclaraciones(t, falso)
+
+	peticiones := []struct {
+		nombre, metodo, ruta, cuerpo string
+		quiero                       int
+	}{
+		{"el alta", http.MethodPost, "/obras/obra-1/declaracion", cuerpoPartes, http.StatusCreated},
+		{"la edicion", http.MethodPut, "/obras/obra-1/declaracion", cuerpoPartes, http.StatusOK},
+		{"el historial", http.MethodGet, "/obras/obra-1/declaracion/historial", "", http.StatusOK},
+	}
+
+	for _, p := range peticiones {
+		t.Run(p.nombre, func(t *testing.T) {
+			rec := pedir(t, h, p.metodo, p.ruta, p.cuerpo, "tok")
+			if rec.Code != p.quiero {
+				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, p.quiero, rec.Body)
+			}
+
+			cuerpo := rec.Body.String()
+			for _, quiero := range []string{`"porcentaje":60`, `"porcentaje":40`} {
+				if !strings.Contains(cuerpo, quiero) {
+					t.Fatalf("la respuesta no trae %s: %s", quiero, cuerpo)
+				}
+			}
+
+			// Y la forma vieja no puede quedar en ningun sitio: es justo la
+			// que concatena en el cliente en vez de sumar.
+			for _, prohibido := range []string{`"porcentaje":"60"`, `"porcentaje":"40"`} {
+				if strings.Contains(cuerpo, prohibido) {
+					t.Fatalf("la respuesta trae el porcentaje entre comillas (%s): %s", prohibido, cuerpo)
+				}
+			}
+		})
+	}
+}
+
+// El arreglo es de la forma que SALE: la que entra se sigue leyendo igual.
+// El tipo se apoya en el UnmarshalJSON de la libreria, que acepta el numero
+// del contrato y tambien la cadena entrecomillada que aceptaba
+// `decimal.Decimal`; estrecharlo seria otro cambio, y rechazaria cuerpos que
+// hoy se guardan.
+func TestElPorcentajeSeSigueLeyendoIgualEnLaPeticion(t *testing.T) {
+	casos := []struct {
+		nombre string
+		cuerpo string
+		quiero string
+	}{
+		{"numero, que es lo que dice el contrato", `[{"titular_id": "t1", "ipi": "IPI-1", "porcentaje": 60}]`, "60"},
+		{"cadena, tolerada como antes", `[{"titular_id": "t1", "ipi": "IPI-1", "porcentaje": "60"}]`, "60"},
+		{"con decimales, sin redondear", `[{"titular_id": "t1", "ipi": "IPI-1", "porcentaje": 33.3333}]`, "33.3333"},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			falso := &declaracionesFalso{version: aplicacion.VersionDeclaracion{Version: 1}}
+			h := servidorConDeclaraciones(t, falso)
+
+			rec := pedir(t, h, http.MethodPost, "/obras/obra-1/declaracion", c.cuerpo, "tok")
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if len(falso.partesRecibidas) != 1 {
+				t.Fatalf("partes recibidas = %+v", falso.partesRecibidas)
+			}
+			// Exacto y no aproximado: el porcentaje se guarda tal como llego.
+			if !falso.partesRecibidas[0].Porcentaje.Equal(decimal.RequireFromString(c.quiero)) {
+				t.Fatalf("porcentaje recibido = %s, se esperaba %s",
+					falso.partesRecibidas[0].Porcentaje, c.quiero)
+			}
+		})
+	}
+}
+
+// Y lo de arriba vale para el tipo suelto: un porcentaje con cuatro decimales
+// -la precision que la columna admite- sale como numero, y ni entre comillas
+// ni en notacion cientifica.
+func TestElPorcentajeConDecimalesSerializaTalCual(t *testing.T) {
+	bruto, err := json.Marshal(parteJSON{
+		TitularID: "t1", IPI: "IPI-1",
+		Porcentaje: decimalComoNumeroJSON(decimal.RequireFromString("33.3333")),
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	quiero := `{"titular_id":"t1","ipi":"IPI-1","porcentaje":33.3333}`
+	if string(bruto) != quiero {
+		t.Fatalf("json = %s, se esperaba %s", bruto, quiero)
+	}
+}

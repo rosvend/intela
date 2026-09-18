@@ -191,6 +191,13 @@ export interface paths {
          *     `limite` y `desplazamiento` son la misma forma que usa `ListarObras`
          *     en el repositorio de reparto (issue #90). Sin `limite` el servidor
          *     aplica 100; por encima de 500 responde 400.
+         *
+         *     Cada obra llega con el estado de su Declaracion de Obra vigente
+         *     (`estado_declaracion`, `suma_porcentajes` y `version_vigente`), que es
+         *     lo que el catalogo tiene que poder mostrar sin que el cliente tenga que
+         *     adivinar nada ni pedir la declaracion aparte. `version_vigente: null`
+         *     distingue una obra sin declaracion de una declarada que no suma 100:
+         *     las dos son `incompleta`, y solo la segunda tiene version.
          */
         get: operations["buscarObras"];
         put?: never;
@@ -203,6 +210,14 @@ export interface paths {
          *
          *     Una vez creada, el identificador es inmutable: no hay operacion que lo
          *     cambie. Es lo que referencian las declaraciones, los alias y los usos.
+         *
+         *     La respuesta trae ademas el estado de la Declaracion de Obra, porque es
+         *     el mismo schema `Obra` y sus tres campos derivados son obligatorios en
+         *     las cuatro respuestas que devuelven una obra. En un alta recien hecha
+         *     ese estado es el cero -`incompleta`, `suma_porcentajes: 0` y
+         *     `version_vigente: null`-, y no por darlo por supuesto: una declaracion
+         *     necesita la fila de la obra, que es justo lo que este alta crea, asi
+         *     que no puede existir ninguna todavia.
          */
         post: operations["registrarObra"];
         delete?: never;
@@ -226,7 +241,9 @@ export interface paths {
         };
         /**
          * Leer una obra del catalogo
-         * @description Devuelve la obra con sus metadatos y sus coautores.
+         * @description Devuelve la obra con sus metadatos, sus coautores y el estado de su
+         *     Declaracion de Obra vigente -incluido que no tenga ninguna, que es
+         *     `version_vigente: null`-.
          */
         get: operations["obraPorID"];
         put?: never;
@@ -248,6 +265,10 @@ export interface paths {
          *     No crea la obra si no existe: responde 404. Un PATCH que inserta
          *     convierte un identificador mal escrito en una obra fantasma del
          *     catalogo contra el que resuelve todo el matching.
+         *
+         *     Solo se corrigen los metadatos: el estado de la Declaracion de Obra no
+         *     se toca -sus porcentajes no estan en el catalogo (`R-03`)- y viaja en la
+         *     respuesta, como en cualquier lectura de la obra.
          */
         patch: operations["actualizarMetadatosObra"];
         trace?: never;
@@ -776,18 +797,96 @@ export interface components {
              */
             coautores: components["schemas"]["Coautor"][];
         };
+        /** @description El identificador de una obra, y nada mas. */
+        IdentidadObra: {
+            /**
+             * @description Identificador de la obra. Opaco, unico e inmutable. Es el numero de
+             *     obra de REDES-SYS, que se asigna FUERA de este sistema: lo trae
+             *     quien da de alta la obra, y ninguna operacion posterior lo cambia.
+             */
+            id: string;
+        };
         /**
-         * @description Una entrada del catalogo maestro: su identificador mas sus metadatos.
+         * @description El cuerpo de un alta de obra: el identificador y sus metadatos.
+         *
+         *     **No es `Obra`, y la diferencia importa.** `Obra` lleva ademas
+         *     `estado_declaracion`, `suma_porcentajes` y `version_vigente`, que el
+         *     servidor calcula a partir de la Declaracion de Obra vigente. Mandarlos
+         *     no cambia nada -el alta no los mira-, asi que un cuerpo que los exigiera
+         *     estaria afirmando una facultad que quien llama no tiene.
+         *
+         *     Es allOf y no un objeto plano por la misma razon que `Obra`: los
+         *     metadatos son los mismos en las dos, y duplicarlos aqui seria una
+         *     segunda copia que se desvia.
+         */
+        NuevaObra: components["schemas"]["IdentidadObra"] & components["schemas"]["MetadatosObra"];
+        /**
+         * @description Una entrada del catalogo maestro: su identificador, sus metadatos, y lo
+         *     que el sistema sabe hoy de su Declaracion de Obra.
          *
          *     El identificador es inmutable. Se asigna al crear la obra -lo trae
          *     quien la registra, es el numero de obra de REDES-SYS- y ninguna
          *     operacion lo cambia: es lo que referencian las declaraciones, los
          *     alias de fuente y los usos.
+         *
+         *     Los tres ultimos campos son DERIVADOS y de solo lectura: los calcula el
+         *     servidor a partir de la version vigente de la declaracion. No entran por
+         *     ningun cuerpo -para mandar una obra esta `NuevaObra`, y para corregir
+         *     sus metadatos, `MetadatosObra`-, y por eso no viven en `MetadatosObra`,
+         *     que es lo que un cliente puede enviar. Estan en las cuatro respuestas
+         *     que devuelven una obra porque el catalogo es donde un administrador ve
+         *     que obras se pueden repartir y cuales quedan retenidas.
          */
-        Obra: {
-            /** @description Identificador de la obra. Opaco, unico e inmutable. */
-            id: string;
-        } & WithRequired<components["schemas"]["MetadatosObra"], "titulo" | "genero" | "anio" | "tipo" | "coautores">;
+        Obra: WithRequired<components["schemas"]["IdentidadObra"], "id"> & WithRequired<components["schemas"]["MetadatosObra"], "titulo" | "genero" | "anio" | "tipo" | "coautores"> & {
+            /**
+             * @description Estado de la Declaracion de Obra vigente. `completa` si las
+             *     partes suman exactamente 100; `incompleta` en cualquier otro
+             *     caso, incluida una obra que no tiene ninguna declaracion.
+             *
+             *     **`incompleta` no es un error ni un rechazo.** Es un estado
+             *     valido del negocio: bajo `R-04` (`RD 13.1.3`) no se reparte nada
+             *     de esa obra y se retiene el total en reserva, nunca se reparte a
+             *     medias. Por eso el conjunto tiene DOS valores y no tres: no hay
+             *     ningun estado `invalida` guardado -lo que el sistema rechaza es
+             *     DECLARAR una suma por encima de 100, y eso es un 400 de la
+             *     escritura, no un estado que aparezca en un listado-.
+             * @enum {string}
+             */
+            estado_declaracion: "completa" | "incompleta";
+            /**
+             * Format: decimal
+             * @description Suma de los porcentajes de las partes de la version vigente.
+             *     Cero si la obra no tiene ninguna declaracion.
+             *
+             *     Es lo DECLARADO, no lo repartido. Viaja como numero, sin
+             *     comillas, igual que el `porcentaje` de una parte: un porcentaje
+             *     tiene hasta 4 decimales acotados por `NUMERIC(8,4)` y se muestra
+             *     tal cual -aqui no se redondea nada, los decimales los decide
+             *     quien lo pinta-. El dinero de las bolsas va al reves, como
+             *     cadena, porque una cifra de terceros no puede pasar por un
+             *     `double` (ADR 0005); un porcentaje de reparto no es esa cifra.
+             *
+             *     **No se deduce de `estado_declaracion`, ni al reves.** Una parte
+             *     sin IPI deja la declaracion `incompleta` con la suma en 100, asi
+             *     que las dos cosas viajan y las dos se muestran: deducir una de
+             *     la otra mentiria en un sentido o en el otro.
+             */
+            suma_porcentajes: number;
+            /**
+             * @description Version de la Declaracion de Obra que rige ahora mismo, o `null`
+             *     si la obra no tiene ninguna declaracion.
+             *
+             *     **Existe porque `estado_declaracion` no basta para decirlo
+             *     todo.** Una obra que nunca se declaro y una declarada que no
+             *     suma 100 dan el MISMO estado -`incompleta`, y las dos quedan
+             *     retenidas bajo `R-04`-, asi que sin este campo una pantalla
+             *     tendria que pintar "incompleta" sobre obras que nadie declaro,
+             *     que es afirmar una declaracion inexistente. Es el ORIGEN del
+             *     estado, no un tercer estado: `null` es "no hay declaracion", y
+             *     un numero es la version que lo sostiene.
+             */
+            version_vigente: number | null;
+        };
         /**
          * @description Lo que un titular declaro sobre una obra. El unico origen valido de un
          *     porcentaje de reparto es este (`R-03`) -nunca un reporte de uso ni un
@@ -1500,7 +1599,10 @@ export interface operations {
                      *             "ipi": "IPI-00000001",
                      *             "rol": "guionista"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "estado_declaracion": "completa",
+                     *         "suma_porcentajes": 100,
+                     *         "version_vigente": 3
                      *       }
                      *     ]
                      */
@@ -1584,7 +1686,7 @@ export interface operations {
                  *       ]
                  *     }
                  */
-                "application/json": components["schemas"]["Obra"];
+                "application/json": components["schemas"]["NuevaObra"];
             };
         };
         responses: {
@@ -1620,7 +1722,10 @@ export interface operations {
                      *           "ipi": "IPI-00000002",
                      *           "rol": "libretista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "incompleta",
+                     *       "suma_porcentajes": 0,
+                     *       "version_vigente": null
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];
@@ -1725,7 +1830,10 @@ export interface operations {
                      *           "ipi": "IPI-00000001",
                      *           "rol": "guionista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "completa",
+                     *       "suma_porcentajes": 100,
+                     *       "version_vigente": 3
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];
@@ -1834,7 +1942,10 @@ export interface operations {
                      *           "ipi": "IPI-00000001",
                      *           "rol": "guionista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "completa",
+                     *       "suma_porcentajes": 100,
+                     *       "version_vigente": 3
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];

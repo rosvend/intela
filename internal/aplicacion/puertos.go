@@ -222,6 +222,27 @@ type GestionDeclaraciones interface {
 	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
 	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+
+	// VigentesDeObras devuelve la version ABIERTA de cada una de las obras
+	// pedidas, indexada por obra, en UNA consulta para toda la lista.
+	//
+	// Existe aparte de [VigenteEn] porque responde otra pregunta. VigenteEn
+	// resuelve que regia en un INSTANTE -por eso recibe el momento y por eso
+	// su ausencia es [ErrNoEncontrado]-. Esto resuelve que rige AHORA MISMO
+	// para las obras de una pagina del catalogo, y con N obras preguntar una
+	// por una seria N+1 viajes contra la base: es la misma cuenta que
+	// [RepositorioRepertorio.ListarObras] ya evita para las partes.
+	//
+	// # Una obra sin declaracion NO aparece en el mapa
+	//
+	// Y la ausencia es el dato, no un hueco que rellenar con la Declaracion
+	// cero: `Estado()` da "incompleta" tanto para una obra que nunca se
+	// declaro como para una declarada que no suma 100 (`R-04`, `RD 13.1.3`),
+	// asi que devolver una entrada de ceros para la primera haria que el
+	// llamador no pudiera distinguir las dos -y una pantalla que las pinta
+	// igual afirma una declaracion que nadie hizo-. Quien necesite el estado
+	// de una obra ausente del mapa lo compone sabiendo que la version es nil.
+	VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]VersionDeclaracion, error)
 }
 
 // Paginacion es el recorte comun de [CatalogoObras.Buscar] y
