@@ -23,11 +23,12 @@ const sinRechazos: Entrega = {
   rechazados: [],
 };
 
-// El id de un rechazo es `rep-<64 hex de la huella>-<n>`, con `n` = posicion
-// entre las filas ya filtradas (internal/aplicacion/ingesta.go), no la linea de
-// la hoja. Por eso los ids de estos fixtures son largos y su sufijo no tiene
-// por que coincidir con el "fila N" del motivo: es justo el malentendido que la
-// columna "Id" evita.
+// El id de un rechazo es `rep-<64 hex de la huella>-<n>`, con `n` contando
+// TODAS las filas parseadas del lote -las aceptadas incluidas- y no los
+// rechazos (internal/aplicacion/ingesta.go), ni la linea de la hoja. Por eso
+// los ids de estos fixtures son largos y su sufijo no tiene por que coincidir
+// con el "fila N" del motivo: es justo el malentendido que la columna "Id"
+// evita.
 const parcial: Entrega = {
   ...sinRechazos,
   aceptados: 58,
@@ -149,11 +150,15 @@ describe("PanelResultado", () => {
     expect(within(alerta).getByText(NO_SE_GUARDO)).toBeTruthy();
   });
 
+  // El 500 no tiene titulo propio: comparte el neutro del fallo desconocido,
+  // porque con un 500 tampoco se sabe si la entrega alcanzo a quedar
+  // registrada. Un titulo que dijera "no se pudo registrar" afirmaria mas de lo
+  // que el sistema sabe.
   it.each([
     [409, "La entrega no se registró"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
-    [500, "No se pudo registrar la entrega"],
+    [500, "No se sabe si la entrega se registró"],
   ] as const)(
     "el status %s se titula %j y conserva el mensaje",
     (status, titulo) => {
@@ -211,11 +216,13 @@ describe("PanelResultado", () => {
       const alerta = screen.getByRole("alert");
       expect(
         within(alerta).getByRole("heading", {
-          name: "No se pudo registrar la entrega",
+          name: "No se sabe si la entrega se registró",
         }),
       ).toBeTruthy();
       // Un 502/504 no se distingue de cualquier otro fallo no clasificable:
-      // lleva el mensaje generico, no la pagina del proxy.
+      // lleva el mensaje generico, no la pagina del proxy. (Que el HTML del
+      // proxy no llegue hasta aqui lo garantiza `mensajeDeError` en api.ts; el
+      // mapeo de este status existe para que el aviso de abajo no se pierda.)
       expect(
         within(alerta).getByText("error desconocido al subir el archivo"),
       ).toBeTruthy();
@@ -249,13 +256,13 @@ describe("PanelResultado", () => {
     expect(screen.queryByText(NO_SE_GUARDO)).toBeNull();
   });
 
-  it("un error desconocido tiene su propio titulo, un mensaje generico y el mismo aviso", () => {
+  it("un error desconocido tiene un titulo neutro, un mensaje generico y el mismo aviso", () => {
     render(<PanelResultado resultado={resultadoDeError(new Error("boom"))} />);
 
     const alerta = screen.getByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "No se pudo registrar la entrega",
+        name: "No se sabe si la entrega se registró",
       }),
     ).toBeTruthy();
     // El texto interno ("boom") no es un mensaje del backend y no se pinta.

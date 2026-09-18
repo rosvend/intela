@@ -102,8 +102,20 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   return res;
 }
 
+// Lo que se muestra cuando el cuerpo de un error no parsea como JSON. El
+// contrato promete que un error de la API viene como `{"error": "..."}`, asi que
+// un cuerpo que no es JSON no es un mensaje suyo: lo pone la infraestructura.
+// Hoy es nginx, que contesta su pagina HTML en un 502 o un 504 y tambien en el
+// 408 de `client_body_timeout` (deploy/nginx.conf); pintar ese HTML -escapado,
+// pero entero- como si fuera la explicacion del backend hacia pasar por
+// mensaje del sistema algo que ningun componente del sistema dijo.
+const MENSAJE_ERROR_ILEGIBLE = "el servidor respondió un error ilegible";
+
 // El DELETE de /auth/session responde 204 sin cuerpo y sin content-type: no
-// se puede pedir .json() a ciegas en el camino de error tampoco.
+// se puede pedir .json() a ciegas en el camino de error tampoco. Un cuerpo
+// vacio sigue usando el `statusText` (eso si es del protocolo); uno que no
+// parsea como JSON se sustituye por un mensaje propio: ver
+// `MENSAJE_ERROR_ILEGIBLE`.
 async function mensajeDeError(res: Response): Promise<string> {
   const texto = await res.text();
   if (!texto) return res.statusText;
@@ -111,6 +123,6 @@ async function mensajeDeError(res: Response): Promise<string> {
     const cuerpo = JSON.parse(texto) as { error?: string };
     return cuerpo.error || texto;
   } catch {
-    return texto;
+    return MENSAJE_ERROR_ILEGIBLE;
   }
 }

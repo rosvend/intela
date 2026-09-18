@@ -41,13 +41,27 @@ const SHA_CARACOL =
   "9f2c4e1a7b3d5f60a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718";
 const SHA_NETFLIX =
   "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f607189f2c4e1a7b3d5f6";
+const SHA_CINE =
+  "3c8d1e5f7a9b0c2d4e6f8a0b1c3d5e7f9a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d";
+
+// El id de una carga es `rep-` mas 64 hex, y el de un rechazo es ese id mas
+// `-<n>` (internal/aplicacion/ingesta.go: `idReporte` compone el de la carga a
+// partir del par (fuente, huella) y `u.ID = rep.ID + "-" + n` el del rechazo).
+// El hex de estos fixtures es la huella del archivo y no el derivado del par
+// -da igual para lo que se prueba- pero la FORMA y el largo son los de
+// produccion a proposito: con ids de 12 caracteres la tabla nunca se pinta al
+// ancho con que se vera, y el corte de linea del CSS no se ejerce.
+const ID_CARACOL = `rep-${SHA_CARACOL}`;
+const ID_NETFLIX = `rep-${SHA_NETFLIX}`;
+const ID_CINE = `rep-${SHA_CINE}`;
 
 const cargaSinRechazos = {
-  id: "rep-9f2c4e1a",
+  id: ID_CARACOL,
   fuente: "caracol",
   periodo: "2026-01",
   sha256: SHA_CARACOL,
-  clave_objeto: "reportes/9f2c4e1a",
+  // `claveObjeto(sha)` en Go: "reportes/" mas la huella.
+  clave_objeto: `reportes/${SHA_CARACOL}`,
   nbytes: 21032,
   recibido: "2026-02-03T14:05:00Z",
   aceptados: 1234,
@@ -55,11 +69,11 @@ const cargaSinRechazos = {
 } satisfies Carga;
 
 const cargaConRechazos = {
-  id: "rep-7a1b2c3d",
+  id: ID_NETFLIX,
   fuente: "netflix",
   periodo: "2026-01",
   sha256: SHA_NETFLIX,
-  clave_objeto: "reportes/7a1b2c3d",
+  clave_objeto: `reportes/${SHA_NETFLIX}`,
   nbytes: 4096,
   recibido: "2026-02-04T09:30:00Z",
   aceptados: 58,
@@ -68,20 +82,20 @@ const cargaConRechazos = {
 
 const rechazos = [
   {
-    id: "rep-7a1b2c3d-2",
+    id: `${ID_NETFLIX}-2`,
     titulo: "Obra sintetica A",
     ids_fuente: "id_netflix=80000001",
     motivo: 'fila 2, titulo (columna "Title"): vacio',
   },
   {
-    id: "rep-7a1b2c3d-5",
+    id: `${ID_NETFLIX}-5`,
     titulo: "Obra sintetica B",
     ids_fuente: "id_netflix=80000002",
     motivo:
       'fila 5, horas_vistas (columna "Hours Viewed"): "muchas" no es un numero',
   },
   {
-    id: "rep-7a1b2c3d-11",
+    id: `${ID_NETFLIX}-11`,
     titulo: "Obra sintetica C",
     ids_fuente: "id_netflix=80000003",
     motivo: 'fila 11, titulo (columna "Title"): vacio',
@@ -146,6 +160,59 @@ describe("ListaCargas", () => {
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain(mensaje);
     expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("un 2xx sin JSON deja el listado en error en vez de tumbarlo", async () => {
+    // `api()` devuelve el `Response` crudo cuando el content-type no es JSON:
+    // antes llegaba hasta `cargas.length` / `cargas.map` y reventaba la
+    // pantalla. `useApi` lo convierte en error.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("<html><body>sin API</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "No se pudo consultar el listado de cargas",
+    );
+    expect(alerta.textContent).toContain("la respuesta no vino en JSON");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("un 2xx con un JSON que no es una lista no revienta el listado", async () => {
+    // `useApi<Carga[]>` no comprueba la forma: un objeto con 200 (el `{error}`
+    // de un proxy, por ejemplo) llegaria a `.length` y a `.map`.
+    vi.mocked(fetch).mockResolvedValue(json({ error: "algo salio mal" }));
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El listado no llegó como una lista de cargas.",
+    );
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("un log de rechazos que no es una lista no revienta la fila", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json([cargaConRechazos]))
+      .mockResolvedValueOnce(json({ error: "algo salio mal" }));
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    await screen.findByRole("table", { name: "Cargas hechas" });
+    fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (3)" }));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El log no llegó como una lista de rechazos.",
+    );
+    // El resto del listado sigue en pie.
+    expect(filaCon("netflix")).toBeTruthy();
   });
 
   it("cada carga muestra fuente, periodo, huella corta, recuentos y fecha", async () => {
@@ -239,13 +306,16 @@ describe("ListaCargas", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (3)" }));
 
     const log = await screen.findByRole("table", { name: "Filas rechazadas" });
-    expect(pedido(1)).toBe("/api/reportes/rep-7a1b2c3d/rechazos");
+    expect(pedido(1)).toBe(`/api/reportes/${ID_NETFLIX}/rechazos`);
     expect(fetch).toHaveBeenCalledTimes(2);
     // Invariante 3: todas las filas del log, ninguna recortada.
     expect(within(log).getAllByRole("row").slice(1)).toHaveLength(3);
     for (const rechazo of rechazos) {
       expect(within(log).getByText(rechazo.motivo)).toBeTruthy();
     }
+    // La columna "Id" pinta el id entero, con sus 64 hex de huella: es la
+    // unica vista que lo muestra a su ancho real (~70 caracteres).
+    expect(within(log).getByText(rechazos[0].id)).toBeTruthy();
 
     const boton = screen.getByRole("button", { name: "Ocultar rechazos" });
     expect(boton.getAttribute("aria-expanded")).toBe("true");
@@ -270,8 +340,10 @@ describe("ListaCargas", () => {
   it("varias cargas pueden tener su log abierto a la vez", async () => {
     const otra = {
       ...cargaConRechazos,
-      id: "rep-5e6f7a8b",
+      id: ID_CINE,
       fuente: "cine",
+      sha256: SHA_CINE,
+      clave_objeto: `reportes/${SHA_CINE}`,
       rechazados: 1,
     } satisfies Carga;
     vi.mocked(fetch)
@@ -291,7 +363,7 @@ describe("ListaCargas", () => {
         screen.getAllByRole("table", { name: "Filas rechazadas" }),
       ).toHaveLength(2),
     );
-    expect(pedido(2)).toBe("/api/reportes/rep-5e6f7a8b/rechazos");
+    expect(pedido(2)).toBe(`/api/reportes/${ID_CINE}/rechazos`);
   });
 
   it("si la carga ya no existe, el error queda dentro de su fila", async () => {
@@ -443,11 +515,14 @@ const FALTA_PERIODO =
 
 // El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
 // `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
-// literales para que un cambio de copy se note.
-const TITULO_FALLO_DESCONOCIDO = "No se pudo registrar la entrega";
+// literales para que un cambio de copy se note. El titulo es neutro a proposito:
+// justo debajo va el aviso de que la entrega pudo haber llegado.
+const TITULO_FALLO_DESCONOCIDO = "No se sabe si la entrega se registró";
 const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
+// Lo que `mensajeDeError` (api.ts) pone en lugar de un cuerpo que no es JSON.
+const MENSAJE_ERROR_ILEGIBLE = "el servidor respondió un error ilegible";
 
 // Ejemplo del 400 en api/openapi.yaml: un unico string que nombra columnas.
 const MENSAJE_400 =
@@ -463,7 +538,7 @@ const entregaCaracol = {
   aceptados: 1234,
   rechazados: [
     {
-      id: "rep-9f2c4e1a-6",
+      id: `${ID_CARACOL}-6`,
       titulo: "Obra sintetica D",
       ids_fuente: "id_ficha=F-004",
       motivo: 'fila 6, titulo (columna "Titulo"): vacio',
@@ -475,8 +550,12 @@ const entregaCaracol = {
 const cargaSubida = { ...cargaSinRechazos, rechazados: 1 } satisfies Carga;
 
 // Un 201 que no trae una `Entrega`. El primero es el cuerpo que devuelve un
-// proxy, el segundo un JSON con otra forma: los dos llegan a `api()` como un
-// resultado valido, y el panel reventaria al leer `rechazados.length`.
+// proxy; el segundo un JSON al que le falta todo salvo el id; el tercero un JSON
+// con `rechazados` lista y nada mas, que es el que pasaba la guarda anterior
+// -solo exigia "objeto con `rechazados` lista"- y reventaba al leer
+// `entrega.sha256` al pintar la huella; el cuarto es una entrega completa con un
+// `null` dentro de `rechazados`, que revienta al leer `.id` de cada fila. Los
+// cuatro llegan a `api()` como un resultado valido.
 const CUERPOS_QUE_NO_SON_ENTREGA: [string, () => Response][] = [
   [
     "HTML",
@@ -486,7 +565,15 @@ const CUERPOS_QUE_NO_SON_ENTREGA: [string, () => Response][] = [
         headers: { "content-type": "text/html" },
       }),
   ],
-  ["JSON sin rechazados", () => json({ id: "rep-9f2c4e1a" }, 201)],
+  ["JSON sin rechazados", () => json({ id: ID_CARACOL }, 201)],
+  [
+    "JSON con rechazados y sin el resto de la entrega",
+    () => json({ rechazados: [] }, 201),
+  ],
+  [
+    "JSON con un rechazo nulo en la lista",
+    () => json({ ...entregaCaracol, rechazados: [null] }, 201),
+  ],
 ];
 
 describe("pantalla de ingesta (integracion con App)", () => {
@@ -592,6 +679,43 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
     // No entro nada, asi que el listado no se vuelve a pedir.
     expect(getsDelListado()).toHaveLength(1);
+  });
+
+  it("un 4xx con un cuerpo que no es JSON no pinta ese cuerpo como mensaje del backend", async () => {
+    // El 409 llega con la pagina de error de nginx en vez del JSON del
+    // contrato: el status manda el titulo, pero el mensaje no es el cuerpo. Un
+    // 408 de `client_body_timeout` es el caso realista de la misma via.
+    simularServidor({
+      rol: "administrador",
+      subida: () =>
+        Promise.resolve(
+          new Response("<html><body><h1>409 Conflict</h1>nginx</body></html>", {
+            status: 409,
+            headers: { "content-type": "text/html" },
+          }),
+        ),
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    fireEvent.click(botonSubir());
+
+    const alerta = await screen.findByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "La entrega no se registró",
+      }),
+    ).toBeTruthy();
+    expect(alerta.textContent).toContain(MENSAJE_ERROR_ILEGIBLE);
+    // Ni el marcado ni el titulo de la pagina del proxy.
+    expect(document.body.textContent).not.toContain("409 Conflict");
+    expect(document.body.textContent).not.toContain("nginx");
+    // Un 409 si es una respuesta del servidor: no lleva el aviso de que pudo
+    // haber llegado.
+    expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
   });
 
   it("con la subida en vuelo el boton queda deshabilitado y dos submits seguidos mandan un solo POST", async () => {

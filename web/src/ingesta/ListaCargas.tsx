@@ -54,6 +54,20 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
     );
   }
 
+  // `useApi<Carga[]>` promete una lista, pero `T` es una promesa y no una
+  // comprobacion: un 2xx con un JSON que no es una lista -el `{error: ...}` de
+  // un proxy, o un backend que cambie de forma- llega hasta aqui. Sin este
+  // corte, `cargas.length` no seria 0 y `cargas.map` tumbaria la pantalla
+  // entera. No es redundante con `useApi`: el hook descarta el `Response` de un
+  // cuerpo que no es JSON, no un JSON que no es una lista.
+  if (!Array.isArray(cargas)) {
+    return (
+      <p className="ingesta-error" role="alert">
+        El listado no llegó como una lista de cargas.
+      </p>
+    );
+  }
+
   if (cargas.length === 0) {
     return (
       <p className="muted">
@@ -154,6 +168,16 @@ function RechazosDeCarga({ id }: { id: string }) {
     return (
       <p className="ingesta-error" role="alert">
         No se pudo consultar el log de rechazos: {error.message}
+      </p>
+    );
+  }
+
+  // Mismo caso que en el listado: el tipo promete una lista y el 2xx puede
+  // traer otra cosa. `TablaRechazos` lee `.length` y `.map`.
+  if (!Array.isArray(rechazos)) {
+    return (
+      <p className="ingesta-error" role="alert">
+        El log no llegó como una lista de rechazos.
       </p>
     );
   }

@@ -43,23 +43,56 @@ const FORMA_PERIODO = /^\d{4}(-\d{2})?$/;
 // ningun reparto cierra.
 const FORMA_PERIODO_DOMINIO = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
 
+/** Un texto con algo dentro, que es lo que son los campos de texto `Entrega`. */
+function esTextoNoVacio(valor: unknown): valor is string {
+  return typeof valor === "string" && valor !== "";
+}
+
 /**
  * Si un cuerpo sin tipar tiene la forma minima de una `Entrega`
- * (api/openapi.yaml): un objeto con `rechazados` como lista, que es lo unico
- * que el panel no puede tolerar que falte. Un 2xx con un cuerpo que no es JSON
- * (el 201 de un proxy o de un despliegue a medias), o con otra forma, tumbaba
- * la pantalla entera al pintar `entrega.rechazados.length`; y no hay
- * ErrorBoundary en `web/src`.
+ * (api/openapi.yaml). Se comprueba todo lo que el panel y la tabla leen:
+ *
+ * - `id`, `fuente`, `periodo`, `sha256` y `clave_objeto`: cadenas no vacias;
+ * - `aceptados`: un numero;
+ * - `rechazados`: una lista de objetos, uno por fila rechazada.
+ *
+ * `nbytes` no se mira: no lo lee ningun consumidor de la pantalla. De cada
+ * rechazo solo se exige que sea un objeto, no sus cuatro campos: se pintan como
+ * texto y un campo que falte deja la celda vacia, mientras que un `null` en la
+ * lista si revienta al leer `.id`.
+ *
+ * Un 2xx con otra forma -el `{"rechazados": []}` de un despliegue a medias, un
+ * objeto suelto, el HTML de un proxy- pasaba la guarda anterior, que solo
+ * exigia "objeto con `rechazados` lista", y tumbaba la pantalla entera al leer
+ * `huellaCorta(entrega.sha256)`; y no hay ErrorBoundary en `web/src` que la
+ * recoja.
  *
  * Lo que no pasa el filtro cae en el fallo no clasificable: ahi el panel ya
  * avisa de que la entrega pudo haber llegado, que es lo que corresponde cuando
- * un 201 no se deja leer.
+ * un 2xx no se deja leer.
  */
 function esEntrega(cuerpo: unknown): cuerpo is Entrega {
+  if (typeof cuerpo !== "object" || cuerpo === null) return false;
+  const entrega = cuerpo as {
+    id?: unknown;
+    fuente?: unknown;
+    periodo?: unknown;
+    sha256?: unknown;
+    clave_objeto?: unknown;
+    aceptados?: unknown;
+    rechazados?: unknown;
+  };
   return (
-    typeof cuerpo === "object" &&
-    cuerpo !== null &&
-    Array.isArray((cuerpo as { rechazados?: unknown }).rechazados)
+    esTextoNoVacio(entrega.id) &&
+    esTextoNoVacio(entrega.fuente) &&
+    esTextoNoVacio(entrega.periodo) &&
+    esTextoNoVacio(entrega.sha256) &&
+    esTextoNoVacio(entrega.clave_objeto) &&
+    typeof entrega.aceptados === "number" &&
+    Array.isArray(entrega.rechazados) &&
+    entrega.rechazados.every(
+      (rechazo) => typeof rechazo === "object" && rechazo !== null,
+    )
   );
 }
 

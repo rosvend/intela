@@ -43,7 +43,13 @@ const TITULO_POR_STATUS: Record<number, string> = {
   503: "La ingesta no está disponible en esta instalación",
 };
 
-const TITULO_POR_DEFECTO = "No se pudo registrar la entrega";
+// El titulo de lo que no tiene uno propio: el fallo "desconocido" (un 2xx que
+// no se dejo leer, un 502/504 del proxy) y cualquier status sin texto en el mapa
+// de arriba. Afirma solo lo que se sabe, que es poco: si la entrega quedo
+// registrada no lo sabe nadie en los dos casos. El caso "desconocido" lleva
+// ademas el aviso de PUDO_LLEGAR justo debajo, y un titulo que dijera "no se
+// pudo registrar" lo contradiria en la misma pantalla.
+const TITULO_POR_DEFECTO = "No se sabe si la entrega se registró";
 
 const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
 
@@ -56,25 +62,29 @@ const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
-// 502 y 504 los contesta el proxy, no la API, y lo que llega en el cuerpo es su
-// pagina de error: no se muestra (ver `resultadoDeError`).
+// El status con que contesta el proxy cuando la API no llego a responder. Ver
+// `resultadoDeError`, que los manda al caso no clasificable.
 const SIN_RESPUESTA_UTIL = new Set([502, 504]);
 
 /**
  * Traduce lo que lanza `api()` al subir un reporte en un `Resultado` de fallo.
  * La pantalla de ingesta lo usa en el `catch` del POST /reportes. Nunca lanza:
  * - `ApiError` -> su status y el mensaje del backend, sin tocar; un 502/504 cae
- *   en "desconocido", porque lo que trae el cuerpo es la pagina del proxy;
+ *   en "desconocido", porque no son un fallo de la API sino una respuesta que se
+ *   perdio en el camino;
  * - `ErrorDeRed` -> status "red" y su mensaje;
  * - cualquier otra cosa -> status "desconocido" y un mensaje generico.
  */
 export function resultadoDeError(error: unknown): Resultado {
-  // El 502 y el 504 los produce el proxy, no la API: su cuerpo es la pagina de
-  // error de nginx (deploy/nginx.conf corta a los 120s y el handler de Go
-  // tiene 60s de escritura), asi que una ingesta larga puede quedarse sin
-  // respuesta con la entrega ya confirmada en la base. Ese cuerpo no es un
-  // mensaje del backend y por eso no se muestra: el fallo cae al caso no
-  // clasificable, que ya avisa de que la entrega pudo haber llegado.
+  // El 502 y el 504 los produce el proxy, no la API: nginx corta a los 120s
+  // (deploy/nginx.conf) y el handler de Go tiene 60s de escritura, asi que una
+  // ingesta larga -un archivo grande, un lote que tarda- puede quedarse sin
+  // respuesta con la entrega ya confirmada en la base. Es el caso en que menos
+  // se sabe si la fila llego, y por eso va al caso no clasificable, el unico que
+  // avisa de que la entrega pudo haber llegado. Ojo: el mapeo NO se puede
+  // borrar argumentando que `api()` ya descarta el HTML del proxy -cierto desde
+  // la frontera-, porque lo que se pierde al borrarlo es el aviso, no el HTML:
+  // un 502 con su titulo propio no lo lleva.
   if (error instanceof ApiError && !SIN_RESPUESTA_UTIL.has(error.status)) {
     return { tipo: "fallo", status: error.status, mensaje: error.message };
   }
@@ -164,7 +174,10 @@ function PanelFallo({
       {/* El mensaje del backend va entero y tal cual. Nombra las columnas y
           campos que faltan; partirlo o reescribirlo acoplaria la UI a la prosa
           de Go y se romperia en silencio al reformularla. El de ErrorDeRed no
-          se muestra porque repite el titulo. */}
+          se muestra porque repite el titulo. Un cuerpo que no parsea como JSON
+          -la pagina de nginx- ya no llega hasta aqui: `mensajeDeError` lo
+          sustituye por un mensaje generico en `api.ts`, que es donde se sabe
+          que el contrato promete JSON. */}
       {status !== "red" && <p className="panel-mensaje">{mensaje}</p>}
       {/* El backend garantiza que un 400 no persiste nada: por eso el aviso
           va ahi y en ningun otro status. */}
