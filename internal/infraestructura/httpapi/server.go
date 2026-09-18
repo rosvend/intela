@@ -60,6 +60,7 @@ type API struct {
 	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
+	liq           Liquidaciones
 	cola          ColaRevision
 	opts          Opciones
 	log           *slog.Logger
@@ -79,6 +80,7 @@ type Casos struct {
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
+	Liquidaciones Liquidaciones
 	Cola          ColaRevision
 }
 
@@ -107,6 +109,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
+		liq:           casos.Liquidaciones,
 		cola:          casos.Cola,
 		opts:          opts,
 		log:           log,
@@ -159,7 +162,6 @@ func (a *API) Router() http.Handler {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
 		})
-
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo
@@ -204,6 +206,11 @@ func (a *API) Router() http.Handler {
 			))
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
+		})
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-liquidaciones", a.consultarLiquidaciones)
+			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
 		})
 
 		// La ingesta manual de reportes de uso. Pide `administrador` por lo
@@ -269,6 +276,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origen)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 			h.Set("Access-Control-Max-Age", "600")
 			// El origen entra en la respuesta, asi que las caches
 			// intermedias tienen que variar por el.

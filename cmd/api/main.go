@@ -20,6 +20,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
@@ -100,6 +101,14 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
+	liquidaciones := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
 	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
@@ -128,6 +137,7 @@ func ejecutar(log *slog.Logger) error {
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
+		Liquidaciones: liquidaciones,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),

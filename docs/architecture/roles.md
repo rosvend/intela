@@ -25,6 +25,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/obras/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+| `/mis-liquidaciones` | `titular` |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -37,7 +38,9 @@ compuertas del `RD 13.5`, y una sola persona no puede ostentar las dos: quien
 co-firma la salida del dinero no debe poder declarar cuanto entro.
 
 `titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
-participa (`OE-6`), no el ingreso de la sociedad.
+participa (`OE-6`), no el ingreso de la sociedad. El panel y el export de
+`/mis-liquidaciones` son la excepcion: ahi ve su propio neto, no el bruto
+de la sociedad.
 
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
 LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo
