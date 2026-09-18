@@ -192,20 +192,21 @@ func TestParametrosDesdeExigeLosCoeficientesDeTV(t *testing.T) {
 }
 
 // S6: normalizacion duplica el vocabulario de modalidad por depguard.
-// Si manana entra una quinta modalidad en reparto y no en normalizacion,
+// Si manana entra otra modalidad en reparto y no en normalizacion,
 // las filas empiezan a rechazarse en silencio.
 func TestVocabularioDeModalidadAlineadoConReparto(t *testing.T) {
-	repartoMods := map[string]bool{
-		string(reparto.TV):    true,
-		string(reparto.Cine):  true,
-		string(reparto.OTT):   true,
-		string(reparto.Hotel): true,
+	repartoMods := map[string]bool{}
+	for _, modalidad := range reparto.Modalidades() {
+		repartoMods[string(modalidad)] = true
 	}
 	normMods := map[string]bool{
-		normalizacion.ModalidadTV:    true,
-		normalizacion.ModalidadCine:  true,
-		normalizacion.ModalidadOTT:   true,
-		normalizacion.ModalidadHotel: true,
+		normalizacion.ModalidadTV:          true,
+		normalizacion.ModalidadCine:        true,
+		normalizacion.ModalidadOTT:         true,
+		normalizacion.ModalidadHotel:       true,
+		normalizacion.ModalidadTeatro:      true,
+		normalizacion.ModalidadTransporte:  true,
+		normalizacion.ModalidadSuscripcion: true,
 	}
 	if len(repartoMods) != len(normMods) {
 		t.Fatalf("reparto tiene %d modalidades, normalizacion %d", len(repartoMods), len(normMods))

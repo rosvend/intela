@@ -716,9 +716,18 @@ func validarUso(u UsoPersistido) string {
 		return "titulo vacio: sin titulo no hay nada que identificar"
 	}
 	switch u.Modalidad {
-	case reparto.TV, reparto.Cine, reparto.OTT, reparto.Hotel:
+	case reparto.TV, reparto.Cine, reparto.OTT, reparto.Hotel,
+		reparto.Teatro, reparto.Transporte, reparto.Suscripcion:
 	default:
-		return fmt.Sprintf("modalidad %q fuera de tv|cine|ott|hotel", u.Modalidad)
+		return fmt.Sprintf("modalidad %q fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion", u.Modalidad)
+	}
+	switch u.TipoObra {
+	case "", "cinematografica", "unitario", "serie", "telenovela", "sketches":
+	default:
+		return fmt.Sprintf(
+			"tipo_obra %q fuera de cinematografica|unitario|serie|telenovela|sketches",
+			u.TipoObra,
+		)
 	}
 	if u.Escalon == "manual" {
 		return "escalon manual: una resolucion manual necesita autor e instante, y no entra por ingesta"
@@ -824,6 +833,7 @@ func validarUso(u UsoPersistido) string {
 		{"duracion_min", u.DuracionMin, 12, 4},
 		{"rating", u.Rating, 12, 6},
 		{"taquilla", u.Taquilla, 18, 2},
+		{"espectadores", u.Espectadores, 18, 2},
 		{"vistas", u.Vistas, 18, 2},
 		{"minutos_vistos", u.MinutosVistos, 18, 4},
 		{"pb", u.PB, 18, 4},
@@ -853,6 +863,9 @@ func validarUso(u UsoPersistido) string {
 	}
 	if u.Emisiones < 0 {
 		return fmt.Sprintf("emisiones negativas: %d", u.Emisiones)
+	}
+	if u.Exhibiciones < 0 {
+		return fmt.Sprintf("exhibiciones negativas: %d", u.Exhibiciones)
 	}
 	return ""
 }
