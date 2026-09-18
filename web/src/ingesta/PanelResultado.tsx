@@ -5,11 +5,14 @@ import TablaRechazos from "./TablaRechazos";
 
 export type Entrega = components["schemas"]["Entrega"];
 
+// El status HTTP con que respondio el servidor; "red" si no hubo respuesta
+// (ErrorDeRed); "desconocido" si algo fallo fuera de la API, por ejemplo un
+// 201 cuyo cuerpo no se pudo leer.
+type StatusDeFallo = number | "red" | "desconocido";
+
 export type Resultado =
   | { tipo: "entrega"; entrega: Entrega }
-  // status null: no hubo respuesta del servidor (ErrorDeRed) o el error no
-  // salio de la API.
-  | { tipo: "fallo"; status: number | null; mensaje: string };
+  | { tipo: "fallo"; status: StatusDeFallo; mensaje: string };
 
 // La huella completa (64 hex) queda en el `title`; a la vista basta un prefijo
 // para reconocer la evidencia.
@@ -34,23 +37,25 @@ const TITULO_POR_STATUS: Record<number, string> = {
   503: "La ingesta no está disponible en esta instalación",
 };
 
+const TITULO_POR_DEFECTO = "No se pudo registrar la entrega";
+
 /**
  * Traduce lo que lanza `api()` al subir un reporte en un `Resultado` de fallo.
  * La pantalla de ingesta lo usa en el `catch` del POST /reportes. Nunca lanza:
  * - `ApiError` -> su status y el mensaje del backend, sin tocar;
- * - `ErrorDeRed` -> status null y su mensaje;
- * - cualquier otra cosa -> status null y un mensaje generico.
+ * - `ErrorDeRed` -> status "red" y su mensaje;
+ * - cualquier otra cosa -> status "desconocido" y un mensaje generico.
  */
 export function resultadoDeError(error: unknown): Resultado {
   if (error instanceof ApiError) {
     return { tipo: "fallo", status: error.status, mensaje: error.message };
   }
   if (error instanceof ErrorDeRed) {
-    return { tipo: "fallo", status: null, mensaje: error.message };
+    return { tipo: "fallo", status: "red", mensaje: error.message };
   }
   return {
     tipo: "fallo",
-    status: null,
+    status: "desconocido",
     mensaje: "error desconocido al subir el archivo",
   };
 }
@@ -114,29 +119,41 @@ function PanelEntrega({ entrega }: { entrega: Entrega }) {
   );
 }
 
+function tituloDeFallo(status: StatusDeFallo): string {
+  if (status === "red") return "No se pudo contactar al servidor";
+  if (status === "desconocido") return TITULO_POR_DEFECTO;
+  return TITULO_POR_STATUS[status] ?? TITULO_POR_DEFECTO;
+}
+
 function PanelFallo({
   status,
   mensaje,
 }: {
-  status: number | null;
+  status: StatusDeFallo;
   mensaje: string;
 }) {
-  const titulo =
-    status === null
-      ? "No se pudo contactar al servidor"
-      : (TITULO_POR_STATUS[status] ?? "No se pudo registrar la entrega");
+  const sinRespuesta = status === "red" || status === "desconocido";
 
   return (
     <section className="panel-resultado panel-fallo" role="alert">
-      <h2>{titulo}</h2>
+      <h2>{tituloDeFallo(status)}</h2>
       {/* D-006: el mensaje del backend va entero y tal cual. Nombra las
           columnas y campos que faltan; partirlo o reescribirlo acoplaria la
-          UI a la prosa de Go y se romperia en silencio al reformularla. */}
-      <p className="panel-mensaje">{mensaje}</p>
+          UI a la prosa de Go y se romperia en silencio al reformularla. El
+          de ErrorDeRed no se muestra: repite el titulo. */}
+      {status !== "red" && <p className="panel-mensaje">{mensaje}</p>}
       {/* El backend garantiza que un 400 no persiste nada: por eso el aviso
           va ahi y en ningun otro status. */}
       {status === 400 && (
         <p>No se guardó nada: corrige el archivo y vuelve a subirlo.</p>
+      )}
+      {/* D-011: sin una respuesta legible no se sabe si la entrega quedo
+          registrada, y subirla otra vez daria 409 si llego. */}
+      {sinRespuesta && (
+        <p>
+          La entrega pudo haber llegado al servidor: revisa el listado de cargas
+          antes de volver a subirla.
+        </p>
       )}
     </section>
   );

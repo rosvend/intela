@@ -5,8 +5,13 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../App";
+import { setToken } from "../api";
+import { ProveedorDeSesion, type Rol } from "../sesion";
 import ListaCargas, { type Carga } from "./ListaCargas";
+import type { Entrega } from "./PanelResultado";
 import type { Rechazo } from "./TablaRechazos";
 
 function json(cuerpo: unknown, status = 200): Response {
@@ -307,5 +312,368 @@ describe("ListaCargas", () => {
     expect(fila?.contains(alerta)).toBe(true);
     // El resto del listado sigue en pie.
     expect(filaCon("caracol")).toBeTruthy();
+  });
+});
+
+// ---------- pantalla completa, montada dentro de App ----------
+
+/** Sonda de ubicacion: ruta y query, para ver si hubo navegacion y donde vive el periodo. */
+function Ubicacion() {
+  const { pathname, search } = useLocation();
+  return <span data-testid="ubicacion">{pathname + search}</span>;
+}
+
+function montarApp(entrada: string) {
+  return render(
+    <MemoryRouter initialEntries={[entrada]}>
+      <ProveedorDeSesion>
+        <Ubicacion />
+        <App />
+      </ProveedorDeSesion>
+    </MemoryRouter>,
+  );
+}
+
+function ubicacion(): string | null {
+  return screen.getByTestId("ubicacion").textContent;
+}
+
+const esListado = (url: string) =>
+  url === "/api/reportes" || url.startsWith("/api/reportes?");
+
+/**
+ * Un backend falso que responde por URL y metodo: la sesion con el rol del
+ * test, el listado con `cargas()` (leidas en cada GET) y la subida con
+ * `subida()`. Todo lo demas, 404.
+ */
+function simularServidor({
+  rol,
+  cargas = () => [],
+  subida,
+}: {
+  rol: Rol;
+  cargas?: () => Carga[];
+  subida?: () => Promise<Response>;
+}) {
+  vi.mocked(fetch).mockImplementation((entrada, init) => {
+    const url = String(entrada);
+    const metodo = init?.method ?? "GET";
+    if (url === "/api/auth/session") {
+      return Promise.resolve(
+        json({
+          id: "usr-1",
+          email: "x@redes.co",
+          nombre: "Persona de Prueba",
+          rol,
+          titular_id: "",
+        }),
+      );
+    }
+    if (metodo === "GET" && esListado(url)) {
+      return Promise.resolve(json(cargas()));
+    }
+    if (metodo === "POST" && url === "/api/reportes" && subida) {
+      return subida();
+    }
+    return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
+  });
+}
+
+function llamadas() {
+  return vi.mocked(fetch).mock.calls.map(([entrada, init]) => ({
+    url: String(entrada),
+    metodo: init?.method ?? "GET",
+    init,
+  }));
+}
+
+function getsDelListado(): string[] {
+  return llamadas()
+    .filter((l) => l.metodo === "GET" && esListado(l.url))
+    .map((l) => l.url);
+}
+
+function subidas() {
+  return llamadas().filter(
+    (l) => l.metodo === "POST" && l.url === "/api/reportes",
+  );
+}
+
+/** El valor que acompana a una etiqueta del resumen de la entrega. */
+function dato(etiqueta: string): string | null | undefined {
+  return screen.getByText(etiqueta).nextElementSibling?.textContent;
+}
+
+const archivoCaracol = () =>
+  new File(["a,b"], "caracol.csv", { type: "text/csv" });
+
+function elegirFuente(valor: string) {
+  fireEvent.change(screen.getByLabelText("Fuente"), {
+    target: { value: valor },
+  });
+}
+
+function elegirArchivo(archivo: File) {
+  fireEvent.change(screen.getByLabelText("Archivo"), {
+    target: { files: [archivo] },
+  });
+}
+
+function escribirPeriodo(valor: string) {
+  fireEvent.change(screen.getByLabelText("Periodo de recaudo"), {
+    target: { value: valor },
+  });
+}
+
+const botonSubir = () => screen.getByRole("button", { name: "Subir reporte" });
+
+const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
+const FALTA_PERIODO =
+  "Escribe un periodo completo (AAAA o AAAA-MM) para poder subir el reporte.";
+
+// Ejemplo del 400 en api/openapi.yaml: un unico string que nombra columnas.
+const MENSAJE_400 =
+  'reporte invalido: a la entrega de "caracol" le faltan columnas requeridas: Duracion_total. El archivo trae: Canal, Titulo, ID_Ficha';
+
+const entregaCaracol = {
+  id: cargaSinRechazos.id,
+  fuente: "caracol",
+  periodo: "2026-01",
+  sha256: SHA_CARACOL,
+  clave_objeto: cargaSinRechazos.clave_objeto,
+  nbytes: cargaSinRechazos.nbytes,
+  aceptados: 1234,
+  rechazados: [
+    {
+      id: "rep-9f2c4e1a-6",
+      titulo: "Obra sintetica D",
+      ids_fuente: "id_ficha=F-004",
+      motivo: 'fila 6, titulo (columna "Titulo"): vacio',
+    },
+  ],
+} satisfies Entrega;
+
+// La misma entrega, como la devuelve el listado despues de subirla.
+const cargaSubida = { ...cargaSinRechazos, rechazados: 1 } satisfies Carga;
+
+describe("pantalla de ingesta (integracion con App)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    setToken("tok");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("el administrador ve el enlace y la pantalla, y el listado pide el periodo de la URL", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta?periodo=2026-01");
+
+    await screen.findByRole("heading", { name: "Ingesta de reportes" });
+    expect(screen.getByRole("link", { name: "Ingesta" })).toBeTruthy();
+    expect(
+      screen.queryByText("Esta pantalla llega en un PR posterior."),
+    ).toBeNull();
+    expect(screen.getByLabelText("Periodo de recaudo")).toHaveProperty(
+      "value",
+      "2026-01",
+    );
+    await screen.findByText(VACIO_2026_01);
+    expect(getsDelListado()).toEqual(["/api/reportes?periodo=2026-01"]);
+
+    // Si la URL cambia por fuera del campo (aqui, el enlace de la nav), el
+    // campo la sigue en vez de ensenar un periodo que ya no se aplica.
+    fireEvent.click(screen.getByRole("link", { name: "Ingesta" }));
+    expect(ubicacion()).toBe("/ingesta");
+    expect(screen.getByLabelText("Periodo de recaudo")).toHaveProperty(
+      "value",
+      "",
+    );
+    await screen.findByText("Aún no hay cargas registradas.");
+  });
+
+  it("una subida OK manda fuente, periodo y archivo en un FormData, muestra los recuentos y vuelve a pedir el listado", async () => {
+    let cargas: Carga[] = [];
+    simularServidor({
+      rol: "administrador",
+      cargas: () => cargas,
+      subida: () => {
+        cargas = [cargaSubida];
+        return Promise.resolve(json(entregaCaracol, 201));
+      },
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+    const pedidosAntes = getsDelListado().length;
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    fireEvent.click(botonSubir());
+
+    await screen.findByRole("heading", { name: "Entrega registrada" });
+    expect(subidas()).toHaveLength(1);
+    const cuerpo = subidas()[0].init?.body;
+    if (!(cuerpo instanceof FormData)) {
+      throw new Error("el POST no lleva un FormData");
+    }
+    expect(cuerpo.get("fuente")).toBe("caracol");
+    expect(cuerpo.get("periodo")).toBe("2026-01");
+    const archivo = cuerpo.get("archivo");
+    expect(archivo).toBeInstanceOf(File);
+    expect((archivo as File).name).toBe("caracol.csv");
+    // El formato lo deduce el backend de la extension.
+    expect(cuerpo.has("formato")).toBe(false);
+
+    expect(dato("Filas aceptadas")).toBe("1.234");
+    expect(dato("Filas rechazadas")).toBe("1");
+
+    // D-007: el listado se remonta, vuelve a pedirse y trae la carga nueva.
+    await screen.findByRole("table", { name: "Cargas hechas" });
+    expect(getsDelListado()).toHaveLength(pedidosAntes + 1);
+    expect(getsDelListado().at(-1)).toBe("/api/reportes?periodo=2026-01");
+  });
+
+  it("un archivo mal formado muestra el 400 tal cual, sin recargar ni navegar", async () => {
+    simularServidor({
+      rol: "administrador",
+      subida: () => Promise.resolve(json({ error: MENSAJE_400 }, 400)),
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    fireEvent.click(botonSubir());
+
+    const alerta = await screen.findByRole("alert");
+    expect(within(alerta).getByText(MENSAJE_400).textContent).toBe(MENSAJE_400);
+    // El formulario sigue montado, con lo elegido, y la ruta no cambio.
+    expect(screen.getByLabelText("Fuente")).toHaveProperty("value", "caracol");
+    expect(botonSubir()).toHaveProperty("disabled", false);
+    expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
+    // No entro nada, asi que el listado no se vuelve a pedir.
+    expect(getsDelListado()).toHaveLength(1);
+  });
+
+  it("con la subida en vuelo el boton queda deshabilitado y un doble clic manda un solo POST", async () => {
+    let responder: (respuesta: Response) => void = () => {};
+    simularServidor({
+      rol: "administrador",
+      subida: () =>
+        new Promise<Response>((resolver) => {
+          responder = resolver;
+        }),
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    const boton = botonSubir();
+    fireEvent.click(boton);
+    fireEvent.click(boton);
+
+    expect(subidas()).toHaveLength(1);
+    expect(boton).toHaveProperty("disabled", true);
+    expect(boton.textContent).toBe("Subiendo…");
+
+    responder(json(entregaCaracol, 201));
+    await screen.findByRole("heading", { name: "Entrega registrada" });
+    expect(botonSubir()).toHaveProperty("disabled", false);
+    expect(subidas()).toHaveLength(1);
+    // El listado se remonta tras el 201: se espera a que termine.
+    await screen.findByText(VACIO_2026_01);
+  });
+
+  it("sin fuente o sin archivo no se puede subir", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    expect(botonSubir()).toHaveProperty("disabled", true);
+    elegirFuente("caracol");
+    expect(botonSubir()).toHaveProperty("disabled", true);
+    elegirArchivo(archivoCaracol());
+    expect(botonSubir()).toHaveProperty("disabled", false);
+    elegirFuente("");
+    expect(botonSubir()).toHaveProperty("disabled", true);
+  });
+
+  it("el periodo solo se aplica completo: entonces pasa a la URL, filtra el listado y habilita la subida", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta");
+    await screen.findByText("Aún no hay cargas registradas.");
+    expect(getsDelListado()).toEqual(["/api/reportes"]);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    expect(botonSubir()).toHaveProperty("disabled", true);
+    expect(screen.getByText(FALTA_PERIODO)).toBeTruthy();
+
+    // A medias no toca la URL ni consulta nada.
+    escribirPeriodo("2026-0");
+    expect(ubicacion()).toBe("/ingesta");
+    expect(botonSubir()).toHaveProperty("disabled", true);
+
+    escribirPeriodo("2026-01");
+    expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+    expect(getsDelListado()).toEqual([
+      "/api/reportes",
+      "/api/reportes?periodo=2026-01",
+    ]);
+    expect(botonSubir()).toHaveProperty("disabled", false);
+    expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
+
+    // Volver a dejarlo a medias bloquea la subida: el campo ya no dice el
+    // periodo que se mandaria.
+    escribirPeriodo("2026-0");
+    expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
+    expect(botonSubir()).toHaveProperty("disabled", true);
+
+    // Vaciarlo lo quita de la URL y el listado vuelve a traer todo.
+    escribirPeriodo("");
+    expect(ubicacion()).toBe("/ingesta");
+    await screen.findByText("Aún no hay cargas registradas.");
+    expect(getsDelListado()).toHaveLength(3);
+  });
+
+  it("soltar un archivo en la zona lo elige, igual que el selector", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    fireEvent.drop(screen.getByText(/Arrastra el archivo hasta aquí/), {
+      dataTransfer: { files: [archivoCaracol()] },
+    });
+
+    expect(screen.getByText("caracol.csv")).toBeTruthy();
+    expect(botonSubir()).toHaveProperty("disabled", false);
+  });
+
+  it("un auditor en /ingesta ve 'No autorizado', sin enlace y sin pedir nada a /api/reportes", async () => {
+    simularServidor({ rol: "auditor" });
+
+    montarApp("/ingesta");
+
+    await screen.findByRole("heading", { name: "No autorizado" });
+    expect(screen.queryByRole("link", { name: "Ingesta" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Ingesta de reportes" }),
+    ).toBeNull();
+    expect(llamadas().filter((l) => l.url.startsWith("/api/reportes"))).toEqual(
+      [],
+    );
   });
 });

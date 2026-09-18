@@ -51,6 +51,9 @@ const MENSAJE_400 =
 const NO_SE_GUARDO =
   "No se guardó nada: corrige el archivo y vuelve a subirlo.";
 
+const PUDO_LLEGAR =
+  "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
+
 /** El valor que acompana a una etiqueta del resumen de la entrega. */
 function dato(etiqueta: string): string | null | undefined {
   return screen.getByText(etiqueta).nextElementSibling?.textContent;
@@ -130,7 +133,6 @@ describe("PanelResultado", () => {
     [409, "Ese archivo ya se había cargado"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
-    [null, "No se pudo contactar al servidor"],
     [500, "No se pudo registrar la entrega"],
   ] as const)(
     "el status %s se titula %j y conserva el mensaje",
@@ -145,8 +147,46 @@ describe("PanelResultado", () => {
       expect(within(alerta).getByText(mensaje)).toBeTruthy();
       // El aviso de "no se guardo nada" es solo del 400.
       expect(screen.queryByText(NO_SE_GUARDO)).toBeNull();
+      // Con un status el servidor contesto: no hay duda de si la entrega llego.
+      expect(screen.queryByText(PUDO_LLEGAR)).toBeNull();
     },
   );
+
+  // D-011: sin respuesta legible no se sabe si la entrega quedo registrada, y
+  // reintentar a ciegas daria 409 si llego.
+  it("sin red avisa que la entrega pudo llegar y no repite el titulo", () => {
+    const red = new ErrorDeRed(new TypeError("Failed to fetch"));
+    render(<PanelResultado resultado={resultadoDeError(red)} />);
+
+    const alerta = screen.getByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "No se pudo contactar al servidor",
+      }),
+    ).toBeTruthy();
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
+    // El mensaje de ErrorDeRed dice lo mismo que el titulo: va una sola vez.
+    expect(
+      within(alerta).getAllByText(/no se pudo contactar al servidor/i),
+    ).toHaveLength(1);
+    expect(screen.queryByText(NO_SE_GUARDO)).toBeNull();
+  });
+
+  it("un error desconocido tiene su propio titulo, su mensaje y el mismo aviso", () => {
+    render(<PanelResultado resultado={resultadoDeError(new Error("boom"))} />);
+
+    const alerta = screen.getByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "No se pudo registrar la entrega",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(alerta).getByText("error desconocido al subir el archivo"),
+    ).toBeTruthy();
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
+    expect(within(alerta).queryByText(/contactar al servidor/i)).toBeNull();
+  });
 });
 
 describe("resultadoDeError", () => {
@@ -158,19 +198,19 @@ describe("resultadoDeError", () => {
     });
   });
 
-  it("un ErrorDeRed queda sin status", () => {
+  it("un ErrorDeRed queda marcado como fallo de red", () => {
     const red = new ErrorDeRed(new TypeError("Failed to fetch"));
     expect(resultadoDeError(red)).toEqual({
       tipo: "fallo",
-      status: null,
+      status: "red",
       mensaje: red.message,
     });
   });
 
-  it("cualquier otro error da un mensaje generico sin status", () => {
+  it("cualquier otro error queda como desconocido, con un mensaje generico", () => {
     expect(resultadoDeError(new Error("boom"))).toEqual({
       tipo: "fallo",
-      status: null,
+      status: "desconocido",
       mensaje: "error desconocido al subir el archivo",
     });
   });
