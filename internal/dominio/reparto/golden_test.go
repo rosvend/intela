@@ -2,16 +2,33 @@ package reparto_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
-// Golden de la corrida Canal Z (RD 9.1.1). ADR 0005: la CI reejecuta
-// corridas de referencia y falla si el resultado cambia entre versiones.
+// Golden Canal Z (RD 9.1.1). Embebido como constante: dominio no puede
+// importar os (ADR 0005 / depguard dominio-no-sale).
+const goldenCanalZ = `{
+  "neto": "1000000.00",
+  "valor_punto": "139.06271729",
+  "residuo": "0.00",
+  "obras": [
+    {
+      "obra_id": "x",
+      "puntos": "1575",
+      "importe": "219023.78"
+    },
+    {
+      "obra_id": "y",
+      "puntos": "5616",
+      "importe": "780976.22"
+    }
+  ]
+}`
+
+// TestReparto_GoldenCanalZ reejecuta la corrida de referencia (ADR 0005).
 func TestReparto_GoldenCanalZ(t *testing.T) {
 	usos := []reparto.Uso{
 		{ObraID: "x", Modalidad: reparto.TV, TipoObra: "cinematografica", CanalID: "z",
@@ -53,13 +70,8 @@ func TestReparto_GoldenCanalZ(t *testing.T) {
 		})
 	}
 
-	path := filepath.Join("testdata", "canal_z.json")
-	wantRaw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var want golden
-	if err := json.Unmarshal(wantRaw, &want); err != nil {
+	if err := json.Unmarshal([]byte(goldenCanalZ), &want); err != nil {
 		t.Fatal(err)
 	}
 	gotRaw, err := json.MarshalIndent(got, "", "  ")
