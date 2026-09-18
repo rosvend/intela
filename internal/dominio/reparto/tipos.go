@@ -134,6 +134,19 @@ type Snapshot struct {
 	BaseCineTeatro string
 
 	Reglamento string
+
+	// Coeficientes de RD 9.1.1(c). Viven en el snapshot y no en el codigo
+	// (ADR 0004): el 80% artistico y los 48 minutos de la hora televisiva
+	// los aplica normalizacion al canonizar la fila, y el motor consume
+	// ya la duracion transformada.
+	DuracionArtisticaPct decimal.Decimal
+	MinutosHoraTV        decimal.Decimal
+
+	// Moneda base del periodo y tasas a esa base (clave ISO → factor).
+	// No hay lista de monedas en codigo: solo se convierten las que traen
+	// tasa. EUR sin entrada propia no hereda la del dolar.
+	MonedaBase string
+	Tasas      map[string]decimal.Decimal
 }
 
 // Uso de una obra en un periodo, ya identificado.

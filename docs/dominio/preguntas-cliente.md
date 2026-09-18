@@ -49,8 +49,8 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-13 | Campos de episodio en la parrilla de Caracol | @rosvend | **Abierta** |
 | P-14 | Extractos del mismo periodo y de mayor volumen | @rosvend | **Abierta** |
 | P-15 | Padron de titulares con IPI poblado y al dia | @rosvend | **Abierta** |
-| P-16 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
-
+| P-16 | Alcance del 80% artistico de `RD 9.1.1` | @rosvend | **Abierta** |
+| P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
 ## Respuestas
 
 ### P-01 `T-02` Base de calculo para salas de cine
@@ -155,8 +155,8 @@ Consecuencia: **afecta a la PR #106.** Exigir IPI en la entrada es incorrecto: e
 fuente no lo tiene. Si conviene conservar una instantanea del IPI para reproducibilidad
 (ADR 0005) es una decision aparte.
 
-### P-12 a P-16
-Abiertas, sin decision provisional, tomadas de `fuentes-datos.md` y del alcance de #120:
+### P-12 a P-17
+Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado de #26 y del alcance de #120:
 - **P-12** `eidr` poblado por Netflix, o acceso a IDA. Sin uno de los dos, el escalon 2 de la
   cascada (#28) solo funciona sobre lo que ya tenga el catalogo.
 - **P-13** Campos de episodio en la parrilla de Caracol, para identificar capitulos de series.
@@ -164,13 +164,16 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md` y del alcance 
   cruzar de verdad: cero coincidencias de titulo entre las dos muestras.
 - **P-15** Padron de titulares con IPI poblado y al dia. `data/IPI - form to report members to
   IPI 01-03-24.xls` ya esta en el repo pero **no esta perfilado**.
-- **P-16** Proveedor especializado, formato y periodicidad del **feed de quintil de audiencia**
+- **P-16** Alcance del 80% artistico de `RD 9.1.1`: ¿aplica a los minutos de la parrilla del
+  canal o solo a la cifra del proveedor especializado de audiencia? El codigo hoy asume lo
+  primero para toda fila de TV/hotel sin `unidad_duracion`. Si es lo segundo, hay que dejar de
+  transformar la parrilla y esperar el feed de audiencia.
+- **P-17** Proveedor especializado, formato y periodicidad del **feed de quintil de audiencia**
   para clasificar canales cerrados como *lideres en rating* (`RD 9.5.4`). La clasificacion
   usa el ano inmediatamente anterior al periodo que se reparte y queda congelada en
   `canales_clasificacion` para poder reejecutar un periodo pasado (ADR 0005). Sin este feed
   no se puede poblar `9.5.4` de forma defendible; `9.5.5` (estandar) absorberia el resto
   solo por exclusion.
-
 ## Agenda para la reunion con REDES
 
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
@@ -186,5 +189,5 @@ cifra defendible.
 5. **Confirmar P-03**: que Intela ocupa el lugar de AVSYS y que REDES-SYS sigue como esta.
 6. **Confirmar P-01, P-02, P-05, P-07, P-09 y P-11**, que hoy van con respuesta del equipo.
 7. **Entretenimientos**: es o no repertorio (P-05).
-8. Pedir P-12 a P-16: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI,
-   feed de quintil `RD 9.5.4`.
+8. Pedir P-12 a P-17: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI,
+   alcance del 80% artistico, feed de quintil `RD 9.5.4`.

@@ -49,6 +49,11 @@ los reportes anuales del proveedor especializado de parrillas.
 - Es el tiempo estimado en minutos durante el cual la obra es emitida.
 - **La hora de emision televisiva se computa como 48 minutos**, salvo prueba en contrario.
 - **La duracion artistica es el 80% de la reportada por el proveedor especializado.**
+- **Las dos transformaciones no se encadenan.** Si la fuente reporta minutos, se aplica el
+  80%; si reporta horas, se aplica la hora de 48 minutos. Encadenarlas contaria los anuncios
+  dos veces: 80% de 60 minutos YA es 48, que es la hora televisiva del ejemplo de Serie Y.
+  Queda abierto (ver `preguntas-cliente.md`) si el 80% aplica a toda cifra de parrilla o solo
+  a la del proveedor especializado de audiencia.
 - No computan los avances publicitarios de obras audiovisuales emitidos para promocionar la
   programacion propia del canal.
 
