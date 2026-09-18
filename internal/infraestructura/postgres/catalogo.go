@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -33,7 +34,25 @@ func (s *Store) CatalogoObras() aplicacion.CatalogoObras {
 // una sola obligaria a la proyeccion a arrastrar campos que no usa.
 const columnasCatalogo = `id, titulo, genero, anio, tipo, ida, eidr, imdb`
 
+// columnasCatalogoDe es lo mismo con alias de tabla, para las lecturas que
+// juntan obras y coautores en una sola sentencia.
+const columnasCatalogoDe = `o.id, o.titulo, o.genero, o.anio, o.tipo, o.ida, o.eidr, o.imdb`
+
 const columnasCoautor = `ipi, nombre, rol`
+
+// lateralCoautores agrega los coautores de cada obra en la misma sentencia
+// que lee `obras`. Una sola instantanea: sin el, PorID y Buscar leian las dos
+// tablas en viajes aparte y un Actualizar que confirmara entre medias podia
+// devolver metadatos viejos con coautores nuevos (issue #90).
+const lateralCoautores = `
+	LEFT JOIN LATERAL (
+	  SELECT jsonb_agg(
+	           jsonb_build_object('ipi', c.ipi, 'nombre', c.nombre, 'rol', c.rol)
+	           ORDER BY c.ipi, c.rol
+	         ) AS coautores
+	    FROM obra_coautores c
+	   WHERE c.obra_id = o.id
+	) ca ON true`
 
 // Registrar inserta la obra y sus coautores en una sola transaccion.
 //
@@ -120,130 +139,144 @@ func (s *Store) escribirCoautores(ctx context.Context, tx pgx.Tx, o repertorio.O
 	return nil
 }
 
-// PorID reconstruye una obra del catalogo.
+// PorID reconstruye una obra del catalogo en una sola sentencia: metadatos y
+// coautores salen de la misma instantanea (issue #90).
 func (c catalogo) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
-		fila fila
-		tipo string
+		fl            fila
+		tipo          string
+		coautoresJSON []byte
 	)
 	err := c.pool.QueryRow(ctx,
-		`SELECT `+columnasCatalogo+` FROM obras WHERE id = $1`, id).
-		Scan(&fila.id, &fila.titulo, &fila.genero, &fila.anio, &tipo,
-			&fila.ida, &fila.eidr, &fila.imdb)
+		`SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
+		   FROM obras o`+lateralCoautores+`
+		  WHERE o.id = $1`, id).
+		Scan(&fl.id, &fl.titulo, &fl.genero, &fl.anio, &tipo,
+			&fl.ida, &fl.eidr, &fl.imdb, &coautoresJSON)
 	if err != nil {
 		return repertorio.Obra{}, traducirError(err, "obra %q del catalogo", id)
 	}
-	fila.tipo = repertorio.TipoObra(tipo)
-
-	coautores, err := c.coautoresDeObras(ctx, []string{id})
+	fl.tipo = repertorio.TipoObra(tipo)
+	coautores, err := decodificarCoautores(coautoresJSON)
 	if err != nil {
-		return repertorio.Obra{}, err
+		return repertorio.Obra{}, fmt.Errorf("obra %q del catalogo: %w", id, err)
 	}
-	return fila.entidad(coautores[id])
+	return fl.entidad(coautores)
 }
 
-// Buscar resuelve los cuatro filtros en una consulta.
+// Buscar resuelve los cuatro filtros y la paginacion en una consulta.
 //
-// Cada filtro se neutraliza con su propio valor cero dentro del WHERE en vez
-// de armar el SQL a trozos segun lo que venga: una sola sentencia, sin
-// concatenar, sin contar parametros a mano y sin que el numero de consultas
-// distintas crezca con las combinaciones. El titulo va por ILIKE '%...%', que
-// es lo que sabe resolver el indice GIN de trigramas de 00001; los otros tres
-// son igualdad.
+// Titulo, genero y anio se neutralizan con su valor cero dentro del WHERE: una
+// sola sentencia, sin concatenar (decision 8 de #86). El IPI NO entra en esa
+// forma: `($5 = ” OR EXISTS (...))` convertia el EXISTS en un subplan
+// hasheado sobre cada fila de `obras` y barria el catalogo entero. Aqui el
+// camino con IPI y el camino sin IPI van en un UNION ALL mutuamente excluyente
+// -`$5 <> ”` frente a `$5 = ”`-, asi el EXISTS suelto deja que
+// `obra_coautores_ipi` guie el Nested Loop (issue #90).
+//
+// La pagina se resuelve PRIMERO (ids + metadatos) y el LATERAL de coautores
+// se aplica despues, solo a las filas que sobreviven al LIMIT: si el jsonb_agg
+// corriera antes del recorte, la primera pagina costaria mas que servir el
+// catalogo entero.
+//
+// ORDER BY id nombra la clave (no la posicion): el ADR 0005 exige
+// reproducibilidad, y el UNION ALL duplica columnasCatalogoDe.
+//
+// OFFSET degrada linealmente con la profundidad (KISS hoy). Cuando el
+// catalogo sea real, el paso a keyset es una decision, no un descubrimiento.
 func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error) {
-	// ORDER BY id: el ADR 0005 exige que una corrida se reproduzca bit a bit,
-	// y una lista sin orden explicito no lo es.
-	filas, err := s.pool.Query(ctx,
-		`SELECT `+columnasCatalogo+`
-		   FROM obras o
-		  WHERE ($1 = ''  OR o.titulo ILIKE $2)
+	p := f.ConDefecto()
+	const filtrosComunes = `
+		    AND ($1 = ''  OR o.titulo ILIKE $2)
 		    AND ($3 = ''  OR o.genero = $3)
-		    AND ($4 = 0   OR o.anio   = $4)
-		    AND ($5 = ''  OR EXISTS (SELECT 1 FROM obra_coautores c
-		                              WHERE c.obra_id = o.id AND c.ipi = $5))
-		  ORDER BY o.id`,
-		f.Titulo, patronContiene(f.Titulo), f.Genero, f.Anio, f.IPI)
+		    AND ($4 = 0   OR o.anio   = $4)`
+	// pagina: ids + metadatos sin coautores. El LATERAL va fuera, contra
+	// las filas que pasan el LIMIT (o contra todas si LimiteSinTope).
+	pagina := `
+	     (
+	       SELECT ` + columnasCatalogoDe + `
+	         FROM obras o
+	        WHERE $5 <> ''
+	          AND EXISTS (SELECT 1 FROM obra_coautores c
+	                       WHERE c.obra_id = o.id AND c.ipi = $5)` + filtrosComunes + `
+	     )
+	     UNION ALL
+	     (
+	       SELECT ` + columnasCatalogoDe + `
+	         FROM obras o
+	        WHERE $5 = ''` + filtrosComunes + `
+	     )`
+	sql := `SELECT ` + columnasCatalogoDe + `, COALESCE(ca.coautores, '[]'::jsonb)
+	   FROM (` + pagina + `
+	     ORDER BY id`
+	args := []any{f.Titulo, patronContiene(f.Titulo), f.Genero, f.Anio, f.IPI}
+	if p.Limite != aplicacion.LimiteSinTope {
+		sql += `
+	     LIMIT $6 OFFSET $7`
+		args = append(args, p.Limite, p.Desplazamiento)
+	}
+	sql += `
+	   ) o` + lateralCoautores + `
+	 ORDER BY o.id`
+
+	filas, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, "buscar obras")
 	}
 	defer filas.Close()
 
-	var (
-		encontradas []fila
-		ids         []string
-	)
+	var obras []repertorio.Obra
 	for filas.Next() {
 		var (
-			fl   fila
-			tipo string
+			fl            fila
+			tipo          string
+			coautoresJSON []byte
 		)
 		if err := filas.Scan(&fl.id, &fl.titulo, &fl.genero, &fl.anio, &tipo,
-			&fl.ida, &fl.eidr, &fl.imdb); err != nil {
+			&fl.ida, &fl.eidr, &fl.imdb, &coautoresJSON); err != nil {
 			return nil, traducirError(err, "escanear obra del catalogo")
 		}
 		fl.tipo = repertorio.TipoObra(tipo)
-		encontradas = append(encontradas, fl)
-		ids = append(ids, fl.id)
+		coautores, err := decodificarCoautores(coautoresJSON)
+		if err != nil {
+			return nil, fmt.Errorf("obra %q del catalogo: %w", fl.id, err)
+		}
+		obra, err := fl.entidad(coautores)
+		if err != nil {
+			return nil, err
+		}
+		obras = append(obras, obra)
 	}
 	// No es opcional: un fallo a mitad de stream sale solo por aqui, y sin
 	// esta comprobacion una lista TRUNCADA se devuelve como lista completa.
 	if err := filas.Err(); err != nil {
 		return nil, traducirError(err, "buscar obras")
 	}
-
-	// Una consulta para todos los coautores y no una por obra: con N obras,
-	// preguntar los coautores de cada una son N+1 viajes.
-	coautores, err := s.coautoresDeObras(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-
-	obras := make([]repertorio.Obra, 0, len(encontradas))
-	for _, fl := range encontradas {
-		obra, err := fl.entidad(coautores[fl.id])
-		if err != nil {
-			return nil, err
-		}
-		obras = append(obras, obra)
-	}
 	return obras, nil
 }
 
-// coautoresDeObras trae los coautores de varias obras de una vez, agrupados
-// por obra.
-func (s *Store) coautoresDeObras(ctx context.Context, ids []string) (map[string][]repertorio.Coautor, error) {
-	porObra := map[string][]repertorio.Coautor{}
-	if len(ids) == 0 {
-		return porObra, nil
+// decodificarCoautores traduce el jsonb_agg de lateralCoautores.
+func decodificarCoautores(bruto []byte) ([]repertorio.Coautor, error) {
+	if len(bruto) == 0 || string(bruto) == "null" {
+		return nil, nil
 	}
-
-	// ORDER BY por la misma razon que Buscar: reproducibilidad (ADR 0005).
-	filas, err := s.pool.Query(ctx,
-		`SELECT obra_id, `+columnasCoautor+`
-		   FROM obra_coautores
-		  WHERE obra_id = ANY($1)
-		  ORDER BY obra_id, ipi, rol`, ids)
-	if err != nil {
-		return nil, traducirError(err, "coautores del catalogo")
+	var filas []struct {
+		IPI    string `json:"ipi"`
+		Nombre string `json:"nombre"`
+		Rol    string `json:"rol"`
 	}
-	defer filas.Close()
-
-	for filas.Next() {
-		var (
-			obraID string
-			c      repertorio.Coautor
-			rol    string
-		)
-		if err := filas.Scan(&obraID, &c.IPI, &c.Nombre, &rol); err != nil {
-			return nil, traducirError(err, "escanear coautor")
-		}
-		c.Rol = repertorio.RolAutoral(rol)
-		porObra[obraID] = append(porObra[obraID], c)
+	if err := json.Unmarshal(bruto, &filas); err != nil {
+		return nil, fmt.Errorf("decodificar coautores: %w", err)
 	}
-	if err := filas.Err(); err != nil {
-		return nil, traducirError(err, "coautores del catalogo")
+	out := make([]repertorio.Coautor, 0, len(filas))
+	for _, f := range filas {
+		out = append(out, repertorio.Coautor{
+			IPI:    f.IPI,
+			Nombre: f.Nombre,
+			Rol:    repertorio.RolAutoral(f.Rol),
+		})
 	}
-	return porObra, nil
+	return out, nil
 }
 
 // patronContiene envuelve el texto en comodines para un ILIKE, escapando los

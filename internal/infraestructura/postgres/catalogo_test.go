@@ -331,8 +331,8 @@ func TestBuscarCombinaLosFiltrosConY(t *testing.T) {
 	}
 }
 
-// Un filtro vacio es el listado del catalogo. Y el orden es explicito: el ADR
-// 0005 exige que una corrida se reproduzca bit a bit.
+// Un filtro vacio es el listado del catalogo (primera pagina). Y el orden es
+// explicito: el ADR 0005 exige que una corrida se reproduzca bit a bit.
 func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	s, _ := sembrar(t)
 
@@ -345,6 +345,87 @@ func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	}
 	if got := ids(obras); !slices.IsSorted(got) {
 		t.Fatalf("el catalogo no viene ordenado por id: %v", got)
+	}
+}
+
+func TestBuscarRespetaLimiteYDesplazamiento(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 2, Desplazamiento: 1},
+	})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	todas, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 10},
+	})
+	if err != nil {
+		t.Fatalf("Buscar completo: %v", err)
+	}
+	if got := ids(obras); !slices.Equal(got, []string{todas[1].ID(), todas[2].ID()}) {
+		t.Fatalf("ids = %v, se esperaba [%s %s]", got, todas[1].ID(), todas[2].ID())
+	}
+}
+
+// IPI + otro filtro + paginacion ejercitan la rama $5 <> ” junto al LIMIT,
+// que es el camino que el UNION ALL existe para proteger.
+func TestBuscarPorIPICombinaFiltrosYPaginacion(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	casos := []struct {
+		nombre string
+		filtro aplicacion.FiltroObras
+		quiero []string
+	}{
+		{
+			nombre: "ipi solo",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001"},
+			quiero: []string{obraCompleta, obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi y genero",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Genero: "Drama"},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi y anio",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Anio: 1991},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con limite",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1},
+			},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con desplazamiento",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1, Desplazamiento: 1},
+			},
+			quiero: []string{obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi inexistente",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-99999999"},
+			quiero: nil,
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			obras, err := s.Buscar(ctx, c.filtro)
+			if err != nil {
+				t.Fatalf("Buscar: %v", err)
+			}
+			if got := ids(obras); !slices.Equal(got, c.quiero) {
+				t.Fatalf("ids = %v, se esperaba %v", got, c.quiero)
+			}
+		})
 	}
 }
 
