@@ -257,3 +257,6 @@ override.tf.json
 # defecto (./data/objetos): es evidencia GENERADA por el dataset sintetico, no
 # los archivos del cliente, que si van versionados en data/files/.
 /data/objetos/
+# Binarios locales de herramientas (golangci-lint, etc.) instalados fuera del
+# PATH del CI. No versionar.
+.tools/
