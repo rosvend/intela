@@ -58,11 +58,29 @@ completo de tres paginas.
 ### La aplicacion
 
 ```bash
-docker compose up --build   # API, worker, scheduler, Postgres y el tablero
-make verificar              # tidy, build, vet, gofmt y test — lo mismo que corre CI
+docker compose --profile demo up --build   # un comando: API, worker, scheduler, Postgres,
+                                           # el tablero, las migraciones y el dataset de demo
+deploy/smoke.sh                            # comprueba que arranca y sirve, o dice por que no
+make verificar                             # tidy, build, vet, gofmt y test — lo que corre CI
 ```
 
-→ [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para variables de entorno y datos de prueba.
+Tablero en <http://localhost>, entrando como `admin@redes.co` / `admin-local`. Sin `--profile demo`
+el sistema levanta migrado pero **vacio**.
+
+Si algun puerto esta ocupado, el compose publica **tres** y los tres se mueven por entorno, sin
+editar ficheros. Mover solo el de nginx no basta: el 8080 de la API choca igual de seguido, y
+cuando choca los contenedores se quedan en `Created` sin decir por que.
+
+```bash
+INTELA_PUERTO_HTTP=8088 \
+INTELA_PUERTO_API=18080 \
+INTELA_PUERTO_PG=55432 \
+docker compose --profile demo up --build
+```
+
+→ [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para el quickstart completo, las variables de entorno y
+que datos son reales y cuales sinteticos. El detalle de los puertos esta en
+[Si un puerto esta ocupado](docs/ARRANQUE.md#si-un-puerto-esta-ocupado).
 
 Los hooks locales viven en [`lefthook.yml`](lefthook.yml) y corren un subconjunto de lo mismo antes
 del commit y del push:

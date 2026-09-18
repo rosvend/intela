@@ -160,8 +160,12 @@ exige compatibilidad hacia atras. Un esquema que solo anade es un esquema del qu
 - **Sin `staging`.** Un solo entorno. Cuando haya otro es otra invocacion de `deploy.yml` con otro
   `environment` y otro `infra/envs/<nombre>/`, no otro workflow.
 - **Sin rollback automatico.** El paso de salud falla el job, pero no revierte: avisa, no arregla.
-- **Sin smoke test de arranque de la imagen.** Las etapas de Docker comprueban que la imagen
-  *construye*, no que *arranca*. Menos grave desde que la imagen no es lo que se despliega.
+- **El smoke test de arranque no toca lo desplegado.** Ya no falta —`Boot smoke test` levanta el
+  stack de `docker-compose.yml` y lo recorre por HTTP en cada PR ([`docs/ci.md`](ci.md))— pero lo que
+  arranca ahi son las **imagenes**, y desde el
+  [ADR 0014](decisiones/0014-infraestructura-serverless-en-aws.md) la imagen no es lo que se
+  despliega. Cubre el codigo y el cableado; no cubre la Lambda ni su entorno. Eso sigue siendo el
+  paso de salud de este workflow.
 - **`cmd/worker` y `cmd/scheduler` no se despliegan.** Sus cuerpos son `log.Debug(); return nil`. La
   forma que tomaran —EventBridge Scheduler contra una Lambda acotada— esta escrita en el ADR 0014.
 - **La subida de parrillas no cabe por aqui.** `deploy/nginx.conf` admite 64 MB y una Function URL

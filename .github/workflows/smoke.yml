@@ -1,0 +1,100 @@
+# Reusable stage: the stack starts and serves.
+#
+# `Docker build (backend)` and `Docker build (frontend)` prove the images
+# BUILD. They cannot prove the system RUNS: a nil dereference on boot, a
+# migration that fails, an `upstream` in deploy/nginx.conf pointing at a service
+# that is not there, a `proxy_pass` that forgot its trailing slash - all of them
+# build a perfectly good image. That gap is what docs/ci.md called "Sin arranque
+# de imagen", and this stage is what closes it.
+#
+# What runs here is the same `docker compose --profile demo up` and the same
+# `deploy/smoke.sh` a person runs locally. Not a CI-only variant: a smoke test
+# that only exists in the pipeline drifts from the documented command, and the
+# first you hear of the drift is a teammate whose quickstart does not work.
+#
+# THREE STEPS, cheapest first, so a broken assertion does not cost an image
+# build:
+#
+#   1. shellcheck    the scripts parse and have no unquoted-expansion traps
+#   2. smoke_test.sh the pass/fail LOGIC, over fixtures, in under a second
+#   3. the stack     the real thing, over HTTP, through nginx
+#
+# Step 2 is not ceremony. If the criterion is what breaks -counting an error
+# object as one obra, taking any 200 as "serves"- the pipeline stays green and
+# stops meaning anything. Fixtures are the only way to exercise a failure path
+# on purpose.
+
+name: Smoke
+
+on:
+  workflow_call:
+    inputs:
+      puerto:
+        description: >-
+          Host port for the edge nginx. 80 is the documented default and what a
+          reader of docs/ARRANQUE.md will type; override it if a runner image
+          ever ships something listening there.
+        type: string
+        default: "80"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: compose up + smoke
+    runs-on: ubuntu-latest
+    # Three images from cold (Go build, npm ci + vite build, distroless seed).
+    # The cap is here so a hung `up` reports instead of burning the hour default.
+    timeout-minutes: 30
+    env:
+      INTELA_PUERTO_HTTP: ${{ inputs.puerto }}
+      # Moved off the defaults on purpose. The runner image ships PostgreSQL and
+      # other services that may or may not be listening on a given month, and a
+      # port collision reads as "the stack is broken" when it is not. It also
+      # exercises the override that docker-compose.yml documents.
+      INTELA_PUERTO_PG: "55432"
+      INTELA_PUERTO_API: "18080"
+      # SMOKE_OBRAS is deliberately NOT set here. How many obras the seed loads
+      # is one fact, and it lives in one place: the `SMOKE_OBRAS:-4` default in
+      # deploy/smoke.sh. Repeating it as a workflow input meant the seed could
+      # grow to five and CI would keep asserting four -or worse, local and CI
+      # would assert different numbers and only one of them would be right.
+      # Override it by exporting SMOKE_OBRAS, the same way a person does.
+      BASE_URL: http://localhost:${{ inputs.puerto }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Preinstalled on the runner. actionlint's bundled shellcheck only reads
+      # `run:` blocks, so the scripts themselves need this explicit pass.
+      - name: Lint the smoke scripts
+        run: shellcheck -x -S style deploy/smoke.sh deploy/smoke_test.sh
+
+      - name: Unit - pass/fail logic
+        run: bash deploy/smoke_test.sh
+
+      - name: Bring the stack up
+        run: docker compose --profile demo up -d --build
+
+      - name: Smoke - the stack serves
+        run: bash deploy/smoke.sh
+
+      # Only on failure, and only then: the whole point of the stage is the
+      # verdict, and a wall of logs on a green run buries it.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "::group::docker compose ps"
+          docker compose --profile demo ps -a
+          echo "::endgroup::"
+          echo "::group::docker compose logs"
+          docker compose --profile demo logs --no-color --tail=200
+          echo "::endgroup::"
+
+      # `-v` because the volumes outlive the containers: pgdata would carry a
+      # half-seeded database into the next run and the seed would refuse to
+      # start, failing a run for the previous run's reason.
+      - name: Tear down
+        if: always()
+        run: docker compose --profile demo down -v --remove-orphans

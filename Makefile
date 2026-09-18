@@ -1,4 +1,4 @@
-.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api seed lambda tf-fmt plan aplicar
+.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api seed demo humo humo-unidad abajo lambda tf-fmt plan aplicar
 
 # La puerta que pide la revision de #6: lo mismo que corre CI, en local.
 verificar: tidy build vet fmt-check test
@@ -39,6 +39,34 @@ api:
 
 seed:
 	go run ./cmd/seed
+
+# --- La demo de un comando --------------------------------------------------
+#
+# Atajos, no una segunda forma de arrancar: cada uno es literalmente el comando
+# que documenta `docs/ARRANQUE.md` y el que corre la etapa `Boot smoke test`.
+# En cuanto un `make` empieza a hacer algo distinto de lo documentado, lo
+# documentado deja de estar probado.
+
+demo:
+	docker compose --profile demo up -d --build
+
+# El stack de verdad, por HTTP y a traves de nginx. Necesita `make demo` antes.
+humo:
+	bash deploy/smoke.sh
+
+# Solo la logica de decision, sobre fixtures. Sin Docker, sin red, <1s.
+humo-unidad:
+	bash deploy/smoke_test.sh
+
+# `-v` a proposito: sin el, el pgdata de la corrida anterior sobrevive y el
+# seed de la siguiente se encuentra una base a medias.
+#
+# `--remove-orphans` por lo mismo, y es lo que corre la etapa de humo: un
+# servicio que se renombro o se quito -MinIO, sin ir mas lejos- deja su
+# contenedor colgando fuera del compose actual, y ese huerfano sigue ocupando el
+# puerto del anfitrion que el siguiente `up` necesita.
+abajo:
+	docker compose --profile demo down -v --remove-orphans
 
 # --- Despliegue -------------------------------------------------------------
 
