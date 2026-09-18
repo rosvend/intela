@@ -724,3 +724,103 @@ td {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- ingesta (#29) ---------- */
+
+/*
+ * Panel con el resultado de una subida. El borde izquierdo dice como fue:
+ * verde si entro todo; ambar si hubo rechazos (quedaron en el log, no se
+ * perdieron); vinotinto si el backend rechazo la entrega entera.
+ */
+.panel-resultado {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-left-width: 4px;
+  border-radius: var(--radio);
+}
+
+.panel-resultado h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.panel-resultado p {
+  margin: 0;
+}
+
+.panel-ok {
+  border-left-color: var(--ok);
+}
+
+.panel-ok h2 {
+  color: var(--ok);
+}
+
+.panel-parcial {
+  border-left-color: var(--alerta);
+}
+
+.panel-parcial h2 {
+  color: var(--alerta);
+}
+
+.panel-fallo {
+  border-left-color: var(--acento);
+}
+
+.panel-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.panel-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.panel-datos dd {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+}
+
+.panel-aviso {
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+/* El mensaje del backend se muestra tal cual, saltos de linea incluidos. */
+.panel-mensaje {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.huella {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.tabla-rechazos td {
+  vertical-align: top;
+}
+
+.tabla-rechazos-id {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* ids_fuente trae una linea `clave=valor` por identificador (ADR 0018). */
+.tabla-rechazos-ids {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: pre-line;
+}
