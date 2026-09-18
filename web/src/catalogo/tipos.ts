@@ -138,26 +138,36 @@ export type VersionDeclaracion = components["schemas"]["VersionDeclaracion"];
 
 /**
  * Si un valor sin tipar tiene la forma de una `VersionDeclaracion`: los campos
- * que lee el detalle de obra, y solo esos.
+ * que leen las dos pantallas que consumen el historial -el detalle de obra y el
+ * historial de versiones-, y solo esos.
  *
  * - `version`: se compara con `version_vigente` de la obra para no pintar las
  *   partes de una version que el servidor no esta sosteniendo. Un texto ahi
  *   haria fallar esa comparacion siempre, y la pantalla diria que el historial
  *   no trae la version vigente cuando el defecto esta en el payload.
+ * - `vigente_desde`: se pinta como instante en el historial. Un objeto ahi
+ *   lanzaria "Objects are not valid as a React child" y tumbaria el listado
+ *   entero.
  * - `vigente_hasta`: **la comprobacion mas importante de todas**. La version
  *   vigente es la que lo tiene en `null`, y es la unica cuyo reparto rige hoy.
  *   Un payload que no traiga el campo -el de un despliegue a medias, la trampa
  *   que `esObra` ya corta para `version_vigente`- NO puede leerse como `null`:
  *   una version ya CERRADA pasaria por vigente y la pantalla pintaria su reparto
  *   como el reparto de hoy, que es afirmar mas de lo que el sistema sabe.
+ * - `estado`: tiene que ser uno de los DOS valores del enum. No es celo: el
+ *   historial pinta el estado de CADA version -el suyo, que es un hecho
+ *   historico, no el de la obra-, y un `invalida` o cualquier otro texto
+ *   acabaria pintado como "Incompleta" o como un estado que el sistema no puede
+ *   producir. Aqui es donde se corta, antes de que llegue a la pantalla.
  * - `partes`: es la tabla que se pinta; cada elemento pasa por `esParte`, porque
  *   una lista de verdad con un elemento a medias revienta al dibujarlo.
  *
- * `vigente_desde` y `estado` no se miran porque ningun consumidor de esta
- * pantalla los lee: la ventana de vigencia es el objeto del historial (paso 7),
- * y el estado que se pinta es el de la obra -`GET /obras/{id}`, que es la
- * autoridad-, no el de la version. El dia que una pantalla los lea, se anaden
- * aqui, junto al tipo que comprueban.
+ * `vigente_desde` y `estado` se anadieron en el paso 7, el dia en que una
+ * pantalla los leyo: hasta entonces el detalle de obra solo miraba la ventana
+ * para saber cual era la abierta. La guarda es de TODOS los consumidores y no
+ * una por pantalla, porque una segunda guarda para la misma forma es la clase
+ * de defecto que este archivo existe para evitar: dos listas de campos que se
+ * desincronizan sin que nadie lo note.
  */
 export function esVersionDeclaracion(
   valor: unknown,
@@ -165,13 +175,17 @@ export function esVersionDeclaracion(
   if (typeof valor !== "object" || valor === null) return false;
   const version = valor as {
     version?: unknown;
+    vigente_desde?: unknown;
     vigente_hasta?: unknown;
+    estado?: unknown;
     partes?: unknown;
   };
   return (
     Number.isInteger(version.version) &&
+    typeof version.vigente_desde === "string" &&
     (version.vigente_hasta === null ||
       typeof version.vigente_hasta === "string") &&
+    (version.estado === "completa" || version.estado === "incompleta") &&
     Array.isArray(version.partes) &&
     version.partes.every(esParte)
   );

@@ -216,6 +216,31 @@ async function rotuloEnElDetalle(caso: Caso) {
   };
 }
 
+/**
+ * Monta el historial de versiones de la misma obra -paso 7- y devuelve lo que la
+ * etiqueta de su primera version dice.
+ *
+ * El historial es la TERCERA pantalla que pinta un estado, y la unica que lo
+ * pinta sin tener una obra delante: cada bloque lleva el `estado` de SU version.
+ * Por eso su etiqueta sale del mismo componente que la de las otras dos
+ * (`EtiquetaDeEstado`, que `EtiquetaDeDeclaracion` usa para el caso de una obra
+ * con declaracion): si alguien volviera a decidir el texto o el color dentro
+ * del historial, esta linea lo diria, porque las dos pantallas dejarian de
+ * coincidir sobre el mismo estado.
+ */
+async function rotuloEnElHistorial(caso: Caso) {
+  simularServidor({ obra: caso.obra, historial: caso.historial });
+  montarApp(`/catalogo/${caso.obra.id}/historial`);
+  // Se espera a la TABLA de partes y no al titulo: el titulo y el nombre de la
+  // obra llegan con la obra, y la etiqueta del estado llega con la version, en la
+  // peticion siguiente, la del historial.
+  await screen.findByRole("table", { name: /^Partes de la versión \d+$/ });
+  return {
+    texto: etiquetaDeEstado().textContent,
+    clase: etiquetaDeEstado().className,
+  };
+}
+
 describe("el estado de la declaracion se dice una sola vez", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -276,5 +301,49 @@ describe("el estado de la declaracion se dice una sola vez", () => {
 
     const incompleta = await rotuloEnElCatalogo(CASO_INCOMPLETA);
     expect(incompleta.texto).toBe("Incompleta");
+  });
+
+  // El historial de versiones (paso 7) es la tercera pantalla que pinta un
+  // estado, y la unica que lo pinta sin una obra delante: el de cada version.
+  // Los dos casos con version son los que se pueden comparar; el de la obra sin
+  // declaracion no tiene ninguna version, y ahi lo que hay que comprobar es que
+  // no se pinte ningun estado.
+  const CASOS_CON_VERSION = [CASO_COMPLETA, CASO_INCOMPLETA];
+
+  it.each(CASOS_CON_VERSION)(
+    "el historial pinta el mismo estado que el detalle para $caso",
+    async (caso) => {
+      const enElDetalle = await rotuloEnElDetalle(caso);
+
+      cleanup();
+
+      const enElHistorial = await rotuloEnElHistorial(caso);
+
+      expect(enElHistorial.texto).toBe(enElDetalle.texto);
+      expect(enElHistorial.clase).toBe(enElDetalle.clase);
+
+      // Y contra el esperado escrito una sola vez arriba: lo que se fija es el
+      // hecho -que estado se dice y de que color-, no solo que dos pantallas
+      // coincidan entre ellas.
+      expect(enElHistorial.texto).toBe(caso.texto);
+      expect(enElHistorial.clase).toContain(caso.clase);
+    },
+  );
+
+  it("una obra sin ninguna version no pinta ningun estado en el historial", async () => {
+    // "Sin declaración" es lo que dice la ficha de una obra que nadie declaro, y
+    // el historial no tiene por que repetirlo: no hay ninguna version de la que
+    // decir un estado, y pintar la de la obra afirmaria una declaracion que no
+    // existe (D-008).
+    simularServidor({
+      obra: CASO_SIN_DECLARACION.obra,
+      historial: CASO_SIN_DECLARACION.historial,
+    });
+    montarApp(`/catalogo/${CASO_SIN_DECLARACION.obra.id}/historial`);
+
+    await screen.findByText("Esta obra no tiene ninguna versión declarada.");
+    expect(document.querySelectorAll(".badge-estado")).toHaveLength(0);
+    expect(screen.queryByText("Sin declaración")).toBeNull();
+    expect(screen.queryByText("Incompleta")).toBeNull();
   });
 });

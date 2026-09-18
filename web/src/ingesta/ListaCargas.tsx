@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import Cargando from "../Cargando";
 import type { components } from "../contrato";
-import { formatearEntero } from "../tablero/formato";
+import { formatearEntero, formatearInstante } from "../tablero/formato";
 import { useApi } from "../useApi";
 import { huellaCorta } from "./PanelResultado";
 import TablaRechazos, { type Rechazo, esRechazo } from "./TablaRechazos";
@@ -17,7 +17,7 @@ export type Carga = components["schemas"]["Carga"];
  *   `TypeError: Cannot read properties of undefined (reading 'slice')` y, sin
  *   ErrorBoundary en `web/src`, dejaba la pantalla en blanco;
  * - `recibido` va a `new Date()` y, si no se puede leer, se pinta tal cual
- *   (`formatearRecibido`): un objeto ahi es tambien un hijo invalido de React;
+ *   (`formatearInstante`): un objeto ahi es tambien un hijo invalido de React;
  * - `id`, `fuente` y `periodo` se pintan, y `id` ademas es la clave de la fila y
  *   el identificador con que se pide su log;
  * - `aceptados` y `rechazados` son cifras contadas: con otra cosa
@@ -52,18 +52,6 @@ export function esCarga(valor: unknown): valor is Carga {
 }
 
 const COLUMNAS = 7;
-
-const FORMATO_RECIBIDO = new Intl.DateTimeFormat("es-CO", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-// Una fecha ilegible se muestra tal cual: `format` lanzaria RangeError y
-// tumbaria el listado entero por una sola celda.
-function formatearRecibido(iso: string): string {
-  const fecha = new Date(iso);
-  return Number.isNaN(fecha.getTime()) ? iso : FORMATO_RECIBIDO.format(fecha);
-}
 
 /**
  * Las cargas hechas (GET /reportes), de un periodo o de todos si `periodo`
@@ -154,7 +142,7 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
               <tr>
                 <td>
                   <time dateTime={carga.recibido}>
-                    {formatearRecibido(carga.recibido)}
+                    {formatearInstante(carga.recibido)}
                   </time>
                 </td>
                 <td>{carga.fuente}</td>

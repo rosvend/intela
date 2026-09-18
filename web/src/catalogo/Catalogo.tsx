@@ -1,5 +1,5 @@
 import { useId, useState, type ReactElement } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { useApi } from "../useApi";
 import { formatearPorcentaje } from "./declaracion";
@@ -33,6 +33,70 @@ const LIMITE_POR_PAGINA = 20;
  * `DetalleObra` la importa para leerla.
  */
 export const CLAVE_DE_VUELTA_AL_CATALOGO = "catalogoDeOrigen";
+
+/**
+ * Lo que el catalogo dejo en esta entrada del historial: su busqueda, y la
+ * direccion de vuelta ya resuelta a partir de ella.
+ *
+ * El administrador busca, abre una obra y vuelve: ese ida y vuelta es el flujo
+ * normal desde que cada fila del catalogo enlaza con su ficha. Si la vuelta
+ * cayera en `/catalogo` a secas, la busqueda que acaba de escribir se perderia
+ * y tendria que rehacerla entera -filtros y pagina- para seguir donde estaba.
+ * Por eso el catalogo entrega su direccion al abrir la fila
+ * (`CLAVE_DE_VUELTA_AL_CATALOGO`) y esta funcion la devuelve tal como llego.
+ *
+ * Las dos mitades hacen falta y por eso se devuelven juntas: `destino` para
+ * volver al catalogo, y `busqueda` para entregarsela a la pantalla siguiente
+ * -el detalle se la pasa al historial, que se la devuelve al detalle-, de modo
+ * que el camino de vuelta conserve la busqueda pase por donde pase.
+ *
+ * Vive aqui, y no en cada pantalla, porque son DOS las pantallas que la
+ * reciben -el detalle de la obra y el historial de su declaracion, pasos 6 y
+ * 7- y una copia por pantalla es exactamente lo que las deja discrepando: el
+ * dia que una sola cambie, una conservara la busqueda y la otra no. El catalogo
+ * es el dueno de su propia direccion y de como se vuelve a ella.
+ *
+ * Lo que se descarto fue `navigate(-1)`, que parece mas corto y es otra cosa:
+ * retroceder el historial no es volver al catalogo, es ir a donde el navegador
+ * tuviera antes. Cuando la ficha se abre por su direccion -un enlace guardado,
+ * un enlace de otra pantalla, una pestaña nueva desde una fila- puede no haber
+ * ninguna entrada del catalogo detras, y el router no dice si la hay:
+ * `navigate(-1)` saldria de la aplicacion o no haria nada, y ninguna de las dos
+ * cosas se puede explicar en pantalla. El enlace, en cambio, siempre lleva a
+ * una direccion que existe.
+ */
+export function useVueltaAlCatalogo(): {
+  busqueda: string;
+  destino: string;
+} {
+  const busqueda = busquedaDeVueltaAlCatalogo(useLocation().state);
+  // Sin busqueda que devolver -o con la busqueda vacia, que es el catalogo sin
+  // filtros- la vuelta es `/catalogo`: esa direccion siempre existe y siempre
+  // pinta algo, asi que nadie se queda sin salida. Y no se inventa ningun
+  // filtro: la ficha no afirma una busqueda que nadie hizo.
+  return {
+    busqueda,
+    destino: busqueda === "" ? "/catalogo" : `/catalogo?${busqueda}`,
+  };
+}
+
+/**
+ * La busqueda que el catalogo dejo en esta entrada del historial, o "".
+ *
+ * El estado de una entrada lo pone quien navega y no tiene forma garantizada:
+ * aqui llega `null` o `undefined` en cualquier entrada que no venga del
+ * catalogo, y podria llegar otra cosa -otra pantalla que use el estado para lo
+ * suyo, un `state` construido a mano-. Se lee solo si es el texto que el
+ * catalogo entrega; cualquier otra forma se trata como "no vengo del catalogo",
+ * en vez de colarse en la direccion de vuelta.
+ */
+function busquedaDeVueltaAlCatalogo(estado: unknown): string {
+  if (typeof estado !== "object" || estado === null) return "";
+  const valor = (estado as Record<string, unknown>)[
+    CLAVE_DE_VUELTA_AL_CATALOGO
+  ];
+  return typeof valor === "string" ? valor : "";
+}
 
 /**
  * Los cuatro filtros de busqueda, con los nombres EXACTOS de los parametros

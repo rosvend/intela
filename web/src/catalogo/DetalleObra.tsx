@@ -1,18 +1,15 @@
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ApiError } from "../api";
 import Cargando from "../Cargando";
 import { useApi } from "../useApi";
-import { CLAVE_DE_VUELTA_AL_CATALOGO } from "./Catalogo";
-import {
-  ROTULO_NOMBRE_EN_PADRON_ACTUAL,
-  formatearPorcentaje,
-} from "./declaracion";
+import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
+import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
+import { TablaDePartes } from "./TablaDePartes";
 import {
   esObra,
   esVersionDeclaracion,
   type Obra,
-  type Parte,
   type VersionDeclaracion,
 } from "./tipos";
 
@@ -42,11 +39,13 @@ import {
  */
 export default function DetalleObra() {
   const { id = "" } = useParams();
-  // La direccion de vuelta se resuelve UNA vez, aqui, y baja a las dos salidas
-  // de la pantalla: la ficha y el aviso de que la obra ya no esta. Quien llego
-  // desde el catalogo vuelve a su busqueda en los dos casos, que es lo que
-  // quiere quien acaba de ver que la obra se fue.
-  const destinoDeVuelta = useDestinoDeVueltaAlCatalogo();
+  // La direccion de vuelta al catalogo y la busqueda que hay que devolverle se
+  // resuelven UNA vez, aqui, con la misma funcion que usa el historial (paso 7):
+  // las dos salidas de la pantalla -la ficha y el aviso de que la obra ya no
+  // esta- y el enlace al historial salen de ese unico sitio. Quien llego desde
+  // el catalogo vuelve a su busqueda en los dos casos, que es lo que quiere
+  // quien acaba de ver que la obra se fue.
+  const { busqueda, destino: destinoDeVuelta } = useVueltaAlCatalogo();
   const {
     datos: obra,
     cargando,
@@ -85,53 +84,9 @@ export default function DetalleObra() {
     );
   }
 
-  return <FichaDeObra obra={obra} volver={destinoDeVuelta} />;
-}
-
-/**
- * A donde lleva "Volver al catalogo" desde esta pantalla.
- *
- * El administrador busca, abre una obra y vuelve: ese ida y vuelta es el flujo
- * normal desde que cada fila del catalogo enlaza con su ficha. Si la vuelta
- * cayera en `/catalogo` a secas, la busqueda que acaba de escribir se perderia
- * y tendria que rehacerla entera -filtros y pagina- para seguir donde estaba.
- * Por eso el catalogo le entrega su direccion al abrir la fila
- * (`CLAVE_DE_VUELTA_AL_CATALOGO`) y esta pantalla devuelve a ELLA.
- *
- * Lo que se descarto fue `navigate(-1)`, que parece mas corto y es otra cosa:
- * retroceder el historial no es volver al catalogo, es ir a donde el navegador
- * tuviera antes. Cuando la ficha se abre por su direccion -un enlace guardado,
- * un enlace de otra pantalla, una pestaña nueva desde una fila- puede no haber
- * ninguna entrada del catalogo detras, y el router no dice si la hay:
- * `navigate(-1)` saldria de la aplicacion o no haria nada, y ninguna de las dos
- * cosas se puede explicar en pantalla. El enlace, en cambio, siempre lleva a
- * una direccion que existe.
- */
-function useDestinoDeVueltaAlCatalogo(): string {
-  const busqueda = busquedaDeVueltaAlCatalogo(useLocation().state);
-  // Sin busqueda que devolver -o con la busqueda vacia, que es el catalogo sin
-  // filtros- la vuelta es `/catalogo`: esa direccion siempre existe y siempre
-  // pinta algo, asi que nadie se queda sin salida. Y no se inventa ningun
-  // filtro: la ficha no afirma una busqueda que nadie hizo.
-  return busqueda === "" ? "/catalogo" : `/catalogo?${busqueda}`;
-}
-
-/**
- * La busqueda que el catalogo dejo en esta entrada del historial, o "".
- *
- * El estado de una entrada lo pone quien navega y no tiene forma garantizada:
- * aqui llega `null` o `undefined` en cualquier entrada que no venga del
- * catalogo, y podria llegar otra cosa -otra pantalla que use el estado para lo
- * suyo, un `state` construido a mano-. Se lee solo si es el texto que el
- * catalogo entrega; cualquier otra forma se trata como "no vengo del catalogo",
- * en vez de colarse en la direccion de vuelta.
- */
-function busquedaDeVueltaAlCatalogo(estado: unknown): string {
-  if (typeof estado !== "object" || estado === null) return "";
-  const valor = (estado as Record<string, unknown>)[
-    CLAVE_DE_VUELTA_AL_CATALOGO
-  ];
-  return typeof valor === "string" ? valor : "";
+  return (
+    <FichaDeObra obra={obra} volver={destinoDeVuelta} busqueda={busqueda} />
+  );
 }
 
 /** Lo que se ve cuando el servidor no tiene ninguna obra con ese identificador. */
@@ -158,8 +113,20 @@ function ObraAusente({ id, volver }: { id: string; volver: string }) {
  * El estado y la suma se pintan tal cual llegan -los calcula el servidor-, y lo
  * unico que decide el cliente es SI HAY declaracion, que es lo que dice
  * `version_vigente`.
+ *
+ * `busqueda` no se pinta: viaja al historial -paso 7- para que el camino de
+ * vuelta conserve la busqueda del catalogo aunque el administrador pase por
+ * una pantalla mas.
  */
-function FichaDeObra({ obra, volver }: { obra: Obra; volver: string }) {
+function FichaDeObra({
+  obra,
+  volver,
+  busqueda,
+}: {
+  obra: Obra;
+  volver: string;
+  busqueda: string;
+}) {
   const versionVigente = obra.version_vigente;
   const sinDeclaracion = versionVigente === null;
 
@@ -262,10 +229,51 @@ function FichaDeObra({ obra, volver }: { obra: Obra; volver: string }) {
               obraId={obra.id}
               versionVigente={versionVigente}
             />
+            <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
           </>
         )}
       </section>
     </section>
+  );
+}
+
+/**
+ * El enlace al historial completo de la declaracion (paso 7).
+ *
+ * Donde va, y por que: al final de la seccion de la declaracion, despues del
+ * reparto vigente. El historial es el registro de ESA declaracion -las versiones
+ * anteriores con el reparto que estaba vigente entonces (S4 del issue #30)-, asi
+ * que el enlace pertenece al bloque donde se acaba de leer el numero de version
+ * vigente y sus partes; es la continuacion natural de lo que se esta mirando. No
+ * va arriba, junto a "Volver al catalogo": dos enlaces de navegacion compitiendo
+ * en la misma linea dejan al administrador sin saber cual es la vuelta.
+ *
+ * Se ofrece SOLO cuando la obra tiene una declaracion, que es cuando esta rama
+ * se pinta: sin ella la ficha ya dice que no hay ninguna version, y el historial
+ * diria otra vez el mismo hecho. Es la misma razon por la que esta pantalla no
+ * pide un historial que ya sabe vacio.
+ *
+ * Es el unico enlace que lleva al historial en todo `web/src`, y lleva el `id`
+ * de ESTA obra y la busqueda del catalogo -que el historial devuelve al
+ * detalle-, para que el camino de vuelta no pierda la busqueda por pasar por una
+ * pantalla mas.
+ */
+function EnlaceAlHistorial({
+  obraId,
+  busqueda,
+}: {
+  obraId: string;
+  busqueda: string;
+}) {
+  return (
+    <p className="detalle-nota">
+      <Link
+        to={`/catalogo/${encodeURIComponent(obraId)}/historial`}
+        state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
+      >
+        Ver el historial completo
+      </Link>
+    </p>
   );
 }
 
@@ -341,67 +349,10 @@ function PartesDeLaVersionVigente({
     );
   }
 
-  return <TablaDePartes partes={vigente.partes} />;
-}
-
-/**
- * Las partes de la version vigente, con el porcentaje de cada titular.
- *
- * La columna del nombre se rotula con `ROTULO_NOMBRE_EN_PADRON_ACTUAL`, no con
- * "Nombre" a secas: el nombre no viaja en la parte y no es un dato de la
- * version -se resuelve contra el padron de HOY, asi que un titular renombrado
- * apareceria con su nombre nuevo hasta en las versiones antiguas (D-006)-. El
- * rotulo dice de donde saldria el dato; el `titular_id` va en la primera
- * columna, visible, para poder conciliar la pantalla con la API y para
- * distinguir homonimos.
- *
- * Esa columna va vacia en esta pantalla, con el guion que el catalogo ya usa
- * para "no se conoce": resolver el nombre aqui exigiria barrer el padron
- * -`GET /titulares` se sirve paginado y no admite filtrar por identificador-, y
- * un titular que no aparezca en la pagina pedida NO prueba que no exista, asi
- * que la celda no puede decir ni el nombre ni que falte.
- */
-function TablaDePartes({ partes }: { partes: readonly Parte[] }) {
   return (
-    <>
-      <div className="catalogo-caja">
-        <table
-          className="tabla-partes"
-          aria-label="Partes de la declaración vigente"
-        >
-          <thead>
-            <tr>
-              <th scope="col">Titular</th>
-              <th scope="col">IPI</th>
-              <th scope="col">{ROTULO_NOMBRE_EN_PADRON_ACTUAL}</th>
-              <th scope="col" className="tabla-partes-numero">
-                Porcentaje
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {partes.map((parte) => (
-              // El `titular_id` como clave: el backend rechaza una declaracion
-              // con un titular repetido, asi que no hay dos filas con el mismo.
-              <tr key={parte.titular_id}>
-                <td className="detalle-identificador">{parte.titular_id}</td>
-                <td className="detalle-identificador">{parte.ipi}</td>
-                <td className="muted">—</td>
-                <td className="tabla-partes-numero">
-                  {formatearPorcentaje(parte.porcentaje)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="muted detalle-nota">
-        Esta pantalla no busca el nombre en el padrón: se sirve por páginas y no
-        admite filtrar por identificador, así que una página que no traiga al
-        titular no probaría que no exista. La columna se rotula «en el padrón
-        actual» porque, el día que se resuelva, el nombre será el de hoy y no el
-        de la fecha de esta versión (D-006).
-      </p>
-    </>
+    <TablaDePartes
+      partes={vigente.partes}
+      titulo="Partes de la declaración vigente"
+    />
   );
 }

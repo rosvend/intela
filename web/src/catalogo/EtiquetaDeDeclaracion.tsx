@@ -1,18 +1,41 @@
-import type { Obra } from "./tipos";
+import type { EstadoDeclaracion, Obra } from "./tipos";
 
 /**
- * La etiqueta de estado de la declaracion de una obra: el UNICO sitio donde se
- * deciden su texto y su clase.
+ * La etiqueta de estado de UNA declaracion: el estado que el backend calculo
+ * para ella, con el texto y la clase que le corresponden.
  *
- * Vive en un archivo propio, y no dentro de `Catalogo.tsx` donde nacio (paso 5),
- * porque ya no es del listado solo: el detalle de obra (paso 6) pinta el mismo
- * estado del mismo dato, y dejar la funcion ahi obligaria a la pantalla de
- * detalle a importar de la del listado -una pantalla dependiendo de otra- para
- * un badge que ninguna de las dos posee. Lo que dos pantallas hermanas
- * comparten va al lado de lo que ya comparten: `tipos.ts` y `declaracion.ts`.
- * En `declaracion.ts` no cabe: ese archivo dice de si mismo que es logica pura
- * "sin React y sin red", y esto es un componente. Las clases si siguen
- * compartidas en `styles.css`, que es de donde las leen las dos.
+ * Es el UNICO sitio donde se deciden el texto y la clase de `completa` y
+ * `incompleta`, y existe separada de `EtiquetaDeDeclaracion` porque hay dos
+ * sitios que conocen un estado y NO conocen una obra: el historial de versiones
+ * (paso 7), donde cada version trae su propio `estado` y no hay ninguna obra de
+ * la que leerlo. Antes de esto los dos rotulos se decidieron en una funcion que
+ * pedia una `Obra` entera, asi que el historial habria tenido que fabricarse una
+ * obra falsa -o repetir las dos lineas-, y las dos pantallas habrian podido
+ * discrepar del MISMO estado sin que nada lo notara: los guards validan el
+ * cuerpo, no el rotulo que cada pantalla pinta de el.
+ *
+ * `estado` viene del backend y se pinta tal cual, sin re-derivarlo de las
+ * partes. "Incompleta" es un estado valido del negocio, no un error: se pinta
+ * en ambar -`badge-estado-incompleta`-, nunca en rojo.
+ */
+export function EtiquetaDeEstado({ estado }: { estado: EstadoDeclaracion }) {
+  const completa = estado === "completa";
+  const clase = completa ? "badge-estado-completa" : "badge-estado-incompleta";
+
+  return (
+    <span className={`badge-estado ${clase}`}>
+      <span className="badge-estado-punto" aria-hidden="true" />
+      {completa ? "Completa" : "Incompleta"}
+    </span>
+  );
+}
+
+/**
+ * La etiqueta de estado de la declaracion de una obra: el estado que el
+ * backend calculo para su version vigente, o el aviso de que no hay ninguna.
+ *
+ * El estado lo pinta `EtiquetaDeEstado`, que es donde vive su texto; esta
+ * funcion solo anade la distincion que necesita una OBRA y no una version.
  *
  * `estado_declaracion` viene del backend y se pinta tal cual, sin re-derivarlo.
  * Lo unico que decide el cliente es SI HAY declaracion, y eso lo dice
@@ -24,34 +47,21 @@ import type { Obra } from "./tipos";
  * sobre una obra que nadie declaro afirmaria una declaracion que no existe. Es
  * ademas el dato que un administrador necesita para saber si la obra esta
  * bloqueada porque falta declararla o porque declara de menos.
- *
- * Que esto sea un solo componente es parte del asunto: mientras el texto y la
- * clase se decidieron en dos funciones distintas, con el payload validado por
- * los guards y nada que atara las dos pantallas, cambiar una sola de las dos
- * dejaba al listado y al detalle afirmando cosas distintas del MISMO hecho sin
- * que ningun test lo notara. Los guards validan el cuerpo, no el rotulo que cada
- * pantalla pinta de el.
- *
- * "Incompleta" es un estado valido del negocio, no un error: se pinta en ambar
- * -`badge-estado-incompleta`-, nunca en rojo.
  */
 export function EtiquetaDeDeclaracion({ obra }: { obra: Obra }) {
-  const sinDeclaracion = obra.version_vigente === null;
-  const clase = sinDeclaracion
-    ? "badge-estado-sin-declaracion"
-    : obra.estado_declaracion === "completa"
-      ? "badge-estado-completa"
-      : "badge-estado-incompleta";
-  const texto = sinDeclaracion
-    ? "Sin declaración"
-    : obra.estado_declaracion === "completa"
-      ? "Completa"
-      : "Incompleta";
+  if (obra.version_vigente === null) return <EtiquetaSinDeclaracion />;
+  return <EtiquetaDeEstado estado={obra.estado_declaracion} />;
+}
 
+/**
+ * Lo que se pinta para una obra sin ninguna declaracion: ni `Completa` ni
+ * `Incompleta`, porque no hay ninguna declaracion de la que decir un estado.
+ */
+function EtiquetaSinDeclaracion() {
   return (
-    <span className={`badge-estado ${clase}`}>
+    <span className="badge-estado badge-estado-sin-declaracion">
       <span className="badge-estado-punto" aria-hidden="true" />
-      {texto}
+      Sin declaración
     </span>
   );
 }

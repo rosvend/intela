@@ -736,13 +736,12 @@ describe("detalle de obra (integracion con App)", () => {
     expect(consultas()).toEqual([]);
   });
 
-  // Las dos sub-rutas que fija D-007 y que son de los pasos 7 y 8. Se declaran
-  // ya para que su direccion sea la que la decision fijo, y mientras tanto
-  // montan el placeholder: lo unico cierto es que esa pantalla todavia no
-  // existe. Ninguna pantalla enlaza a ellas -un enlace que no lleva a ninguna
-  // parte es peor que su ausencia-.
+  // La sub-ruta que fija D-007 y que sigue sin pantalla propia: el editor es el
+  // paso 8. Se declara ya para que su direccion sea la que la decision fijo, y
+  // mientras tanto monta el placeholder: lo unico cierto es que esa pantalla
+  // todavia no existe. El historial salio de esta lista en el paso 7, cuando su
+  // ruta paso a tener componente de verdad.
   const SUBRUTAS_PENDIENTES: [string, string][] = [
-    ["/catalogo/obra-1/historial", "Historial de la declaración"],
     ["/catalogo/obra-1/declaracion", "Declaración de la obra"],
   ];
 
@@ -760,4 +759,63 @@ describe("detalle de obra (integracion con App)", () => {
       expect(consultas()).toEqual([]);
     },
   );
+
+  // S4 del issue #30: "saving creates a new version; the previous version is
+  // still visible in history". Para que la version anterior se vea hay que poder
+  // LLEGAR al historial, y el unico enlace que lleva es este. Va por obra -el
+  // `id` del destino es el de la obra que se esta viendo- porque un enlace que
+  // llevara al historial de otra obra pasaria un test que solo mirara el texto.
+  const OBRAS_CON_HISTORIAL: [string, Obra, VersionDeclaracion[], string][] = [
+    [
+      "una obra declarada completa",
+      obraCompleta,
+      HISTORIAL,
+      "/catalogo/obra-1/historial",
+    ],
+    [
+      "una obra declarada incompleta",
+      obraIncompleta,
+      [versionDosIncompleta],
+      "/catalogo/obra-2/historial",
+    ],
+  ];
+
+  it.each(OBRAS_CON_HISTORIAL)(
+    "el detalle de %s enlaza con el historial de ESA obra",
+    async (_caso, obra, historial, destino) => {
+      simularServidor({
+        obra: () => json(obra),
+        historial: () => json(historial),
+      });
+
+      montarApp(`/catalogo/${obra.id}`);
+      await screen.findByRole("table", {
+        name: "Partes de la declaración vigente",
+      });
+
+      const enlace = screen.getByRole("link", {
+        name: "Ver el historial completo",
+      });
+      expect(enlace.getAttribute("href")).toBe(destino);
+      expect(destino).toContain(obra.id);
+    },
+  );
+
+  it("la obra sin ninguna declaracion no ofrece un historial que ya sabe vacio", async () => {
+    // Esta pantalla no pide el historial cuando `version_vigente` es `null` -el
+    // hecho ya esta dicho-, y el enlace sigue la misma regla: llevaria a una
+    // pantalla que repite "no hay ninguna version".
+    simularServidor({
+      obra: () => json(obraSinDeclaracion),
+      historial: () => json([]),
+    });
+
+    montarApp("/catalogo/obra-3");
+    await screen.findByText("Sin declaración");
+
+    expect(
+      screen.queryByRole("link", { name: "Ver el historial completo" }),
+    ).toBeNull();
+    expect(consultas()).toEqual(["/api/obras/obra-3"]);
+  });
 });

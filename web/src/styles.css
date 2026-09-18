@@ -1393,3 +1393,42 @@ td {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- historial de versiones (#30, paso 7) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo y el detalle: es la misma
+   pantalla un nivel mas abajo. */
+.historial-versiones {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.historial-versiones h1 {
+  margin: 0;
+}
+
+.historial-versiones h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Una version por bloque, separadas por una linea: la ventana, el estado y el
+   reparto de cada una se leen como una unidad, y sin la linea dos versiones
+   seguidas se leen como una sola tabla larga con dos encabezados. */
+.historial-version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--borde);
+}
+
+/* La version que rige hoy, dicha con palabras en el dato de "Vigente hasta".
+   En el color de acento y no en ambar ni en rojo: no es una alerta -no hay
+   nada mal- ni un estado de la declaracion, es la que sigue abierta. */
+.historial-abierta {
+  font-weight: 600;
+  color: var(--acento);
+}
