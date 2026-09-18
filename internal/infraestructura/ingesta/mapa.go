@@ -47,9 +47,12 @@ const (
 	CampoEmisiones      Campo = "emisiones"
 	CampoRating         Campo = "rating"
 	CampoTaquilla       Campo = "taquilla"
+	CampoEspectadores   Campo = "espectadores"
+	CampoExhibiciones   Campo = "exhibiciones"
 	CampoVistas         Campo = "vistas"
 	CampoMinutosVistos  Campo = "minutos_vistos"
 	CampoPB             Campo = "pb"
+	CampoCanalID        Campo = "canal_id"
 	CampoFecha          Campo = "fecha"
 	CampoHora           Campo = "hora"
 	CampoMoneda         Campo = "moneda"
@@ -81,9 +84,12 @@ var tipos = map[Campo]tipo{
 	CampoEmisiones:      entero,
 	CampoRating:         numero,
 	CampoTaquilla:       numero,
+	CampoEspectadores:   numero,
+	CampoExhibiciones:   entero,
 	CampoVistas:         numero,
 	CampoMinutosVistos:  numero,
 	CampoPB:             numero,
+	CampoCanalID:        texto,
 	CampoFecha:          texto,
 	CampoHora:           texto,
 	CampoMoneda:         texto,
@@ -449,6 +455,8 @@ func (m Mapa) asignarTexto(u *aplicacion.UsoPersistido, c Campo, v string) {
 		u.Titulo = v
 	case CampoTipoObra:
 		u.TipoObra = v
+	case CampoCanalID:
+		u.CanalID = v
 	case CampoFecha:
 		u.Fecha = v
 	case CampoHora:
@@ -470,8 +478,11 @@ func (m Mapa) asignarTexto(u *aplicacion.UsoPersistido, c Campo, v string) {
 }
 
 func (m Mapa) asignarEntero(u *aplicacion.UsoPersistido, c Campo, v int64) {
-	if c == CampoEmisiones {
+	switch c {
+	case CampoEmisiones:
 		u.Emisiones = v
+	case CampoExhibiciones:
+		u.Exhibiciones = v
 	}
 }
 
@@ -483,6 +494,8 @@ func (m Mapa) asignarDecimal(u *aplicacion.UsoPersistido, c Campo, v decimal.Dec
 		u.Rating = v
 	case CampoTaquilla:
 		u.Taquilla = v
+	case CampoEspectadores:
+		u.Espectadores = v
 	case CampoVistas:
 		u.Vistas = v
 	case CampoMinutosVistos:

@@ -662,7 +662,7 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 	}{
 		"buena":                 {usoBueno("La Casa"), ""},
 		"sin titulo":            {usoBueno("   "), "titulo vacio: sin titulo no hay nada que identificar"},
-		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), `modalidad "radio" fuera de tv|cine|ott|hotel`},
+		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`},
 		"escalon desconocido":   {func() UsoPersistido { u := usoBueno("X"); u.Escalon = "adivinado"; return u }(), `escalon "adivinado" en la ingesta: solo sale "pendiente" de aqui`},
 		// Ya no la caza la coherencia oni/obra sino la regla de H5, que es
 		// anterior y mas estricta: con obra_id puesto no se mira nada mas. Que el
