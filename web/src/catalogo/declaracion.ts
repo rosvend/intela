@@ -124,9 +124,15 @@ export function estadoDelBorrador(total: number): EstadoBorrador {
  * Y esos dos NO son "los dos cuerpos que el backend rechaza con 400", que es lo
  * que decia el comentario de aqui: `NuevaDeclaracion` rechaza ademas un IPI
  * ausente, un porcentaje no positivo, mas de cuatro decimales y un titular
- * repetido. El cliente no adelanta esos cuatro -por fila solo comprueba que el
- * porcentaje se lea como un numero, y el signo no lo mira-, asi que el 400 del
- * servidor trae su mensaje y la pantalla lo enseña tal cual.
+ * repetido. De esos cuatro, el cliente adelanta **uno**: el titular repetido no
+ * se puede ni anadir, porque el padron sustituye "Añadir al reparto" por "Ya
+ * está en el reparto" para quien ya esta en el borrador
+ * (`EditorReparto.tsx`), y una fila solo nace de ese boton -asi que ese 400 es
+ * inalcanzable desde esta pantalla-. Los otros tres SI llegan al 400 del
+ * servidor: por fila esta pantalla solo comprueba que el porcentaje se lea como
+ * un numero -ni el signo ni la cuenta de decimales-, y del IPI no comprueba
+ * nada, asi que un IPI borrado a mano viaja igual. Ese 400 trae su mensaje y la
+ * pantalla lo enseña tal cual.
  */
 export function puedeGuardarBorrador(estado: EstadoBorrador): boolean {
   return estado !== "vacia" && estado !== "excedida";

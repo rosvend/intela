@@ -884,6 +884,176 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
+  // CRITICAL de la PASADA 2 de la revision adversarial (`findings/review-iter-1-pass2.md`): el
+  // arreglo del 8.1 derivaba la duda del `resultado` del render, que es transitorio -`guardar()`
+  // lo pone a `null` al empezar-, asi que el guardado SIGUIENTE devolvia el numero viejo al
+  // aviso. Aqui el primero contesta 200 con un cuerpo que no es del contrato -el servidor cerro
+  // la v3 y abrio la v4, y el cliente lo sabe a medias- y el segundo es un 400: la duda tiene que
+  // SOBREVIVIR al 400, porque un 4xx prueba que ESA peticion no abrio nada, no lo que hizo la
+  // anterior. Es la clase de D-009 reentrando por la puerta de al lado.
+  it("tras un 200 ilegible, un 400 posterior no devuelve el numero viejo al aviso", async () => {
+    let guardadosHechos = 0;
+    simularServidor({
+      guardado: () => {
+        guardadosHechos += 1;
+        return guardadosHechos === 1
+          ? json({ version: "cuatro" })
+          : json({ error: MENSAJE_SUMA }, 400);
+      },
+    });
+    await abrirElEditor();
+
+    // La guarda contra el verde por vacio: antes de guardar el aviso SI numera,
+    // y los numeros los saca del historial. Sin esto, un aviso que no numerara
+    // nunca haria pasar sola la negativa de abajo.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 3 y abrirá la versión 4/,
+    );
+
+    guardar();
+
+    await screen.findByRole("alert");
+    expect(avisoDeVersion().textContent).toMatch(
+      /así que una versión se abrió/,
+    );
+
+    guardar();
+
+    // El panel del 400, que es el que dice "No se guardó nada".
+    await screen.findByText(/corrige el reparto y vuelve a guardarlo/);
+
+    const aviso = avisoDeVersion().textContent ?? "";
+    // Ningun numero: ni el 3 del historial -que el 200 acaba de cerrar-, ni el 4
+    // que el primero dejo sin leer.
+    expect(aviso).not.toMatch(/versión \d/);
+    // Y dice DE QUE guardado habla: el panel de abajo cuenta otro, posterior, y
+    // sin esa frase el aviso se lee como si describiera el que acaba de
+    // rechazarse. La asercion es del parrafo ENTERO -las dos frases pegadas a la
+    // prosa del 200 ilegible- porque el defecto que vigila esta ahi: una frase
+    // nueva mal encajada en el JSX pierde el espacio o lo duplica y el texto se
+    // lee mal sin que ninguna asercion de fragmento lo note.
+    expect(aviso).toContain(
+      "decir cuál es. El rechazo que cuenta el panel de abajo es de otro guardado, posterior: prueba que ESA petición no abrió ninguna versión, no lo que hizo la que dejó esta duda, así que no la resuelve. Compruébalo en el historial antes de volver a guardar:",
+    );
+  });
+
+  // El mismo defecto por la puerta de en vuelo: `guardar()` pone `resultado` a
+  // `null` al empezar, asi que el aviso volvia al numero viejo MIENTRAS el
+  // segundo `PUT` estaba sin contestar, que es un estado que dura lo que tarde la
+  // red y que nadie mira salvo que lo fije un test.
+  it("mientras el segundo guardado esta en vuelo el aviso no vuelve al numero viejo", async () => {
+    simularServidor({ guardado: () => json({ version: "cuatro" }) });
+    await abrirElEditor();
+
+    guardar();
+    await screen.findByRole("alert");
+    expect(avisoDeVersion().textContent).not.toMatch(/versión \d/);
+
+    // A partir de aqui el PUT no contesta: el doble se cambia despues de montar,
+    // que es lo unico que deja mirar la ventana en vuelo.
+    vi.mocked(fetch).mockImplementation((entrada, init) => {
+      const url = String(entrada);
+      const metodo = init?.method ?? "GET";
+      if (url === "/api/auth/session") {
+        return Promise.resolve(respuestaDeSesion("administrador"));
+      }
+      if (metodo === "PUT") return new Promise<Response>(() => {});
+      return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
+    });
+
+    guardar();
+
+    // El panel del desenlace se ha borrado -es el `setResultado(null)` del
+    // arranque de `guardar()`-, o sea que la duda que queda en pantalla es la
+    // que sobrevivio a ese borrado y no la de un render con desenlace.
+    expect(screen.queryByRole("alert")).toBeNull();
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).toMatch(/así que una versión se abrió/);
+    expect(aviso).not.toMatch(/versión \d/);
+  });
+
+  // WARNING de la PASADA 2: un 2xx cuyo cuerpo no parsea salia de `api()` como un
+  // `Error` cualquiera y caia en `incierta`, cuya prosa dice que no se sabe si el
+  // guardado abrio una version. El cliente SI recibio el 200, o sea que una
+  // version se abrio -el mismo mecanismo que sostiene `guardadaSinLeer`-, y la
+  // respuesta no se perdio: el aviso afirmaba de menos y nombraba una causa que no
+  // ocurrio.
+  it("un 200 con un cuerpo que no parsea dice que la version se abrio, no que no se sepa", async () => {
+    simularServidor({
+      guardado: () =>
+        new Response("esto no es json", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    await abrirElEditor();
+
+    // La misma guarda contra el verde por vacio que en los tests de arriba.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 3 y abrirá la versión 4/,
+    );
+
+    guardar();
+
+    // El panel del desenlace es el del cuerpo ilegible, no el del guardado
+    // incierto: los dos dicen cosas distintas y la pantalla no puede elegir el
+    // equivocado.
+    await screen.findByRole("heading", {
+      name: "El servidor contestó sin error, sin la versión nueva",
+    });
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).toMatch(
+      /El servidor contestó sin error, así que una versión se abrió/,
+    );
+    expect(aviso).not.toMatch(/No se sabe si el guardado abrió una versión/);
+    expect(aviso).toMatch(/esta pantalla no puede decir cuál es/);
+    expect(aviso).not.toMatch(/versión \d/);
+  });
+
+  // El caso que el 8.2 dejo a medias: `versionGuardada` ya esta fijada por un
+  // guardado legible, y despues llegan un 5xx -que deja la duda- y un 400. El 400
+  // no resuelve la duda, asi que el numero 4 del primer PUT -y el 5 que se
+  // deducia- no pueden volver: la v5 puede existir.
+  it("un guardado legible, un 5xx y un 400 dejan el aviso sin ningun numero", async () => {
+    let guardadosHechos = 0;
+    simularServidor({
+      guardado: () => {
+        guardadosHechos += 1;
+        if (guardadosHechos === 1) return json(versionCuatro);
+        if (guardadosHechos === 2) return json({ error: MENSAJE_500 }, 500);
+        return json({ error: MENSAJE_SUMA }, 400);
+      },
+    });
+    await abrirElEditor();
+
+    guardar();
+    await screen.findByRole("heading", {
+      name: "El servidor abrió la versión 4",
+    });
+    // La guarda contra el verde por vacio, con los dos numeros que el aviso sabe
+    // en ese momento.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 4 y abrirá la versión 5/,
+    );
+
+    guardar();
+    await screen.findByRole("alert");
+    expect(avisoDeVersion().textContent).not.toMatch(/versión \d/);
+
+    guardar();
+    await screen.findByText(/corrige el reparto y vuelve a guardarlo/);
+
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).not.toMatch(/versión \d/);
+    expect(aviso).toMatch(/No se sabe si el guardado abrió una versión/);
+    // La otra mitad de la combinacion nueva -duda incierta pendiente + panel de
+    // un 400-, tambien pegada a su prosa entera: los dos textos hablan de
+    // guardados distintos y el aviso lo dice sin pisar la consecuencia.
+    expect(aviso).toContain(
+      "puede decir qué versión se cerrará ni con qué número se abre la nueva. El rechazo que cuenta el panel de abajo es de otro guardado, posterior: prueba que ESA petición no abrió ninguna versión, no lo que hizo la que dejó esta duda, así que no la resuelve. Lo que sí se sabe: la versión anterior, si la hay, no se borra ni se modifica",
+    );
+  });
+
   // D-009: los tres estados del aviso. El primero -con historial- lo fija el
   // test de arriba; los otros dos, estos. Ninguno afirma un numero que no tenga,
   // y por eso la comprobacion es `versión \d` y no un numero concreto: el dia

@@ -40,6 +40,34 @@ export class ErrorDeRed extends Error {
   }
 }
 
+/**
+ * La respuesta llego **sin error** -un 2xx- pero su cuerpo no se pudo leer, asi
+ * que el dato prometido no esta.
+ *
+ * Existe para que quien llama pueda distinguir dos cosas que antes subian
+ * iguales, como un `Error` sin tipo:
+ *
+ * - `ErrorDeRed`: `fetch` no llego a tener respuesta. De aqui no se sabe si el
+ *   servidor hizo algo;
+ * - este: el servidor **contesto**, y contesto sin error. Que el cuerpo falte es
+ *   un problema del cuerpo, no de la operacion.
+ *
+ * Sin este tipo, un 200 con un cuerpo truncado salia como el `SyntaxError` de
+ * `res.json()` y se confundia con un fallo de la operacion. En el editor del
+ * reparto eso afirmaba de menos: `res.ok` ya prueba que el servidor acepto el
+ * guardado, y su cuerpo es lo unico que no llego.
+ */
+export class ErrorDeCuerpoIlegible extends Error {
+  readonly status: number;
+
+  constructor(status: number, cause: unknown) {
+    super("la respuesta llegó sin un cuerpo legible");
+    this.name = "ErrorDeCuerpoIlegible";
+    this.status = status;
+    this.cause = cause;
+  }
+}
+
 // Sustituible para que un 401 navegue con el router en vez de recargar la
 // pagina entera y perder el estado en memoria. Sin registrar ninguno, el
 // comportamiento es el de siempre: window.location.href.
@@ -98,7 +126,17 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   }
 
   const ct = res.headers.get("content-type") || "";
-  if (ct.includes("json")) return res.json();
+  // `res.json()` sobre un cuerpo que no parsea -truncado, cortado a mitad, o una
+  // pagina que no es JSON- lanza un `SyntaxError` y el status se pierde. Se
+  // nombra aqui, que es el unico sitio donde se sabe que la respuesta si llego:
+  // ver `ErrorDeCuerpoIlegible`.
+  if (ct.includes("json")) {
+    try {
+      return await res.json();
+    } catch (err) {
+      throw new ErrorDeCuerpoIlegible(res.status, err);
+    }
+  }
   return res;
 }
 

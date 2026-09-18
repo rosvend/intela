@@ -6,7 +6,7 @@ import {
   type ReactElement,
 } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, ErrorDeRed, api } from "../api";
+import { ApiError, ErrorDeCuerpoIlegible, ErrorDeRed, api } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
 import { useApi } from "../useApi";
@@ -140,6 +140,23 @@ function versionAbierta(
 }
 
 /**
+ * El motivo por el que un guardado dejo PENDIENTE la pregunta de que version
+ * quedo abierta.
+ *
+ * No es el desenlace de un guardado: es un hecho que tiene que SOBREVIVIR al
+ * render en que ocurrio, porque el unico desenlace que lo resuelve -un 200
+ * legible- puede no llegar nunca, y mientras tanto el numero viejo ya no se
+ * sostiene. Por eso vive en el estado del componente y no se deriva del
+ * `resultado` de turno.
+ *
+ * Los dos se distinguen por lo que SI se sabe: `guardadoSinLeer` es un 2xx cuyo
+ * cuerpo no se pudo leer, o sea que una version se abrio y lo que falta es su
+ * numero; `guardadoIncierto` es un 5xx o una respuesta que no llego, donde ni
+ * siquiera se sabe si una version quedo abierta.
+ */
+type MotivoDeDuda = "guardadoSinLeer" | "guardadoIncierto";
+
+/**
  * Lo que se sabe de la version que el guardado va a cerrar y de la que va a
  * abrir. Es el aviso que D-009 existe para arreglar: el mockup ponia "se
  * cerrara la version 2 y se abrira una version 3" con los dos numeros escritos
@@ -167,24 +184,28 @@ function versionAbierta(
  * `sinBorrador` no es un quinto motivo: es el hecho independiente de que el
  * borrador no se pudo sembrar con el reparto vigente, y se sigue diciendo pase
  * lo que pase con el guardado.
+ *
+ * `hayRechazoPosterior` tampoco es un motivo, sino un hecho de la PANTALLA que
+ * solo importa en dos de los cuatro `porque`: abajo hay un rechazo que NO es el
+ * guardado del que habla este aviso -un 4xx no limpia la duda, ver
+ * `avisoDeVersion`-, asi que los dos textos hablan de guardados distintos y hay
+ * que decirlo. Va en `false` cuando no lo hay, que es lo que hace que la prosa
+ * del aviso no cambie en los casos que ya estaban probados.
  */
 type AvisoDeVersion =
   | { tipo: "cierraYabre"; seCierra: number; seAbre: number }
   | { tipo: "abreLaPrimera" }
   | {
       tipo: "sinNumeros";
-      porque:
-        | "historialNoLeido"
-        | "sinVersionAbierta"
-        | "guardadoSinLeer"
-        | "guardadoIncierto";
+      porque: "historialNoLeido" | "sinVersionAbierta" | MotivoDeDuda;
       sinBorrador: boolean;
+      hayRechazoPosterior: boolean;
     };
 
 /**
  * El aviso, a partir de las TRES fuentes que pueden saberlo: el historial leido
  * al abrir la pantalla, la version que el servidor contesto que abrio en el
- * ultimo guardado, y el DESENLACE de ese guardado.
+ * ultimo guardado, y la DUDA que un guardado dejo pendiente.
  *
  * `versionGuardada` manda sobre el historial, y no es un atajo: despues de
  * guardar, el historial que hay en memoria es el de ANTES, y usarlo diria que
@@ -193,56 +214,48 @@ type AvisoDeVersion =
  * version-, y el consecutivo es del servidor: `Store.Guardar` abre
  * `versionAbierta + 1` (`internal/infraestructura/postgres/declaraciones.go`).
  *
- * **El desenlace manda sobre las dos**, y ese es el arreglo que trajo el
- * completion fix `iter-1/step-8.1` (hallazgo CRITICAL de la revision
- * adversarial). Con solo dos fuentes -historial y `versionGuardada`- esta
- * funcion afirmaba un numero que el cliente habia dejado de tener, en los dos
- * desenlaces en que el guardado es el que deja la duda:
+ * **La duda pendiente manda sobre las dos**, y ese es el arreglo que trajo el
+ * completion fix `iter-1/step-8.3` (hallazgo CRITICAL de la PASADA 2 de la
+ * revision adversarial, sobre el arreglo que a su vez trajo el `iter-1/step-8.1`).
+ * El 8.1 ya mandaba a `sinNumeros` los dos desenlaces que dejan la duda, pero lo
+ * hacia mirando el `resultado` DEL RENDER, y ese `resultado` es transitorio:
+ * `guardar()` lo pone a `null` al empezar. La consecuencia, medida: el guardado
+ * SIGUIENTE devolvia el numero viejo al aviso -con un 200 de cuerpo ilegible, que
+ * cierra la v3 y abre la v4, seguido de un 400, el aviso decia "cerrará la
+ * versión 3 y abrirá la versión 4" mientras el panel de la MISMA pantalla decia
+ * "No se guardó nada"-, y el mismo texto reaparecia mientras el segundo `PUT`
+ * estaba en vuelo. Por eso la duda vive en el estado del componente
+ * (`MotivoDeDuda`) y llega aqui como una fuente mas.
  *
- * - `guardadaSinLeer`: el 200 prueba que el servidor abrio una version -el
- *   handler escribe despues de confirmar la transaccion-, pero el cuerpo no
- *   llego con la forma del contrato, asi que el cliente NO SABE CUAL es. Esa
- *   rama no toca `versionGuardada`, asi que el aviso caia al historial en
- *   memoria -que ya era viejo- y afirmaba "cerrara la version N" sobre la
- *   version que el 200 acababa de cerrar, mientras el panel de la MISMA
- *   pantalla decia que no puede saber cual se abrio. Dos textos incompatibles
- *   sobre el mismo hecho, y el de arriba era el que mentia.
- * - `incierta`: un 5xx o la falta de respuesta. `Store.Guardar` corre dentro de
- *   `EnTransaccion`, asi que no se sabe si una version quedo abierta, y sin
- *   saberlo no se puede decir cual se cerraria.
+ * Un 4xx (`rechazada`) NO deja duda -no abre ninguna version- pero tampoco la
+ * **limpia**, y ahi estaba el error del comentario del 8.1: un 4xx prueba que ESA
+ * peticion no abrio ninguna version, y no dice nada del guardado anterior que
+ * quedo en duda. El historial en memoria vuelve a ser la autoridad solo cuando no
+ * hay ninguna duda pendiente. El 200 legible tampoco entra por aqui: es el unico
+ * camino que limpia la duda, porque es el unico que dice cual se abrio.
  *
- * Los dos van a `sinNumeros` con su PROPIO `porque`, y NO se reutiliza el texto
- * de `historialNoLeido`: ese dice que no se pudo leer el historial, y aqui el
- * historial se leyo perfectamente -lo que cambio es el GUARDADO-. Un texto que
- * nombra la causa equivocada es el mismo defecto que este arreglo viene a
- * cerrar, asi que los dos motivos nuevos tienen su prosa propia.
- *
- * Un 4xx (`rechazada`) NO entra por aqui: no deja ninguna version abierta, y el
- * historial en memoria sigue siendo la autoridad para decir cual se cerraria.
- * Tampoco el 200 legible, que es el unico camino donde `versionGuardada` se
- * fija.
+ * `hayRechazoPosterior` no cambia el motivo, cambia la PROSA: cuando en la misma
+ * pantalla hay ademas un rechazo, los dos textos hablan de guardados distintos
+ * -el aviso, del que dejo la duda; el panel, de otro posterior-, y el aviso tiene
+ * que decirlo o se lee como si describiera el que acaba de rechazarse.
  */
 function avisoDeVersion(
   historial: readonly VersionDeclaracion[] | null,
   versionGuardada: number | null,
-  resultado: ResultadoDelGuardado | null,
+  dudaPendiente: MotivoDeDuda | null,
+  hayRechazoPosterior: boolean,
 ): AvisoDeVersion {
-  // El desenlace del guardado manda sobre todo lo demas, incluida la version
-  // que el propio `PUT` devolvio: entre un guardado legible y otro posterior
-  // que quedo en duda, la que ya no se sostiene es la del primero.
-  const delGuardado: "guardadoSinLeer" | "guardadoIncierto" | null =
-    resultado?.tipo === "guardadaSinLeer"
-      ? "guardadoSinLeer"
-      : resultado?.tipo === "incierta"
-        ? "guardadoIncierto"
-        : null;
-  if (delGuardado !== null) {
+  // La duda pendiente manda sobre todo lo demas, incluida la version que el
+  // propio `PUT` devolvio: entre un guardado legible y otro posterior que quedo
+  // en duda, la que ya no se sostiene es la del primero.
+  if (dudaPendiente !== null) {
     return {
       tipo: "sinNumeros",
-      porque: delGuardado,
+      porque: dudaPendiente,
       // El borrador se sembro -o no- al leer el historial, y un guardado
       // posterior no cambia eso: el hecho se dice en los dos casos.
       sinBorrador: historial === null,
+      hayRechazoPosterior,
     };
   }
   if (versionGuardada !== null) {
@@ -257,6 +270,7 @@ function avisoDeVersion(
       tipo: "sinNumeros",
       porque: "historialNoLeido",
       sinBorrador: true,
+      hayRechazoPosterior: false,
     };
   }
   if (historial.length === 0) return { tipo: "abreLaPrimera" };
@@ -266,6 +280,7 @@ function avisoDeVersion(
       tipo: "sinNumeros",
       porque: "sinVersionAbierta",
       sinBorrador: false,
+      hayRechazoPosterior: false,
     };
   }
   return {
@@ -277,7 +292,12 @@ function avisoDeVersion(
 
 /**
  * El status con que fallo el guardado. "red" si no hubo respuesta
- * (`ErrorDeRed`), "desconocido" si fallo algo fuera de la API.
+ * (`ErrorDeRed`), "desconocido" si fallo algo que no es una respuesta del
+ * servidor con status.
+ *
+ * "desconocido" **no** es el 2xx cuyo cuerpo no se pudo leer: eso ya no es un
+ * fallo del guardado sino de su cuerpo, y tiene su propio desenlace
+ * (`ErrorDeCuerpoIlegible`, ver `falloDelGuardado`).
  *
  * No es el `resultadoDeError` de la ingesta, y la diferencia importa: alli el
  * 502/504 tiene caso propio porque su cuerpo es la pagina HTML de nginx y
@@ -315,6 +335,13 @@ type FalloDelGuardado = {
  * miente. Lo unico que los cuatro comparten, y lo unico que esta funcion
  * necesita, es que un 4xx es una respuesta del servidor en la que no quedo
  * ninguna version abierta.
+ *
+ * El conjunto que entra aqui no es "el 5xx y la falta de respuesta", que es lo
+ * que decia este comentario: entra ademas "desconocido", o sea cualquier fallo
+ * que no sea una respuesta del servidor con status. Y no entra ningun 2xx: un
+ * 2xx ya respondio sin error, asi que que su cuerpo no se pueda leer no deja
+ * ninguna duda sobre si el servidor escribio -de eso se ocupa
+ * `ErrorDeCuerpoIlegible`-.
  */
 function puedeHaberGuardado(status: FalloDelGuardado["status"]): boolean {
   return status === "red" || status === "desconocido" || status >= 500;
@@ -322,11 +349,27 @@ function puedeHaberGuardado(status: FalloDelGuardado["status"]): boolean {
 
 /**
  * Traduce lo que lanza `api()` al guardar en un `ResultadoDelGuardado`. Nunca
- * lanza, y es donde se decide cual de los dos fallos es: el incierto -el 5xx y
- * la falta de respuesta, ver `puedeHaberGuardado`- o el que cierra la pregunta
- * con su mensaje.
+ * lanza, y es donde se decide cual de los desenlaces de fallo es:
+ *
+ * - el **2xx cuyo cuerpo no se pudo leer** (`ErrorDeCuerpoIlegible`) va a
+ *   `guardadaSinLeer`, que es el mismo desenlace del 200 con un cuerpo que no
+ *   tiene la forma del contrato. **No es un guardado incierto**: `res.ok` prueba
+ *   que el servidor contesto sin error, o sea que una version se abrio -el
+ *   handler escribe despues de confirmar la transaccion-, y lo unico que falta es
+ *   su numero. Mandarlo a `incierta` afirmaba de menos y nombraba una causa -"una
+ *   respuesta que se perdio"- que no ocurrio.
+ * - el **guardado incierto**, que es el unico que deja la pregunta abierta: un
+ *   5xx, una respuesta que no llego y cualquier fallo que no sea una respuesta
+ *   del servidor con status. Ver `puedeHaberGuardado`.
+ * - el **4xx**, que cierra la pregunta con el mensaje del servidor.
  */
 function falloDelGuardado(error: unknown): ResultadoDelGuardado {
+  // El 2xx con un cuerpo ilegible no es un fallo del guardado: el guardado
+  // ocurrio. Se nombra ANTES que los demas porque es el unico camino en que el
+  // status es de exito.
+  if (error instanceof ErrorDeCuerpoIlegible) {
+    return { tipo: "guardadaSinLeer" };
+  }
   const fallo: FalloDelGuardado =
     error instanceof ApiError
       ? { status: error.status, mensaje: error.message }
@@ -347,10 +390,13 @@ function falloDelGuardado(error: unknown): ResultadoDelGuardado {
  *
  * - `guardada`: el servidor contesto 200 con la version nueva, y la version
  *   nueva es un dato suyo: su numero, su estado y su ventana se pintan tal cual;
- * - `guardadaSinLeer`: 200 con un cuerpo que no tiene la forma del contrato. El
- *   200 prueba que la version se abrio -el handler lo escribe despues de
- *   confirmar la transaccion-, pero el numero no se puede afirmar, asi que no se
- *   afirma: se dice que se guardo y que el historial es donde se comprueba;
+ * - `guardadaSinLeer`: 200 con un cuerpo que no se pudo leer. Dos caminos llegan
+ *   aqui y son el mismo desenlace: un cuerpo que no se pudo ni leer como JSON
+ *   (`ErrorDeCuerpoIlegible`, `api.ts`) y uno que se leyo pero no tiene la forma
+ *   del contrato (`esVersionDeclaracion`). El 200 prueba que la version se abrio
+ *   -el handler lo escribe despues de confirmar la transaccion-, pero el numero
+ *   no se puede afirmar, asi que no se afirma: se dice que se guardo y que el
+ *   historial es donde se comprueba;
  * - `rechazada`: un 4xx con su mensaje, que es lo unico que explica cual de las
  *   reglas de escritura se incumplio;
  * - `incierta`: un 5xx o la falta de respuesta. Ver `puedeHaberGuardado`.
@@ -582,6 +628,12 @@ function FormularioDeReparto({
   // La version que el servidor contesto que abrio. Es lo que mantiene el aviso
   // al dia despues de guardar, sin releer el historial ni adivinar el numero.
   const [versionGuardada, setVersionGuardada] = useState<number | null>(null);
+  // La duda que un guardado dejo pendiente, en su PROPIO estado y no derivada
+  // del `resultado` del render: `resultado` es transitorio -`guardar()` lo pone a
+  // `null` al empezar- y deducirla de ahi hacia que el guardado siguiente
+  // devolviera el numero viejo al aviso, incluido el hueco en vuelo. Un 4xx no la
+  // toca; la limpia un 200 legible. Ver `MotivoDeDuda`.
+  const [dudaPendiente, setDudaPendiente] = useState<MotivoDeDuda | null>(null);
   const [guardando, setGuardando] = useState(false);
   // `disabled` llega en el siguiente render; el ref corta tambien un segundo
   // clic que entre antes. Un segundo `PUT` con el mismo reparto abriria una
@@ -600,10 +652,18 @@ function FormularioDeReparto({
     (fila) => !Number.isFinite(porcentajeDeTexto(fila.porcentaje)),
   ).length;
   const puedeGuardar = puedeGuardarBorrador(estado) && filasSinNumero === 0;
-  // Las tres fuentes: el historial, la version que el `PUT` devolvio y el
-  // desenlace de ese `PUT`. La ultima manda, y por eso no basta con las dos
+  // Las tres fuentes: el historial, la version que el `PUT` devolvio y la duda
+  // que un guardado dejo pendiente. La duda manda, y por eso no basta con las dos
   // primeras -ver `avisoDeVersion`-.
-  const aviso = avisoDeVersion(historial, versionGuardada, resultado);
+  const aviso = avisoDeVersion(
+    historial,
+    versionGuardada,
+    dudaPendiente,
+    // Un 4xx no limpia la duda, asi que cuando el panel de abajo cuenta un
+    // rechazo y hay una duda pendiente, los dos textos son de guardados
+    // distintos: el rechazo es posterior al guardado que dejo la duda.
+    resultado?.tipo === "rechazada",
+  );
 
   function agregarTitular(titular: Titular) {
     // La fila nace SIN porcentaje: la cifra la escribe quien declara, y un
@@ -650,12 +710,26 @@ function FormularioDeReparto({
       // una comprobacion. Se revisa antes de afirmar su numero.
       if (!esVersionDeclaracion(cuerpo)) {
         setResultado({ tipo: "guardadaSinLeer" });
+        // El 200 prueba que una version se abrio; lo que no se puede leer es
+        // cual. La duda queda PENDIENTE hasta que otro guardado conteste 200 con
+        // un cuerpo legible.
+        setDudaPendiente("guardadoSinLeer");
         return;
       }
       setResultado({ tipo: "guardada", version: cuerpo });
       setVersionGuardada(cuerpo.version);
+      // El unico desenlace que limpia la duda: es el unico que dice cual se
+      // abrio. La version vieja de `versionGuardada` no se borra -sigue siendo
+      // el ultimo dato bueno-, pero deja de mandar mientras haya duda.
+      setDudaPendiente(null);
     } catch (error) {
-      setResultado(falloDelGuardado(error));
+      const fallo = falloDelGuardado(error);
+      setResultado(fallo);
+      // Un 4xx (`rechazada`) NO entra en ninguna rama y por eso no limpia nada:
+      // prueba que ESA peticion no abrio ninguna version, y no dice nada del
+      // guardado anterior que quedo en duda.
+      if (fallo.tipo === "guardadaSinLeer") setDudaPendiente("guardadoSinLeer");
+      if (fallo.tipo === "incierta") setDudaPendiente("guardadoIncierto");
     } finally {
       enVuelo.current = false;
       setGuardando(false);
@@ -815,6 +889,16 @@ function AvisoDeVersionVisible({
   const sinBorrador = aviso.sinBorrador
     ? " El borrador tampoco se ha podido cargar con el reparto vigente."
     : "";
+  // Cuando en la misma pantalla hay ademas un rechazo, los dos textos hablan de
+  // guardados DISTINTOS -el aviso, del que dejo la duda; el panel de abajo, de
+  // otro posterior- y hay que decirlo: sin esta frase el aviso se lee como si
+  // describiera el guardado que acaba de rechazarse, y afirmaria entonces una
+  // version abierta sobre un guardado que no abrio ninguna. Lo que se afirma del
+  // rechazo es lo unico que un 4xx prueba, y esta escrito con el mismo criterio
+  // que `avisoDelRechazo`.
+  const rechazoPosterior = aviso.hayRechazoPosterior
+    ? " El rechazo que cuenta el panel de abajo es de otro guardado, posterior: prueba que ESA petición no abrió ninguna versión, no lo que hizo la que dejó esta duda, así que no la resuelve."
+    : "";
 
   if (aviso.porque === "historialNoLeido") {
     return (
@@ -828,16 +912,18 @@ function AvisoDeVersionVisible({
   }
 
   // El 200 con un cuerpo que no se pudo leer: el servidor SI abrio una version
-  // -un 200 es lo que el contrato promete cuando la abre-, pero no dijo cual.
-  // El aviso no puede caer al historial en memoria: alli la version que se
-  // cerraria es justo la que el 200 acaba de cerrar.
+  // -un 200 es lo que el contrato promete cuando la abre-, pero no dijo cual. Las
+  // dos formas de que el cuerpo no sirva -que no se pueda ni leer y que se lea
+  // sin la forma del contrato- llegan al mismo desenlace, `guardadaSinLeer`. El
+  // aviso no puede caer al historial en memoria: alli la version que se cerraria
+  // es justo la que el 200 acaba de cerrar.
   if (aviso.porque === "guardadoSinLeer") {
     return (
       <p className="editor-aviso-version">
         El servidor contestó sin error, así que una versión se abrió, pero la
         respuesta no llegó con la forma del contrato y esta pantalla no puede
-        decir cuál es. Compruébalo en el historial antes de volver a guardar:
-        guardar otra vez abre una versión más. {consecuencia}
+        decir cuál es.{rechazoPosterior} Compruébalo en el historial antes de
+        volver a guardar: guardar otra vez abre una versión más. {consecuencia}
         {sinBorrador}
       </p>
     );
@@ -851,8 +937,8 @@ function AvisoDeVersionVisible({
       <p className="editor-aviso-version">
         No se sabe si el guardado abrió una versión: un fallo al confirmar es
         indistinguible de una respuesta que se perdió, así que esta pantalla no
-        puede decir qué versión se cerrará ni con qué número se abre la nueva.{" "}
-        {consecuencia}
+        puede decir qué versión se cerrará ni con qué número se abre la nueva.
+        {rechazoPosterior} {consecuencia}
         {sinBorrador}
       </p>
     );
