@@ -8,6 +8,11 @@ make verificar                 # tidy, build, vet, gofmt y test - lo mismo que c
 UI: <http://localhost>
 API: <http://localhost/api>
 
+> Esto deja la base **migrada y vacia**. Para un arranque de una sola orden que
+> ademas siembra el dataset -y una prueba de humo que lo comprueba-, ver
+> [`QUICKSTART.md`](QUICKSTART.md). Esta pagina es la referencia: variables,
+> credenciales, y que dato es real y cual sintetico.
+
 Comprobar que responde:
 
 ```bash
@@ -29,14 +34,21 @@ arranca la API. Antes lo hacia la propia API al levantar, lo que significaba que
 cada replica intentaba migrar en paralelo y que un fallo de migracion se
 confundia con un fallo de arranque.
 
-El seed **no corre en `up`**: es un comando explicito, contra una base ya
-migrada, para demos y desarrollo. No hay siembra en produccion.
+El seed **no corre en un `up` pelado**: entra por perfil, o se invoca a mano,
+siempre contra una base ya migrada, para demos y desarrollo. No hay siembra en
+produccion, y por eso nunca esta en el `up` por defecto.
 
 ```bash
-docker compose run --rm seed      # dataset sintetico; no corre en `up`
-SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
-go run ./cmd/seed                 # equivalente, con DATABASE_URL
+docker compose --profile demo up -d --build   # arranque + siembra, en una orden
+docker compose run --rm seed                  # solo sembrar, con el stack ya arriba
+SEED_RESET=true docker compose run --rm seed  # vaciar y recargar
+go run ./cmd/seed                             # equivalente, con DATABASE_URL
 ```
+
+`SEED_RESET` se interpola desde el entorno del `docker compose`, asi que vale
+tanto para `run` como para `up`. Antes estaba fijo a `"false"` en el compose: la
+unica forma de recargar era repetir el valor con `-e`, y para `up` no habia
+ninguna -el stack levantaba y no recargaba, sin decir nada-.
 
 El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
 tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que
@@ -98,7 +110,7 @@ autorizacion de verdad va en el servidor y es el `#17`.
 | Sintoma | Causa | Arreglo |
 | --- | --- | --- |
 | `404 ruta no encontrada` al entrar | Imagenes viejas | `docker compose up -d --build` |
-| `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed` |
+| `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed`, o arrancar con `--profile demo` |
 | La API se reinicia sola, `lookup postgres ... no such host` | Docker se reinicio y el contenedor quedo con una direccion vieja | `docker compose up -d --force-recreate api` |
 
 ### Modo desarrollo del frontend
