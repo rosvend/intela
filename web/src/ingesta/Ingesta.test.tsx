@@ -791,13 +791,14 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
   });
 
-  it("un 500 se titula como entrega no registrada y no pinta el JSON crudo de su cuerpo", async () => {
-    // Un 500 de POST /reportes sale con "no se pudo registrar la entrega"
-    // (internal/infraestructura/httpapi/reportes.go) y las dos escrituras del
-    // caso de uso van en UNA transaccion (internal/aplicacion/ingesta.go), asi
-    // que el sistema si sabe que no quedo fila: el titulo lo dice en vez del
-    // neutro. El cuerpo, ademas, no trae `error`, asi que no es un mensaje del
-    // backend y no se pinta.
+  it("un 500 no afirma el no-registro, avisa de que pudo llegar y no pinta el JSON crudo de su cuerpo", async () => {
+    // Un 500 no garantiza que no quedo entrega: `Store.EnTransaccion` devuelve
+    // el fallo del COMMIT como un error mas (internal/infraestructura/postgres/
+    // store.go) y si la respuesta del COMMIT se pierde el cliente no puede
+    // saber si entro (`08007`/`40003` del motor), asi que el panel no promete
+    // el no-registro y devuelve el aviso de mirar el listado antes de resubir.
+    // El cuerpo, ademas, no trae `error`, asi que no es un mensaje del backend
+    // y no se pinta.
     simularServidor({
       rol: "administrador",
       subida: () => Promise.resolve(json({ detalle: "algo" }, 500)),
@@ -813,16 +814,14 @@ describe("pantalla de ingesta (integracion con App)", () => {
     const alerta = await screen.findByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "La entrega no se registró",
+        name: "No se sabe si la entrega se registró",
       }),
     ).toBeTruthy();
     expect(alerta.textContent).toContain(MENSAJE_ERROR_ILEGIBLE);
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
     // Ni el JSON crudo ni su clave llegan a la pantalla.
     expect(alerta.textContent).not.toContain("detalle");
     expect(document.body.textContent).not.toContain('{"detalle"');
-    // Un 500 si es una respuesta del servidor: sin el aviso de que pudo haber
-    // llegado, que es justo lo que el titulo neutro contradecia.
-    expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
     expect(subidas()).toHaveLength(1);
   });
 

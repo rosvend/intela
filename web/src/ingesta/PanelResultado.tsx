@@ -40,27 +40,30 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
   409: "La entrega no se registró",
   413: "El archivo es demasiado grande",
-  // Un 500 tampoco es ambiguo, aunque lo parezca: el backend lo contesta con el
-  // mensaje "no se pudo registrar la entrega"
-  // (internal/infraestructura/httpapi/reportes.go, el `default` de
-  // `subirReporte`), y no es prudencia suya sino consecuencia de dos hechos del
-  // caso de uso (internal/aplicacion/ingesta.go): las dos escrituras -el acuse y
-  // el lote- van en UNA transaccion (`GuardarEntrega`), y las ramas anteriores
-  // (`congelarEvidencia`, `aplicarNormalizacion`) tampoco dejan fila. Si el
-  // servidor contesta un 500, no quedo entrega. Un titulo neutro aqui diria
-  // menos de lo que el sistema sabe, y ademas contradiria al mensaje que va
-  // justo debajo.
-  500: "La entrega no se registró",
+  // Un 500 **no** esta aqui a proposito: es el unico status con numero que deja
+  // abierta la pregunta de si quedo algo escrito, asi que cae en el titulo
+  // neutro y lleva el aviso. Ver `TITULO_POR_DEFECTO` y `avisarQuePudoLlegar`.
   503: "La ingesta no está disponible en esta instalación",
 };
 
 // El titulo de lo que no tiene uno propio: el fallo "desconocido" (un 2xx que
-// no se dejo leer, un 502/504 del proxy) y cualquier status sin texto en el mapa
-// de arriba. Afirma solo lo que se sabe, que es poco: si la entrega quedo
-// registrada no lo sabe nadie en esos casos. El caso "desconocido" lleva ademas
-// el aviso de PUDO_LLEGAR justo debajo, y un titulo que dijera "no se pudo
-// registrar" lo contradiria en la misma pantalla. Un 500 **no** cae aqui desde
-// que tiene entrada propia arriba: ahi el sistema si sabe que no quedo entrega.
+// no se dejo leer, un 502/504 del proxy), el **500** y cualquier status sin
+// texto en el mapa de arriba. Afirma solo lo que se sabe, que es poco: si la
+// entrega quedo registrada no lo sabe nadie en esos casos.
+//
+// El 500 esta aqui a proposito, aunque el backend lo conteste con "no se pudo
+// registrar la entrega" (internal/infraestructura/httpapi/reportes.go). Que las
+// dos escrituras del caso de uso vayan en UNA transaccion (`GuardarEntrega`,
+// internal/aplicacion/ingesta.go) y que las ramas anteriores
+// (`congelarEvidencia`, `aplicarNormalizacion`) no dejen fila dice COMO se
+// escriben las filas, no COMO acaba el COMMIT: `Store.EnTransaccion`
+// (internal/infraestructura/postgres/store.go) devuelve el fallo del COMMIT como
+// un error mas, y si el enlace con el motor se pierde despues de mandarlo el
+// cliente no puede saber si entro -el motor tiene estados propios para eso
+// (`08007 transaction_resolution_unknown`, `40003 statement_completion_unknown`)
+// -. Afirmar el no-registro seria decir mas de lo que el sistema sabe, que es
+// justo lo que este panel evita; por eso el 500 lleva ademas el aviso de
+// PUDO_LLEGAR, como "red" y "desconocido".
 const TITULO_POR_DEFECTO = "No se sabe si la entrega se registró";
 
 const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
@@ -70,7 +73,8 @@ const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
 const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
 
 // Lo que se dice cuando no queda claro si la entrega se registro. Reintentar a
-// ciegas daria 409 si llego, y el 409 es irreversible.
+// ciegas daria 409 si llego, y el 409 es irreversible. Lo llevan "red",
+// "desconocido" y el 500: ver `avisarQuePudoLlegar`.
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
@@ -178,7 +182,11 @@ function PanelFallo({
   status: StatusDeFallo;
   mensaje: string;
 }) {
-  const avisarQuePudoLlegar = status === "red" || status === "desconocido";
+  // El 500 va aqui por lo mismo que "red" y "desconocido": su error puede ser el
+  // de un COMMIT que si entro y cuya respuesta se perdio. Es el unico status con
+  // numero que deja la pregunta abierta; 400, 409, 413 y 503 la cierran.
+  const avisarQuePudoLlegar =
+    status === "red" || status === "desconocido" || status === 500;
 
   return (
     <section className="panel-resultado panel-fallo" role="alert">

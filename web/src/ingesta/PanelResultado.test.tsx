@@ -150,18 +150,14 @@ describe("PanelResultado", () => {
     expect(within(alerta).getByText(NO_SE_GUARDO)).toBeTruthy();
   });
 
-  // El 500 si tiene titulo propio, y no por prudencia: el backend lo contesta
-  // con "no se pudo registrar la entrega" (reportes.go) porque las dos
-  // escrituras del caso de uso -el acuse y el lote- van en UNA transaccion
-  // (internal/aplicacion/ingesta.go), y las ramas anteriores a ella tampoco
-  // dejan fila. Si el servidor contesta un 500, no quedo entrega. El titulo
-  // neutro se reserva para "desconocido" y para los status que no estan en el
-  // mapa, que es donde de verdad no se sabe.
+  // Estos tres status si cierran la pregunta de si quedo algo escrito: 409 y
+  // 413 no llegan a escribir y 503 ni entra, asi que su titulo puede afirmar el
+  // no-registro y no hace falta el aviso. El 500 NO entra aqui: tiene su caso
+  // propio debajo, porque es el unico que deja la pregunta abierta.
   it.each([
     [409, "La entrega no se registró"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
-    [500, "La entrega no se registró"],
   ] as const)(
     "el status %s se titula %j y conserva el mensaje",
     (status, titulo) => {
@@ -175,10 +171,38 @@ describe("PanelResultado", () => {
       expect(within(alerta).getByText(mensaje)).toBeTruthy();
       // El aviso de "no se guardo nada" es solo del 400.
       expect(screen.queryByText(NO_SE_GUARDO)).toBeNull();
-      // Con un status el servidor contesto: no hay duda de si la entrega llego.
+      // Contestado, y sin duda de si la entrega llego.
       expect(screen.queryByText(PUDO_LLEGAR)).toBeNull();
     },
   );
+
+  // El 500 no afirma el no-registro, y ademas lleva el aviso. Que las dos
+  // escrituras del caso de uso vayan en UNA transaccion
+  // (internal/aplicacion/ingesta.go, `GuardarEntrega`) y que las ramas
+  // anteriores no dejen fila dice como se escriben las filas, no como acaba el
+  // COMMIT: si el enlace con Postgres se pierde despues de mandarlo, el cliente
+  // no puede saber si entro -el motor tiene estados propios para eso
+  // (`08007 transaction_resolution_unknown`, `40003`)- y `Store.EnTransaccion`
+  // convierte ese fallo en el mismo 500 que un fallo limpio
+  // (`internal/infraestructura/postgres/store.go`). El mensaje del backend va
+  // entero debajo; lo que no se hace es prometer lo que no se sabe.
+  it("un 500 no afirma que la entrega no se registró y conserva el aviso", () => {
+    const mensaje = "no se pudo registrar la entrega";
+    render(
+      <PanelResultado resultado={{ tipo: "fallo", status: 500, mensaje }} />,
+    );
+
+    const alerta = screen.getByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "No se sabe si la entrega se registró",
+      }),
+    ).toBeTruthy();
+    // El mensaje del backend va tal cual: es lo que el servidor contesto.
+    expect(within(alerta).getByText(mensaje)).toBeTruthy();
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
+    expect(within(alerta).queryByText(NO_SE_GUARDO)).toBeNull();
+  });
 
   // El 409 de evidencia corrupta entra por el mismo status que el duplicado,
   // asi que el titulo tiene que dejar hablar al mensaje del backend.
