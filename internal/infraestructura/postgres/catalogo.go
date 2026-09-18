@@ -43,17 +43,23 @@ const lateralCoautores = `
 
 // Registrar inserta la obra y sus coautores en una sola transaccion.
 //
-// El limite lo fija el adaptador y no el caso de uso, al contrario de lo que
-// dice la regla general de doc.go, porque aqui no hay dos repositorios que
-// coordinar: es UNA operacion del puerto, y su contrato dice que es atomica.
-// Una obra a medias -en `obras` pero sin coautores- no la puede reconstruir
-// [repertorio.NuevaObra], asi que quedaria escrita y no se podria leer.
+// El limite propio -- las dos tablas de ESTA operacion -- lo fija el adaptador
+// y no el caso de uso: es UNA operacion del puerto, y su contrato dice que es
+// atomica. Una obra a medias -en `obras` pero sin coautores- no la puede
+// reconstruir [repertorio.NuevaObra], asi que quedaria escrita y no se podria
+// leer.
+//
+// enTransaccionDe y no EnTransaccion: si el caso de uso ya abrio una unidad
+// -- [Catalogo.RegistrarObra] la abre para que la obra y su asiento sean un
+// solo hecho (ADR 0006, issue #91) -- esta escritura entra EN ELLA y la
+// confirma quien la abrio. Con EnTransaccion, la obra se confirmaria aqui y un
+// asiento que fallara despues ya no tendria nada que revertir.
 //
 // El duplicado lo decide la clave primaria. Un SELECT previo dejaria una
 // ventana entre la consulta y el INSERT por la que cabe otra peticion.
 func (s *Store) Registrar(ctx context.Context, o repertorio.Obra) error {
 	m := o.Metadatos()
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO obras (`+columnasCatalogo+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 			o.ID(), m.Titulo, m.Genero, m.Anio, string(m.Tipo), m.IDA, m.EIDR, m.IMDB)
@@ -70,6 +76,10 @@ func (s *Store) Registrar(ctx context.Context, o repertorio.Obra) error {
 // Actualizar reemplaza los metadatos de una obra existente. El id no entra en
 // el SET: es la clave del WHERE y nada mas.
 //
+// Participa en la unidad de quien llame, igual que [Store.Registrar] y por la
+// misma razon: [Catalogo.ActualizarMetadatosObra] lee la obra, la reescribe y
+// asienta el cambio, y las tres cosas son un solo hecho.
+//
 // Los coautores se borran y se vuelven a escribir en vez de reconciliarse fila
 // a fila. Es lo mismo que hace el caso de uso conceptualmente -el bloque de
 // metadatos llega completo- y ahorra tener que decidir que hacer con un
@@ -77,7 +87,7 @@ func (s *Store) Registrar(ctx context.Context, o repertorio.Obra) error {
 // obra no se borra.
 func (s *Store) Actualizar(ctx context.Context, o repertorio.Obra) error {
 	m := o.Metadatos()
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		etiqueta, err := tx.Exec(ctx,
 			`UPDATE obras
 			    SET titulo = $2, genero = $3, anio = $4, tipo = $5,
@@ -128,13 +138,19 @@ func (s *Store) escribirCoautores(ctx context.Context, tx pgx.Tx, o repertorio.O
 
 // PorID reconstruye una obra del catalogo en una sola sentencia: metadatos y
 // coautores salen de la misma instantanea (issue #90).
+//
+// Lee por [Store.ejecutorDe] y no por el pool porque esta lectura tambien
+// ocurre DENTRO de una unidad: [Catalogo.ActualizarMetadatosObra] la usa para
+// saber que habia antes y poder asentar que cambio. Por el pool leeria en otra
+// conexion, fuera de la transaccion que esta a punto de reescribir esa misma
+// fila.
 func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
 		fl            fila
 		tipo          string
 		coautoresJSON []byte
 	)
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
 		   FROM obras o`+lateralCoautores+`
 		  WHERE o.id = $1`, id).
@@ -206,7 +222,7 @@ func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]reperto
 	   ) o` + lateralCoautores + `
 	 ORDER BY o.id`
 
-	filas, err := s.pool.Query(ctx, sql, args...)
+	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, "buscar obras")
 	}

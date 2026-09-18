@@ -71,6 +71,7 @@ jobs:
       contract: ${{ steps.layers.outputs.contract }}
       docker-backend: ${{ steps.layers.outputs.docker_backend }}
       docker-frontend: ${{ steps.layers.outputs.docker_frontend }}
+      smoke: ${{ steps.layers.outputs.smoke }}
       terraform: ${{ steps.layers.outputs.terraform }}
     steps:
       - uses: actions/checkout@v7
@@ -130,6 +131,13 @@ jobs:
           # migrations/*.sql is embedded into /app/migrate, so a SQL-only PR
           # must rebuild the image too.
           P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^migrations/|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          # The widest pattern in the file, and deliberately so: this stage is
+          # the only one that answers "does the system still come up", and the
+          # ways to break that are spread across every layer - the compose file,
+          # either Dockerfile, the nginx config, a migration that will not
+          # apply, a change to cmd/seed. Narrowing it would mean the stage stays
+          # green precisely in the pull requests that broke the bring-up.
+          P_SMOKE='(^docker-compose\.yml$|^deploy/|^Dockerfile|^\.dockerignore$|^migrations/|^web/|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|smoke)\.yml$)'
           # The Go sources are in here for the same reason they are in P_DOCKER:
           # the plan hashes the Lambda zips, which are built FROM them, so a
           # change under cmd/lambda has to re-plan rather than surprise the
@@ -165,6 +173,9 @@ jobs:
           docker_frontend=false
           if exists web/Dockerfile && touched "$P_FRONTEND"; then docker_frontend=true; fi
 
+          smoke=false
+          if exists docker-compose.yml && exists deploy/smoke.sh && touched "$P_SMOKE"; then smoke=true; fi
+
           terraform=false
           if exists infra/envs/nheo/main.tf && touched "$P_TERRAFORM"; then terraform=true; fi
 
@@ -177,6 +188,7 @@ jobs:
             echo "contract=$contract"
             echo "docker_backend=$docker_backend"
             echo "docker_frontend=$docker_frontend"
+            echo "smoke=$smoke"
             echo "terraform=$terraform"
           } >> "$GITHUB_OUTPUT"
 
@@ -197,6 +209,7 @@ jobs:
             echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
             echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
+            echo "| smoke | \`$smoke\` | \`docker-compose.yml\` and \`deploy/smoke.sh\` exist and the PR touches anything the bring-up depends on |"
             echo "| terraform | \`$terraform\` | \`infra/\` exists and the PR touches infrastructure or what it packages |"
             echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -344,6 +357,21 @@ jobs:
       dockerfile: web/Dockerfile
       push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
+  # The bring-up. Builds the images through compose and proves the stack serves
+  # over nginx with the seeded data, which is the one thing no other stage can
+  # tell you.
+  #
+  # It does NOT declare `needs: [container-backend, container-frontend]`. It
+  # builds its own images from the same Dockerfiles, so waiting would only
+  # serialise two independent builds - and worse, `needs` on a stage that is
+  # SKIPPED for not being touched would skip this one too, exactly when a change
+  # to `docker-compose.yml` or `deploy/` is the only thing in the pull request.
+  smoke:
+    name: Smoke (compose bring-up)
+    needs: detect
+    if: needs.detect.outputs.smoke == 'true'
+    uses: ./.github/workflows/smoke.yml
+
   # Infrastructure. `validate` inside this stage needs no credentials and always
   # runs; `plan` runs on a pull request, where a human is there to read the
   # result and where the destroy guard has something to refuse.
@@ -401,6 +429,7 @@ jobs:
       - contract
       - container-backend
       - container-frontend
+      - smoke
       - terraform
     if: always()
     runs-on: ubuntu-latest

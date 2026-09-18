@@ -1,6 +1,11 @@
 package aplicacion
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Errores que los adaptadores devuelven y los casos de uso distinguen.
 //
@@ -24,7 +29,26 @@ var (
 
 	// ErrParametroAusente: falta un parametro normativo para el calculo.
 	// No se inventa un valor por defecto: se falla (ADR 0004).
+	//
+	// Quien resuelve un snapshot entero lo devuelve dentro de
+	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
+
+	// ErrSnapshotCorrupto: bajo ese id hay filas congeladas que no forman el
+	// snapshot que el id anuncia.
+	//
+	// El id de un snapshot esta direccionado por contenido: es el sha256 de
+	// sus pares (clave, valor) ordenados. Eso lo convierte en una suma de
+	// verificacion, y entonces "las filas no hashean a su id" es un caso
+	// posible y hay que poder decirlo. Lo mismo cuando al conjunto congelado
+	// le falta una clausula: nunca fue un snapshot valido.
+	//
+	// Es la hermana de ErrEvidenciaCorrupta y existe por lo mismo: servir esas
+	// filas como si fueran el snapshot devolveria una corrida "reproducida"
+	// con cifras que no son las que se pagaron, y eso no se puede distinguir
+	// mirando el resultado. No es un fallo de infraestructura ni un "no
+	// encontrado".
+	ErrSnapshotCorrupto = errors.New("snapshot de parametros corrupto")
 
 	// ErrUsuarioInvalido: los datos de una cuenta nueva no cumplen el esquema.
 	//
@@ -141,3 +165,38 @@ var (
 	// repartiria como si fuera el total de un usuario distinto.
 	ErrUsuarioDeRecaudoDuplicado = errors.New("ya existe un usuario de recaudo con ese identificador")
 )
+
+// ErrorParametroAusente nombra las clausulas normativas que no tienen valor
+// vigente en la fecha pedida.
+//
+// Es un tipo y no solo el centinela porque el ADR 0004 pide que un reparto que
+// no encuentre un parametro "falle ruidosamente en vez de producir una cifra
+// falsa", y ruidosamente quiere decir diciendo CUAL falta. Quien recibe el
+// fallo -- distribucion, no un programador -- tiene que poder cargar la fila
+// que falta, y para eso necesita su clave, no un "parametro normativo
+// ausente" que no se puede accionar.
+//
+// errors.Is lo sigue reconociendo como [ErrParametroAusente], que es lo que ya
+// distingue el resto del sistema; errors.As da las claves.
+//
+// Lleva la lista ENTERA y no la primera que falte: si faltan cinco, enterarse
+// de una por intento son cinco viajes para la misma carga de datos.
+type ErrorParametroAusente struct {
+	// Fecha es el dia contra el que se resolvio, ya reducido a fecha en UTC.
+	// Va en el mensaje porque la misma clave puede estar y no estar segun el
+	// dia: un parametro "ausente" suele ser una vigencia que empieza mas
+	// tarde, no una fila que nadie cargo.
+	Fecha time.Time
+
+	// Claves son las clausulas sin valor, ordenadas.
+	Claves []string
+}
+
+func (e *ErrorParametroAusente) Error() string {
+	return fmt.Sprintf("%s en %s: %s",
+		ErrParametroAusente, e.Fecha.UTC().Format(time.DateOnly), strings.Join(e.Claves, ", "))
+}
+
+// Unwrap deja que quien solo quiera saber "falta un parametro" siga usando
+// errors.Is(err, ErrParametroAusente) sin conocer este tipo.
+func (e *ErrorParametroAusente) Unwrap() error { return ErrParametroAusente }

@@ -25,9 +25,14 @@ import (
 // Los metodos hablan en [repertorio.Metadatos] y [repertorio.Obra], que son
 // tipos del nucleo sin etiquetas json ni nada de transporte. La forma que
 // viaja por la red la decide este fichero.
+//
+// Las dos escrituras piden un actorID, igual que [Declaraciones.GuardarSplits]
+// y por lo mismo: es quien FIRMA el asiento de bitacora (ADR 0006). Sale de la
+// sesion y nunca del cuerpo -- un actor que llegue por la red es un actor que
+// se puede falsificar --, y por eso las dos rutas van detras de conSesion.
 type Catalogo interface {
-	RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos) (repertorio.Obra, error)
-	ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos) (repertorio.Obra, error)
+	RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error)
+	ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error)
 	ObraPorID(ctx context.Context, id string) (repertorio.Obra, error)
 	BuscarObras(ctx context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error)
 }
@@ -217,7 +222,14 @@ func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obra, err := a.catalogo.RegistrarObra(r.Context(), cuerpo.ID, cuerpo.aDominio())
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		// Inalcanzable detras de conSesion, igual que en guardarDeclaracion.
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+
+	obra, err := a.catalogo.RegistrarObra(r.Context(), cuerpo.ID, cuerpo.aDominio(), usuario.ID)
 	switch {
 	case err == nil:
 	case errors.Is(err, repertorio.ErrObraInvalida):
@@ -251,8 +263,14 @@ func (a *API) actualizarObra(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+
 	obra, err := a.catalogo.ActualizarMetadatosObra(
-		r.Context(), chi.URLParam(r, "id"), cuerpo.aDominio())
+		r.Context(), chi.URLParam(r, "id"), cuerpo.aDominio(), usuario.ID)
 	switch {
 	case err == nil:
 	case errors.Is(err, repertorio.ErrObraInvalida):

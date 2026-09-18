@@ -18,18 +18,19 @@ type catalogoFalso struct {
 	obras []repertorio.Obra
 	err   error
 
-	filtro     aplicacion.FiltroObras
-	idRecibido string
-	metadatos  repertorio.Metadatos
+	filtro        aplicacion.FiltroObras
+	idRecibido    string
+	metadatos     repertorio.Metadatos
+	actorRecibido string
 }
 
-func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos) (repertorio.Obra, error) {
-	c.idRecibido, c.metadatos = id, m
+func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
-func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos) (repertorio.Obra, error) {
-	c.idRecibido, c.metadatos = id, m
+func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
@@ -290,6 +291,11 @@ func TestRegistrarObraDevuelve201YLocation(t *testing.T) {
 	if cat.idRecibido != "obra-1" {
 		t.Fatalf("id recibido = %q", cat.idRecibido)
 	}
+	// Quien firma el asiento sale de la SESION y no del cuerpo (ADR 0006): un
+	// actor que llegue por la red es un actor que se puede falsificar.
+	if cat.actorRecibido != "usr-admin" {
+		t.Fatalf("actor recibido = %q, se esperaba el de la sesion", cat.actorRecibido)
+	}
 
 	// El cuerpo llego entero hasta el nucleo, coautores incluidos, y con el
 	// rol autoral tipado.
@@ -372,6 +378,9 @@ func TestActualizarObraIgnoraCualquierIDDelCuerpo(t *testing.T) {
 	}
 	if cat.metadatos.Titulo != "Otro titulo" || cat.metadatos.Anio != 2001 {
 		t.Fatalf("metadatos = %+v", cat.metadatos)
+	}
+	if cat.actorRecibido != "usr-admin" {
+		t.Fatalf("actor recibido = %q, se esperaba el de la sesion", cat.actorRecibido)
 	}
 }
 
