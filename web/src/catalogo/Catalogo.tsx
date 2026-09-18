@@ -559,9 +559,20 @@ function TablaCatalogo({
                   enlace por fila se sabe cual es cual.
                   El id se codifica porque el contrato lo declara opaco y
                   asignado FUERA de este sistema: no hay forma de saber que
-                  caracteres trae. `useParams` lo entrega decodificado y
-                  `DetalleObra` lo vuelve a codificar al consultar, asi que la
-                  obra que se consulta es la que esta fila nombra. */}
+                  caracteres trae. Para las ids que hoy existen -`obra-N`-
+                  codificar es lo correcto y `useParams` lo entrega decodificado,
+                  asi que la obra que se consulta es la que esta fila nombra.
+                  Lo que NO se puede afirmar, y por eso queda escrito aqui: el
+                  alfabeto del identificador no esta fijado por el contrato
+                  (`NuevaObra` admite cualquier id no vacio), y con un id que
+                  lleve `/ + , : ; = & @ $` -los que `encodeURIComponent` escapa
+                  y el escaper de rutas de Go deja literales- el parametro de
+                  ruta llega al handler TODAVIA escapado -medido con chi v5.2.2,
+                  9 de 9 ids-, asi que se busca un id que no existe y la peticion
+                  responde 404 sobre una obra que SI existe. Hoy no rompe porque
+                  las ids sembradas son `obra-N`. Estrechar el alfabeto en el
+                  contrato o desescapar en el handler es un issue propio: aqui
+                  solo se deja de prometer lo que no se cumple. */}
               <Link
                 to={`/catalogo/${encodeURIComponent(obra.id)}`}
                 state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}

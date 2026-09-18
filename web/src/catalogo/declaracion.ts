@@ -87,8 +87,21 @@ export function totalDeclarado(
  * Un total que no llega a positivo -0, y tambien negativo, que es lo que deja
  * una fila mientras se teclea un signo- cuenta como borrador vacio: no hay
  * nada declarado que guardar, y `NuevaDeclaracion` rechaza ese cuerpo igual
- * (exige al menos una parte, y cada una estrictamente positiva). La fila
- * negativa es cosa del editor, que es quien la valida al escribirla.
+ * (exige al menos una parte, y cada una estrictamente positiva).
+ *
+ * **Lo que el cliente NO hace hoy es validar el signo de una fila.** El
+ * comentario que decia que si -"la fila negativa es cosa del editor, que es
+ * quien la valida al escribirla"- era falso, y esta escrito aqui para que no
+ * vuelva: lo que mira esta funcion es el TOTAL, y el editor comprueba por fila
+ * una sola cosa, que su porcentaje se lea como un numero finito
+ * (`Number.isFinite`, en `EditorReparto.tsx`). Un borrador de -5 y 105 suma 100,
+ * o sea que se lee como `completa`, la pantalla SI ofrece guardar y lo unico
+ * que lo frena es el 400 del servidor.
+ *
+ * El reparto de responsabilidades es ese: el CLIENTE decide sobre la forma del
+ * cuerpo y sobre el total; el SERVIDOR aplica la regla, y `NuevaDeclaracion`
+ * exige un porcentaje estrictamente positivo. Su 400 es el mensaje que se
+ * enseña.
  */
 export function estadoDelBorrador(total: number): EstadoBorrador {
   if (!(total > 0)) return "vacia";
@@ -101,12 +114,19 @@ export function estadoDelBorrador(total: number): EstadoBorrador {
 /**
  * Si el borrador se puede guardar.
  *
- * Se bloquean exactamente los dos cuerpos que el backend rechaza con 400: uno
- * sin ninguna parte, y uno cuya suma pasa de 100. **No se bloquea la suma
- * menor a 100**, y eso no es un descuido: es la asimetria del contrato y de
- * R-04. Una declaracion que suma 60 se guarda, queda `incompleta` y su importe
- * se retiene entero; bloquearla contradiria el contrato y haria imposible
- * declarar a proposito por debajo de 100.
+ * Se bloquean dos cuerpos, y solo dos: uno que no declara nada -sin ninguna
+ * fila, o con un total que no llega a positivo- y uno cuya suma pasa de 100.
+ * **No se bloquea la suma menor a 100**, y eso no es un descuido: es la
+ * asimetria del contrato y de R-04. Una declaracion que suma 60 se guarda,
+ * queda `incompleta` y su importe se retiene entero; bloquearla contradiria el
+ * contrato y haria imposible declarar a proposito por debajo de 100.
+ *
+ * Y esos dos NO son "los dos cuerpos que el backend rechaza con 400", que es lo
+ * que decia el comentario de aqui: `NuevaDeclaracion` rechaza ademas un IPI
+ * ausente, un porcentaje no positivo, mas de cuatro decimales y un titular
+ * repetido. El cliente no adelanta esos cuatro -por fila solo comprueba que el
+ * porcentaje se lea como un numero, y el signo no lo mira-, asi que el 400 del
+ * servidor trae su mensaje y la pantalla lo enseña tal cual.
  */
 export function puedeGuardarBorrador(estado: EstadoBorrador): boolean {
   return estado !== "vacia" && estado !== "excedida";
@@ -135,15 +155,29 @@ export function formatearPorcentaje(valor: number): string {
  * El rotulo de la columna que muestra el nombre de un titular en las tablas de
  * partes (detalle e historial, pasos 6 y 7).
  *
- * Dice "en el padron actual" porque es el unico dato que el sistema tiene:
- * `Parte` trae `titular_id` e `ipi`, no el nombre, y el nombre se resuelve hoy
- * contra el padron de hoy. Un titular que se renombre despues aparecera con su
- * nombre nuevo tambien en las versiones antiguas, asi que la columna rotulada
- * como "Nombre" a secas afirmaria un hecho historico que el sistema no guarda.
- * Con el rotulo, la columna dice exactamente de donde sale el dato, y el
- * `titular_id` va visible al lado para poder conciliar la pantalla con la API.
+ * Dice "en el padron actual" porque es el unico nombre que el sistema tendria
+ * derecho a mostrar: `Parte` trae `titular_id` e `ipi`, no el nombre, y
+ * resolverlo contra el padron de HOY hace que un titular que se renombre
+ * aparezca con su nombre nuevo tambien en las versiones antiguas, o sea un
+ * hecho historico que el sistema no guarda. Congelar el nombre con la version
+ * es lo correcto a largo plazo y sigue anotado como pendiente: cambia la forma
+ * de respuestas ya entregadas.
  *
- * Congelar el nombre con la version es lo correcto a largo plazo y esta
- * anotado como pendiente (D-006): cambia la forma de respuestas ya entregadas.
+ * **Hoy no se resuelve ningun nombre, y el rotulo existe para el dia en que se
+ * resuelva.** `TablaDePartes.tsx` pinta un guion en todas las filas de esa
+ * columna, y el parrafo de esa misma pantalla dice por que: no busca el nombre.
+ * El motivo es del contrato, no de la pantalla: `GET /titulares` no admite
+ * filtrar por identificador (`internal/infraestructura/httpapi/titulares.go`),
+ * asi que con el `titular_id` de una fila en la mano no hay forma de pedir su
+ * nombre sin traer paginas enteras del padron y cruzarlas en el cliente.
+ *
+ * Esto es una DESVIACION de D-006, y se registra aqui porque el comentario que
+ * habia en este sitio afirmaba lo contrario -que el nombre "se resuelve hoy
+ * contra el padron de hoy"-. D-006 decidio resolverlo en el cliente contra el
+ * padron que el editor ya carga; el paso 6 dejo esa resolucion sin implementar
+ * -y lo registro en `progress.md`-, pero el registro de decisiones se quedo sin
+ * corregir. La resolucion contra el padron sigue siendo una decision registrada
+ * y **NO implementada**. Alinear las dos fuentes es trabajo propio, no un
+ * efecto secundario de este arreglo.
  */
 export const ROTULO_NOMBRE_EN_PADRON_ACTUAL = "Nombre en el padrón actual";

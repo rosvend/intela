@@ -172,6 +172,17 @@ const versionCuatro: VersionDeclaracion = {
   ],
 };
 
+// La version que abre el PRIMER guardado de una obra: la 1. Existe porque el
+// panel del exito prometia, sin condicion, conservar una version anterior que
+// en este caso no hay (WARNING de la revision adversarial de la iteracion 1).
+const primeraVersion: VersionDeclaracion = {
+  version: 1,
+  vigente_desde: "2026-09-01T09:00:00Z",
+  vigente_hasta: null,
+  estado: "completa",
+  partes: [{ titular_id: "tit-1", ipi: "IPI-00000001", porcentaje: 100 }],
+};
+
 // Los mensajes REALES con que contesta el handler
 // (internal/infraestructura/httpapi/declaraciones.go). Se copian literales para
 // que la pantalla se pruebe contra la prosa que de verdad va a recibir; si el
@@ -690,6 +701,110 @@ describe("editor de reparto (integracion con App)", () => {
     ).toBeTruthy();
   });
 
+  // CRITICAL de la revision adversarial de la iteracion 1: en esta rama el
+  // cliente deja de saber que version abrio el servidor -el 200 lo prueba, el
+  // cuerpo no lo dice-, y el aviso caia al historial en memoria, que ya era
+  // viejo, para afirmar el numero que el propio 200 acababa de cerrar. Dos
+  // textos de la MISMA pantalla que se contradecian, y el de arriba mentia.
+  it("tras un 200 con cuerpo ilegible el aviso deja de afirmar que version se cierra", async () => {
+    simularServidor({ guardado: () => json({ version: "cuatro" }) });
+    await abrirElEditor();
+
+    // Antes de guardar el aviso si nombra la version que rige, y la saca del
+    // historial: eso no cambia.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 3 y abrirá la versión 4/,
+    );
+
+    guardar();
+
+    await screen.findByRole("alert");
+    const aviso = avisoDeVersion().textContent ?? "";
+    // Lo que SI se sabe: un 200 es lo que el contrato promete cuando una
+    // version se abre. Lo que no: cual es.
+    expect(aviso).toMatch(
+      /El servidor contestó sin error, así que una versión se abrió/,
+    );
+    expect(aviso).toMatch(/esta pantalla no puede decir cuál es/);
+    // Y la consecuencia practica, que el panel de abajo no da: guardar otra vez
+    // abre una version de mas.
+    expect(aviso).toMatch(
+      /Compruébalo en el historial antes de volver a guardar/,
+    );
+    expect(aviso).toMatch(/guardar otra vez abre una versión más/);
+    // La consecuencia que si se sostiene en todos los casos.
+    expect(aviso).toMatch(
+      /la versión anterior, si la hay, no se borra ni se modifica/,
+    );
+    // NINGUN numero de version: ni el 3 del historial, ni el que el 200 acaba
+    // de cerrar.
+    expect(aviso).not.toMatch(/versión \d/);
+    // Y no se reutiliza el texto del historial ilegible: aqui el historial se
+    // leyo perfectamente, lo que cambio es el GUARDADO.
+    expect(aviso).not.toMatch(/No se pudo leer el historial/);
+    expect(aviso).not.toMatch(/tampoco se ha podido cargar/);
+  });
+
+  // La otra mitad del CRITICAL: un 5xx deja la misma duda -`Store.Guardar`
+  // corre dentro de `EnTransaccion`, asi que el COMMIT pudo entrar- y el aviso
+  // afirmaba igual cual se cerraria.
+  it("tras un 5xx el aviso no afirma que version se cerrara", async () => {
+    simularServidor({ guardado: () => json({ error: MENSAJE_500 }, 500) });
+    await abrirElEditor();
+
+    guardar();
+
+    await screen.findByRole("alert");
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).toMatch(/No se sabe si el guardado abrió una versión/);
+    expect(aviso).toMatch(
+      /esta pantalla no puede decir qué versión se cerrará ni con qué número se abre la nueva/,
+    );
+    expect(aviso).toMatch(
+      /la versión anterior, si la hay, no se borra ni se modifica/,
+    );
+    expect(aviso).not.toMatch(/versión \d/);
+    expect(aviso).not.toMatch(/No se pudo leer el historial/);
+  });
+
+  it("sin respuesta del servidor el aviso tampoco afirma que version se cerrara", async () => {
+    simularServidor();
+    await abrirElEditor();
+    // El doble se cambia despues de montar: la pantalla ya tiene sus lecturas.
+    vi.mocked(fetch).mockImplementation((entrada, init) => {
+      const url = String(entrada);
+      const metodo = init?.method ?? "GET";
+      if (url === "/api/auth/session") {
+        return Promise.resolve(respuestaDeSesion("administrador"));
+      }
+      if (metodo === "PUT") return Promise.reject(new TypeError("sin red"));
+      return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
+    });
+
+    guardar();
+
+    await screen.findByRole("alert");
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).toMatch(/No se sabe si el guardado abrió una versión/);
+    expect(aviso).not.toMatch(/versión \d/);
+  });
+
+  // El limite del arreglo, y por eso tiene su propio test: un 4xx NO abre
+  // ninguna version, asi que el historial en memoria sigue siendo la autoridad
+  // y el aviso no cae a la forma sin numeros. Si esto se rompiera, la pantalla
+  // diria menos de lo que sabe.
+  it("tras un 400 el historial vuelve a ser la autoridad del aviso", async () => {
+    simularServidor({ guardado: () => json({ error: MENSAJE_SUMA }, 400) });
+    await abrirElEditor();
+
+    guardar();
+
+    await screen.findByRole("alert");
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 3 y abrirá la versión 4/,
+    );
+  });
+
   // D-009: los tres estados del aviso. El primero -con historial- lo fija el
   // test de arriba; los otros dos, estos. Ninguno afirma un numero que no tenga,
   // y por eso la comprobacion es `versión \d` y no un numero concreto: el dia
@@ -929,6 +1044,60 @@ describe("editor de reparto (integracion con App)", () => {
     // entonces: un periodo pasado tiene que poder reproducirse con el split que
     // estaba vigente entonces.
     expect(screen.getAllByText("60.0000%").length).toBeGreaterThan(0);
+  });
+
+  // WARNING de la revision adversarial: el parrafo del exito prometia, sin
+  // condicion, que "la version anterior no se borra ni se modifica" tambien
+  // cuando la que se abre es la 1, donde no hay ninguna version anterior. El
+  // aviso hermano de la misma pantalla ya se curaba con "si la hay" y el aviso
+  // previo de este mismo flujo dice que no hay ninguna que cerrar.
+  it("guardar la primera declaracion no promete una version anterior que no hay", async () => {
+    simularServidor({
+      obra: () => json(obraSinDeclarar),
+      historial: () => json([]),
+      guardado: () => json(primeraVersion),
+    });
+
+    await abrirElEditor("/catalogo/obra-3/declaracion");
+    await screen.findByRole("table", { name: "Padrón de titulares" });
+
+    // El aviso previo ya lo decia: no hay ninguna version anterior que cerrar.
+    expect(avisoDeVersion().textContent).toMatch(
+      /No hay ninguna versión anterior que cerrar/,
+    );
+
+    // El historial vacio no trae filas, asi que el reparto se arma desde el
+    // padron: es el camino real de la primera declaracion de una obra.
+    agregarAlReparto("tit-1");
+    escribirPorcentaje("tit-1", "100");
+    guardar();
+
+    const panel = await screen.findByRole("heading", {
+      name: "El servidor abrió la versión 1",
+    });
+    const caja = panel.closest("section");
+    if (!caja) throw new Error("el panel del guardado no tiene seccion");
+    // Lo que si se sostiene con la version 1: la declaracion queda en el
+    // historial y un periodo pasado se reproduce con el reparto que regia
+    // entonces.
+    expect(
+      within(caja).getByText(/Esta es la primera declaración de la obra/),
+    ).toBeTruthy();
+    expect(caja.textContent).toMatch(
+      /antes de esta versión no había ninguno declarado/,
+    );
+    // Y lo que no: una version anterior que conserve nada.
+    expect(caja.textContent).not.toMatch(
+      /La versión anterior no se borra ni se modifica/,
+    );
+    expect(caja.textContent).not.toMatch(
+      /sigue en el historial con los porcentajes que regían hasta ahora/,
+    );
+    // El aviso de arriba si queda al dia con la version que el servidor abrio:
+    // la que se cerrara la proxima vez es esta.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 1 y abrirá la versión 2/,
+    );
   });
 
   it("un 404 al guardar dice que la obra ya no esta, con el mensaje del servidor", async () => {

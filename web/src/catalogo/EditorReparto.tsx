@@ -155,19 +155,36 @@ function versionAbierta(
  * - `abreLaPrimera`: el historial vino vacio -la obra no tiene ninguna
  *   declaracion- asi que el numero que se abriria seria el 1, y se dice con
  *   palabras en vez de con una cifra deducida;
- * - `sinNumeros`: no se pudo leer el historial, o lo que trajo no permite saber
- *   que version esta abierta. Se dice SOLO la consecuencia -la version anterior
- *   queda en el historial y no se modifica- y ningun numero.
+ * - `sinNumeros`: no se sabe que version esta abierta. Cuatro motivos distintos
+ *   caen aqui y cada uno tiene su prosa -el `porque`-, porque nombrar la causa
+ *   equivocada es la misma clase de defecto que este tipo existe para cerrar:
+ *   el historial no se pudo leer, lo que trajo no deja ver una sola version
+ *   abierta, el `PUT` contesto 200 con un cuerpo ilegible, o el guardado quedo
+ *   en duda (un 5xx, una respuesta perdida). Se dice SOLO la consecuencia -la
+ *   version anterior, si la hay, queda en el historial y no se modifica- y
+ *   ningun numero.
+ *
+ * `sinBorrador` no es un quinto motivo: es el hecho independiente de que el
+ * borrador no se pudo sembrar con el reparto vigente, y se sigue diciendo pase
+ * lo que pase con el guardado.
  */
 type AvisoDeVersion =
   | { tipo: "cierraYabre"; seCierra: number; seAbre: number }
   | { tipo: "abreLaPrimera" }
-  | { tipo: "sinNumeros"; porque: "historialNoLeido" | "sinVersionAbierta" };
+  | {
+      tipo: "sinNumeros";
+      porque:
+        | "historialNoLeido"
+        | "sinVersionAbierta"
+        | "guardadoSinLeer"
+        | "guardadoIncierto";
+      sinBorrador: boolean;
+    };
 
 /**
- * El aviso, a partir de las dos unicas fuentes que pueden saberlo: el historial
- * leido al abrir la pantalla, y la version que el servidor contesto que abrio
- * en el ultimo guardado.
+ * El aviso, a partir de las TRES fuentes que pueden saberlo: el historial leido
+ * al abrir la pantalla, la version que el servidor contesto que abrio en el
+ * ultimo guardado, y el DESENLACE de ese guardado.
  *
  * `versionGuardada` manda sobre el historial, y no es un atajo: despues de
  * guardar, el historial que hay en memoria es el de ANTES, y usarlo diria que
@@ -175,11 +192,59 @@ type AvisoDeVersion =
  * `PUT` es el dato mas fresco que existe -el servidor acaba de escribir esa
  * version-, y el consecutivo es del servidor: `Store.Guardar` abre
  * `versionAbierta + 1` (`internal/infraestructura/postgres/declaraciones.go`).
+ *
+ * **El desenlace manda sobre las dos**, y ese es el arreglo que trajo el
+ * completion fix `iter-1/step-8.1` (hallazgo CRITICAL de la revision
+ * adversarial). Con solo dos fuentes -historial y `versionGuardada`- esta
+ * funcion afirmaba un numero que el cliente habia dejado de tener, en los dos
+ * desenlaces en que el guardado es el que deja la duda:
+ *
+ * - `guardadaSinLeer`: el 200 prueba que el servidor abrio una version -el
+ *   handler escribe despues de confirmar la transaccion-, pero el cuerpo no
+ *   llego con la forma del contrato, asi que el cliente NO SABE CUAL es. Esa
+ *   rama no toca `versionGuardada`, asi que el aviso caia al historial en
+ *   memoria -que ya era viejo- y afirmaba "cerrara la version N" sobre la
+ *   version que el 200 acababa de cerrar, mientras el panel de la MISMA
+ *   pantalla decia que no puede saber cual se abrio. Dos textos incompatibles
+ *   sobre el mismo hecho, y el de arriba era el que mentia.
+ * - `incierta`: un 5xx o la falta de respuesta. `Store.Guardar` corre dentro de
+ *   `EnTransaccion`, asi que no se sabe si una version quedo abierta, y sin
+ *   saberlo no se puede decir cual se cerraria.
+ *
+ * Los dos van a `sinNumeros` con su PROPIO `porque`, y NO se reutiliza el texto
+ * de `historialNoLeido`: ese dice que no se pudo leer el historial, y aqui el
+ * historial se leyo perfectamente -lo que cambio es el GUARDADO-. Un texto que
+ * nombra la causa equivocada es el mismo defecto que este arreglo viene a
+ * cerrar, asi que los dos motivos nuevos tienen su prosa propia.
+ *
+ * Un 4xx (`rechazada`) NO entra por aqui: no deja ninguna version abierta, y el
+ * historial en memoria sigue siendo la autoridad para decir cual se cerraria.
+ * Tampoco el 200 legible, que es el unico camino donde `versionGuardada` se
+ * fija.
  */
 function avisoDeVersion(
   historial: readonly VersionDeclaracion[] | null,
   versionGuardada: number | null,
+  resultado: ResultadoDelGuardado | null,
 ): AvisoDeVersion {
+  // El desenlace del guardado manda sobre todo lo demas, incluida la version
+  // que el propio `PUT` devolvio: entre un guardado legible y otro posterior
+  // que quedo en duda, la que ya no se sostiene es la del primero.
+  const delGuardado: "guardadoSinLeer" | "guardadoIncierto" | null =
+    resultado?.tipo === "guardadaSinLeer"
+      ? "guardadoSinLeer"
+      : resultado?.tipo === "incierta"
+        ? "guardadoIncierto"
+        : null;
+  if (delGuardado !== null) {
+    return {
+      tipo: "sinNumeros",
+      porque: delGuardado,
+      // El borrador se sembro -o no- al leer el historial, y un guardado
+      // posterior no cambia eso: el hecho se dice en los dos casos.
+      sinBorrador: historial === null,
+    };
+  }
   if (versionGuardada !== null) {
     return {
       tipo: "cierraYabre",
@@ -188,11 +253,21 @@ function avisoDeVersion(
     };
   }
   if (historial === null) {
-    return { tipo: "sinNumeros", porque: "historialNoLeido" };
+    return {
+      tipo: "sinNumeros",
+      porque: "historialNoLeido",
+      sinBorrador: true,
+    };
   }
   if (historial.length === 0) return { tipo: "abreLaPrimera" };
   const abierta = versionAbierta(historial);
-  if (!abierta) return { tipo: "sinNumeros", porque: "sinVersionAbierta" };
+  if (!abierta) {
+    return {
+      tipo: "sinNumeros",
+      porque: "sinVersionAbierta",
+      sinBorrador: false,
+    };
+  }
   return {
     tipo: "cierraYabre",
     seCierra: abierta.version,
@@ -346,12 +421,19 @@ const ESTADO_DEL_BORRADOR: Record<
  *   la regla que se incumplio, y solo el backend sabe cual de ellas ha sido.
  *
  * El bloqueo del guardado SI es del cliente, y es el unico que hay:
- * `puedeGuardarBorrador` frena exactamente los dos cuerpos que el backend
- * rechaza con 400 -sin partes, y con la suma por encima de 100-. Que el cliente
- * frene no es que la regla sea suya: la regla es del servidor, que la aplica
- * aunque el cliente no la mire, y si el total se cuela -una suma que se pasa por
- * menos que la tolerancia, un porcentaje con mas de cuatro decimales- el 400 del
- * backend es lo que se enseña.
+ * `puedeGuardarBorrador` frena dos cuerpos -uno que no declara nada, y uno cuya
+ * suma pasa de 100-. Que el cliente frene no es que la regla sea suya: la regla
+ * es del servidor, que la aplica aunque el cliente no la mire, y si el total se
+ * cuela -una suma que se pasa por menos que la tolerancia, un porcentaje con mas
+ * de cuatro decimales- el 400 del backend es lo que se enseña.
+ *
+ * Este bloqueo NO es la lista de todo lo que el backend rechaza con 400, y el
+ * comentario que lo decia asi era falso: `repertorio.NuevaDeclaracion` rechaza
+ * ademas un IPI ausente, un porcentaje no positivo, mas de cuatro decimales y un
+ * titular repetido. La lista de los dos cuerpos que el cliente SI bloquea vive
+ * en un solo sitio, `declaracion.ts` (`puedeGuardarBorrador`,
+ * `estadoDelBorrador`); repetirla aqui daria dos fuentes para el mismo hecho, y
+ * la que se quede sin actualizar es la que miente.
  */
 export default function EditorReparto() {
   const { id = "" } = useParams();
@@ -518,7 +600,10 @@ function FormularioDeReparto({
     (fila) => !Number.isFinite(porcentajeDeTexto(fila.porcentaje)),
   ).length;
   const puedeGuardar = puedeGuardarBorrador(estado) && filasSinNumero === 0;
-  const aviso = avisoDeVersion(historial, versionGuardada);
+  // Las tres fuentes: el historial, la version que el `PUT` devolvio y el
+  // desenlace de ese `PUT`. La ultima manda, y por eso no basta con las dos
+  // primeras -ver `avisoDeVersion`-.
+  const aviso = avisoDeVersion(historial, versionGuardada, resultado);
 
   function agregarTitular(titular: Titular) {
     // La fila nace SIN porcentaje: la cifra la escribe quien declara, y un
@@ -721,20 +806,58 @@ function AvisoDeVersionVisible({
   }
 
   // Sin numeros. Lo unico que se afirma es la consecuencia, que se sostiene en
-  // los dos casos: no hay forma de editar una version pasada, solo de abrir una
-  // nueva, asi que la anterior no se borra ni se modifica.
+  // todos los casos: no hay forma de editar una version pasada, solo de abrir
+  // una nueva, asi que la anterior -si la hay- no se borra ni se modifica.
   const consecuencia =
     "Lo que sí se sabe: la versión anterior, si la hay, no se borra ni se modifica, y queda en el historial con los porcentajes que regían hasta ahora.";
+  // Si el borrador no se pudo sembrar, se sigue diciendo: es un hecho del
+  // historial, no del guardado, y ninguno de los motivos de abajo lo cambia.
+  const sinBorrador = aviso.sinBorrador
+    ? " El borrador tampoco se ha podido cargar con el reparto vigente."
+    : "";
+
   if (aviso.porque === "historialNoLeido") {
     return (
       <p className="editor-aviso-version">
         No se pudo leer el historial de esta declaración ({mensaje}), así que
         esta pantalla no puede decir qué versión se cerrará ni con qué número se
-        abre la nueva. {consecuencia} El borrador tampoco se ha podido cargar
-        con el reparto vigente.
+        abre la nueva. {consecuencia}
+        {sinBorrador}
       </p>
     );
   }
+
+  // El 200 con un cuerpo que no se pudo leer: el servidor SI abrio una version
+  // -un 200 es lo que el contrato promete cuando la abre-, pero no dijo cual.
+  // El aviso no puede caer al historial en memoria: alli la version que se
+  // cerraria es justo la que el 200 acaba de cerrar.
+  if (aviso.porque === "guardadoSinLeer") {
+    return (
+      <p className="editor-aviso-version">
+        El servidor contestó sin error, así que una versión se abrió, pero la
+        respuesta no llegó con la forma del contrato y esta pantalla no puede
+        decir cuál es. Compruébalo en el historial antes de volver a guardar:
+        guardar otra vez abre una versión más. {consecuencia}
+        {sinBorrador}
+      </p>
+    );
+  }
+
+  // Un 5xx o una respuesta perdida: no se sabe si una version quedo abierta, y
+  // sin saberlo no se puede decir cual se cerraria. El panel de abajo da el
+  // paso siguiente; aqui solo se deja de afirmar el numero.
+  if (aviso.porque === "guardadoIncierto") {
+    return (
+      <p className="editor-aviso-version">
+        No se sabe si el guardado abrió una versión: un fallo al confirmar es
+        indistinguible de una respuesta que se perdió, así que esta pantalla no
+        puede decir qué versión se cerrará ni con qué número se abre la nueva.{" "}
+        {consecuencia}
+        {sinBorrador}
+      </p>
+    );
+  }
+
   return (
     <p className="editor-aviso-version">
       Con lo que el servidor devolvió en el historial, esta pantalla no puede
@@ -1108,11 +1231,29 @@ function PanelDelGuardado({
             </dd>
           </div>
         </dl>
-        <p className="panel-aviso">
-          La versión anterior no se borra ni se modifica: sigue en el historial
-          con los porcentajes que regían hasta ahora. Un reparto de un periodo
-          pasado se reproduce con el reparto que estaba vigente entonces.
-        </p>
+        {/* El parrafo va ramificado por el numero que el servidor acaba de
+            contestar, y no es un detalle de estilo: con la version 1 -el caso
+            central del issue, una obra sin ninguna declaracion- NO hay ninguna
+            version anterior, asi que el texto que se pintaba sin condicion
+            afirmaba un hecho del registro que no existe. Es la misma disciplina
+            del aviso de arriba, que se cura con "si la hay". Las dos ramas
+            dicen cosas que la otra no desmiente. */}
+        {version === 1 ? (
+          <p className="panel-aviso">
+            Esta es la primera declaración de la obra: no había ninguna versión
+            anterior que conservar, y esta queda en el historial desde ahora con
+            los porcentajes que se acaban de declarar. Un reparto de un periodo
+            pasado se reproduce con el reparto que regía entonces, y antes de
+            esta versión no había ninguno declarado.
+          </p>
+        ) : (
+          <p className="panel-aviso">
+            La versión anterior no se borra ni se modifica: sigue en el
+            historial con los porcentajes que regían hasta ahora. Un reparto de
+            un periodo pasado se reproduce con el reparto que estaba vigente
+            entonces.
+          </p>
+        )}
         {enlaceAlHistorial}
       </section>
     );
