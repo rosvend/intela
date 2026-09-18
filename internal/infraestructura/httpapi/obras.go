@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -116,10 +117,10 @@ func aObraJSON(o repertorio.Obra) obraJSON {
 // ---------------------------------------------------------------------------
 // Handlers
 
-// buscarObras sirve el catalogo, con o sin filtros.
+// buscarObras sirve el catalogo, con o sin filtros, siempre paginado.
 //
-// Sin ningun parametro devuelve el catalogo entero: "sin recorte" es un
-// recorte mas y no merece una ruta aparte.
+// Sin filtros de titulo/genero/IPI/anio devuelve la primera pagina: el tope
+// evita servir el catalogo real de REDES SGC de un golpe (issue #90).
 func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filtro := aplicacion.FiltroObras{
@@ -139,6 +140,12 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 		filtro.Anio = anio
 	}
 
+	pag, ok := leerPaginacion(w, q)
+	if !ok {
+		return
+	}
+	filtro.Paginacion = pag
+
 	obras, err := a.catalogo.BuscarObras(r.Context(), filtro)
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "fallo al buscar obras", slog.Any("error", err))
@@ -153,6 +160,34 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 		cuerpo = append(cuerpo, aObraJSON(o))
 	}
 	escribirJSON(w, http.StatusOK, cuerpo)
+}
+
+// leerPaginacion interpreta limite y desplazamiento. Misma forma que
+// ListarObras: ausente = defecto; mal formado o fuera de rango = 400.
+func leerPaginacion(w http.ResponseWriter, q url.Values) (aplicacion.Paginacion, bool) {
+	p := aplicacion.Paginacion{}
+	if bruto := q.Get("limite"); bruto != "" {
+		n, err := strconv.Atoi(bruto)
+		if err != nil || n <= 0 {
+			escribirError(w, http.StatusBadRequest, "limite tiene que ser un entero positivo")
+			return aplicacion.Paginacion{}, false
+		}
+		if n > aplicacion.LimiteObrasMaximo {
+			escribirError(w, http.StatusBadRequest,
+				"limite no puede ser mayor que "+strconv.Itoa(aplicacion.LimiteObrasMaximo))
+			return aplicacion.Paginacion{}, false
+		}
+		p.Limite = n
+	}
+	if bruto := q.Get("desplazamiento"); bruto != "" {
+		n, err := strconv.Atoi(bruto)
+		if err != nil || n < 0 {
+			escribirError(w, http.StatusBadRequest, "desplazamiento tiene que ser un entero no negativo")
+			return aplicacion.Paginacion{}, false
+		}
+		p.Desplazamiento = n
+	}
+	return p.ConDefecto(), true
 }
 
 func (a *API) obraPorID(w http.ResponseWriter, r *http.Request) {
