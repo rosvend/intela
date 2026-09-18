@@ -812,10 +812,12 @@ td {
   vertical-align: top;
 }
 
+/* El id del rechazo (`rep-<huella>-<n>`) pasa de 70 caracteres y la columna se
+   titula "Id", no "Fila": parte linea en vez de estirar la tabla. */
 .tabla-rechazos-id {
   font-family: var(--mono);
   font-size: 0.8rem;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 /* ids_fuente trae una linea `clave=valor` por identificador (ADR 0018). */

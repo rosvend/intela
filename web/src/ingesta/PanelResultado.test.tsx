@@ -23,12 +23,17 @@ const sinRechazos: Entrega = {
   rechazados: [],
 };
 
+// El id de un rechazo es `rep-<64 hex de la huella>-<n>`, con `n` = posicion
+// entre las filas ya filtradas (internal/aplicacion/ingesta.go), no la linea de
+// la hoja. Por eso los ids de estos fixtures son largos y su sufijo no tiene
+// por que coincidir con el "fila N" del motivo: es justo el malentendido que la
+// columna "Id" evita.
 const parcial: Entrega = {
   ...sinRechazos,
   aceptados: 58,
   rechazados: [
     {
-      id: "rep-9f2c4e1a-6",
+      id: `rep-${SHA}-1`,
       titulo: "Obra sintetica A",
       // Formato de ids_fuente (ADR 0018): una linea `clave=valor` por id.
       ids_fuente: "id_ficha=F-001\nimdb=tt0000001",
@@ -36,7 +41,7 @@ const parcial: Entrega = {
         'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero',
     },
     {
-      id: "rep-9f2c4e1a-9",
+      id: `rep-${SHA}-4`,
       titulo: "Obra sintetica B",
       ids_fuente: "id_ficha=F-002",
       motivo: 'fila 9, titulo (columna "Titulo"): vacio',
@@ -53,6 +58,19 @@ const NO_SE_GUARDO =
 
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
+
+const MENSAJE_SIN_RESPUESTA = "no se recibio una respuesta util del servidor";
+
+// Texto literal del 409 de evidencia corrupta: lo levanta
+// internal/infraestructura/httpapi/reportes.go cuando la boveda tiene bytes
+// distintos bajo la huella. Se copia aqui a proposito: si el backend lo
+// reformula, este test avisa de que la UI lo estaba mostrando.
+const MENSAJE_EVIDENCIA_CORRUPTA =
+  "la boveda ya tiene contenido distinto bajo esa huella; avise a operacion";
+
+// Pagina de error de nginx: no es un mensaje de la API y no se debe pintar.
+const HTML_DEL_PROXY =
+  "<html><head><title>504 Gateway Time-out</title></head><body><h1>504 Gateway Time-out</h1><hr><center>nginx</center></body></html>";
 
 /** El valor que acompana a una etiqueta del resumen de la entrega. */
 function dato(etiqueta: string): string | null | undefined {
@@ -98,15 +116,18 @@ describe("PanelResultado", () => {
     const encabezados = within(tabla)
       .getAllByRole("columnheader")
       .map((th) => th.textContent);
-    expect(encabezados).toEqual([
-      "Fila",
-      "Título",
-      "IDs de la fuente",
-      "Motivo",
-    ]);
+    // "Id" y no "Fila": la primera columna trae el id interno del rechazo, que
+    // no es la linea de la hoja (el motivo la nombra cuando la sabe).
+    expect(encabezados).toEqual(["Id", "Título", "IDs de la fuente", "Motivo"]);
     const filasDeDatos = within(tabla).getAllByRole("row").slice(1);
     expect(filasDeDatos).toHaveLength(2);
+    // El id se pinta entero, con sus 64 hex, para poder copiarlo al reportar.
     for (const rechazo of parcial.rechazados) {
+      expect(
+        within(tabla)
+          .getByText(rechazo.id)
+          .classList.contains("tabla-rechazos-id"),
+      ).toBe(true);
       expect(within(tabla).getByText(rechazo.motivo)).toBeTruthy();
     }
   });
@@ -124,13 +145,14 @@ describe("PanelResultado", () => {
         name: "La entrega no cumple la estructura mínima",
       }),
     ).toBeTruthy();
-    // Un solo elemento con el mensaje entero: ni partido ni reescrito (D-006).
+    // Un solo elemento con el mensaje entero: ni partido ni reescrito; partirlo
+    // acoplaria la UI a la prosa de Go.
     expect(within(alerta).getByText(MENSAJE_400).textContent).toBe(MENSAJE_400);
     expect(within(alerta).getByText(NO_SE_GUARDO)).toBeTruthy();
   });
 
   it.each([
-    [409, "Ese archivo ya se había cargado"],
+    [409, "La entrega no se registró"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
     [500, "No se pudo registrar la entrega"],
@@ -152,7 +174,59 @@ describe("PanelResultado", () => {
     },
   );
 
-  // D-011: sin respuesta legible no se sabe si la entrega quedo registrada, y
+  // El 409 de evidencia corrupta entra por el mismo status que el duplicado,
+  // asi que el titulo tiene que dejar hablar al mensaje del backend.
+  it("un 409 de evidencia corrupta conserva su mensaje y no lo titula duplicado", () => {
+    render(
+      <PanelResultado
+        resultado={{
+          tipo: "fallo",
+          status: 409,
+          mensaje: MENSAJE_EVIDENCIA_CORRUPTA,
+        }}
+      />,
+    );
+
+    const alerta = screen.getByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "La entrega no se registró",
+      }),
+    ).toBeTruthy();
+    // El mensaje de la API llega entero: es lo que dice que hay que avisar a
+    // operacion, y no un "ya se habia cargado" inofensivo.
+    expect(within(alerta).getByText(MENSAJE_EVIDENCIA_CORRUPTA)).toBeTruthy();
+    expect(within(alerta).queryByText(/ya se había cargado/i)).toBeNull();
+    // Con un 409 el servidor contesto: no hay duda de si la entrega llego.
+    expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
+  });
+
+  it.each([502, 504] as const)(
+    "un %s del proxy no pinta su cuerpo y avisa que la entrega pudo llegar",
+    (status) => {
+      render(
+        <PanelResultado
+          resultado={resultadoDeError(new ApiError(status, HTML_DEL_PROXY))}
+        />,
+      );
+
+      const alerta = screen.getByRole("alert");
+      expect(
+        within(alerta).getByRole("heading", {
+          name: "No se pudo registrar la entrega",
+        }),
+      ).toBeTruthy();
+      expect(within(alerta).getByText(MENSAJE_SIN_RESPUESTA)).toBeTruthy();
+      expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
+      // Ni el HTML del proxy ni su titulo: no son la explicacion del backend.
+      expect(within(alerta).queryByText(/nginx/i)).toBeNull();
+      expect(within(alerta).queryByText(/Gateway Time-out/i)).toBeNull();
+      // El "no se guardo nada" es solo del 400: aqui pudo haber entrado.
+      expect(within(alerta).queryByText(NO_SE_GUARDO)).toBeNull();
+    },
+  );
+
+  // Sin respuesta legible no se sabe si la entrega quedo registrada, y
   // reintentar a ciegas daria 409 si llego.
   it("sin red avisa que la entrega pudo llegar y no repite el titulo", () => {
     const red = new ErrorDeRed(new TypeError("Failed to fetch"));
@@ -172,7 +246,7 @@ describe("PanelResultado", () => {
     expect(screen.queryByText(NO_SE_GUARDO)).toBeNull();
   });
 
-  it("un error desconocido tiene su propio titulo, su mensaje y el mismo aviso", () => {
+  it("un error desconocido tiene su propio titulo, un mensaje generico y el mismo aviso", () => {
     render(<PanelResultado resultado={resultadoDeError(new Error("boom"))} />);
 
     const alerta = screen.getByRole("alert");
@@ -181,9 +255,9 @@ describe("PanelResultado", () => {
         name: "No se pudo registrar la entrega",
       }),
     ).toBeTruthy();
-    expect(
-      within(alerta).getByText("error desconocido al subir el archivo"),
-    ).toBeTruthy();
+    // El texto interno ("boom") no es un mensaje del backend y no se pinta.
+    expect(within(alerta).getByText(MENSAJE_SIN_RESPUESTA)).toBeTruthy();
+    expect(within(alerta).queryByText("boom")).toBeNull();
     expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
     expect(within(alerta).queryByText(/contactar al servidor/i)).toBeNull();
   });
@@ -197,6 +271,17 @@ describe("resultadoDeError", () => {
       mensaje: "ya se habia cargado",
     });
   });
+
+  it.each([502, 504] as const)(
+    "un %s del proxy no se guarda como mensaje del backend",
+    (status) => {
+      expect(resultadoDeError(new ApiError(status, HTML_DEL_PROXY))).toEqual({
+        tipo: "fallo",
+        status: "inalcanzable",
+        mensaje: "error desconocido al subir el archivo",
+      });
+    },
+  );
 
   it("un ErrorDeRed queda marcado como fallo de red", () => {
     const red = new ErrorDeRed(new TypeError("Failed to fetch"));

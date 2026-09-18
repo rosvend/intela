@@ -7,8 +7,9 @@ export type Entrega = components["schemas"]["Entrega"];
 
 // El status HTTP con que respondio el servidor; "red" si no hubo respuesta
 // (ErrorDeRed); "desconocido" si algo fallo fuera de la API, por ejemplo un
-// 201 cuyo cuerpo no se pudo leer.
-type StatusDeFallo = number | "red" | "desconocido";
+// 201 cuyo cuerpo no se pudo leer; "inalcanzable" si contesto algo que no es la
+// API, que en la practica son el 502 y el 504 del proxy.
+type StatusDeFallo = number | "red" | "desconocido" | "inalcanzable";
 
 export type Resultado =
   | { tipo: "entrega"; entrega: Entrega }
@@ -32,22 +33,58 @@ export function huellaCorta(sha256: string): string {
 // siempre el mensaje del backend, que va debajo.
 const TITULO_POR_STATUS: Record<number, string> = {
   400: "La entrega no cumple la estructura mínima",
-  409: "Ese archivo ya se había cargado",
+  // 409 es ambiguo y por eso no se titula con ninguna de sus dos causas: el
+  // backend responde 409 tanto cuando esa fuente ya entrego exactamente ese
+  // archivo como cuando la boveda tiene contenido distinto bajo esa huella
+  // (evidencia corrupta, un incidente de integridad que hay que avisar a
+  // operacion). Un titulo que afirmara el duplicado contradiria al mensaje que
+  // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
+  409: "La entrega no se registró",
   413: "El archivo es demasiado grande",
   503: "La ingesta no está disponible en esta instalación",
 };
 
 const TITULO_POR_DEFECTO = "No se pudo registrar la entrega";
 
+const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
+
+// Lo que se pone en el cuerpo cuando la respuesta no sirve como mensaje del
+// backend: en "desconocido" no hubo mensaje, y en 502/504 lo que llego es la
+// pagina de error del proxy. Pintar esa prosa (HTML incluido) como si fuera la
+// explicacion del backend mandaria a buscar la causa donde no esta.
+const MENSAJE_SIN_RESPUESTA = "no se recibio una respuesta util del servidor";
+
+// Lo que se dice cuando no queda claro si la entrega se registro. Reintentar a
+// ciegas daria 409 si llego, y el 409 es irreversible.
+const PUDO_LLEGAR =
+  "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
+
+// 502 y 504 los produce el proxy, no la API: su cuerpo es una pagina de error
+// y no un mensaje del backend. Nginx corta a los 120s (deploy/nginx.conf)
+// mientras el handler de Go tiene 60s de escritura, asi que una ingesta larga
+// puede quedarse sin respuesta con la entrega ya confirmada en la base. El
+// status se conserva como diagnostico, pero no se pinta el cuerpo ajeno ni se
+// afirma que no entro nada.
+const SIN_RESPUESTA_UTIL = new Set([502, 504]);
+
 /**
  * Traduce lo que lanza `api()` al subir un reporte en un `Resultado` de fallo.
  * La pantalla de ingesta lo usa en el `catch` del POST /reportes. Nunca lanza:
- * - `ApiError` -> su status y el mensaje del backend, sin tocar;
+ * - `ApiError` -> su status y el mensaje del backend, sin tocar; un 502/504
+ *   queda como "inalcanzable" y con un texto propio, porque el cuerpo es del
+ *   proxy y no del backend;
  * - `ErrorDeRed` -> status "red" y su mensaje;
  * - cualquier otra cosa -> status "desconocido" y un mensaje generico.
  */
 export function resultadoDeError(error: unknown): Resultado {
   if (error instanceof ApiError) {
+    if (SIN_RESPUESTA_UTIL.has(error.status)) {
+      return {
+        tipo: "fallo",
+        status: "inalcanzable",
+        mensaje: "error desconocido al subir el archivo",
+      };
+    }
     return { tipo: "fallo", status: error.status, mensaje: error.message };
   }
   if (error instanceof ErrorDeRed) {
@@ -120,8 +157,10 @@ function PanelEntrega({ entrega }: { entrega: Entrega }) {
 }
 
 function tituloDeFallo(status: StatusDeFallo): string {
-  if (status === "red") return "No se pudo contactar al servidor";
-  if (status === "desconocido") return TITULO_POR_DEFECTO;
+  if (status === "red") return TITULO_SIN_RESPUESTA;
+  if (status === "desconocido" || status === "inalcanzable") {
+    return TITULO_POR_DEFECTO;
+  }
   return TITULO_POR_STATUS[status] ?? TITULO_POR_DEFECTO;
 }
 
@@ -132,29 +171,29 @@ function PanelFallo({
   status: StatusDeFallo;
   mensaje: string;
 }) {
-  const sinRespuesta = status === "red" || status === "desconocido";
+  const sinTituloPropio = status === "desconocido" || status === "inalcanzable";
+  const avisarQuePudoLlegar =
+    status === "red" || status === "desconocido" || status === "inalcanzable";
 
   return (
     <section className="panel-resultado panel-fallo" role="alert">
       <h2>{tituloDeFallo(status)}</h2>
-      {/* D-006: el mensaje del backend va entero y tal cual. Nombra las
-          columnas y campos que faltan; partirlo o reescribirlo acoplaria la
-          UI a la prosa de Go y se romperia en silencio al reformularla. El
-          de ErrorDeRed no se muestra: repite el titulo. */}
-      {status !== "red" && <p className="panel-mensaje">{mensaje}</p>}
+      {/* El mensaje del backend va entero y tal cual. Nombra las columnas y
+          campos que faltan; partirlo o reescribirlo acoplaria la UI a la prosa
+          de Go y se romperia en silencio al reformularla. El de ErrorDeRed no
+          se muestra porque repite el titulo. */}
+      {status !== "red" && (
+        <p className="panel-mensaje">
+          {sinTituloPropio ? MENSAJE_SIN_RESPUESTA : mensaje}
+        </p>
+      )}
       {/* El backend garantiza que un 400 no persiste nada: por eso el aviso
           va ahi y en ningun otro status. */}
       {status === 400 && (
         <p>No se guardó nada: corrige el archivo y vuelve a subirlo.</p>
       )}
-      {/* D-011: sin una respuesta legible no se sabe si la entrega quedo
-          registrada, y subirla otra vez daria 409 si llego. */}
-      {sinRespuesta && (
-        <p>
-          La entrega pudo haber llegado al servidor: revisa el listado de cargas
-          antes de volver a subirla.
-        </p>
-      )}
+      {/* Sin una respuesta legible no se sabe si la entrega quedo registrada. */}
+      {avisarQuePudoLlegar && <p>{PUDO_LLEGAR}</p>}
     </section>
   );
 }
