@@ -54,9 +54,18 @@ func Nuevo(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// Pool expone el pool. cmd/seed escribe con SQL directo las tablas cuyo puerto
-// todavia es de solo lectura -RepositorioRepertorio y ParametrosNormativos-; el
+// Pool expone el pool. cmd/seed escribe con SQL directo las tablas que no
+// tienen adaptador de escritura -`titulares`, `usuarios` y `parametros`-; el
 // Store sigue siendo el dueno de la conexion.
+//
+// Decia "las tablas cuyo puerto todavia es de solo lectura -RepositorioRepertorio
+// y ParametrosNormativos-", y de ParametrosNormativos dejo de ser cierto en la
+// #118: [Store.SnapshotEnFecha] ESCRIBE. Lo que escribe es
+// `snapshots_parametros` -- el corte congelado que una corrida consume --, no
+// `parametros`, que sigue sin puerto de escritura y por eso sigue siendo del
+// seed. La distincion importa: cargar una vigencia nueva es un hecho normativo
+// que necesita su asiento (ADR 0006), y congelar un corte no lo es, porque no
+// decide nada, solo deja constancia de lo que ya regia.
 //
 // `bolsas` y `usuarios_recaudo` YA tienen adaptador de escritura desde la #27
 // ([Store.RegistrarBolsa], [Store.RegistrarUsuario]) y aun asi el seed las

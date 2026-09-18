@@ -79,9 +79,11 @@
 // participa si pide su ejecutor con [Store.ejecutorDe] (lecturas y escrituras
 // sueltas) o abre con [Store.enTransaccionDe] (las que ya tenian transaccion
 // propia). Hoy lo hacen catalogo.go y bitacora.go, que son los dos puertos que
-// la unidad del catalogo abarca; el resto va directo al pool. Quien meta un
-// puerto nuevo en una unidad tiene que cambiar tambien sus metodos: por el
-// pool escribirian FUERA de la transaccion y se confirmarian aparte, que es
+// la unidad del catalogo abarca, y parametros.go, que desde la #118 congela el
+// snapshot con el que se abre un proceso -- el corte y el `procesos.snapshot_id`
+// que lo referencia son un solo hecho --; el resto va directo al pool. Quien
+// meta un puerto nuevo en una unidad tiene que cambiar tambien sus metodos: por
+// el pool escribirian FUERA de la transaccion y se confirmarian aparte, que es
 // justo el fallo que la unidad existe para impedir.
 //
 // Lo que no se va a hacer, y conviene decirlo antes de que alguien lo intente:

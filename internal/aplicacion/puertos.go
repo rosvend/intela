@@ -435,6 +435,30 @@ type GestionRecaudo interface {
 // corrida lee el snapshot del proceso con SnapshotPorID, nunca vuelve a
 // resolver: si volviera, cambiar un parametro cambiaria en silencio el
 // resultado de una corrida ya hecha.
+//
+// "Queda congelado" es una ESCRITURA, y por eso este puerto ya no es de solo
+// lectura desde la #118: resolver sin persistir el corte dejaria SnapshotPorID
+// sin nada que leer, y la unica forma de reproducir la corrida seria volver a
+// resolver la fecha -- que es exactamente lo que el parrafo anterior prohibe.
+// Lo que se congela es el corte, nunca la tabla de vigencias.
+//
+// # El id
+//
+// Esta direccionado por contenido: sale de los pares (clave, valor) que el
+// snapshot consume, ordenados. Tres consecuencias que forman parte del
+// contrato y no del adaptador que lo cumple:
+//
+//   - resolver dos veces la misma fecha sobre los mismos valores da el MISMO
+//     id, asi que abrir el proceso es idempotente;
+//   - dos conjuntos de valores distintos no pueden compartir id;
+//   - un parametro que el snapshot no consume no cambia el id, porque no
+//     cambia el snapshot.
+//
+// # Los ausentes
+//
+// Una clausula sin valor vigente en la fecha NO resuelve a cero ni a un valor
+// por defecto (ADR 0004): sale [ErrorParametroAusente], que la nombra. Un
+// snapshot a medias es una cifra falsa con aspecto de cifra buena.
 type ParametrosNormativos interface {
 	SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (id string, s reparto.Snapshot, err error)
 	SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot, error)
@@ -443,6 +467,11 @@ type ParametrosNormativos interface {
 
 // FilaParametro es un parametro normativo con su procedencia. Sin vigencia y
 // organo aprobador no es un parametro, es una constante disfrazada.
+//
+// Valor es texto y no un decimal porque esta fila se LISTA, no se calcula con
+// ella: es la pantalla de administracion del ADR 0004. El adaptador lo entrega
+// en la misma forma canonica que entra en el id del snapshot, para que lo que
+// se ve en la lista y lo que se congelo sean comparables caracter a caracter.
 type FilaParametro struct {
 	Clave           string
 	Valor           string
