@@ -37,7 +37,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgx/v5/pgxpool"
 	// Registra el driver "pgx" de database/sql. Lo necesitan goose, que solo
 	// habla database/sql, y el WithSQLDriver("pgx") de mas abajo.
@@ -149,14 +148,11 @@ func arrancar() {
 		// initdb, asi que la primera conexion corre contra el servidor que se
 		// esta apagando.
 		tcpostgres.BasicWaitStrategies(),
-		// CI (y Docker-in-Docker) suele tener /dev/shm chico; sin esto el
-		// servidor arranca justo de memoria compartida y el techo efectivo
-		// de conexiones cae. Con go test ./... varios paquetes levantan
-		// contenedor a la vez y el 53300 aparece en la victima, no en quien
-		// agoto. 256 MiB + max_connections alto dan margen.
-		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
-			hc.ShmSize = 256 * 1024 * 1024
-		}),
+		// Margen frente a 53300 en CI: go test ./... levanta varios
+		// contenedores y el techo por defecto (100) se agota si alguna
+		// prueba deja sesiones colgadas bajo -race. No importamos
+		// docker/docker solo para subir shm: go mod tidy lo promoveria a
+		// dependencia directa.
 		testcontainers.WithCmdArgs("-c", "max_connections=200"),
 	)
 	contenedor = ctr
