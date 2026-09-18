@@ -360,6 +360,84 @@ func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido,
 	return usos, nil
 }
 
+// RechazosDeReporte devuelve el log de rechazos entero de una entrega, en orden
+// de fila del archivo.
+//
+// # Una sola sentencia, y por eso un LEFT JOIN desde `reportes`
+//
+// "La entrega no existe" y "existe sin rechazos" tienen que salir de la MISMA
+// lectura. Con un SELECT de existencia y despues otro de filas, la entrega
+// puede borrarse entre los dos -el log cuelga de ella con ON DELETE CASCADE- y
+// la respuesta mezclaria dos estados de la base. Asi: cero filas es que la
+// entrega no existe; una sola fila con x.id NULL es la fila nula del LEFT JOIN,
+// o sea una entrega sin rechazos.
+//
+// x.id se escanea como *string porque es el unico NULL que significa algo: lo
+// distingue de un rechazo de verdad, cuyo id es clave primaria. El resto va con
+// COALESCE, por la misma razon que obra_id en columnasUso: sin tipos nullable
+// en el adaptador para columnas que son NOT NULL en su tabla y solo salen NULL
+// en esa fila.
+//
+// # El orden: longitud y despues texto
+//
+// Los ids de fila los deriva la ingesta como `<reporte>-<n>` sin ceros a la
+// izquierda, y el orden lexico pondria `-10` antes que `-2`. Dentro de UNA
+// entrega todos comparten el prefijo, asi que ordenar por longitud y despues
+// por texto es ordenar por n, que es la fila del archivo.
+//
+// Sin LIMIT a proposito, a diferencia de [Store.ListarRechazos]: esa cota
+// protege la cola de revision, que lee la base entera, y aqui truncaria en
+// silencio el log de una carga. Va por el indice `usos_rechazados_reporte`.
+func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string) ([]aplicacion.UsoPersistido, error) {
+	filas, err := s.pool.Query(ctx, `
+		SELECT x.id,
+		       COALESCE(x.reporte_id, ''), COALESCE(x.fuente, ''), COALESCE(x.titulo, ''),
+		       COALESCE(x.ids_fuente, ''), COALESCE(x.modalidad, ''), COALESCE(x.motivo, ''),
+		       COALESCE(x.tipo, ''), COALESCE(x.codigo, '')
+		  FROM reportes r
+		  LEFT JOIN usos_rechazados x ON x.reporte_id = r.id
+		 WHERE r.id = $1
+		 ORDER BY length(x.id), x.id`, reporteID)
+	if err != nil {
+		return nil, traducirError(err, "rechazos del reporte %q", reporteID)
+	}
+	defer filas.Close()
+
+	existe := false
+	usos := make([]aplicacion.UsoPersistido, 0)
+	for filas.Next() {
+		existe = true
+		var (
+			u         aplicacion.UsoPersistido
+			id        *string
+			modalidad string
+		)
+		if err := filas.Scan(
+			&id, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &modalidad,
+			&u.RechazoMotivo, &u.RechazoTipo, &u.RechazoCodigo,
+		); err != nil {
+			return nil, traducirError(err, "escanear rechazo")
+		}
+		if id == nil {
+			continue
+		}
+		u.ID = *id
+		// Igual que en ListarRechazos: a string y despues al tipo, sin depender
+		// del plan de escaneo de la libreria.
+		u.Modalidad = reparto.Modalidad(modalidad)
+		usos = append(usos, u)
+	}
+	// Igual que en ListarCargas: sin esto un log TRUNCADO por un fallo a mitad
+	// de stream se devuelve como log completo.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "rechazos del reporte %q", reporteID)
+	}
+	if !existe {
+		return nil, fmt.Errorf("rechazos del reporte %q: %w", reporteID, aplicacion.ErrNoEncontrado)
+	}
+	return usos, nil
+}
+
 // UsosPorIDs resuelve un lote de ids en un solo viaje (S5). Los que no
 // existen simplemente no aparecen en el mapa.
 func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplicacion.UsoPersistido, error) {

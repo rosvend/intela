@@ -20,15 +20,17 @@ import (
 // hace que estas pruebas comprueben el ADAPTADOR -codigos, cabeceras y forma
 // del JSON- y no la boveda ni la base.
 type ingestaFalsa struct {
-	rec    aplicacion.Recepcion
-	cargas []aplicacion.CargaReporte
-	err    error
+	rec      aplicacion.Recepcion
+	cargas   []aplicacion.CargaReporte
+	rechazos []aplicacion.UsoPersistido
+	err      error
 
 	fuente            string
 	formato           string
 	periodo           string
 	datos             []byte
 	periodoConsultado string
+	cargaConsultada   string
 }
 
 func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error) {
@@ -39,6 +41,11 @@ func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, period
 func (i *ingestaFalsa) Cargas(_ context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
 	i.periodoConsultado = periodo
 	return i.cargas, i.err
+}
+
+func (i *ingestaFalsa) RechazosDeCarga(_ context.Context, id string) ([]aplicacion.UsoPersistido, error) {
+	i.cargaConsultada = id
+	return i.rechazos, i.err
 }
 
 func servidorConIngesta(t *testing.T, ing Ingesta) http.Handler {
@@ -101,16 +108,18 @@ func recepcionDePrueba() aplicacion.Recepcion {
 // Autorizacion
 
 func TestLosReportesExigenElRolAdministrador(t *testing.T) {
-	// Una entrega pondera el reparto de un periodo entero. Las dos rutas van en
-	// el mismo grupo de rol que el catalogo.
+	// Una entrega pondera el reparto de un periodo entero. Las tres rutas van en
+	// el mismo grupo de rol que el catalogo; la de rechazos incluida, que es la
+	// pantalla de ingesta de #29, solo de administrador.
 	for _, rol := range []aplicacion.Rol{
 		aplicacion.RolDistribucion,
 		aplicacion.RolContabilidad,
 		aplicacion.RolAuditor,
 		aplicacion.RolTitular,
 	} {
+		ing := &ingestaFalsa{}
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol}}
-		h := Nueva(Casos{Auth: auth, Ingesta: &ingestaFalsa{}}, Opciones{}).Router()
+		h := Nueva(Casos{Auth: auth, Ingesta: ing}, Opciones{}).Router()
 
 		if rec := pedir(t, h, http.MethodGet, "/reportes", "", "tok"); rec.Code != http.StatusForbidden {
 			t.Errorf("%s GET: codigo = %d, se esperaba 403", rol, rec.Code)
@@ -118,13 +127,23 @@ func TestLosReportesExigenElRolAdministrador(t *testing.T) {
 		if rec := subir(t, h, map[string]string{"fuente": "caracol"}, "x.csv", []byte("a")); rec.Code != http.StatusForbidden {
 			t.Errorf("%s POST: codigo = %d, se esperaba 403", rol, rec.Code)
 		}
+		if rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s GET rechazos: codigo = %d, se esperaba 403", rol, rec.Code)
+		}
+		// El 403 tiene que llegar ANTES del caso de uso: si la consulta se
+		// hiciera y solo se tirara la respuesta, el rol no protegeria la base.
+		if ing.cargaConsultada != "" {
+			t.Errorf("%s: se consultaron los rechazos de %q sin permiso", rol, ing.cargaConsultada)
+		}
 	}
 }
 
 func TestLosReportesSinSesionSon401(t *testing.T) {
 	h := servidorConIngesta(t, &ingestaFalsa{})
-	if rec := pedir(t, h, http.MethodGet, "/reportes", "", ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("codigo = %d, se esperaba 401", rec.Code)
+	for _, ruta := range []string{"/reportes", "/reportes/rep-1/rechazos"} {
+		if rec := pedir(t, h, http.MethodGet, ruta, "", ""); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s: codigo = %d, se esperaba 401", ruta, rec.Code)
+		}
 	}
 }
 
@@ -143,6 +162,9 @@ func TestLasRutasDeReportesSon503SiElBinarioNoCableaLaIngesta(t *testing.T) {
 	}
 	if rec := subir(t, h, map[string]string{"fuente": "caracol"}, "x.csv", []byte("a")); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("POST: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("GET rechazos: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
 	}
 }
 
@@ -451,5 +473,109 @@ func TestListarCargasConPeriodoMalEscritoEs400(t *testing.T) {
 	rec := pedir(t, h, http.MethodGet, "/reportes?periodo=2026-1", "", "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /reportes/{id}/rechazos
+
+func TestRechazosDeCargaSirveElLogDeUnaCarga(t *testing.T) {
+	// Emisiones puesto a proposito: una medida que llegue al doble no puede
+	// salir por la respuesta (ADR 0016).
+	ing := &ingestaFalsa{rechazos: []aplicacion.UsoPersistido{
+		{ID: "rep-1-2", Titulo: "Sin duracion", IDsFuente: "123", Emisiones: 7,
+			RechazoMotivo: `fila 4, duracion_min (columna "Duracion_total"): vacio`},
+		{ID: "rep-1-10", Titulo: "Radio Novela", IDsFuente: "456", Emisiones: 3,
+			RechazoMotivo: `modalidad "radio" fuera de tv|cine|ott|hotel`},
+	}}
+	h := servidorConIngesta(t, ing)
+
+	rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.cargaConsultada != "rep-1" {
+		t.Errorf("carga consultada = %q, se esperaba rep-1", ing.cargaConsultada)
+	}
+
+	var cuerpo []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("el cuerpo no es JSON: %v (%s)", err, rec.Body)
+	}
+	if len(cuerpo) != 2 {
+		t.Fatalf("rechazos = %d, se esperaban 2", len(cuerpo))
+	}
+	// El orden es el del caso de uso, que es el de la fila del archivo: el
+	// adaptador no reordena.
+	if cuerpo[0]["id"] != "rep-1-2" || cuerpo[1]["id"] != "rep-1-10" {
+		t.Errorf("orden = %v, %v", cuerpo[0]["id"], cuerpo[1]["id"])
+	}
+	// La MISMA forma que los rechazos del POST, y nada mas: ni medidas ni
+	// campos internos del nucleo.
+	for _, r := range cuerpo {
+		if len(r) != 4 || r["id"] == nil || r["titulo"] == nil || r["ids_fuente"] == nil || r["motivo"] == nil {
+			t.Errorf("forma = %v, se esperaba {id, titulo, ids_fuente, motivo}", r)
+		}
+	}
+	if cuerpo[0]["motivo"] != `fila 4, duracion_min (columna "Duracion_total"): vacio` {
+		t.Errorf("motivo = %v", cuerpo[0]["motivo"])
+	}
+}
+
+func TestRechazosDeCargaSinNingunoDevuelveListaVaciaYNoNull(t *testing.T) {
+	// El doble devuelve nil a proposito: la respuesta tiene que ser [] aunque
+	// el nucleo mande nil, o la pantalla revienta justo con la carga buena.
+	h := servidorConIngesta(t, &ingestaFalsa{})
+
+	rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRechazosDeCargaTraduceLosErroresDelNucleo(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		err      error
+		codigo   int
+		enCuerpo string
+	}{
+		{
+			// 404 y no una lista vacia: "no existe" y "no tuvo rechazos" son dos
+			// respuestas distintas.
+			nombre:   "carga que no existe",
+			err:      fmt.Errorf("rechazos de la carga \"rep-x\": %w", aplicacion.ErrNoEncontrado),
+			codigo:   http.StatusNotFound,
+			enCuerpo: "esa carga no existe",
+		},
+		{
+			nombre:   "id en blanco",
+			err:      fmt.Errorf("%w: falta el id de la carga", aplicacion.ErrReporteInvalido),
+			codigo:   http.StatusBadRequest,
+			enCuerpo: "falta el id de la carga",
+		},
+		{
+			nombre:   "fallo de infraestructura",
+			err:      fmt.Errorf("la base no responde"),
+			codigo:   http.StatusInternalServerError,
+			enCuerpo: "no se pudo consultar los rechazos de la carga",
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConIngesta(t, &ingestaFalsa{err: c.err})
+			rec := pedir(t, h, http.MethodGet, "/reportes/rep-x/rechazos", "", "tok")
+			if rec.Code != c.codigo {
+				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.codigo, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), c.enCuerpo) {
+				t.Errorf("el cuerpo no dice %q: %s", c.enCuerpo, rec.Body)
+			}
+			// El 500 no filtra el error interno: eso va al log, no al cliente.
+			if c.codigo == http.StatusInternalServerError && strings.Contains(rec.Body.String(), "la base") {
+				t.Errorf("el 500 filtra el error interno: %s", rec.Body)
+			}
+		})
 	}
 }

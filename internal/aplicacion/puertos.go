@@ -273,6 +273,20 @@ type RepositorioIngesta interface {
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
 	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
 
+	// RechazosDeReporte devuelve el log de rechazos COMPLETO de una entrega, en
+	// el orden de fila del archivo.
+	//
+	// Sin cota, a diferencia de ListarRechazos, que la cola de revision acota a
+	// 1000 filas globales: este es el log de UNA entrega, el que se le muestra a
+	// quien la subio para pedirle al cliente lo que falta, y truncarlo en
+	// silencio lo haria mentir sobre si la carga entro completa.
+	//
+	// Devuelve [ErrNoEncontrado] si la entrega no existe, y una lista vacia -no
+	// nil- si existe y no tuvo rechazos. Una lista vacia no puede significar
+	// "no existe": seria la misma ambiguedad que [Ingesta.Cargas] evita
+	// validando el periodo.
+	RechazosDeReporte(ctx context.Context, reporteID string) ([]UsoPersistido, error)
+
 	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
 	// mas antigua. Un periodo vacio NO filtra.
 	//

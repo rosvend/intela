@@ -1566,6 +1566,90 @@ paths:
               example:
                 error: la ingesta de reportes no esta configurada en esta instalacion
 
+  /reportes/{id}/rechazos:
+    get:
+      tags: [ingesta]
+      summary: Log de rechazos de una carga
+      description: |
+        Las filas que no se pudieron normalizar en UNA entrega, cada una con
+        su motivo. Existe porque `GET /reportes` solo trae el RECUENTO de
+        rechazos por carga, y es lo que despliega una fila de ese listado.
+
+        El log sale COMPLETO, sin cota, a diferencia de la cola de revision
+        (`/admin/cola-revision`), que lee la base entera y se acota a 1000
+        filas: filtrarla por carga truncaria en silencio justo la entrega
+        grande.
+
+        Las filas salen en el orden en que venian en el archivo, que es el
+        orden en que hay que pedirle al cliente lo que falta.
+
+        Una carga que no existe responde 404, y no una lista vacia: "no llego"
+        y "llego sin rechazos" son las dos respuestas que esta lectura existe
+        para distinguir.
+      operationId: listarRechazosDeCarga
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la carga, el `id` de `Carga` o de `Entrega`.
+          schema:
+            type: string
+          example: rep-9f2c...
+      responses:
+        "200":
+          description: |
+            Los rechazos de la carga, en orden de fila. Lista vacia si no hubo
+            ninguno, nunca `null`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Rechazo"
+        "400":
+          description: El identificador de la carga llego en blanco.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: falta el id de la carga'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna carga con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa carga no existe
+        "503":
+          description: Esta instalacion no cablea la ingesta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
 components:
   securitySchemes:
     bearerAuth:

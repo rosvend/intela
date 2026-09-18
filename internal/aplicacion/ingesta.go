@@ -194,6 +194,32 @@ func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, er
 	return cargas, nil
 }
 
+// RechazosDeCarga devuelve el log de rechazos entero de una entrega, en orden
+// de fila del archivo.
+//
+// Es lo que despliega una fila del listado de cargas: [Ingesta.Cargas] solo
+// trae el RECUENTO de rechazos, y la cola de revision -que si trae las filas-
+// esta acotada a 1000 en toda la base, asi que filtrarla por entrega truncaria
+// en silencio justo la carga grande.
+//
+// Una entrega que no existe es [ErrNoEncontrado], y no una lista vacia: "no
+// llego" y "llego entera" son las dos respuestas que esta lectura existe para
+// distinguir.
+func (i Ingesta) RechazosDeCarga(ctx context.Context, id string) ([]UsoPersistido, error) {
+	// TrimSpace por lo mismo que la fuente en prepararReporte: su blanco incluye
+	// el NBSP. Un id en blanco no es "una carga que no existe", es una peticion
+	// mal hecha, y se dice como tal.
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: falta el id de la carga", ErrReporteInvalido)
+	}
+	rechazos, err := i.Reportes.RechazosDeReporte(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("leer los rechazos de la carga %q: %w", id, err)
+	}
+	return rechazos, nil
+}
+
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
 //
 // En minusculas y sin separadores porque asi lo exige el CHECK del esquema

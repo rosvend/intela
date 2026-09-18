@@ -1,6 +1,7 @@
 package aplicacion
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -139,6 +140,29 @@ func (r *repoIngestaMemoria) ListarRechazos(context.Context) ([]UsoPersistido, e
 	if us == nil {
 		us = []UsoPersistido{}
 	}
+	return us, nil
+}
+
+// RechazosDeReporte imita la lectura por entrega del adaptador real: el log
+// ENTERO de esa entrega y de ninguna otra, ErrNoEncontrado si la entrega no
+// existe y una lista vacia -no nil- si existe sin rechazos.
+//
+// Ordena igual que el ORDER BY del adaptador, por longitud y despues por texto:
+// los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, y el orden
+// lexico pondria `-10` antes que `-2`.
+func (r *repoIngestaMemoria) RechazosDeReporte(_ context.Context, reporteID string) ([]UsoPersistido, error) {
+	if _, hay := r.reportes[reporteID]; !hay {
+		return nil, ErrNoEncontrado
+	}
+	us := []UsoPersistido{}
+	for _, u := range r.usos {
+		if u.ReporteID == reporteID && u.RechazoMotivo != "" {
+			us = append(us, u)
+		}
+	}
+	slices.SortFunc(us, func(a, b UsoPersistido) int {
+		return cmp.Or(cmp.Compare(len(a.ID), len(b.ID)), strings.Compare(a.ID, b.ID))
+	})
 	return us, nil
 }
 
@@ -1792,5 +1816,79 @@ func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
 	// indistinguible de "ese periodo no tuvo cargas".
 	if _, err := ingesta.Cargas(t.Context(), "2026-1"); !errors.Is(err, ErrReporteInvalido) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RechazosDeCarga: el log de rechazos de una entrega
+// ---------------------------------------------------------------------------
+
+func TestRechazosDeCargaExigeElIDDeLaCarga(t *testing.T) {
+	ingesta, _, _ := nuevaIngesta()
+
+	// El NBSP es el blanco de los exports de Excel: TrimSpace lo recorta, un
+	// recorte propio de espacios no.
+	for _, id := range []string{"", "   ", " "} {
+		if _, err := ingesta.RechazosDeCarga(t.Context(), id); !errors.Is(err, ErrReporteInvalido) {
+			t.Errorf("id %q: err = %v, se esperaba ErrReporteInvalido", id, err)
+		}
+	}
+}
+
+func TestRechazosDeCargaDeUnaCargaQueNoExisteEsNoEncontrado(t *testing.T) {
+	ingesta, _, _ := nuevaIngesta()
+
+	// Una lista vacia no puede significar "esa carga no existe": seria la
+	// misma ambiguedad que Cargas evita validando el periodo, y la pantalla
+	// diria "sin rechazos" de una carga que nunca llego.
+	_, err := ingesta.RechazosDeCarga(t.Context(), "rep-que-no-existe")
+	if !errors.Is(err, ErrNoEncontrado) {
+		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
+	// Doce filas para que existan las posiciones 10 y 11: con menos de once, el
+	// orden lexico y el de fila coinciden y la prueba no distingue nada.
+	filas := make([]UsoPersistido, 12)
+	for n := range filas {
+		filas[n] = usoBueno("Fila " + strconv.Itoa(n))
+	}
+	for _, n := range []int{10, 2, 1} {
+		filas[n].RechazoMotivo = fmt.Sprintf("fila %d, duracion_min: \"x\" no es un numero", n)
+	}
+	lec := &lectorFalso{filas: filas}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	if err != nil {
+		t.Fatalf("enero: %v", err)
+	}
+	// Otra entrega con su propio rechazo: no puede colarse en el log de enero.
+	otra := usoBueno("De febrero")
+	otra.RechazoMotivo = "titulo vacio"
+	lec.filas = []UsoPersistido{otra}
+	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
+		t.Fatalf("febrero: %v", err)
+	}
+
+	// Con blancos alrededor: el id llega de un segmento de la URL, y el caso de
+	// uso lo recorta antes de buscar.
+	rechazos, err := ingesta.RechazosDeCarga(t.Context(), " "+enero.Reporte.ID+" ")
+	if err != nil {
+		t.Fatalf("RechazosDeCarga: %v", err)
+	}
+	ids := make([]string, 0, len(rechazos))
+	for _, u := range rechazos {
+		ids = append(ids, u.ID)
+	}
+	quiero := []string{enero.Reporte.ID + "-1", enero.Reporte.ID + "-2", enero.Reporte.ID + "-10"}
+	if !slices.Equal(ids, quiero) {
+		t.Fatalf("ids = %v, se esperaba %v (solo los de enero, en orden de fila)", ids, quiero)
+	}
+	// El motivo viaja con cada fila: es lo que la pantalla le muestra a quien
+	// subio el archivo.
+	if !strings.Contains(rechazos[2].RechazoMotivo, "fila 10") {
+		t.Errorf("motivo = %q", rechazos[2].RechazoMotivo)
 	}
 }

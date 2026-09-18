@@ -486,6 +486,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reportes/{id}/rechazos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Log de rechazos de una carga
+         * @description Las filas que no se pudieron normalizar en UNA entrega, cada una con
+         *     su motivo. Existe porque `GET /reportes` solo trae el RECUENTO de
+         *     rechazos por carga, y es lo que despliega una fila de ese listado.
+         *
+         *     El log sale COMPLETO, sin cota, a diferencia de la cola de revision
+         *     (`/admin/cola-revision`), que lee la base entera y se acota a 1000
+         *     filas: filtrarla por carga truncaria en silencio justo la entrega
+         *     grande.
+         *
+         *     Las filas salen en el orden en que venian en el archivo, que es el
+         *     orden en que hay que pedirle al cliente lo que falta.
+         *
+         *     Una carga que no existe responde 404, y no una lista vacia: "no llego"
+         *     y "llego sin rechazos" son las dos respuestas que esta lectura existe
+         *     para distinguir.
+         */
+        get: operations["listarRechazosDeCarga"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2779,6 +2813,105 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "el archivo pasa de 32 MiB"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea la ingesta. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la ingesta de reportes no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listarRechazosDeCarga: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identificador de la carga, el `id` de `Carga` o de `Entrega`.
+                 * @example rep-9f2c...
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Los rechazos de la carga, en orden de fila. Lista vacia si no hubo
+             *     ninguno, nunca `null`.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rechazo"][];
+                };
+            };
+            /** @description El identificador de la carga llego en blanco. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "reporte invalido: falta el id de la carga"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ninguna carga con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "esa carga no existe"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

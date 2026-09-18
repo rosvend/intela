@@ -1448,6 +1448,92 @@ func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// RechazosDeReporte: el log de rechazos de una carga
+// ---------------------------------------------------------------------------
+
+// rechazoDe es una fila del log de rechazos de una entrega, con su motivo.
+func rechazoDe(id, reporteID, motivo string) aplicacion.UsoPersistido {
+	u := usoPendiente(id, reporteID, "Titulo de "+id)
+	u.RechazoMotivo = motivo
+	return u
+}
+
+func TestRechazosDeReporteDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, que es lo
+	// que deriva la ingesta. Con -1, -2 y -10 el orden lexico (-1, -10, -2) y el
+	// de fila (-1, -2, -10) se separan, y se insertan desordenados para que el
+	// orden de insercion tampoco lo tape.
+	diez := rechazoDe(reporteEnero+"-10", reporteEnero, `modalidad "radio" fuera de tv|cine|ott|hotel`)
+	diez.Modalidad = "radio"
+	diez.IDsFuente = "ID_Ficha 77"
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		diez,
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+		rechazoDe(reporteEnero+"-1", reporteEnero, `duracion_min: "x" no es un numero`),
+		// La otra entrega tiene su propio log, y no puede colarse en el de enero.
+		rechazoDe(reporteFebrero+"-1", reporteFebrero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	rechazos, err := s.RechazosDeReporte(ctx, reporteEnero)
+	if err != nil {
+		t.Fatalf("RechazosDeReporte: %v", err)
+	}
+	ids := make([]string, 0, len(rechazos))
+	for _, u := range rechazos {
+		ids = append(ids, u.ID)
+	}
+	quiero := []string{reporteEnero + "-1", reporteEnero + "-2", reporteEnero + "-10"}
+	if strings.Join(ids, ",") != strings.Join(quiero, ",") {
+		t.Fatalf("ids = %v, se esperaba %v (solo los de enero, en orden de fila)", ids, quiero)
+	}
+
+	// La proyeccion entera, campo a campo: una columna corrida no falla, deja
+	// el motivo en el titulo.
+	got := rechazos[2]
+	if got.ReporteID != reporteEnero || got.Fuente != "caracol" || got.Titulo != "Titulo de "+diez.ID ||
+		got.IDsFuente != "ID_Ficha 77" || got.Modalidad != "radio" || got.RechazoMotivo != diez.RechazoMotivo {
+		t.Errorf("rechazo = %+v", got)
+	}
+	if got.RechazoTipo != aplicacion.TipoRevisionAdaptador || got.RechazoCodigo != aplicacion.CodigoRechazoFormato {
+		t.Errorf("tipo/codigo = %q/%q", got.RechazoTipo, got.RechazoCodigo)
+	}
+}
+
+func TestRechazosDeReporteDistingueSinRechazosDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Enero con una fila canonica y ningun rechazo: la fila de `usos` no es un
+	// rechazo y no puede salir por aqui.
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// Existe y no tuvo rechazos: lista VACIA, no nil. Es la fila nula del LEFT
+	// JOIN, y no puede salir como un rechazo con id vacio.
+	ninguno, err := s.RechazosDeReporte(ctx, reporteEnero)
+	if err != nil {
+		t.Fatalf("RechazosDeReporte(enero): %v", err)
+	}
+	if ninguno == nil || len(ninguno) != 0 {
+		t.Fatalf("rechazos = %#v, se esperaba una lista vacia y no nil", ninguno)
+	}
+
+	// No existe: ErrNoEncontrado, que la capa HTTP convierte en 404.
+	if _, err := s.RechazosDeReporte(ctx, "rep-que-no-existe"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
 func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {
 	t.Helper()
 	for _, c := range cargas {
