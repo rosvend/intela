@@ -325,8 +325,19 @@ jobs:
             });
             const mio = previos.find((c) => c.body && c.body.includes(marca));
 
-            if (mio) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: mio.id, body: cuerpo });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: cuerpo });
+            try {
+              if (mio) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: mio.id, body: cuerpo });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body: cuerpo });
+              }
+            } catch (err) {
+              // A locked conversation is not a failed plan. The plan is
+              // already in this job log; refusing to comment must not
+              // paint Infrastructure red.
+              const locked = err.status === 403 && /locked/i.test(String(err.message));
+              if (!locked) {
+                throw err;
+              }
+              core.warning('could not comment: the pull request conversation is locked. The plan is in the job log.');
             }

@@ -51,20 +51,6 @@ type Opciones struct {
 	Log                *slog.Logger
 }
 
-// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
-// entren sus PRs.
-type API struct {
-	salud         Salud
-	auth          Autenticacion
-	catalogo      Catalogo
-	ingesta       Ingesta
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	cola          ColaRevision
-	opts          Opciones
-	log           *slog.Logger
-}
-
 // Casos agrupa los casos de uso que sirve el adaptador.
 //
 // Iban como parametros sueltos de [Nueva] mientras fueron dos. Con el tercero
@@ -75,6 +61,8 @@ type API struct {
 type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
+	Ingresos      ConsultaIngresos
+	Explicar      ExplicarCifra
 	Catalogo      Catalogo
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
@@ -87,6 +75,22 @@ type Casos struct {
 // consumidor, igual que [Catalogo].
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
+}
+
+// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
+// entren sus PRs.
+type API struct {
+	salud         Salud
+	auth          Autenticacion
+	ingresos      ConsultaIngresos
+	explicarCifra ExplicarCifra
+	catalogo      Catalogo
+	ingesta       Ingesta
+	declaraciones Declaraciones
+	recaudo       Recaudo
+	cola          ColaRevision
+	opts          Opciones
+	log           *slog.Logger
 }
 
 // Nueva construye el adaptador.
@@ -103,6 +107,8 @@ func Nueva(casos Casos, opts Opciones) *API {
 	return &API{
 		salud:         casos.Salud,
 		auth:          casos.Auth,
+		ingresos:      casos.Ingresos,
+		explicarCifra: casos.Explicar,
 		catalogo:      casos.Catalogo,
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
@@ -160,6 +166,23 @@ func (a *API) Router() http.Handler {
 			audit.Get("/asientos", superficieOK)
 		})
 
+		// Panel del titular (OE-6). El middleware cierra el prefijo al
+		// rol; el caso de uso recorta por TitularID de la sesion.
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-ingresos", a.misIngresos)
+		})
+		// ExplicarCifra: misma consulta, distinto alcance. El titular
+		// solo ve las suyas (SoloPropiasObras); auditor y administrador
+		// ven cualquiera. Una cifra ajena es 403, no 404.
+		protegido.Group(func(exp chi.Router) {
+			exp.Use(requiereRol(
+				aplicacion.RolTitular,
+				aplicacion.RolAuditor,
+				aplicacion.RolAdministrador,
+			))
+			exp.Get("/explicar/{ref}", a.explicar)
+		})
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo
