@@ -135,9 +135,16 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria y
+	// UnidadDeTrabajo. El nucleo sigue viendo tres puertos separados: que el
+	// adaptador sea uno solo es asunto suyo, y es lo que permite que el asiento
+	// del alta comparta transaccion con la obra (ADR 0006, #91).
+	catalogo := aplicacion.Catalogo{
+		Obras:    store,
+		Bitacora: store,
+		Unidad:   store,
+		Reloj:    reloj.Sistema{},
+	}
 
 	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la

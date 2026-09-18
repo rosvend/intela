@@ -173,6 +173,8 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 		t.Fatalf("Cargar: %v", err)
 	}
 
+	// Solo las dos lecturas del catalogo: esta prueba cruza el seed con lo que
+	// sirve GET /obras, y ninguna de las dos escribe ni asienta.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})

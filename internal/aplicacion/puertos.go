@@ -510,6 +510,42 @@ type BitacoraAuditoria interface {
 	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 }
 
+// UnidadDeTrabajo es el limite de transaccion cuando un caso de uso escribe
+// por DOS puertos y las dos escrituras son un solo hecho.
+//
+// # Por que hace falta un puerto para esto
+//
+// Cuando el asiento y la fila que explica salen del MISMO puerto, el limite lo
+// declara el contrato de ese metodo y no hace falta nada mas: es lo que hacen
+// [GestionDeclaraciones.Guardar] y [GestionRecaudo.RegistrarBolsa], que
+// reciben `ahora` y `actorID` y asientan por dentro.
+//
+// El catalogo no puede resolverlo asi. El ADR 0003 pide que la trazabilidad
+// entre por [BitacoraAuditoria] y no por el contrato del modulo -- "ningun
+// modulo escribe en la trazabilidad de otro" solo es exigible si Asentar no
+// esta en el contrato que todos comparten --, asi que [Catalogo] sostiene los
+// dos puertos y es EL quien tiene que decir que la obra y su asiento son una
+// sola cosa. Sin esto solo quedan dos llamadas seguidas, y un alta confirmada
+// cuyo asiento fallo despues es justo la escritura huerfana que el ADR 0006
+// prohibe.
+//
+// # Por que fn recibe un context
+//
+// Porque es lo unico que puede transportar la transaccion sin que el nucleo
+// aprenda el driver: depguard deniega `pgx` en esta capa, asi que una firma
+// con la transaccion como parametro tipado no se puede ni escribir aqui. El
+// contrato es que los puertos invocados DENTRO de fn tienen que recibir ese
+// ctx -- el que fn recibe, no el de fuera --; un puerto llamado con el ctx
+// exterior escribe fuera de la unidad y se confirma aparte.
+//
+// Se confirma si fn devuelve nil y se revierte con cualquier error, que sube
+// sin envolver para que quien llama distinga sus centinelas. Una
+// implementacion puede ser reentrante (una unidad dentro de otra es la misma
+// unidad) pero nadie debe depender de que lo sea.
+type UnidadDeTrabajo interface {
+	EnUnidad(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
 //
 // Los tres metodos son los que pide el issue #35; el detalle de por que la
