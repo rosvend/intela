@@ -142,9 +142,45 @@ func TestBuscarObrasPasaLosCuatroFiltros(t *testing.T) {
 	}
 	quiero := aplicacion.FiltroObras{
 		Titulo: "palmas", Genero: "Drama", IPI: "IPI-00000001", Anio: 1991,
+		Paginacion: aplicacion.Paginacion{Limite: aplicacion.LimiteObrasPorDefecto},
 	}
 	if cat.filtro != quiero {
 		t.Fatalf("filtro = %+v, se esperaba %+v", cat.filtro, quiero)
+	}
+}
+
+func TestBuscarObrasPasaLimiteYDesplazamiento(t *testing.T) {
+	cat := &catalogoFalso{}
+	h := servidorConCatalogo(t, cat)
+
+	rec := pedir(t, h, http.MethodGet, "/obras?limite=10&desplazamiento=20", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if cat.filtro.Limite != 10 || cat.filtro.Desplazamiento != 20 {
+		t.Fatalf("paginacion = {%d,%d}, se esperaba {10,20}",
+			cat.filtro.Limite, cat.filtro.Desplazamiento)
+	}
+}
+
+func TestBuscarObrasRechazaPaginacionInvalida(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	casos := []struct{ query, trozo string }{
+		{"limite=0", "limite"},
+		{"limite=-1", "limite"},
+		{"limite=abc", "limite"},
+		{"limite=501", "limite"},
+		{"desplazamiento=-1", "desplazamiento"},
+		{"desplazamiento=x", "desplazamiento"},
+	}
+	for _, c := range casos {
+		t.Run(c.query, func(t *testing.T) {
+			rec := pedir(t, h, http.MethodGet, "/obras?"+c.query, "", "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
 

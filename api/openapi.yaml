@@ -387,8 +387,10 @@ paths:
       tags: [repertorio]
       summary: Buscar en el catalogo maestro
       description: |
-        Devuelve las obras del catalogo. Sin parametros devuelve el catalogo
-        entero: "sin recorte" es un recorte mas y no merece una ruta aparte.
+        Devuelve las obras del catalogo. Sin filtros de busqueda devuelve la
+        primera pagina: "sin recorte" de titulo/genero/IPI/anio sigue siendo
+        un listado, y la paginacion es el tope que evita servir el catalogo
+        real de REDES SGC de un golpe.
 
         Los filtros se combinan con Y. `titulo` es PARCIAL y no distingue
         mayusculas -es el unico campo por el que se busca sin saber el dato
@@ -397,6 +399,10 @@ paths:
 
         `ipi` cruza contra los COAUTORES de la obra: el IPI identifica
         personas, no obras (`RD 3`).
+
+        `limite` y `desplazamiento` son la misma forma que usa `ListarObras`
+        en el repositorio de reparto (issue #90). Sin `limite` el servidor
+        aplica 100; por encima de 500 responde 400.
       operationId: buscarObras
       security:
         - bearerAuth: []
@@ -435,11 +441,35 @@ paths:
             type: integer
             minimum: 1
           example: 1991
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas obras saltarse desde el inicio del resultado ordenado por
+            identificador. Cero o ausente es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
           description: |
-            Las obras que cuadran, ordenadas por identificador. Sin
-            coincidencias devuelve una lista vacia, no un 404.
+            Las obras que cuadran, ordenadas por identificador, recortadas a
+            la pagina pedida. Sin coincidencias devuelve una lista vacia, no
+            un 404.
           content:
             application/json:
               schema:
@@ -460,7 +490,7 @@ paths:
                       ipi: IPI-00000001
                       rol: guionista
         "400":
-          description: Un parametro de busqueda esta mal formado.
+          description: Un parametro de busqueda o de paginacion esta mal formado.
           content:
             application/json:
               schema:
@@ -1241,8 +1271,9 @@ paths:
       summary: Listar las bolsas
       description: |
         Devuelve las bolsas, ordenadas por identificador. Sin el parametro
-        devuelve todas: "sin recorte" es un recorte mas y no merece una ruta
-        aparte. Sin coincidencias devuelve una lista vacia, no un 404.
+        `periodo` no filtra por periodo (todas las bolsas). Distinto de
+        `/obras`, que pagina siempre: aqui el listado sigue sin tope de
+        paginacion. Sin coincidencias devuelve una lista vacia, no un 404.
       operationId: listarBolsas
       security:
         - bearerAuth: []
