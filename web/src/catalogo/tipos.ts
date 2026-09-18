@@ -131,6 +131,91 @@ export function esParte(valor: unknown): valor is Parte {
 }
 
 /**
+ * Una entrada del padron de titulares: quien figura ante la sociedad.
+ *
+ * Trae el padron ENTERO, personas juridicas incluidas, y no es un descuido del
+ * contrato: `R-01` (`RD 4.5`) se comprueba al armar una declaracion, no al leer
+ * el padron. Recortar aqui a las personas naturales dejaria al editor sin poder
+ * explicar por que el titular que se busca no esta entre los elegibles: la
+ * regla quedaria invisible y pareceria un dato que falta.
+ *
+ * La `clase` -socio o administrado- decide quien vota (capitulo 4 del
+ * reglamento de socios) y NO quien cobra: un administrado persona natural cobra
+ * igual que un socio. Lo que decide es `persona_natural`, y por eso el editor
+ * la pinta al lado de `puedeSerParte` y no en lugar de ella.
+ */
+export type Titular = components["schemas"]["Titular"];
+
+/**
+ * Si un valor sin tipar tiene la forma de un `Titular`: los campos que lee el
+ * editor de reparto, y solo esos.
+ *
+ * Vive aqui, junto a `Titular`, como `esObra` vive junto a `Obra`: cada guarda
+ * se lee al lado del tipo que comprueba. Campo por campo:
+ *
+ * - `id`: se pinta, es la clave de la fila del padron y es EXACTAMENTE el
+ *   `titular_id` que viaja en la parte que se guarda; ausente o vacio mandaria
+ *   al backend una parte que nombra a nadie.
+ * - `nombre`: se pinta como texto; un objeto ahi lanzaria "Objects are not
+ *   valid as a React child" y tumbaria el padron entero.
+ * - `ipi`: se pinta y ademas RELLENA el campo de la fila que se agrega al
+ *   borrador; un objeto ahi pintaria "[object Object]" en la parte que se
+ *   guarda. Vacio no se rechaza: el contrato solo lo exige a las personas
+ *   naturales.
+ * - `persona_natural`: **la comprobacion que mas importa de las cinco**. Es lo
+ *   unico que decide si el titular se ofrece como parte (ver `puedeSerParte`), y
+ *   un `"false"` de texto -o un ausente, que en JavaScript es falsy- se leeria
+ *   como "no puede ser parte" y escondereria a un titular que el backend si
+ *   acepta: el editor dejaria de ofrecer a quien tiene derecho, en silencio.
+ * - `clase`: tiene que ser uno de los DOS valores del enum. No es celo: se
+ *   pinta en el padron, y un valor que el sistema no puede producir -el
+ *   `sin_clasificar` de `UsuarioRecaudo`, que aqui no existe- seria una
+ *   clasificacion inventada en pantalla.
+ *
+ * `clase` y `nombre` se comprueban porque el editor los pinta; el dia que una
+ * columna nueva lea otro campo, se anade aqui, junto al tipo que comprueba.
+ */
+export function esTitular(valor: unknown): valor is Titular {
+  if (typeof valor !== "object" || valor === null) return false;
+  const titular = valor as {
+    id?: unknown;
+    nombre?: unknown;
+    ipi?: unknown;
+    persona_natural?: unknown;
+    clase?: unknown;
+  };
+  return (
+    typeof titular.id === "string" &&
+    titular.id !== "" &&
+    typeof titular.nombre === "string" &&
+    typeof titular.ipi === "string" &&
+    typeof titular.persona_natural === "boolean" &&
+    (titular.clase === "socio" || titular.clase === "administrado")
+  );
+}
+
+/**
+ * Si un titular del padron puede figurar como parte de una Declaracion de Obra:
+ * `R-01` (`RD 4.5`), la misma pregunta que
+ * `afiliacion.Titular.PuedeRecibirReparto()` (`internal/dominio/afiliacion/titular.go`).
+ *
+ * Existe porque el editor tiene que OFRECER solo a quien el backend va a
+ * aceptar y EXPLICAR a quien no: un selector que trajera a una productora
+ * mandaria al administrador a un 400 que podria haber entendido de antemano.
+ *
+ * Lo que esta funcion NO es: la barrera. La regla la impone el backend -400 con
+ * su propio mensaje, que nombra `R-01` y `RD 4.5`- y esto es azucar de la
+ * oferta: si el padron cambiara y esta condicion se quedara corta, lo que pasa
+ * es que se ofrece de mas y el servidor rechaza el guardado con su mensaje, que
+ * es justo lo que el editor tiene que enseñar. Una condicion escrita dos veces
+ * es una condicion que algun dia discrepa; por eso lleva el nombre de la regla
+ * en vez de leer la columna a pelo, para que la discrepancia se vea al leerla.
+ */
+export function puedeSerParte(titular: Titular): boolean {
+  return titular.persona_natural;
+}
+
+/**
  * Una version de la Declaracion de Obra con su ventana de vigencia. La version
  * VIGENTE es la que tiene `vigente_hasta` en `null`.
  */

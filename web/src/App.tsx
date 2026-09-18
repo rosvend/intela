@@ -9,6 +9,7 @@ import NoEncontrado from "./NoEncontrado";
 import RutaProtegida from "./RutaProtegida";
 import Catalogo from "./catalogo/Catalogo";
 import DetalleObra from "./catalogo/DetalleObra";
+import EditorReparto from "./catalogo/EditorReparto";
 import HistorialVersiones from "./catalogo/HistorialVersiones";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
@@ -35,24 +36,23 @@ const PANTALLAS: Partial<Record<string, ReactElement>> = {
  * `Layout.tsx` resuelve el modulo por PREFIJO. El precio, aceptado: `App.tsx`
  * deja de ser un mapeo plano de `RUTAS`.
  *
- * Las tres vistas son de #30 y de sus pasos: el detalle (6) y el historial (7)
- * ya tienen pantalla, y el editor (8) sigue montando <EnConstruccion>, que dice
- * lo unico cierto: esa pantalla todavia no existe. Se declaran todas aqui para
- * que su direccion sea la que D-007 fijo, y cada paso solo cambia el elemento.
+ * Las tres vistas son de #30 y las tres tienen ya pantalla: el detalle (paso 6),
+ * el historial (paso 7) y el editor de reparto (paso 8). Se declaran todas aqui
+ * para que su direccion sea la que D-007 fijo, y cada paso solo cambio el
+ * elemento -el ultimo, el editor, dejo de montar <EnConstruccion> cuando su
+ * pantalla existio: un placeholder sobre una ruta que ya funciona dice lo
+ * contrario de lo que pasa-.
  *
  * Quien enlaza a cada una: el detalle se abre desde la fila de su obra en el
- * catalogo, y el historial desde el detalle -al final de su declaracion
- * vigente-. Al editor no enlaza nadie todavia: un enlace que no lleva a ninguna
- * parte es peor que su ausencia.
+ * catalogo, el historial desde el detalle -al final de su declaracion vigente-,
+ * y el editor desde el detalle tambien, en el bloque de la declaracion. Ninguna
+ * de las tres es alcanzable solo escribiendo su URL.
  */
 const SUBRUTAS_DEL_DETALLE: readonly { path: string; element: ReactElement }[] =
   [
     { path: "/catalogo/:id", element: <DetalleObra /> },
     { path: "/catalogo/:id/historial", element: <HistorialVersiones /> },
-    {
-      path: "/catalogo/:id/declaracion",
-      element: <EnConstruccion titulo="Declaración de la obra" />,
-    },
+    { path: "/catalogo/:id/declaracion", element: <EditorReparto /> },
   ];
 
 /**

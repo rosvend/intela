@@ -232,6 +232,12 @@ function FichaDeObra({
             <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
           </>
         )}
+
+        <EnlaceAlEditor
+          obraId={obra.id}
+          busqueda={busqueda}
+          hayDeclaracion={!sinDeclaracion}
+        />
       </section>
     </section>
   );
@@ -253,10 +259,11 @@ function FichaDeObra({
  * diria otra vez el mismo hecho. Es la misma razon por la que esta pantalla no
  * pide un historial que ya sabe vacio.
  *
- * Es el unico enlace que lleva al historial en todo `web/src`, y lleva el `id`
- * de ESTA obra y la busqueda del catalogo -que el historial devuelve al
- * detalle-, para que el camino de vuelta no pierda la busqueda por pasar por una
- * pantalla mas.
+ * Es el enlace al historial de ESTA ficha -al que se llega tambien desde el
+ * editor, que ofrece el historial para comprobar que version quedo abierta-, y
+ * lleva el `id` de ESTA obra y la busqueda del catalogo -que el historial
+ * devuelve al detalle-, para que el camino de vuelta no pierda la busqueda por
+ * pasar por una pantalla mas.
  */
 function EnlaceAlHistorial({
   obraId,
@@ -272,6 +279,47 @@ function EnlaceAlHistorial({
         state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
       >
         Ver el historial completo
+      </Link>
+    </p>
+  );
+}
+
+/**
+ * El enlace al editor del reparto (paso 8).
+ *
+ * Va al final del bloque de la declaracion y SIEMPRE, con o sin declaracion, que
+ * es lo que lo distingue del enlace al historial: a la ficha se llega tanto para
+ * revisar un reparto vigente como para declarar una obra que nadie declaro, y en
+ * los dos casos el siguiente paso es el editor -editarlo o abrirlo por primera
+ * vez-. Ofrecerlo solo con declaracion dejaria la primera declaracion de una
+ * obra sin ninguna puerta, que es el defecto que este paso existe para no
+ * repetir: la pantalla quedaria construida y sin forma de llegar a ella.
+ *
+ * El texto cambia con el caso porque el caso es distinto -"Editar el reparto" y
+ * "Declarar el reparto" no son lo mismo para quien lo lee- y ninguno de los dos
+ * afirma un numero de version: que el guardado cierre la vigente y abra una
+ * nueva lo dice el editor, que es donde se sabe cual se cierra (D-009).
+ *
+ * Es el unico enlace al editor en todo `web/src`, y lleva el `id` de ESTA obra
+ * -un enlace que llevara al editor de otra obra pasaria un test que solo mirara
+ * el texto- y la busqueda del catalogo, para que la vuelta no la pierda.
+ */
+function EnlaceAlEditor({
+  obraId,
+  busqueda,
+  hayDeclaracion,
+}: {
+  obraId: string;
+  busqueda: string;
+  hayDeclaracion: boolean;
+}) {
+  return (
+    <p className="detalle-nota">
+      <Link
+        to={`/catalogo/${encodeURIComponent(obraId)}/declaracion`}
+        state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
+      >
+        {hayDeclaracion ? "Editar el reparto" : "Declarar el reparto"}
       </Link>
     </p>
   );

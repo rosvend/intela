@@ -1432,3 +1432,100 @@ td {
   font-weight: 600;
   color: var(--acento);
 }
+
+/* ---------- editor de reparto (#30, paso 8) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo, el detalle y el historial:
+   es la misma pantalla un nivel mas abajo. */
+.editor-reparto {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.editor-reparto h1 {
+  margin: 0;
+}
+
+.editor-reparto h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/*
+ * El aviso de que version se cierra y cual se abre.
+ *
+ * En el tinte de acento y no en ambar: no es una advertencia ni un estado del
+ * negocio -no hay nada que corregir-, es lo que va a pasar al guardar, y quien
+ * crea que esta corrigiendo la version vigente tiene que leerlo antes de tocar
+ * nada. El ambar queda para lo que de verdad pide atencion.
+ */
+.editor-aviso-version {
+  margin: 0;
+  padding: 0.9rem 1.15rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--acento);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+  max-width: 62rem;
+}
+
+.editor-formulario,
+.editor-borrador,
+.editor-padron {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* La tabla de filas: los campos ocupan el ancho de su celda, y el numero va a
+   la derecha como en las tablas de partes que no se editan. */
+.editor-filas td {
+  vertical-align: middle;
+}
+
+.editor-campo {
+  font: inherit;
+  font-size: 0.85rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.editor-campo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.editor-campo-numero {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem 1.25rem;
+}
+
+.editor-aviso {
+  margin: 0;
+  max-width: 42rem;
+  font-size: 0.85rem;
+  color: var(--alerta);
+}
+
+/* Un titular que el padron trae y la regla no admite como parte. En ambar, que
+   es el color de "esto necesita una explicacion" y no el del fallo: no hay nada
+   roto, hay una regla -R-01- que se aplica al guardar. */
+.editor-no-elegible {
+  font-size: 0.85rem;
+  color: var(--alerta);
+}

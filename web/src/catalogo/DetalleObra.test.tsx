@@ -736,35 +736,19 @@ describe("detalle de obra (integracion con App)", () => {
     expect(consultas()).toEqual([]);
   });
 
-  // La sub-ruta que fija D-007 y que sigue sin pantalla propia: el editor es el
-  // paso 8. Se declara ya para que su direccion sea la que la decision fijo, y
-  // mientras tanto monta el placeholder: lo unico cierto es que esa pantalla
-  // todavia no existe. El historial salio de esta lista en el paso 7, cuando su
-  // ruta paso a tener componente de verdad.
-  const SUBRUTAS_PENDIENTES: [string, string][] = [
-    ["/catalogo/obra-1/declaracion", "Declaración de la obra"],
-  ];
-
-  it.each(SUBRUTAS_PENDIENTES)(
-    "%s sigue sin pantalla propia y lo dice",
-    async (ruta, titulo) => {
-      simularServidor();
-
-      montarApp(ruta);
-
-      expect(await screen.findByRole("heading", { name: titulo })).toBeTruthy();
-      expect(
-        screen.getByText("Esta pantalla llega en un PR posterior."),
-      ).toBeTruthy();
-      expect(consultas()).toEqual([]);
-    },
-  );
-
   // S4 del issue #30: "saving creates a new version; the previous version is
   // still visible in history". Para que la version anterior se vea hay que poder
   // LLEGAR al historial, y el unico enlace que lleva es este. Va por obra -el
   // `id` del destino es el de la obra que se esta viendo- porque un enlace que
   // llevara al historial de otra obra pasaria un test que solo mirara el texto.
+  //
+  // El otro enlace de la ficha, el del editor (paso 8), se prueba en
+  // `EditorReparto.test.tsx`, que es donde vive esa pantalla: alli se comprueba
+  // el `id` del destino, que el texto cambia segun la obra tenga declaracion o
+  // no, y que el clic abre el editor de verdad. Aqui estaba el test que exigia
+  // <EnConstruccion> en `/catalogo/:id/declaracion`, y dejo de tener sentido el
+  // dia que la ruta paso a tener pantalla: un test de un placeholder caduca
+  // cuando el placeholder desaparece, no cuando alguien lo mira.
   const OBRAS_CON_HISTORIAL: [string, Obra, VersionDeclaracion[], string][] = [
     [
       "una obra declarada completa",
