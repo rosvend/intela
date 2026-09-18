@@ -82,6 +82,73 @@ describe("useRecurso", () => {
     expect(result.current.tipo).toBe("inactivo");
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("una recarga del mismo path no pinta Cargando otra vez", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ total: 1 }));
+    const { result, rerender } = renderHook(
+      ({ recarga }: { recarga: number }) => useRecurso("/api/x", true, recarga),
+      { initialProps: { recarga: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.tipo).toBe("listo"));
+
+    vi.mocked(fetch).mockResolvedValue(json({ total: 2 }));
+    rerender({ recarga: 1 });
+
+    expect(result.current).toEqual({ tipo: "listo", datos: { total: 1 } });
+    await waitFor(() =>
+      expect(result.current).toEqual({ tipo: "listo", datos: { total: 2 } }),
+    );
+  });
+
+  it("una recarga no borra el vacio: sin backend el sondeo no parpadea", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json({ error: "ruta no encontrada" }, 404),
+    );
+    const { result, rerender } = renderHook(
+      ({ recarga }: { recarga: number }) => useRecurso("/api/x", true, recarga),
+      { initialProps: { recarga: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.tipo).toBe("ausente"));
+
+    rerender({ recarga: 1 });
+
+    expect(result.current.tipo).toBe("ausente");
+  });
+
+  it("una recarga no borra el error: el role=alert no se re-anuncia cada ciclo", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json({ error: "la base esta caida" }, 500),
+    );
+    const { result, rerender } = renderHook(
+      ({ recarga }: { recarga: number }) => useRecurso("/api/x", true, recarga),
+      { initialProps: { recarga: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.tipo).toBe("error"));
+
+    rerender({ recarga: 1 });
+
+    expect(result.current).toEqual({
+      tipo: "error",
+      mensaje: "la base esta caida",
+    });
+  });
+
+  it("cambiar de path si pinta la carga, aunque el anterior estuviera resuelto", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ total: 1 }));
+    const { result, rerender } = renderHook(
+      ({ path }: { path: string }) => useRecurso(path),
+      { initialProps: { path: "/api/x" } },
+    );
+
+    await waitFor(() => expect(result.current.tipo).toBe("listo"));
+
+    rerender({ path: "/api/y" });
+
+    expect(result.current.tipo).toBe("cargando");
+  });
 });
 
 describe("useDashboard", () => {
