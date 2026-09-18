@@ -2,7 +2,6 @@ package reparto
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/shopspring/decimal"
 )
@@ -150,36 +149,6 @@ func agruparPorGrupo(usos []Uso) map[GrupoCanal][]Uso {
 	out := make(map[GrupoCanal][]Uso)
 	for _, u := range usos {
 		out[u.Grupo] = append(out[u.Grupo], u)
-	}
-	return out
-}
-
-func clavesGrupoOrdenadas(m map[GrupoCanal][]Uso) []GrupoCanal {
-	// Orden normativo fijo, no el de insercion.
-	orden := GruposCanal()
-	out := make([]GrupoCanal, 0, len(orden))
-	for _, g := range orden {
-		if _, ok := m[g]; ok {
-			out = append(out, g)
-		}
-	}
-	// Grupos desconocidos al final, ordenados, para fallar de forma estable.
-	extra := make([]string, 0)
-	for g := range m {
-		conocido := false
-		for _, o := range orden {
-			if g == o {
-				conocido = true
-				break
-			}
-		}
-		if !conocido {
-			extra = append(extra, string(g))
-		}
-	}
-	sort.Strings(extra)
-	for _, s := range extra {
-		out = append(out, GrupoCanal(s))
 	}
 	return out
 }
