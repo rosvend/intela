@@ -127,6 +127,13 @@ func TestParametrosSinteticosVanEtiquetados(t *testing.T) {
 		"ott.wa": true, "ott.wb": true, "ott.wc": true,
 		// Tasas a COP: USD es P-09 provisional; EUR sintetica hasta tasa propia.
 		"cambio.USD": true, "cambio.EUR": true,
+		// Porcentajes RD 9.5 / 9.7: unidad 0-100; no estan en un acta (P-10).
+		"grupo.privados_pct":      true,
+		"grupo.regionales_pct":    true,
+		"grupo.premium_pct":       true,
+		"grupo.lideres_pct":       true,
+		"grupo.estandar_pct":      true,
+		"asignacion.terceros_pct": true,
 	}
 
 	sinteticos := map[string]bool{}

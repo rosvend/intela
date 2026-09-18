@@ -177,6 +177,8 @@ Para television por suscripcion, se excluyen del reparto los canales que no tran
 contenido del catalogo de REDES SGC.
 Estado: Firme. Fuente: `RD 9.5`
 Implementacion: hace falta un filtro de repertorio a nivel de canal **y** a nivel de programa.
+Hoy conviven tres granularidades sin reconciliar del todo: `Uso.FueraDeRepertorio` (por uso,
+comentario "canal"), `identificacion.FuentesExcluidas` (por fuente) y el texto de esta regla.
 Los noticieros y magazines de la parrilla de muestra probablemente no son repertorio. Ver
 `docs/dominio/fuentes-datos.md`.
 
