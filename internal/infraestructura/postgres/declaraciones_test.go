@@ -3,6 +3,7 @@ package postgres
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 func partesDePrueba(t *testing.T, split1, split2 int64) repertorio.Declaracion {
@@ -494,6 +496,173 @@ func TestGuardarEmpujaVigenteDesdeSiCoincideConLaAnterior(t *testing.T) {
 			}
 			if !vd2.Equal(*historial[0].VigenteHasta) {
 				t.Fatalf("Guardar devolvio vigenteDesde = %s, pero la base tiene %s", vd2, *historial[0].VigenteHasta)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R-01 de punta a punta: el caso de uso montado sobre la base real.
+
+// El tercer caso que pide el criterio S8 del plan. Los otros dos -el del caso de
+// uso y el del handler- corren sobre dobles, y los dos dan por hecho lo mismo:
+// que el puerto honra `FiltroTitulares.IDs` y devuelve las filas de verdad,
+// personas naturales incluidas, para que el veredicto salga de
+// `PuedeRecibirReparto()`. Aqui no hay doble: [aplicacion.Declaraciones] se
+// monta sobre el `*Store` real, con una sociedad sembrada en el padron de
+// verdad, asi que lo que se prueba es la costura entera -la consulta acotada por
+// ids, la entidad del dominio decidiendo, y la escritura que no ocurre-.
+//
+// # La asercion que solo se puede hacer aqui
+//
+// Que el rechazo no deja rastro. Se lee de la BASE y no del valor devuelto: un
+// rechazo que hubiera cerrado la version abierta -o que hubiera dejado una
+// version 2 a medias- devolveria el mismo centinela, y [Store.Guardar] cierra la
+// version anterior y abre la nueva dentro de una sola transaccion, asi que lo
+// unico que dice lo que paso es lo que quedo escrito. Por eso el test deja
+// primero una version ABIERTA y valida: sin ella, "no se cerro nada" seria
+// indistinguible de "no habia nada que cerrar".
+func TestGuardarSplitsRechazaR01SinCerrarLaVersionAbierta(t *testing.T) {
+	casos := []struct {
+		nombre         string
+		juridica       string
+		nombreEnPadron string
+		ipiDeLaParte   string
+	}{
+		// La primera lleva IPI en el padron y en la parte: lo que la descalifica
+		// es `persona_natural`, no la falta de IPI.
+		{"una sociedad con IPI", titularProductora, "Productora del Caribe S.A.S.", "IPI-00000077"},
+		// Y esta no lo lleva en el padron, porque el esquema solo obliga al IPI
+		// a las personas naturales (`titular_natural_tiene_ipi`): el rechazo no
+		// puede depender de que la fila traiga el dato. La PARTE si lleva uno,
+		// porque [repertorio.NuevaDeclaracion] lo exige en toda parte; sin el,
+		// lo que rebotaria seria la validacion pura y no `R-01`.
+		{"una sociedad sin IPI", titularCadena, "Cadena del Norte S.A.", "IPI-00000088"},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			s, _ := padronCompleto(t)
+			ctx := t.Context()
+			// Truncado a microsegundos: es la resolucion de TIMESTAMPTZ y
+			// Store.Guardar trunca antes de escribir (mismo motivo que
+			// TestGuardarPrimeraVersion).
+			ahora := time.Now().UTC().Truncate(time.Microsecond)
+			decl := aplicacion.Declaraciones{Gestion: s, Padron: s, Reloj: reloj.Fijo{Instante: ahora}}
+
+			// Las dos lecturas con las que se comprueba que no se escribio nada.
+			// Son de la BASE -`declaracion_versiones` y la bitacora de la obra-
+			// y no del valor que devuelve la llamada.
+			historialDeLaObra := func() []aplicacion.VersionDeclaracion {
+				t.Helper()
+				historial, err := s.Historial(ctx, obraSinDeclaracion)
+				if err != nil {
+					t.Fatalf("Historial: %v", err)
+				}
+				return historial
+			}
+			asientosDeLaObra := func() []aplicacion.Asiento {
+				t.Helper()
+				asientos, err := s.De(ctx, "obra", obraSinDeclaracion)
+				if err != nil {
+					t.Fatalf("De: %v", err)
+				}
+				return asientos
+			}
+
+			// 1. Una v1 valida y ABIERTA: dos personas naturales al 60/40. No es
+			// decoracion, es lo que hace posible la asercion que vale -que el
+			// rechazo no cierra una version que ya estaba abierta-.
+			partesV1 := []repertorio.Parte{
+				{TitularID: titularAna, IPI: "IPI-00000001", Porcentaje: decimal.NewFromInt(60)},
+				{TitularID: titularBeto, IPI: "IPI-00000002", Porcentaje: decimal.NewFromInt(40)},
+			}
+			v1, err := decl.GuardarSplits(ctx, obraSinDeclaracion, partesV1, usuarioAdmin)
+			if err != nil {
+				t.Fatalf("guardar la v1 con dos personas naturales: %v", err)
+			}
+			if v1.Version != 1 {
+				t.Fatalf("version = %d, se esperaba 1: obraSinDeclaracion no tiene ninguna version sembrada", v1.Version)
+			}
+
+			historialV1 := historialDeLaObra()
+			asientosV1 := asientosDeLaObra()
+			if len(historialV1) != 1 || len(asientosV1) != 1 {
+				t.Fatalf("la v1 dejo %d versiones y %d asientos, se esperaba 1 y 1",
+					len(historialV1), len(asientosV1))
+			}
+
+			// 2. El intento que tiene que rebotar, con la sociedad MEZCLADA con
+			// una persona natural. Mezclarla es la mitad que importa: el caso de
+			// uso pide los ids que la declaracion nombra, y lo que vuelve son
+			// esas dos filas -la de Ana incluida-, asi que el rechazo solo puede
+			// salir de preguntarle `PuedeRecibirReparto()` a la fila de la
+			// sociedad. Con una declaracion donde todo lo que vuelve esta
+			// excluido, el test pasaria igual con un caso de uso que rechazara
+			// por "algo de la lista no es persona natural".
+			partesMezcladas := []repertorio.Parte{
+				{TitularID: c.juridica, IPI: c.ipiDeLaParte, Porcentaje: decimal.NewFromInt(50)},
+				{TitularID: titularAna, IPI: "IPI-00000001", Porcentaje: decimal.NewFromInt(50)},
+			}
+			_, err = decl.GuardarSplits(ctx, obraSinDeclaracion, partesMezcladas, usuarioAdmin)
+			if !errors.Is(err, aplicacion.ErrTitularNoEsPersonaNatural) {
+				t.Fatalf("se esperaba ErrTitularNoEsPersonaNatural, se obtuvo %v", err)
+			}
+			// El error nombra la fila del padron que lo provoco: si el veredicto
+			// hubiera salido de la parte de Ana -que si puede recibir reparto-,
+			// el nombre seria el suyo.
+			if !strings.Contains(err.Error(), c.nombreEnPadron) {
+				t.Fatalf("el error no nombra la fila del padron que lo provoco: %v", err)
+			}
+
+			// 3. Y contra la base, las cuatro aserciones de que no se escribio
+			// nada.
+			//
+			// (a) El historial sigue teniendo UNA version. Historial lee
+			// `declaracion_versiones`, que es la tabla donde Guardar abre la
+			// version nueva: una segunda fila aqui es el intento fallido.
+			historial := historialDeLaObra()
+			if len(historial) != len(historialV1) {
+				t.Fatalf("el historial paso de %d versiones a %d: el intento fallido escribio",
+					len(historialV1), len(historial))
+			}
+
+			// (b) Sigue siendo la 1 y sigue ABIERTA: `vigente_hasta` nulo es
+			// exactamente "nadie la cerro". Es la mitad que un rechazo tardio
+			// -posterior a Guardar- habria roto: la v1 quedaria cerrada, la v2
+			// no llegaria a existir y la obra se quedaria sin declaracion
+			// vigente.
+			if historial[0].Version != 1 || historial[0].VigenteHasta != nil {
+				t.Fatalf("version vigente = %d con vigente_hasta %v, se esperaba la 1 abierta",
+					historial[0].Version, historial[0].VigenteHasta)
+			}
+
+			// (c) Y sus partes siguen siendo las de la v1 -60/40, las dos
+			// personas naturales-, ni una mezcla con las del intento ni una
+			// version nueva a medias. Salen de `declaraciones` filtrada por esa
+			// version, que es la tabla donde se escriben.
+			partes := historial[0].Declaracion.Partes
+			if len(partes) != 2 {
+				t.Fatalf("la v1 abierta tiene %d partes, se esperaban 2: %+v", len(partes), partes)
+			}
+			if partes[0].TitularID != titularAna || !partes[0].Porcentaje.Equal(decimal.NewFromInt(60)) {
+				t.Fatalf("primera parte de la v1 = %+v, se esperaba %s al 60", partes[0], titularAna)
+			}
+			if partes[1].TitularID != titularBeto || !partes[1].Porcentaje.Equal(decimal.NewFromInt(40)) {
+				t.Fatalf("segunda parte de la v1 = %+v, se esperaba %s al 40", partes[1], titularBeto)
+			}
+
+			// (d) La bitacora de la obra no gano un asiento. El asiento lo
+			// escribe Guardar en la MISMA transaccion que la version, asi que
+			// uno de mas seria la prueba de que la escritura llego a empezar.
+			asientos := asientosDeLaObra()
+			if len(asientos) != len(asientosV1) {
+				t.Fatalf("la bitacora de la obra paso de %d asientos a %d",
+					len(asientosV1), len(asientos))
+			}
+			if asientos[0].Hecho != "declaracion.guardada" {
+				t.Fatalf("el asiento que queda es de %q, se esperaba el de la v1 (`declaracion.guardada`)",
+					asientos[0].Hecho)
 			}
 		})
 	}
