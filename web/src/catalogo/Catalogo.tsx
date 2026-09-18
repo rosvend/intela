@@ -1,8 +1,9 @@
 import { useId, useState, type ReactElement } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { useApi } from "../useApi";
 import { formatearPorcentaje } from "./declaracion";
+import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { esObra, type Obra } from "./tipos";
 
 /**
@@ -12,6 +13,26 @@ import { esObra, type Obra } from "./tipos";
  * compartido abre lo mismo que vio quien lo copio.
  */
 const LIMITE_POR_PAGINA = 20;
+
+/**
+ * La clave con la que el catalogo le entrega su direccion al detalle de una obra.
+ *
+ * Buscar, abrir una obra y volver es el camino de ida y vuelta normal del
+ * administrador, y volver a `/catalogo` a secas le tiraria la busqueda que
+ * acaba de escribir: tendria que teclearla otra vez y llegar de nuevo a la
+ * pagina en la que estaba. Para devolverle ESA direccion, el detalle necesita
+ * saber de cual se vino, y de eso se encarga esta clave.
+ *
+ * Viaja en el estado de la entrada del historial y no en la direccion de la
+ * ficha, porque los filtros y la pagina son parametros de ESTA pantalla: en la
+ * direccion del detalle serian unos parametros que esa pantalla no lee, y un
+ * enlace copiado desde ahi los arrastraria como si significaran algo del
+ * detalle.
+ *
+ * Se exporta desde aqui porque el catalogo es el dueno de su propia direccion;
+ * `DetalleObra` la importa para leerla.
+ */
+export const CLAVE_DE_VUELTA_AL_CATALOGO = "catalogoDeOrigen";
 
 /**
  * Los cuatro filtros de busqueda, con los nombres EXACTOS de los parametros
@@ -238,7 +259,7 @@ export default function Catalogo() {
               onLimpiar={limpiarFiltros}
             />
           ) : (
-            <TablaCatalogo obras={obras} />
+            <TablaCatalogo obras={obras} busqueda={searchParams.toString()} />
           )}
           {obras.length > 0 && (
             <div className="catalogo-pie">
@@ -423,12 +444,31 @@ function VacioCatalogo({
 }
 
 /**
- * La tabla del catalogo, con las columnas del mockup. Ninguna fila navega
- * todavia: el detalle de la obra es un paso posterior del plan (el 6). Un
- * enlace que no lleva a ninguna parte es peor que su ausencia -la misma razon
- * por la que el mockup no dibuja aqui su boton de alta de obras (D-010)-.
+ * La tabla del catalogo, con las columnas del mockup.
+ *
+ * Cada fila enlaza al detalle de SU obra: es lo que el issue #30 pide del
+ * catalogo maestro ("cada fila navega al detalle de la obra") y el destino que
+ * D-007 fijo para esa vista. Cuando esta tabla se escribio el detalle no
+ * existia -era el paso 6 del plan- y la nota decia que ninguna fila navegaba;
+ * el enlace se anadio al aterrizar esa pantalla, porque la razon que lo
+ * justificaba -un enlace que no lleva a ninguna parte es peor que su ausencia-
+ * dejo de ser cierta en cuanto la ruta paso a tener componente. Lo que sigue
+ * sin dibujarse es el boton de alta del mockup: `POST /obras` existe, pero el
+ * alta no esta en el alcance de #30 (D-010).
+ *
+ * El enlace lleva ademas la direccion del catalogo -`busqueda`, la query de
+ * esta pantalla- para que la ficha sepa a donde devolver al administrador. Se
+ * entrega la direccion tal como esta, con los filtros y la pagina que tenga: es
+ * la busqueda que esa persona acaba de componer, y devolverla distinta seria
+ * devolverla a medias.
  */
-function TablaCatalogo({ obras }: { obras: readonly Obra[] }) {
+function TablaCatalogo({
+  obras,
+  busqueda,
+}: {
+  obras: readonly Obra[];
+  busqueda: string;
+}) {
   return (
     <table className="tabla-catalogo" aria-label="Catálogo de obras">
       <thead>
@@ -444,7 +484,27 @@ function TablaCatalogo({ obras }: { obras: readonly Obra[] }) {
       <tbody>
         {obras.map((obra) => (
           <tr key={obra.id}>
-            <td className="catalogo-titulo">{obra.titulo}</td>
+            <td className="catalogo-titulo">
+              {/* El enlace va en el titulo y no en la fila entera. Un `<a>` no
+                  puede ir entre `<tbody>` y `<tr>` sin romper el modelo de
+                  contenido de la tabla -un `<tbody>` contiene filas-, y una
+                  capa que cubriera la fila entera se comeria el clic y la
+                  seleccion de texto de las demas celdas, donde el IDA es un
+                  identificador que alguien puede necesitar copiar. El titulo,
+                  ademas, es el nombre accesible del enlace, asi que con un
+                  enlace por fila se sabe cual es cual.
+                  El id se codifica porque el contrato lo declara opaco y
+                  asignado FUERA de este sistema: no hay forma de saber que
+                  caracteres trae. `useParams` lo entrega decodificado y
+                  `DetalleObra` lo vuelve a codificar al consultar, asi que la
+                  obra que se consulta es la que esta fila nombra. */}
+              <Link
+                to={`/catalogo/${encodeURIComponent(obra.id)}`}
+                state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
+              >
+                {obra.titulo}
+              </Link>
+            </td>
             <td>{obra.genero}</td>
             {/* El anio va sin agrupar miles, por eso no pasa por
                 `formatearEntero`: "1.991" no es un anio. */}
@@ -472,42 +532,5 @@ function TablaCatalogo({ obras }: { obras: readonly Obra[] }) {
         ))}
       </tbody>
     </table>
-  );
-}
-
-/**
- * La etiqueta de estado de una obra.
- *
- * `estado_declaracion` viene del backend y se pinta tal cual, sin re-derivarlo.
- * Lo unico que decide el cliente es SI HAY declaracion, y eso lo dice
- * `version_vigente`: `null` quiere decir que la obra no tiene ninguna, y un
- * numero, la version que sostiene el estado. Hace falta porque las dos
- * situaciones -"nadie la declaro" y "declarada y no suma 100"- llegan con el
- * MISMO estado, `incompleta` y suma 0 la una y suma menor la otra: pintar
- * "Incompleta" sobre una obra que nadie declaro afirmaria una declaracion que
- * no existe (D-008), y es el dato que un administrador necesita para saber si
- * la obra esta bloqueada porque falta declararla o porque declara de menos.
- *
- * "Incompleta" es un estado valido del negocio, no un error: se pinta en ambar
- * -`badge-estado-incompleta`-, nunca en rojo.
- */
-function EtiquetaDeDeclaracion({ obra }: { obra: Obra }) {
-  const sinDeclaracion = obra.version_vigente === null;
-  const clase = sinDeclaracion
-    ? "badge-estado-sin-declaracion"
-    : obra.estado_declaracion === "completa"
-      ? "badge-estado-completa"
-      : "badge-estado-incompleta";
-  const texto = sinDeclaracion
-    ? "Sin declaración"
-    : obra.estado_declaracion === "completa"
-      ? "Completa"
-      : "Incompleta";
-
-  return (
-    <span className={`badge-estado ${clase}`}>
-      <span className="badge-estado-punto" aria-hidden="true" />
-      {texto}
-    </span>
   );
 }

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
-import type { Obra } from "./tipos";
+import type { Obra, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(cuerpo), {
@@ -68,6 +68,30 @@ const obraSinDeclaracion = {
 
 const LAS_TRES = [obraCompleta, obraIncompleta, obraSinDeclaracion];
 
+/**
+ * La version vigente de `obraIncompleta`, como la sirve el historial: la unica
+ * abierta (`vigente_hasta: null`) y con el mismo numero de version que declara
+ * la obra. `DetalleObra` no pinta partes si las dos lecturas no coinciden.
+ */
+const VERSION_VIGENTE_DE_LA_INCOMPLETA: VersionDeclaracion = {
+  version: 2,
+  vigente_desde: "2026-03-01T09:00:00Z",
+  vigente_hasta: null,
+  estado: "incompleta",
+  partes: [{ titular_id: "tit-1", ipi: "IPI-00000001", porcentaje: 74.5 }],
+};
+
+/**
+ * Una obra cuyo identificador necesita ir codificado en la direccion. El
+ * contrato lo declara opaco y asignado FUERA de este sistema, asi que no se
+ * puede suponer que no traiga un caracter que la ruta reserva.
+ */
+const obraConEspacioEnElId = {
+  ...obraCompleta,
+  id: "obra 7",
+  titulo: "Titulo Con Espacio",
+} satisfies Obra;
+
 /** La fila de la tabla que contiene `texto`. */
 function filaCon(texto: string): HTMLElement {
   const fila = screen.getByText(texto).closest("tr");
@@ -80,6 +104,16 @@ function tabla(): HTMLElement {
 }
 
 const esConsultaDeObras = (url: string) => url.startsWith("/api/obras");
+
+/**
+ * El detalle de una obra y su historial. Se reconocen ANTES que el listado,
+ * porque `GET /api/obras/{id}` tambien empieza por `/api/obras`: sin ese corte,
+ * seguir el enlace de una fila recibiria la lista del catalogo y la ficha diria
+ * que la obra no llego legible.
+ */
+const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
+const esElHistorial = (url: string) =>
+  /^\/api\/obras\/[^/]+\/declaracion\/historial$/.test(url);
 
 /** Los GET de la busqueda, en orden: una por cada cambio de filtro o de pagina. */
 function consultas(): string[] {
@@ -128,17 +162,22 @@ function respuestaDeSesion(rol: Rol): Response {
 
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del
- * test y el catalogo con `obras(url)`. `respuesta` sustituye al catalogo cuando
- * lo que se prueba es un fallo. Todo lo demas, 404.
+ * test, el catalogo con `obras(url)`, y el detalle de una obra con
+ * `detalle(id)` mas su historial con `historial()`. `respuesta` sustituye al
+ * catalogo cuando lo que se prueba es un fallo. Todo lo demas, 404.
  */
 function simularServidor({
   rol,
   obras = () => [],
   respuesta,
+  detalle,
+  historial = () => [],
 }: {
   rol: Rol;
   obras?: (url: string) => unknown;
   respuesta?: () => Response;
+  detalle?: (id: string) => Response;
+  historial?: () => VersionDeclaracion[];
 }) {
   vi.mocked(fetch).mockImplementation((entrada, init) => {
     const url = String(entrada);
@@ -146,11 +185,37 @@ function simularServidor({
     if (url === "/api/auth/session") {
       return Promise.resolve(respuestaDeSesion(rol));
     }
+    if (metodo === "GET" && esElHistorial(url)) {
+      return Promise.resolve(json(historial()));
+    }
+    if (metodo === "GET" && esLaObra(url)) {
+      // El segmento llega codificado en la direccion y el backend lo lee
+      // decodificado: aqui se decodifica para reconocer la obra, igual que
+      // `useParams` entrega el id ya decodificado a la ficha.
+      const id = decodeURIComponent(url.slice("/api/obras/".length));
+      return Promise.resolve(
+        detalle ? detalle(id) : json({ error: "esa obra no existe" }, 404),
+      );
+    }
     if (metodo === "GET" && esConsultaDeObras(url)) {
       return Promise.resolve(respuesta ? respuesta() : json(obras(url)));
     }
     return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
   });
+}
+
+/**
+ * El detalle de una obra de `lista`, como lo sirve `GET /obras/{id}`.
+ *
+ * Un identificador que no esta en la lista es 404 y NO el detalle de otra obra:
+ * asi, un enlace que apunte al id equivocado hace fallar el test en vez de
+ * pintar la ficha de otra obra como si fuera la suya.
+ */
+function detalleDe(lista: readonly Obra[]): (id: string) => Response {
+  return (id) => {
+    const obra = lista.find((candidata) => candidata.id === id);
+    return obra ? json(obra) : json({ error: "esa obra no existe" }, 404);
+  };
 }
 
 describe("pantalla de catalogo (integracion con App)", () => {
@@ -338,8 +403,138 @@ describe("pantalla de catalogo (integracion con App)", () => {
     // boton que no hace nada es peor que su ausencia.
     expect(screen.queryByRole("button", { name: /nueva obra/i })).toBeNull();
 
-    // El detalle tampoco: es el paso 6. Ninguna fila navega a ninguna parte.
-    expect(within(filaCon("Noche de Bodas")).queryByRole("link")).toBeNull();
+    // El detalle SI existe ya -es el paso 6 y cada fila enlaza con su obra-,
+    // asi que aqui no se afirma su ausencia: el enlace de cada fila y el
+    // destino al que lleva se prueban en su propio test, mas abajo.
+  });
+
+  it("cada fila enlaza al detalle de SU obra, y el enlace abre esa obra y no otra", async () => {
+    simularServidor({
+      rol: "administrador",
+      obras: () => LAS_TRES,
+      detalle: detalleDe(LAS_TRES),
+      historial: () => [VERSION_VIGENTE_DE_LA_INCOMPLETA],
+    });
+
+    montarApp("/catalogo");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+
+    // El destino se afirma fila por fila, con su identificador. Un enlace que
+    // apuntara al detalle de OTRA obra -el error de copiar el `to` y olvidar la
+    // variable- se ve igual en una captura, y una prueba que solo contara
+    // enlaces tampoco lo veria.
+    const destinos = LAS_TRES.map((obra) => [
+      obra.titulo,
+      within(filaCon(obra.titulo)).getByRole("link").getAttribute("href"),
+    ]);
+    expect(destinos).toEqual([
+      ["La Casa de las Dos Palmas", "/catalogo/obra-1"],
+      ["Noche de Bodas", "/catalogo/obra-2"],
+      ["Sin Declarar Todavia", "/catalogo/obra-3"],
+    ]);
+
+    // El enlace es el titulo, y solo el titulo: el IDA es un identificador que
+    // alguien puede necesitar copiar, y una fila entera que navegara se comeria
+    // el clic y la seleccion de esa celda.
+    const primera = filaCon("La Casa de las Dos Palmas");
+    expect(within(primera).getAllByRole("link")).toHaveLength(1);
+    const celdaDelIda = within(primera).getByText("IDA-1");
+    expect(celdaDelIda.tagName).toBe("TD");
+    expect(celdaDelIda.closest("a")).toBeNull();
+
+    // Y sigue el enlace de la SEGUNDA fila, que no es la primera del catalogo:
+    // la ficha que aparece es la de esa obra, con su identificador y su
+    // declaracion vigente.
+    fireEvent.click(within(filaCon("Noche de Bodas")).getByRole("link"));
+
+    expect(ubicacion()).toBe("/catalogo/obra-2");
+    expect(
+      await screen.findByRole("heading", { name: "Noche de Bodas", level: 1 }),
+    ).toBeTruthy();
+    expect(screen.getByText("obra-2")).toBeTruthy();
+    expect(screen.queryByText("La Casa de las Dos Palmas")).toBeNull();
+
+    const partes = await screen.findByRole("table", {
+      name: "Partes de la declaración vigente",
+    });
+    expect(within(partes).getByText("74.5000%")).toBeTruthy();
+  });
+
+  it("la vuelta desde la ficha devuelve al catalogo con la busqueda y la pagina que se dejaron", async () => {
+    // Desde que cada fila enlaza con su ficha, buscar una obra y abrirla es el
+    // ida y vuelta normal del administrador: si la vuelta cayera en el catalogo
+    // entero, la busqueda que acaba de escribir -y la pagina en la que estaba-
+    // se perderian y tendria que rehacerla para seguir donde iba.
+    const veinte = Array.from({ length: 20 }, (_, i) => ({
+      ...obraCompleta,
+      id: `obra-${i}`,
+      titulo: `Obra ${i}`,
+    })) satisfies Obra[];
+    simularServidor({
+      rol: "administrador",
+      obras: () => veinte,
+      detalle: detalleDe(veinte),
+    });
+
+    // Una busqueda de verdad: un filtro puesto y la segunda pagina.
+    montarApp("/catalogo?titulo=Obra&desplazamiento=20");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+    expect(consultas()).toEqual([
+      "/api/obras?titulo=Obra&limite=20&desplazamiento=20",
+    ]);
+    await screen.findByText("Obras 21 a 40");
+
+    fireEvent.click(within(filaCon("Obra 3")).getByRole("link"));
+
+    await screen.findByRole("heading", { name: "Obra 3", level: 1 });
+    // La ficha no escribe la busqueda en su propia direccion: los filtros y la
+    // pagina son parametros del catalogo y esta pantalla no los lee.
+    expect(ubicacion()).toBe("/catalogo/obra-3");
+
+    fireEvent.click(screen.getByRole("link", { name: /Volver al catálogo/ }));
+
+    // La vuelta cae en LA MISMA direccion de la que se salio, y la pantalla
+    // vuelve a pedir lo mismo: filtro y pagina, no solo el filtro.
+    expect(ubicacion()).toBe("/catalogo?titulo=Obra&desplazamiento=20");
+    await vi.waitFor(() =>
+      expect(ultimaConsulta()).toBe(
+        "/api/obras?titulo=Obra&limite=20&desplazamiento=20",
+      ),
+    );
+    expect(screen.getByLabelText("Título")).toHaveProperty("value", "Obra");
+    await screen.findByText("Obras 21 a 40");
+  });
+
+  it("el identificador viaja codificado y vuelve entero a la consulta de la obra", async () => {
+    simularServidor({
+      rol: "administrador",
+      obras: () => [obraConEspacioEnElId],
+      detalle: detalleDe([obraConEspacioEnElId]),
+    });
+
+    montarApp("/catalogo");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+
+    const enlace = within(filaCon(obraConEspacioEnElId.titulo)).getByRole(
+      "link",
+    );
+    // El segmento viaja codificado: un id opaco puede traer un caracter que la
+    // direccion no admite tal cual -un espacio ya hace invalida la URL-, y sin
+    // codificar el `href` sale con ese caracter crudo.
+    expect(enlace.getAttribute("href")).toBe("/catalogo/obra%207");
+
+    fireEvent.click(enlace);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: obraConEspacioEnElId.titulo,
+        level: 1,
+      }),
+    ).toBeTruthy();
+    // El id vuelve entero: el segmento decodificado es el que el backend
+    // reconoce, asi que se consulta la obra que la fila nombraba.
+    expect(consultas()).toContain("/api/obras/obra%207");
+    expect(screen.getByText("obra 7")).toBeTruthy();
   });
 
   it("cada filtro va a la URL y a la consulta con el parametro que acepta el backend", async () => {
