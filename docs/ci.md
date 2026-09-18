@@ -39,11 +39,11 @@ if: always()
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
-| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` |
-| `Test (frontend)` | `npm test` | Hay `web/package.json` y el PR toca `web/` |
-| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` |
+| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
-| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
+| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` o `api/openapi.yaml` |
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
 
