@@ -22,10 +22,10 @@ describe("itemsDeNav", () => {
     );
   });
 
-  it("el auditor ve todo lo del administrador salvo /ingesta (solo lectura: subir no es leer)", () => {
+  it("el auditor ve todo lo del administrador salvo /ingesta y /catalogo (solo lectura no es subir ni administrar el catalogo)", () => {
     const delAdministrador = itemsDeNav("administrador").map((r) => r.to);
     expect(itemsDeNav("auditor").map((r) => r.to)).toEqual(
-      delAdministrador.filter((to) => to !== "/ingesta"),
+      delAdministrador.filter((to) => to !== "/ingesta" && to !== "/catalogo"),
     );
   });
 
@@ -89,6 +89,15 @@ describe("puedeVer", () => {
   it("/ingesta es solo del administrador, como /reportes en el servidor", () => {
     for (const rol of TODOS_LOS_ROLES) {
       expect(puedeVer(rol, "/ingesta"), rol).toBe(rol === "administrador");
+    }
+  });
+
+  it("/catalogo es solo del administrador, como el requiereRol del grupo /obras (#30, D-013)", () => {
+    // Distribucion y auditor no lo ven porque el servidor les responde 403 en
+    // todas las pantallas de #30: el catalogo no se les ofrece para no anunciar
+    // una pantalla que el sistema no les da.
+    for (const rol of TODOS_LOS_ROLES) {
+      expect(puedeVer(rol, "/catalogo"), rol).toBe(rol === "administrador");
     }
   });
 });

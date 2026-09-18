@@ -45,9 +45,17 @@ export const RUTAS: readonly ItemDeNav[] = [
     seccion: "principal",
   },
   {
+    // Solo administrador: el grupo entero `/obras` del servidor esta bajo
+    // requiereRol(aplicacion.RolAdministrador)
+    // (internal/infraestructura/httpapi/server.go), asi que distribucion y
+    // auditor reciben 403 en TODAS las pantallas de #30, el catalogo incluido.
+    // Es la misma discrepancia que #29 encontro en /ingesta y resolvio igual:
+    // ofrecer en la navegacion una pantalla que el servidor va a rechazar es
+    // prometer algo que el sistema no da (D-013). El `requiereRol` del servidor
+    // sigue siendo la barrera real: esto solo deja de anunciar lo que no hay.
     to: "/catalogo",
     label: "Catálogo",
-    roles: ["administrador", "distribucion", "auditor"],
+    roles: ["administrador"],
     seccion: "principal",
   },
   {

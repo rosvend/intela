@@ -7,6 +7,7 @@ import Layout from "./Layout";
 import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import RutaProtegida from "./RutaProtegida";
+import Catalogo from "./catalogo/Catalogo";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
 
@@ -18,6 +19,7 @@ import { RUTAS } from "./navegacion";
  */
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
+  "/catalogo": <Catalogo />,
 };
 
 /**
