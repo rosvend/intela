@@ -1,0 +1,81 @@
+-- Ordenes de pago (R-10, R-11, R-12) y documentos del titular para cobrar.
+--
+-- Bruto, cada deduccion y neto viven en tablas distintas a proposito: OE-4 y
+-- OE-6 piden el desglose en cada consulta. Colapsar las deducciones en el
+-- neto haria inexpresable el resumen que exige RD 13.2.
+--
+-- COORDINACION DE NUMERO: esta migracion nacio como 00002, paso a 00003
+-- cuando el catalogo (#86) se quedo esa version, y luego a 00007 cuando
+-- #85/#72 ocuparon 00005/00006. El 00007 ya no se puede usar: main
+-- mergeo `00007_uso_excluido_no_es_oni.sql`, y goose aborta con
+-- `duplicate version 7` si dos archivos llevan el mismo numero.
+--
+-- goose corre con `allowMissing = false`. Un numero LIBRE por debajo de
+-- la version ya aplicada aborta con
+--
+--     found 1 missing migrations before current version N
+--
+-- antes de aplicar nada, y el despliegue condiciona el rollout a que
+-- goose termine bien. Por eso no se rellena el hueco 00003/00004.
+--
+-- Se toma el 00012: main mergeo `00011_usos_modalidades_y_canales.sql`,
+-- y goose aborta con `duplicate version 11` si dos archivos llevan el mismo
+-- numero. El 2026-09-18 el mayor en `main` es 00011. Un ADR admite huecos;
+-- una migracion no. Las ramas #87/#88 reclaman 00013/00014.
+
+-- +goose Up
+
+-- +goose StatementBegin
+CREATE TABLE ordenes_pago (
+  id          TEXT PRIMARY KEY,
+  proceso_id  TEXT NOT NULL REFERENCES procesos(id),
+  titular_id  TEXT NOT NULL REFERENCES titulares(id),
+  periodo     TEXT NOT NULL CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$'),
+  bruto       NUMERIC(18,2) NOT NULL CHECK (bruto >= 0),
+  neto        NUMERIC(18,2) NOT NULL CHECK (neto  >= 0),
+  estado      TEXT NOT NULL CHECK (estado IN (
+                'enviada',
+                'aceptada',
+                'aceptada_por_silencio',
+                'diferida',
+                'acumulada',
+                'objetada')),
+  -- Dia civil del envio. El plazo de 15 dias de R-10 / RD 13.2 se cuenta
+  -- sobre esta fecha, no sobre un timestamptz: calendario, no 15*24h.
+  enviada     DATE NOT NULL,
+  arrastres   TEXT[] NOT NULL DEFAULT '{}',
+  UNIQUE (proceso_id, titular_id),
+  CONSTRAINT orden_neto_no_supera_bruto CHECK (neto <= bruto)
+);
+CREATE INDEX ordenes_pago_titular ON ordenes_pago (titular_id);
+CREATE INDEX ordenes_pago_estado  ON ordenes_pago (estado);
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TABLE ordenes_pago_deducciones (
+  orden_id TEXT NOT NULL REFERENCES ordenes_pago(id) ON DELETE CASCADE,
+  concepto TEXT NOT NULL CHECK (btrim(concepto) <> ''),
+  monto    NUMERIC(18,2) NOT NULL CHECK (monto >= 0),
+  PRIMARY KEY (orden_id, concepto)
+);
+-- +goose StatementEnd
+
+-- R-12 / RD 13.1.6: RUT y certificacion bancaria. Su ausencia bloquea el
+-- pago, no la liquidacion. La clave del objeto es la evidencia; el tipo
+-- es lo que consulta EsPagable.
+-- +goose StatementBegin
+CREATE TABLE documentos_titular (
+  titular_id   TEXT NOT NULL REFERENCES titulares(id),
+  tipo         TEXT NOT NULL CHECK (tipo IN ('rut', 'certificacion_bancaria')),
+  clave_objeto TEXT NOT NULL DEFAULT '',
+  aportado     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (titular_id, tipo)
+);
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP TABLE IF EXISTS documentos_titular;
+DROP TABLE IF EXISTS ordenes_pago_deducciones;
+DROP TABLE IF EXISTS ordenes_pago;
+-- +goose StatementEnd
