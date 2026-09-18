@@ -805,6 +805,85 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
+  // COBERTURA DEL ORDEN del arreglo `iter-1/step-8.1`, que es lo que impide que
+  // un numero viejo sobreviva a un guardado en duda. El caso peligroso no es el
+  // PRIMER guardado -que ya cubren los tests del 200 ilegible y del 5xx- sino
+  // quien YA guardo una vez y recibe el 5xx en el SEGUNDO: ahi `versionGuardada`
+  // esta fijada, y si la guarda del desenlace se comprobara DESPUES, el aviso
+  // caeria a esa version -la que el primer PUT dio- y afirmaria con seguridad
+  // una version que puede estar cerrada. Es la clase exacta del CRITICAL.
+  it("un guardado legible y despues un 5xx dejan el aviso sin ningun numero de version", async () => {
+    let guardadosHechos = 0;
+    simularServidor({
+      guardado: () => {
+        guardadosHechos += 1;
+        // El primero abre la version 4 con un cuerpo legible; el segundo falla
+        // con 5xx -o sea `incierta`-, que es el desenlace que deja la duda.
+        return guardadosHechos === 1
+          ? json(versionCuatro)
+          : json({ error: MENSAJE_500 }, 500);
+      },
+    });
+    await abrirElEditor();
+
+    guardar();
+    await screen.findByRole("heading", {
+      name: "El servidor abrió la versión 4",
+    });
+
+    // El aviso SI nombra los numeros despues del primer guardado, y esto no es
+    // decoracion: es lo que impide que el test pase por vacio, porque si el
+    // aviso no nombrara numeros nunca la negativa de abajo pasaria sola.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 4 y abrirá la versión 5/,
+    );
+
+    guardar();
+
+    await screen.findByRole("alert");
+    const aviso = avisoDeVersion().textContent ?? "";
+    // El segundo guardado deja el estado en duda, y eso DESPLAZA la version que
+    // el PUT anterior habia dado: ya no se sostiene como "la que esta abierta".
+    // Ni el 4 del primer PUT, ni el 5 deducido.
+    expect(aviso).not.toMatch(/versión \d/);
+    expect(aviso).toMatch(/No se sabe si el guardado abrió una versión/);
+  });
+
+  // La otra mitad del mismo orden: el segundo guardado no falla, contesta 200,
+  // pero con un cuerpo que no tiene la forma del contrato. La version del primer
+  // PUT tampoco se sostiene aqui, porque el 200 acaba de cerrarla.
+  it("un guardado legible y despues un 200 ilegible dejan el aviso sin ningun numero", async () => {
+    let guardadosHechos = 0;
+    simularServidor({
+      guardado: () => {
+        guardadosHechos += 1;
+        return guardadosHechos === 1
+          ? json(versionCuatro)
+          : json({ version: "cuatro" });
+      },
+    });
+    await abrirElEditor();
+
+    guardar();
+    await screen.findByRole("heading", {
+      name: "El servidor abrió la versión 4",
+    });
+
+    // La misma guarda contra el verde por vacio que en el test de arriba.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 4 y abrirá la versión 5/,
+    );
+
+    guardar();
+
+    await screen.findByRole("alert");
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).not.toMatch(/versión \d/);
+    expect(aviso).toMatch(
+      /El servidor contestó sin error, así que una versión se abrió/,
+    );
+  });
+
   // D-009: los tres estados del aviso. El primero -con historial- lo fija el
   // test de arriba; los otros dos, estos. Ninguno afirma un numero que no tenga,
   // y por eso la comprobacion es `versión \d` y no un numero concreto: el dia
