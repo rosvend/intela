@@ -182,6 +182,57 @@ func TestElTitularLeidoDelPadronSabeSiPuedeRecibirReparto(t *testing.T) {
 	}
 }
 
+// El filtro que hace que la consulta de `R-01` este acotada: se piden unos ids
+// y vuelven esas filas, no el padron que hay detras. Es la unica prueba que
+// puede demostrarlo contra Postgres real -el caso de uso solo puede comprobar
+// que manda los ids-, asi que ademas de los que llegan comprueba que el resto
+// del padron NO llega: con un WHERE que ignorara este filtro, Beto seguiria
+// apareciendo en la primera busqueda.
+//
+// El orden de los ids que se piden no es el de la respuesta a proposito: el
+// ORDER BY id del listado se mantiene tambien con este filtro.
+func TestBuscarTitularesPorIDsDevuelveSoloEsos(t *testing.T) {
+	s, _ := padronCompleto(t)
+
+	casos := []struct {
+		nombre string
+		ids    []string
+		quiero []string
+	}{
+		{
+			"los pedidos, sin los demas",
+			[]string{titularCadena, titularAna, titularProductora},
+			[]string{titularAna, titularCadena, titularProductora},
+		},
+		{
+			"uno solo",
+			[]string{titularProductora},
+			[]string{titularProductora},
+		},
+		{
+			"un id que no esta en el padron",
+			[]string{"tit-no-existe"},
+			nil,
+		},
+		{
+			"lista vacia: no filtra",
+			[]string{},
+			[]string{titularAna, titularBeto, titularCadena, titularProductora},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			titulares, err := s.BuscarTitulares(t.Context(), aplicacion.FiltroTitulares{IDs: c.ids})
+			if err != nil {
+				t.Fatalf("BuscarTitulares: %v", err)
+			}
+			if got := idsTitulares(titulares); !slices.Equal(got, c.quiero) {
+				t.Fatalf("ids = %v, se esperaba %v", got, c.quiero)
+			}
+		})
+	}
+}
+
 // Los filtros se combinan con Y, no con O: con O, un nombre que no cuadra
 // devolveria titulares de todas formas y el buscador mentiria.
 func TestBuscarTitularesCombinaLosFiltrosConY(t *testing.T) {

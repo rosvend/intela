@@ -83,18 +83,26 @@ func ejecutar(log *slog.Logger) error {
 	// puertos separados: que el adaptador sea uno solo es asunto suyo.
 	catalogo := aplicacion.Catalogo{Obras: store}
 
-	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
-	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
-	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
-	declaraciones := aplicacion.Declaraciones{
-		Gestion: store,
-		Reloj:   reloj.Sistema{},
-	}
-
 	// El padron de titulares, que es de donde el editor de splits saca las
 	// partes de una declaracion. La satisface el mismo *Store, y con esto es
 	// la primera lectura de `titulares` en produccion.
 	padron := aplicacion.Titulares{Padron: store}
+
+	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
+	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
+	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El padron entra aqui tambien, y es el MISMO valor de arriba: guardar una
+	// declaracion no puede escribir una parte que R-01 prohibe, y la regla se
+	// cablea una sola vez. Declaraciones lo recibe por el puerto
+	// -PadronTitulares, el nucleo no conoce el caso de uso del padron-, y que
+	// sea este valor quien lo satisface es decision de este main. De ahi que
+	// `padron` se construya antes de esta linea.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Padron:  padron,
+		Reloj:   reloj.Sistema{},
+	}
 
 	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
 	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene

@@ -104,6 +104,32 @@ var (
 	// el catalogo", que no es lo que paso.
 	ErrTitularInexistente = errors.New("ese titular no existe")
 
+	// ErrTitularNoEsPersonaNatural: la declaracion nombra un titular que SI
+	// esta en el padron y que no puede recibir reparto, porque no es persona
+	// natural (`R-01`, `RD 4.5`).
+	//
+	// No es ErrTitularInexistente, y la diferencia es la razon de ser de los
+	// dos: alli el titular_id no resuelve a nadie y el defecto esta en el dato
+	// que llego; aqui el dato es correcto -una productora tiene su fila en el
+	// padron, con su nombre y su clase- y lo que la rechaza es la REGLA. Los
+	// dos salen como 400 porque el campo viene en el cuerpo de la peticion,
+	// pero dicen cosas distintas y por eso llevan mensajes distintos: decirle
+	// "no existe" a quien mando el id de una sociedad que si existe lo manda a
+	// buscar un error que no cometio.
+	//
+	// Existe porque hasta ahora la unica barrera de R-01 en el camino de la
+	// declaracion era el trigger `resultados_titular_persona_natural`
+	// (migracion 00001), que dispara en `resultados_titular`, es decir al
+	// PAGAR: la declaracion con una sociedad dentro se guardaba con 200 y el
+	// reparto la rechazaba mucho mas tarde, con una excepcion cruda de
+	// Postgres y con el dinero ya en juego. Este centinela es lo que permite
+	// decirlo en la puerta de entrada, antes de abrir la version.
+	//
+	// El trigger no se toca: sigue siendo la ultima linea, y la unica que
+	// cubre lo que entre por SQL crudo -lo dice el comentario de
+	// `afiliacion.Titular.PuedeRecibirReparto`-. Esto es la mitad del nucleo.
+	ErrTitularNoEsPersonaNatural = errors.New("ese titular no es persona natural")
+
 	// ErrBolsaDuplicada: ya hay una bolsa para ese usuario, periodo y circuito.
 	//
 	// No es "no se pudo escribir" y no es un dato invalido: el alta estaba bien

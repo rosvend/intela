@@ -120,6 +120,20 @@ func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoE
 		// esas frases son internas.
 		escribirError(w, http.StatusBadRequest, "uno de los titulares indicados no existe")
 		return
+	case errors.Is(err, aplicacion.ErrTitularNoEsPersonaNatural):
+		// 400 por la misma razon que el de arriba -el titular_id viene del
+		// cuerpo-, pero NO es el mismo error y por eso no comparte mensaje: ahi
+		// el identificador no resuelve a nadie y aqui resuelve a un titular del
+		// padron que la regla no admite como parte. Mandar "no existe" a quien
+		// mando el id de una sociedad que si existe lo manda a buscar un error
+		// que no cometio.
+		//
+		// El mensaje es fijo, y nombra la regla, porque es lo unico que permite
+		// entender el rechazo sin conocer `RD 4.5`. Fijo tambien porque el error
+		// del nucleo nombra la fila del padron y esas frases son internas.
+		escribirError(w, http.StatusBadRequest,
+			"uno de los titulares indicados no es persona natural, y solo un escritor persona natural puede recibir reparto (R-01, RD 4.5)")
+		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa obra no esta en el catalogo")
 		return

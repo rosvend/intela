@@ -1965,6 +1965,14 @@ export interface operations {
              *     que no es positivo o que trae mas de 4 decimales, un titular
              *     repetido, la suma se pasa de 100, o nombra un titular_id que no
              *     esta en el padron.
+             *
+             *     Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+             *     no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+             *     persona natural como titular de una Declaracion de Obra, y esa
+             *     regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+             *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
+             *     inexistente: alli el identificador no resuelve a nadie, y aqui
+             *     resuelve a una productora que existe y no puede figurar como parte.
              */
             400: {
                 headers: {
@@ -2094,6 +2102,14 @@ export interface operations {
              *     que no es positivo o que trae mas de 4 decimales, un titular
              *     repetido, la suma se pasa de 100, o nombra un titular_id que no
              *     esta en el padron.
+             *
+             *     Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+             *     no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+             *     persona natural como titular de una Declaracion de Obra, y esa
+             *     regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+             *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
+             *     inexistente: alli el identificador no resuelve a nadie, y aqui
+             *     resuelve a una productora que existe y no puede figurar como parte.
              */
             400: {
                 headers: {

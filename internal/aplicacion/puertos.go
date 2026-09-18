@@ -296,12 +296,19 @@ type FiltroObras struct {
 //
 // PersonaNatural es un PUNTERO, y no es un capricho. Con un bool a secas, "no
 // filtrar" y "solo personas juridicas" serian el mismo valor cero -`false`- y
-// no habria forma de preguntar por las productoras, que es justo la pregunta
-// que `R-01` hace: quien esta en el padron y NO puede recibir reparto.
+// no habria forma de preguntar por las productoras, que es lo que ofrece
+// `GET /titulares`: quien esta en el padron y NO puede recibir reparto.
+//
+// IDs pide esas filas del padron y ninguna otra, y una lista vacia NO filtra,
+// igual que los tres de arriba. Existe porque `R-01` tiene que decidir sobre
+// los titulares que NOMBRA una declaracion, y esos son unos pocos: sin este
+// filtro, comprobar la regla en cada guardado obliga a leer el padron entero
+// -que no tiene tope- para responder por un punado de ids.
 type FiltroTitulares struct {
 	Nombre         string
 	IPI            string
 	PersonaNatural *bool
+	IDs            []string
 	Paginacion
 }
 

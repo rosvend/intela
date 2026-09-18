@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +147,47 @@ func TestGuardarDeclaracionConTitularInexistenteDevuelve400(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/obras/obra-1/declaracion", cuerpoPartes, "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	// Y con SU mensaje: el de R-01 es otro, y los dos son 400.
+	if cuerpo := rec.Body.String(); !strings.Contains(cuerpo, "no existe") {
+		t.Fatalf("el mensaje no dice que el titular no esta en el padron: %s", cuerpo)
+	}
+}
+
+// El segundo 400 de esta ruta, y el que le faltaba al contrato: una parte cuyo
+// titular SI esta en el padron y no es persona natural (`R-01`, `RD 4.5`). El
+// mensaje tiene que nombrar la regla -es lo unico que explica el rechazo- y no
+// puede confundirse con el del titular inexistente.
+func TestGuardarDeclaracionConTitularQueNoEsPersonaNaturalDevuelve400(t *testing.T) {
+	falso := &declaracionesFalso{err: aplicacion.ErrTitularNoEsPersonaNatural}
+	h := servidorConDeclaraciones(t, falso)
+
+	// PUT y no POST: el defecto que esto cierra se veia justo aqui, editando
+	// una declaracion existente.
+	rec := pedir(t, h, http.MethodPut, "/obras/obra-1/declaracion", cuerpoPartes, "tok")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	cuerpo := rec.Body.String()
+	if !strings.Contains(cuerpo, "R-01") {
+		t.Fatalf("el mensaje no nombra la regla que rechaza: %s", cuerpo)
+	}
+	if strings.Contains(cuerpo, "no existe") {
+		t.Fatalf("el rechazo de R-01 se anuncio como un titular inexistente: %s", cuerpo)
+	}
+}
+
+// Un fallo del nucleo que no es ninguno de los rechazos de arriba es un 500, y
+// ese es el punto de que R-01 tenga centinela propio: el dia que leer el padron
+// falle, quien edita tiene que ver "no se pudo guardar" y no un 400 que le dice
+// que sus datos estan mal.
+func TestGuardarDeclaracionConFalloDelNucleoDevuelve500(t *testing.T) {
+	falso := &declaracionesFalso{err: errors.New("comprobar quien puede recibir reparto: la base no responde")}
+	h := servidorConDeclaraciones(t, falso)
+
+	rec := pedir(t, h, http.MethodPut, "/obras/obra-1/declaracion", cuerpoPartes, "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
 	}
 }
 
