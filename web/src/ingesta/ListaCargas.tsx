@@ -4,9 +4,52 @@ import type { components } from "../contrato";
 import { formatearEntero } from "../tablero/formato";
 import { useApi } from "../useApi";
 import { huellaCorta } from "./PanelResultado";
-import TablaRechazos, { type Rechazo } from "./TablaRechazos";
+import TablaRechazos, { type Rechazo, esRechazo } from "./TablaRechazos";
 
 export type Carga = components["schemas"]["Carga"];
+
+/**
+ * Si un valor sin tipar tiene la forma de una `Carga`: los campos que lee este
+ * listado, y solo esos.
+ *
+ * - `sha256` es el campo sobre el que revienta la tabla: `huellaCorta` le hace
+ *   `.slice`, asi que una carga sin el -o con un objeto en su lugar- lanzaba
+ *   `TypeError: Cannot read properties of undefined (reading 'slice')` y, sin
+ *   ErrorBoundary en `web/src`, dejaba la pantalla en blanco;
+ * - `recibido` va a `new Date()` y, si no se puede leer, se pinta tal cual
+ *   (`formatearRecibido`): un objeto ahi es tambien un hijo invalido de React;
+ * - `id`, `fuente` y `periodo` se pintan, y `id` ademas es la clave de la fila y
+ *   el identificador con que se pide su log;
+ * - `aceptados` y `rechazados` son cifras contadas: con otra cosa
+ *   `formatearEntero` pintaria `NaN` y el boton de rechazos desapareceria sin
+ *   decirlo, que es una cifra mal dicha antes que una pantalla rota.
+ *
+ * `nbytes` y `clave_objeto` no se miran porque ningun consumidor de esta
+ * pantalla los lee. Vive aqui, junto a `Carga`, como `esRechazo` vive junto a
+ * `Rechazo` y `esEntrega` junto a `Entrega`: cada guarda se lee al lado del tipo
+ * que comprueba.
+ */
+export function esCarga(valor: unknown): valor is Carga {
+  if (typeof valor !== "object" || valor === null) return false;
+  const carga = valor as {
+    id?: unknown;
+    fuente?: unknown;
+    periodo?: unknown;
+    sha256?: unknown;
+    recibido?: unknown;
+    aceptados?: unknown;
+    rechazados?: unknown;
+  };
+  return (
+    typeof carga.id === "string" &&
+    typeof carga.fuente === "string" &&
+    typeof carga.periodo === "string" &&
+    typeof carga.sha256 === "string" &&
+    typeof carga.recibido === "string" &&
+    Number.isInteger(carga.aceptados) &&
+    Number.isInteger(carga.rechazados)
+  );
+}
 
 const COLUMNAS = 7;
 
@@ -59,11 +102,18 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
   // un proxy, o un backend que cambie de forma- llega hasta aqui. Sin este
   // corte, `cargas.length` no seria 0 y `cargas.map` tumbaria la pantalla
   // entera. No es redundante con `useApi`: el hook descarta el `Response` de un
-  // cuerpo que no es JSON, no un JSON que no es una lista.
-  if (!Array.isArray(cargas)) {
+  // cuerpo que no es JSON, no un JSON que no sea la lista prometida, y de la
+  // forma de cada elemento no sabe nada.
+  //
+  // Y no basta con que sea una lista: `carga.sha256` es lo que revienta en
+  // `huellaCorta`, asi que cada elemento pasa por `esCarga`. Una carga mal
+  // formada deja el listado entero en error a proposito: saltarse la fila mala
+  // esconderia una carga -y sus recuentos- sin decirlo, y aqui toda cifra se
+  // explica hasta su origen.
+  if (!Array.isArray(cargas) || !cargas.every(esCarga)) {
     return (
       <p className="ingesta-error" role="alert">
-        El listado no llegó como una lista de cargas.
+        El listado no llegó como una lista de cargas legibles.
       </p>
     );
   }
@@ -173,11 +223,16 @@ function RechazosDeCarga({ id }: { id: string }) {
   }
 
   // Mismo caso que en el listado: el tipo promete una lista y el 2xx puede
-  // traer otra cosa. `TablaRechazos` lee `.length` y `.map`.
-  if (!Array.isArray(rechazos)) {
+  // traer otra cosa, y `TablaRechazos` lee cuatro campos de cada elemento
+  // -`id`, `titulo`, `ids_fuente` y `motivo`- que este tipo no comprueba. Los
+  // valida `esRechazo`, definido junto al tipo `Rechazo`. Un log con un rechazo
+  // ilegible se avisa entero en vez de dibujar solo las filas buenas: lo que el
+  // sistema promete es el log completo o un error explicito, nunca filas
+  // escondidas sin decirlo.
+  if (!Array.isArray(rechazos) || !rechazos.every(esRechazo)) {
     return (
       <p className="ingesta-error" role="alert">
-        El log no llegó como una lista de rechazos.
+        El log no llegó como una lista de rechazos legibles.
       </p>
     );
   }

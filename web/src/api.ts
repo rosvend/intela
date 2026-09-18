@@ -114,14 +114,21 @@ const MENSAJE_ERROR_ILEGIBLE = "el servidor respondió un error ilegible";
 // El DELETE de /auth/session responde 204 sin cuerpo y sin content-type: no
 // se puede pedir .json() a ciegas en el camino de error tampoco. Un cuerpo
 // vacio sigue usando el `statusText` (eso si es del protocolo); uno que no
-// parsea como JSON se sustituye por un mensaje propio: ver
-// `MENSAJE_ERROR_ILEGIBLE`.
+// parsea como JSON -o que parsea sin traer un `error` de texto- se sustituye por
+// un mensaje propio: ver `MENSAJE_ERROR_ILEGIBLE`.
 async function mensajeDeError(res: Response): Promise<string> {
   const texto = await res.text();
   if (!texto) return res.statusText;
   try {
-    const cuerpo = JSON.parse(texto) as { error?: string };
-    return cuerpo.error || texto;
+    const cuerpo = JSON.parse(texto) as { error?: unknown };
+    // Solo vale un `error` que sea un texto con algo dentro, que es la forma que
+    // promete el contrato (`{"error": "..."}`). Un cuerpo que parsea pero no
+    // trae `error` -el `{"detalle": ...}` de un proxy- o que lo trae vacio
+    // (`{"error": ""}`, que ademas es falsy) no es un mensaje del backend:
+    // devolverlo crudo pintaba el JSON entero como explicacion del sistema.
+    return typeof cuerpo.error === "string" && cuerpo.error !== ""
+      ? cuerpo.error
+      : MENSAJE_ERROR_ILEGIBLE;
   } catch {
     return MENSAJE_ERROR_ILEGIBLE;
   }

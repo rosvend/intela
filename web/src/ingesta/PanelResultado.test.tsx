@@ -150,15 +150,18 @@ describe("PanelResultado", () => {
     expect(within(alerta).getByText(NO_SE_GUARDO)).toBeTruthy();
   });
 
-  // El 500 no tiene titulo propio: comparte el neutro del fallo desconocido,
-  // porque con un 500 tampoco se sabe si la entrega alcanzo a quedar
-  // registrada. Un titulo que dijera "no se pudo registrar" afirmaria mas de lo
-  // que el sistema sabe.
+  // El 500 si tiene titulo propio, y no por prudencia: el backend lo contesta
+  // con "no se pudo registrar la entrega" (reportes.go) porque las dos
+  // escrituras del caso de uso -el acuse y el lote- van en UNA transaccion
+  // (internal/aplicacion/ingesta.go), y las ramas anteriores a ella tampoco
+  // dejan fila. Si el servidor contesta un 500, no quedo entrega. El titulo
+  // neutro se reserva para "desconocido" y para los status que no estan en el
+  // mapa, que es donde de verdad no se sabe.
   it.each([
     [409, "La entrega no se registró"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
-    [500, "No se sabe si la entrega se registró"],
+    [500, "La entrega no se registró"],
   ] as const)(
     "el status %s se titula %j y conserva el mensaje",
     (status, titulo) => {

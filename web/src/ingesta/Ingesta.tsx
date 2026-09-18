@@ -7,6 +7,7 @@ import PanelResultado, {
   type Resultado,
   resultadoDeError,
 } from "./PanelResultado";
+import { esRechazo } from "./TablaRechazos";
 
 // Las fuentes con adaptador dado de alta en
 // internal/infraestructura/ingesta/fuentes.go. Una fuente nueva se anade alli
@@ -54,12 +55,16 @@ function esTextoNoVacio(valor: unknown): valor is string {
  *
  * - `id`, `fuente`, `periodo`, `sha256` y `clave_objeto`: cadenas no vacias;
  * - `aceptados`: un numero;
- * - `rechazados`: una lista de objetos, uno por fila rechazada.
+ * - `rechazados`: una lista de rechazos, y cada uno pasa por `esRechazo`, que es
+ *   quien comprueba los cuatro campos que `TablaRechazos` lee (`id`, `titulo`,
+ *   `ids_fuente` y `motivo`). Una sola definicion: `esRechazo` vive junto al
+ *   tipo `Rechazo`, y si la tabla empieza a leer un campo nuevo se toca alli.
+ *   Exigir aqui "objeto no nulo" dejaba pasar un `ids_fuente` objeto -el
+ *   contrato lo declara `string`- y React lanzaba "Objects are not valid as a
+ *   React child" al pintarlo, con el panel entero muerto.
  *
- * `nbytes` no se mira: no lo lee ningun consumidor de la pantalla. De cada
- * rechazo solo se exige que sea un objeto, no sus cuatro campos: se pintan como
- * texto y un campo que falte deja la celda vacia, mientras que un `null` en la
- * lista si revienta al leer `.id`.
+ * `nbytes` no se mira: no lo lee ningun consumidor de la pantalla (el panel no
+ * lo pinta, y el listado, que si lo tiene en su tipo, tampoco).
  *
  * Un 2xx con otra forma -el `{"rechazados": []}` de un despliegue a medias, un
  * objeto suelto, el HTML de un proxy- pasaba la guarda anterior, que solo
@@ -90,9 +95,7 @@ function esEntrega(cuerpo: unknown): cuerpo is Entrega {
     esTextoNoVacio(entrega.clave_objeto) &&
     typeof entrega.aceptados === "number" &&
     Array.isArray(entrega.rechazados) &&
-    entrega.rechazados.every(
-      (rechazo) => typeof rechazo === "object" && rechazo !== null,
-    )
+    entrega.rechazados.every(esRechazo)
   );
 }
 

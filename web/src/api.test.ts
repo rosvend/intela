@@ -150,6 +150,46 @@ describe("api", () => {
     await expect(api("/api/obras")).rejects.toThrow("Internal Server Error");
   });
 
+  it("un cuerpo de error que parsea pero no trae `error` no se pinta crudo", async () => {
+    // El contrato promete `{error: "..."}`. Un cuerpo que si parsea como JSON
+    // pero nombra el mensaje de otra manera -`{"detalle": ...}`, la forma de
+    // tantos proxies- no es un mensaje de esta API: devolverlo tal cual pintaba
+    // el JSON entero, con sus llaves y comillas, como explicacion del sistema.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detalle: "algo del proxy" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    expect((error as ApiError).message).not.toContain("detalle");
+    expect((error as ApiError).message).not.toContain("{");
+  });
+
+  it("un `error` vacio tambien es ilegible: una cadena vacia no es un mensaje", async () => {
+    // `cuerpo.error || texto` caia al `||` con `""` -que es falsy- y acababa
+    // pintando el JSON crudo.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni el JSON crudo: el mensaje propio no lleva llaves ni comillas.
+    expect((error as ApiError).message).not.toContain('"error"');
+  });
+
   it("un cuerpo de error que no es JSON se sustituye: la pagina del proxy no es un mensaje del backend", async () => {
     // El contrato promete que un error de la API viene como `{error: "..."}`,
     // asi que un cuerpo que no parsea como JSON no lo puso la API. Devuelto

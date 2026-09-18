@@ -192,7 +192,42 @@ describe("ListaCargas", () => {
 
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain(
-      "El listado no llegó como una lista de cargas.",
+      "El listado no llegó como una lista de cargas legibles.",
+    );
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("un 2xx con una lista de elementos vacios no revienta el listado", async () => {
+    // Reproduccion del crash de la revision pasada 3: `[{}]` es una lista de
+    // verdad con un elemento sin ningun campo, asi que pasaba el `Array.isArray`
+    // y `huellaCorta(carga.sha256)` lanzaba "Cannot read properties of
+    // undefined (reading 'slice')". Sin ErrorBoundary en `web/src`, la pantalla
+    // se quedaba en blanco.
+    vi.mocked(fetch).mockResolvedValue(json([{}]));
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El listado no llegó como una lista de cargas legibles.",
+    );
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("una carga con un campo mal tipado deja el listado en error, no la fila escondida", async () => {
+    // `sha256` es el campo que revienta; `aceptados`/`rechazados` son las cifras
+    // que el listado muestra, y una cifra que no es un numero se pintaria como
+    // `NaN`. Los dos casos dejan el listado entero en error: saltarse la fila
+    // mala escondería una carga sin decirlo.
+    vi.mocked(fetch).mockResolvedValue(
+      json([{ ...cargaSinRechazos, sha256: null }, cargaConRechazos]),
+    );
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El listado no llegó como una lista de cargas legibles.",
     );
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -209,7 +244,30 @@ describe("ListaCargas", () => {
 
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain(
-      "El log no llegó como una lista de rechazos.",
+      "El log no llegó como una lista de rechazos legibles.",
+    );
+    // El resto del listado sigue en pie.
+    expect(filaCon("netflix")).toBeTruthy();
+  });
+
+  it("un log con un rechazo de campo mal tipado deja la fila en error, sin tumbarla", async () => {
+    // `ids_fuente` objeto: el contrato lo declara `string` y React no pinta un
+    // objeto como hijo ("Objects are not valid as a React child"), asi que la
+    // tabla reventaba con el panel entero.
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json([cargaConRechazos]))
+      .mockResolvedValueOnce(
+        json([{ ...rechazos[0], ids_fuente: { id_netflix: "80000001" } }]),
+      );
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    await screen.findByRole("table", { name: "Cargas hechas" });
+    fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (3)" }));
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El log no llegó como una lista de rechazos legibles.",
     );
     // El resto del listado sigue en pie.
     expect(filaCon("netflix")).toBeTruthy();
@@ -554,8 +612,10 @@ const cargaSubida = { ...cargaSinRechazos, rechazados: 1 } satisfies Carga;
 // con `rechazados` lista y nada mas, que es el que pasaba la guarda anterior
 // -solo exigia "objeto con `rechazados` lista"- y reventaba al leer
 // `entrega.sha256` al pintar la huella; el cuarto es una entrega completa con un
-// `null` dentro de `rechazados`, que revienta al leer `.id` de cada fila. Los
-// cuatro llegan a `api()` como un resultado valido.
+// `null` dentro de `rechazados`, que revienta al leer `.id` de cada fila; el
+// quinto una entrega completa cuyo rechazo trae `ids_fuente` como objeto, que el
+// contrato declara `string` y que React no pinta como hijo. Los cinco llegan a
+// `api()` como un resultado valido.
 const CUERPOS_QUE_NO_SON_ENTREGA: [string, () => Response][] = [
   [
     "HTML",
@@ -573,6 +633,19 @@ const CUERPOS_QUE_NO_SON_ENTREGA: [string, () => Response][] = [
   [
     "JSON con un rechazo nulo en la lista",
     () => json({ ...entregaCaracol, rechazados: [null] }, 201),
+  ],
+  [
+    "JSON con un rechazo cuyo ids_fuente es un objeto",
+    () =>
+      json(
+        {
+          ...entregaCaracol,
+          rechazados: [
+            { ...entregaCaracol.rechazados[0], ids_fuente: { a: 1 } },
+          ],
+        },
+        201,
+      ),
   ],
 ];
 
@@ -716,6 +789,63 @@ describe("pantalla de ingesta (integracion con App)", () => {
     // Un 409 si es una respuesta del servidor: no lleva el aviso de que pudo
     // haber llegado.
     expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
+  });
+
+  it("un 500 se titula como entrega no registrada y no pinta el JSON crudo de su cuerpo", async () => {
+    // Un 500 de POST /reportes sale con "no se pudo registrar la entrega"
+    // (internal/infraestructura/httpapi/reportes.go) y las dos escrituras del
+    // caso de uso van en UNA transaccion (internal/aplicacion/ingesta.go), asi
+    // que el sistema si sabe que no quedo fila: el titulo lo dice en vez del
+    // neutro. El cuerpo, ademas, no trae `error`, asi que no es un mensaje del
+    // backend y no se pinta.
+    simularServidor({
+      rol: "administrador",
+      subida: () => Promise.resolve(json({ detalle: "algo" }, 500)),
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+    await screen.findByText(VACIO_2026_01);
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    fireEvent.click(botonSubir());
+
+    const alerta = await screen.findByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "La entrega no se registró",
+      }),
+    ).toBeTruthy();
+    expect(alerta.textContent).toContain(MENSAJE_ERROR_ILEGIBLE);
+    // Ni el JSON crudo ni su clave llegan a la pantalla.
+    expect(alerta.textContent).not.toContain("detalle");
+    expect(document.body.textContent).not.toContain('{"detalle"');
+    // Un 500 si es una respuesta del servidor: sin el aviso de que pudo haber
+    // llegado, que es justo lo que el titulo neutro contradecia.
+    expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
+    expect(subidas()).toHaveLength(1);
+  });
+
+  it("un listado con un elemento que no es una carga deja el error en su sitio sin tumbar la pantalla", async () => {
+    simularServidor({
+      rol: "administrador",
+      // Una lista de verdad con un elemento sin campos: es la forma que
+      // reventaba en `huellaCorta(carga.sha256)`.
+      cargas: () => [{} as Carga],
+    });
+
+    montarApp("/ingesta?periodo=2026-01");
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toContain(
+      "El listado no llegó como una lista de cargas legibles.",
+    );
+    // La pantalla entera sigue montada: antes el TypeError la dejaba en blanco.
+    expect(
+      screen.getByRole("heading", { name: "Ingesta de reportes" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Cargas hechas" })).toBeTruthy();
+    expect(screen.queryByRole("table", { name: "Cargas hechas" })).toBeNull();
   });
 
   it("con la subida en vuelo el boton queda deshabilitado y dos submits seguidos mandan un solo POST", async () => {

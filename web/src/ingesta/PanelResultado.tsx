@@ -40,15 +40,27 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
   409: "La entrega no se registró",
   413: "El archivo es demasiado grande",
+  // Un 500 tampoco es ambiguo, aunque lo parezca: el backend lo contesta con el
+  // mensaje "no se pudo registrar la entrega"
+  // (internal/infraestructura/httpapi/reportes.go, el `default` de
+  // `subirReporte`), y no es prudencia suya sino consecuencia de dos hechos del
+  // caso de uso (internal/aplicacion/ingesta.go): las dos escrituras -el acuse y
+  // el lote- van en UNA transaccion (`GuardarEntrega`), y las ramas anteriores
+  // (`congelarEvidencia`, `aplicarNormalizacion`) tampoco dejan fila. Si el
+  // servidor contesta un 500, no quedo entrega. Un titulo neutro aqui diria
+  // menos de lo que el sistema sabe, y ademas contradiria al mensaje que va
+  // justo debajo.
+  500: "La entrega no se registró",
   503: "La ingesta no está disponible en esta instalación",
 };
 
 // El titulo de lo que no tiene uno propio: el fallo "desconocido" (un 2xx que
 // no se dejo leer, un 502/504 del proxy) y cualquier status sin texto en el mapa
 // de arriba. Afirma solo lo que se sabe, que es poco: si la entrega quedo
-// registrada no lo sabe nadie en los dos casos. El caso "desconocido" lleva
-// ademas el aviso de PUDO_LLEGAR justo debajo, y un titulo que dijera "no se
-// pudo registrar" lo contradiria en la misma pantalla.
+// registrada no lo sabe nadie en esos casos. El caso "desconocido" lleva ademas
+// el aviso de PUDO_LLEGAR justo debajo, y un titulo que dijera "no se pudo
+// registrar" lo contradiria en la misma pantalla. Un 500 **no** cae aqui desde
+// que tiene entrada propia arriba: ahi el sistema si sabe que no quedo entrega.
 const TITULO_POR_DEFECTO = "No se sabe si la entrega se registró";
 
 const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
