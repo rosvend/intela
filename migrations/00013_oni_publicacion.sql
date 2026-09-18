@@ -16,9 +16,9 @@
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00011: el primero libre por encima del mayor en `main` y en
--- las ramas abiertas que ya reclamaron 00010. Un ADR admite huecos; una
--- migracion no.
+-- Se toma el 00013: main mergeo `00011_usos_modalidades_y_canales.sql`
+-- (duplicate version 11). #80 reclama 00012 y #88 reclama 00014. Un ADR
+-- admite huecos; una migracion no.
 
 -- +goose Up
 
