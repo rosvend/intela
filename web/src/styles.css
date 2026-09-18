@@ -370,12 +370,22 @@ a {
   max-width: 25rem;
 }
 
-/* Mascara pintada con el token de marca: la forma esta en el canal alfa. */
+/*
+ * Mascara pintada con el token de marca: la forma esta en el canal alfa.
+ *
+ * El margen inferior es la distancia AL TITULO, no al techo de la pantalla,
+ * y la columna entera se centra en vertical (`align-items: center` en
+ * `.acceso-formulario`). Por eso acortar este margen no acerca el logo al
+ * titulo por un solo lado: el bloque completo es mas corto, y al recentrarse
+ * el logo baja la mitad de lo que se quito mientras el titulo sube la otra
+ * mitad -- los dos se acercan al centro del bloque, no solo el de abajo hacia
+ * el de arriba.
+ */
 .acceso-logo {
   display: block;
   width: 132px;
   height: 42px; /* 132 / 3.179, el aspecto real del activo */
-  margin: 0 auto 3rem;
+  margin: 0 auto 1.5rem;
   background-color: var(--acento);
   mask-repeat: no-repeat;
   mask-position: center;
@@ -390,9 +400,9 @@ a {
  * sus etiquetas se quedan a la izquierda -- un formulario se lee por el borde
  * izquierdo de las etiquetas, y centrarlas obliga a buscar cada una.
  *
- * La entradilla se centra con el titulo aunque no se pidiera explicitamente:
- * es la segunda linea del mismo bloque, y dejarla a la izquierda debajo de un
- * titulo centrado se lee como un descuido.
+ * La entradilla -que solo dibuja el modo de alta- se centra con el titulo
+ * aunque no se pidiera explicitamente: es la segunda linea del mismo bloque, y
+ * dejarla a la izquierda debajo de un titulo centrado se lee como un descuido.
  */
 .acceso-titulo {
   margin: 0 0 0.5rem;
@@ -595,8 +605,10 @@ a {
     padding: 2.5rem 1.5rem;
   }
 
+  /* Mismo valor que en escritorio (`.acceso-logo`, arriba): sin esta regla el
+     media query volvia a 2rem y deshacia el ajuste en pantallas chicas. */
   .acceso-logo {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
   }
 
   /*

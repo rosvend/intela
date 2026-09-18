@@ -148,12 +148,49 @@ func TestActualizarMetadatosObraConservaElIdentificador(t *testing.T) {
 
 func TestBuscarObrasPasaElFiltroTalCual(t *testing.T) {
 	repo := &catalogoFalso{}
-	quiero := FiltroObras{Titulo: "palmas", Genero: "Drama", IPI: "IPI-1", Anio: 1991}
+	quiero := FiltroObras{
+		Titulo:     "palmas",
+		Genero:     "Drama",
+		IPI:        "IPI-1",
+		Anio:       1991,
+		Paginacion: Paginacion{Limite: 25, Desplazamiento: 10},
+	}
 
 	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), quiero); err != nil {
 		t.Fatalf("BuscarObras: %v", err)
 	}
 	if repo.filtroRecibido != quiero {
 		t.Fatalf("filtro = %+v, se esperaba %+v", repo.filtroRecibido, quiero)
+	}
+}
+
+// La garantia de "filtro vacio = primera pagina" vive en el caso de uso, no
+// en cada adaptador: asi cualquier CatalogoObras la hereda y se comprueba
+// sin Postgres.
+func TestBuscarObrasAplicaPaginacionPorDefecto(t *testing.T) {
+	repo := &catalogoFalso{}
+
+	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), FiltroObras{}); err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	if repo.filtroRecibido.Limite != LimiteObrasPorDefecto {
+		t.Fatalf("Limite = %d, se esperaba %d", repo.filtroRecibido.Limite, LimiteObrasPorDefecto)
+	}
+	if repo.filtroRecibido.Desplazamiento != 0 {
+		t.Fatalf("Desplazamiento = %d, se esperaba 0", repo.filtroRecibido.Desplazamiento)
+	}
+}
+
+// LimiteSinTope es una eleccion explicita: ConDefecto no la sustituye.
+func TestBuscarObrasRespetaLimiteSinTope(t *testing.T) {
+	repo := &catalogoFalso{}
+	quiero := FiltroObras{Paginacion: Paginacion{Limite: LimiteSinTope}}
+
+	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), quiero); err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	if repo.filtroRecibido.Limite != LimiteSinTope {
+		t.Fatalf("Limite = %d, se esperaba LimiteSinTope (%d)",
+			repo.filtroRecibido.Limite, LimiteSinTope)
 	}
 }
