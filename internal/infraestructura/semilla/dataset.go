@@ -455,6 +455,15 @@ func (d *Dataset) parametros() {
 		sintetico("ott.wa", "0.50"),
 		sintetico("ott.wb", "0.30"),
 		sintetico("ott.wc", "0.20"),
+
+		// Porcentajes de grupo RD 9.5 y asignacion RD 9.7: unidad 0-100, la
+		// misma que exige el motor al armar el Snapshot (no fracciones 0-1).
+		sintetico("grupo.privados_pct", "50"),
+		sintetico("grupo.regionales_pct", "20"),
+		sintetico("grupo.premium_pct", "10"),
+		sintetico("grupo.lideres_pct", "10"),
+		sintetico("grupo.estandar_pct", "10"),
+		sintetico("asignacion.terceros_pct", "5"),
 	}
 }
 
