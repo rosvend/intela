@@ -6,10 +6,9 @@ import TablaRechazos from "./TablaRechazos";
 export type Entrega = components["schemas"]["Entrega"];
 
 // El status HTTP con que respondio el servidor; "red" si no hubo respuesta
-// (ErrorDeRed); "desconocido" si algo fallo fuera de la API, por ejemplo un
-// 201 cuyo cuerpo no se pudo leer; "inalcanzable" si contesto algo que no es la
-// API, que en la practica son el 502 y el 504 del proxy.
-type StatusDeFallo = number | "red" | "desconocido" | "inalcanzable";
+// (ErrorDeRed); "desconocido" si algo fallo fuera de la API: un 201 cuyo cuerpo
+// no se pudo leer, o un 502/504 que contesta el proxy y no la API.
+type StatusDeFallo = number | "red" | "desconocido";
 
 export type Resultado =
   | { tipo: "entrega"; entrega: Entrega }
@@ -48,53 +47,41 @@ const TITULO_POR_DEFECTO = "No se pudo registrar la entrega";
 
 const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
 
-// Lo que se pone en el cuerpo cuando la respuesta no sirve como mensaje del
-// backend: en "desconocido" no hubo mensaje, y en 502/504 lo que llego es la
-// pagina de error del proxy. Pintar esa prosa (HTML incluido) como si fuera la
-// explicacion del backend mandaria a buscar la causa donde no esta.
-const MENSAJE_SIN_RESPUESTA = "no se recibio una respuesta util del servidor";
+// Lo que se pone en el cuerpo cuando no hay ningun mensaje del backend que
+// mostrar: ni el error desconocido ni el 502/504 del proxy traen uno.
+const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
 
 // Lo que se dice cuando no queda claro si la entrega se registro. Reintentar a
 // ciegas daria 409 si llego, y el 409 es irreversible.
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
-// 502 y 504 los produce el proxy, no la API: su cuerpo es una pagina de error
-// y no un mensaje del backend. Nginx corta a los 120s (deploy/nginx.conf)
-// mientras el handler de Go tiene 60s de escritura, asi que una ingesta larga
-// puede quedarse sin respuesta con la entrega ya confirmada en la base. El
-// status se conserva como diagnostico, pero no se pinta el cuerpo ajeno ni se
-// afirma que no entro nada.
+// 502 y 504 los contesta el proxy, no la API, y lo que llega en el cuerpo es su
+// pagina de error: no se muestra (ver `resultadoDeError`).
 const SIN_RESPUESTA_UTIL = new Set([502, 504]);
 
 /**
  * Traduce lo que lanza `api()` al subir un reporte en un `Resultado` de fallo.
  * La pantalla de ingesta lo usa en el `catch` del POST /reportes. Nunca lanza:
- * - `ApiError` -> su status y el mensaje del backend, sin tocar; un 502/504
- *   queda como "inalcanzable" y con un texto propio, porque el cuerpo es del
- *   proxy y no del backend;
+ * - `ApiError` -> su status y el mensaje del backend, sin tocar; un 502/504 cae
+ *   en "desconocido", porque lo que trae el cuerpo es la pagina del proxy;
  * - `ErrorDeRed` -> status "red" y su mensaje;
  * - cualquier otra cosa -> status "desconocido" y un mensaje generico.
  */
 export function resultadoDeError(error: unknown): Resultado {
-  if (error instanceof ApiError) {
-    if (SIN_RESPUESTA_UTIL.has(error.status)) {
-      return {
-        tipo: "fallo",
-        status: "inalcanzable",
-        mensaje: "error desconocido al subir el archivo",
-      };
-    }
+  // El 502 y el 504 los produce el proxy, no la API: su cuerpo es la pagina de
+  // error de nginx (deploy/nginx.conf corta a los 120s y el handler de Go
+  // tiene 60s de escritura), asi que una ingesta larga puede quedarse sin
+  // respuesta con la entrega ya confirmada en la base. Ese cuerpo no es un
+  // mensaje del backend y por eso no se muestra: el fallo cae al caso no
+  // clasificable, que ya avisa de que la entrega pudo haber llegado.
+  if (error instanceof ApiError && !SIN_RESPUESTA_UTIL.has(error.status)) {
     return { tipo: "fallo", status: error.status, mensaje: error.message };
   }
   if (error instanceof ErrorDeRed) {
     return { tipo: "fallo", status: "red", mensaje: error.message };
   }
-  return {
-    tipo: "fallo",
-    status: "desconocido",
-    mensaje: "error desconocido al subir el archivo",
-  };
+  return { tipo: "fallo", status: "desconocido", mensaje: MENSAJE_DESCONOCIDO };
 }
 
 /** Lo que devolvio la subida: la entrega registrada o por que no entro. */
@@ -158,9 +145,7 @@ function PanelEntrega({ entrega }: { entrega: Entrega }) {
 
 function tituloDeFallo(status: StatusDeFallo): string {
   if (status === "red") return TITULO_SIN_RESPUESTA;
-  if (status === "desconocido" || status === "inalcanzable") {
-    return TITULO_POR_DEFECTO;
-  }
+  if (status === "desconocido") return TITULO_POR_DEFECTO;
   return TITULO_POR_STATUS[status] ?? TITULO_POR_DEFECTO;
 }
 
@@ -171,9 +156,7 @@ function PanelFallo({
   status: StatusDeFallo;
   mensaje: string;
 }) {
-  const sinTituloPropio = status === "desconocido" || status === "inalcanzable";
-  const avisarQuePudoLlegar =
-    status === "red" || status === "desconocido" || status === "inalcanzable";
+  const avisarQuePudoLlegar = status === "red" || status === "desconocido";
 
   return (
     <section className="panel-resultado panel-fallo" role="alert">
@@ -182,11 +165,7 @@ function PanelFallo({
           campos que faltan; partirlo o reescribirlo acoplaria la UI a la prosa
           de Go y se romperia en silencio al reformularla. El de ErrorDeRed no
           se muestra porque repite el titulo. */}
-      {status !== "red" && (
-        <p className="panel-mensaje">
-          {sinTituloPropio ? MENSAJE_SIN_RESPUESTA : mensaje}
-        </p>
-      )}
+      {status !== "red" && <p className="panel-mensaje">{mensaje}</p>}
       {/* El backend garantiza que un 400 no persiste nada: por eso el aviso
           va ahi y en ningun otro status. */}
       {status === 400 && (

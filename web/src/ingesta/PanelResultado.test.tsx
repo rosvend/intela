@@ -59,8 +59,6 @@ const NO_SE_GUARDO =
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
-const MENSAJE_SIN_RESPUESTA = "no se recibio una respuesta util del servidor";
-
 // Texto literal del 409 de evidencia corrupta: lo levanta
 // internal/infraestructura/httpapi/reportes.go cuando la boveda tiene bytes
 // distintos bajo la huella. Se copia aqui a proposito: si el backend lo
@@ -216,11 +214,16 @@ describe("PanelResultado", () => {
           name: "No se pudo registrar la entrega",
         }),
       ).toBeTruthy();
-      expect(within(alerta).getByText(MENSAJE_SIN_RESPUESTA)).toBeTruthy();
+      // Un 502/504 no se distingue de cualquier otro fallo no clasificable:
+      // lleva el mensaje generico, no la pagina del proxy.
+      expect(
+        within(alerta).getByText("error desconocido al subir el archivo"),
+      ).toBeTruthy();
       expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
-      // Ni el HTML del proxy ni su titulo: no son la explicacion del backend.
-      expect(within(alerta).queryByText(/nginx/i)).toBeNull();
-      expect(within(alerta).queryByText(/Gateway Time-out/i)).toBeNull();
+      // Ni el HTML del proxy ni su titulo llegan al documento: no son la
+      // explicacion del backend.
+      expect(document.body.textContent).not.toContain("Gateway Time-out");
+      expect(document.body.textContent).not.toContain("nginx");
       // El "no se guardo nada" es solo del 400: aqui pudo haber entrado.
       expect(within(alerta).queryByText(NO_SE_GUARDO)).toBeNull();
     },
@@ -256,7 +259,9 @@ describe("PanelResultado", () => {
       }),
     ).toBeTruthy();
     // El texto interno ("boom") no es un mensaje del backend y no se pinta.
-    expect(within(alerta).getByText(MENSAJE_SIN_RESPUESTA)).toBeTruthy();
+    expect(
+      within(alerta).getByText("error desconocido al subir el archivo"),
+    ).toBeTruthy();
     expect(within(alerta).queryByText("boom")).toBeNull();
     expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
     expect(within(alerta).queryByText(/contactar al servidor/i)).toBeNull();
@@ -273,11 +278,11 @@ describe("resultadoDeError", () => {
   });
 
   it.each([502, 504] as const)(
-    "un %s del proxy no se guarda como mensaje del backend",
+    "un %s del proxy queda como desconocido y descarta su mensaje",
     (status) => {
       expect(resultadoDeError(new ApiError(status, HTML_DEL_PROXY))).toEqual({
         tipo: "fallo",
-        status: "inalcanzable",
+        status: "desconocido",
         mensaje: "error desconocido al subir el archivo",
       });
     },
