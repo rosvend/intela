@@ -8,32 +8,32 @@ import (
 
 // ponderacionTipo resuelve la ponderacion de RD 9.1.1 desde el snapshot.
 // serie y telenovela comparten PondSerie.
-func ponderacionTipo(tipo string, snap Snapshot) (decimal.Decimal, error) {
+func ponderacionTipo(tipo, obraID string, snap Snapshot) (decimal.Decimal, error) {
 	switch tipo {
 	case "cinematografica":
 		if err := exigirPositivo("pond_cine", snap.PondCine); err != nil {
-			return decimal.Zero, err
+			return decimal.Zero, fmt.Errorf("%w (obra %q)", err, obraID)
 		}
 		return snap.PondCine, nil
 	case "unitario":
 		if err := exigirPositivo("pond_unitario", snap.PondUnitario); err != nil {
-			return decimal.Zero, err
+			return decimal.Zero, fmt.Errorf("%w (obra %q)", err, obraID)
 		}
 		return snap.PondUnitario, nil
 	case "serie", "telenovela":
 		if err := exigirPositivo("pond_serie", snap.PondSerie); err != nil {
-			return decimal.Zero, err
+			return decimal.Zero, fmt.Errorf("%w (obra %q)", err, obraID)
 		}
 		return snap.PondSerie, nil
 	case "sketches":
 		if err := exigirPositivo("pond_sketch", snap.PondSketch); err != nil {
-			return decimal.Zero, err
+			return decimal.Zero, fmt.Errorf("%w (obra %q)", err, obraID)
 		}
 		return snap.PondSketch, nil
 	case "":
-		return decimal.Zero, fmt.Errorf("%w: tipo_obra vacio", ErrRepartoInvalido)
+		return decimal.Zero, fmt.Errorf("%w: tipo_obra vacio (obra %q)", ErrRepartoInvalido, obraID)
 	default:
-		return decimal.Zero, fmt.Errorf("%w: tipo_obra %q", ErrRepartoInvalido, tipo)
+		return decimal.Zero, fmt.Errorf("%w: tipo_obra %q (obra %q)", ErrRepartoInvalido, tipo, obraID)
 	}
 }
 
@@ -42,18 +42,24 @@ func ponderacionTipo(tipo string, snap Snapshot) (decimal.Decimal, error) {
 func puntosTV(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, error) {
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
-		pond, err := ponderacionTipo(u.TipoObra, snap)
+		pond, err := ponderacionTipo(u.TipoObra, u.ObraID, snap)
 		if err != nil {
 			return nil, err
 		}
+		if u.DuracionMin.IsNegative() || u.Rating.IsNegative() {
+			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
+		}
 		emisiones := decimal.NewFromInt(u.Emisiones)
+		if emisiones.IsNegative() {
+			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
+		}
 		p := pond.Mul(u.DuracionMin).Mul(u.Rating).Mul(emisiones)
 		out[u.ObraID] = out[u.ObraID].Add(p)
 	}
 	return out, nil
 }
 
-// puntosCineTeatro pondera por espectadores o taquilla segun el snapshot (P-01).
+// puntosCineTeatro pondera por espectadores o taquilla segun el snapshot (P-18).
 func puntosCineTeatro(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, error) {
 	switch snap.BaseCineTeatro {
 	case BaseEspectadores, BaseTaquilla:
@@ -77,13 +83,16 @@ func puntosCineTeatro(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, er
 }
 
 // puntosTransporte pondera por exhibiciones. Cero exhibiciones = cero peso.
-func puntosTransporte(usos []Uso) map[string]decimal.Decimal {
+func puntosTransporte(usos []Uso) (map[string]decimal.Decimal, error) {
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
+		if u.Exhibiciones < 0 {
+			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
+		}
 		w := decimal.NewFromInt(u.Exhibiciones)
 		out[u.ObraID] = out[u.ObraID].Add(w)
 	}
-	return out
+	return out, nil
 }
 
 // puntosOTT aplica Pi = PB*Wa + DU*Wb + V*Wc.

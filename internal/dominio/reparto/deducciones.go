@@ -21,19 +21,21 @@ type deducciones struct {
 }
 
 func aplicarDeducciones(bolsa Bolsa, snap Snapshot, sinDeducciones bool) (deducciones, error) {
-	if err := exigirNoNegativo("admin_pct", snap.AdminPct); err != nil {
-		return deducciones{}, err
-	}
-	if err := exigirNoNegativo("social_pct", snap.SocialPct); err != nil {
-		return deducciones{}, err
-	}
-	if err := exigirNoNegativo("reserva_pct", snap.ReservaPct); err != nil {
-		return deducciones{}, err
-	}
-
 	bruto := bolsa.Bruto
 	if sinDeducciones {
 		return deducciones{Neto: bruto}, nil
+	}
+
+	// Cero = ausente (ADR 0004), igual que pctGrupo. SinDeducciones cubre el
+	// salto legitimo de Fees in Error (R-16); no se inventa un 0% silencioso.
+	if err := exigirPositivo("admin_pct", snap.AdminPct); err != nil {
+		return deducciones{}, err
+	}
+	if err := exigirPositivo("social_pct", snap.SocialPct); err != nil {
+		return deducciones{}, err
+	}
+	if err := exigirPositivo("reserva_pct", snap.ReservaPct); err != nil {
+		return deducciones{}, err
 	}
 
 	admin := pctDe(bruto, snap.AdminPct)
@@ -108,9 +110,9 @@ func aplicarDeclaraciones(
 	return titulares, retenido, obrasOut
 }
 
-// cerrarResiduoTitulares ajusta el residuo de redondeo de las lineas de
-// titular contra el importe repartido (no retenido). El sobrante queda en
-// Residuo, no se empuja a la ultima linea.
+// sumaTitulares agrega importes de titular. El residuo de redondeo de esas
+// lineas contra el importe repartido (no retenido) se calcula en Reparto y
+// queda en Residuo, no se empuja a la ultima linea.
 func sumaTitulares(tt []LineaTitular) decimal.Decimal {
 	s := decimal.Zero
 	for _, t := range tt {

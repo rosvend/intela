@@ -60,7 +60,18 @@ func GruposCanal() []GrupoCanal {
 	}
 }
 
-// BaseCineTeatro elige la medida de ponderacion de cine/teatro (P-01 / T-02).
+// ParseGrupoCanal valida un grupo de canal. Simetrico a [ParseModalidad]:
+// desconocido o vacio es error tipado, no cero puntos silenciosos (P-04).
+func ParseGrupoCanal(s string) (GrupoCanal, error) {
+	g := GrupoCanal(s)
+	if !slices.Contains(GruposCanal(), g) {
+		return "", fmt.Errorf("%w: %q", ErrGrupoDesconocido, s)
+	}
+	return g, nil
+}
+
+// BaseCineTeatro elige la medida de ponderacion de cine/teatro (P-18).
+// No es P-01: P-01 es la base tarifaria (RT 3.2 vs RT 4) y no desbloquea codigo.
 const (
 	BaseEspectadores = "espectadores"
 	BaseTaquilla     = "taquilla"
@@ -110,6 +121,12 @@ type Firma struct {
 //
 // Ningun porcentaje de grupo ni la asignacion de plataformas de terceros es
 // literal en el motor: viven aqui (ADR 0004, RD 9.5, RD 9.7).
+//
+// Unidad de los porcentajes (Admin/Social/Reserva, grupos, terceros): 0-100
+// (cincuenta por ciento = 50). No son fracciones 0-1. El sembrador escribe
+// deducciones como "0.20" en parametros.valor; SnapshotEnFecha (#34) debe
+// convertir a esta unidad al armar el Snapshot. Cero en un porcentaje se
+// trata como ausente (ADR 0004); SinDeducciones cubre el salto legitimo (R-16).
 type Snapshot struct {
 	AdminPct     decimal.Decimal
 	SocialPct    decimal.Decimal
@@ -130,7 +147,9 @@ type Snapshot struct {
 	GrupoEstandarPct      decimal.Decimal
 	AsignacionTercerosPct decimal.Decimal
 
-	// BaseCineTeatro es "espectadores" o "taquilla" (P-01). Vacio es error.
+	// BaseCineTeatro es "espectadores" o "taquilla" (P-18). Vacio es error.
+	// Es string a proposito: no cabe en parametros.valor NUMERIC(18,6);
+	// la resolucion del snapshot (#34) lo lee de una clave textual aparte.
 	BaseCineTeatro string
 
 	Reglamento string
@@ -216,28 +235,59 @@ type LineaTitular struct {
 	Importe    decimal.Decimal
 }
 
+// MotivoNoDistribuido explica por que un importe no llego a titulares ni a
+// retenido. Residuo queda reservado al redondeo (ADR 0005); esto es otra cosa.
+type MotivoNoDistribuido string
+
+const (
+	MotivoGrupoSinObras MotivoNoDistribuido = "grupo_sin_obras"
+	MotivoExclusionR27  MotivoNoDistribuido = "exclusion_r27"
+	MotivoPesoCero      MotivoNoDistribuido = "peso_cero"
+)
+
+// ParteNoDistribuida es un tramo de NoDistribuido con motivo auditable (RD 16).
+type ParteNoDistribuida struct {
+	Motivo  MotivoNoDistribuido
+	Grupo   GrupoCanal
+	ObraID  string
+	Importe decimal.Decimal
+}
+
+// LineaGrupo deja observable el valor punto de cada grupo (RD 9.5 / #120).
+type LineaGrupo struct {
+	Grupo       GrupoCanal
+	Bolsa       decimal.Decimal
+	TotalPuntos decimal.Decimal
+	ValorPunto  decimal.Decimal
+	Residuo     decimal.Decimal
+}
+
 // Resultado de una corrida.
 //
 // La invariante de cierre que el motor tiene que probar:
 //
-//	Neto == suma(Titulares.Importe) + Retenido + Residuo
+//	Neto == suma(Titulares.Importe) + Retenido + Residuo + NoDistribuido
 //
-// Retenido y Residuo existen como campos propios precisamente para que esa
-// igualdad se pueda comprobar. El ADR 0005 pide que el residuo de redondeo
-// sea explicito y reproducible, no un sobrante que absorbe la ultima linea.
+// Residuo es SOLO el residuo de redondeo (ADR 0005). NoDistribuido concentra
+// importes enteros que el reglamento no reparte (grupo sin obras, exclusion
+// R-27 a posteriori, peso total cero). Ante RD 16, PartesNoDistribuidas dice
+// a donde fue cada tramo.
 //
 // Snapshot y Reglamento guardan la procedencia: sin ellos no se puede
 // defender una cifra ante una auditoria de RD 16.
 type Resultado struct {
-	Neto       decimal.Decimal
-	Admin      decimal.Decimal
-	Social     decimal.Decimal
-	Reserva    decimal.Decimal
-	Retenido   decimal.Decimal
-	Residuo    decimal.Decimal
-	ValorPunto decimal.Decimal
-	Obras      []LineaObra
-	Titulares  []LineaTitular
+	Neto                 decimal.Decimal
+	Admin                decimal.Decimal
+	Social               decimal.Decimal
+	Reserva              decimal.Decimal
+	Retenido             decimal.Decimal
+	Residuo              decimal.Decimal
+	NoDistribuido        decimal.Decimal
+	PartesNoDistribuidas []ParteNoDistribuida
+	ValorPunto           decimal.Decimal
+	PorGrupo             []LineaGrupo
+	Obras                []LineaObra
+	Titulares            []LineaTitular
 
 	SnapshotID string
 	Reglamento string
@@ -246,6 +296,7 @@ type Resultado struct {
 // Sentinel errors del paquete. Un solo centinela por clase de fallo.
 var (
 	ErrModalidadDesconocida = errors.New("modalidad desconocida")
+	ErrGrupoDesconocido     = errors.New("grupo de canal desconocido")
 	ErrParametroAusente     = errors.New("parametro normativo ausente")
 	ErrRepartoInvalido      = errors.New("reparto invalido")
 )

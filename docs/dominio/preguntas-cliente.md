@@ -51,6 +51,9 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-15 | Padron de titulares con IPI poblado y al dia | @rosvend | **Abierta** |
 | P-16 | Alcance del 80% artistico de `RD 9.1.1` | @rosvend | **Abierta** |
 | P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
+| P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
+| P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
+
 ## Respuestas
 
 ### P-01 `T-02` Base de calculo para salas de cine
@@ -155,7 +158,7 @@ Consecuencia: **afecta a la PR #106.** Exigir IPI en la entrada es incorrecto: e
 fuente no lo tiene. Si conviene conservar una instantanea del IPI para reproducibilidad
 (ADR 0005) es una decision aparte.
 
-### P-12 a P-17
+### P-12 a P-19
 Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado de #26 y del alcance de #120:
 - **P-12** `eidr` poblado por Netflix, o acceso a IDA. Sin uno de los dos, el escalon 2 de la
   cascada (#28) solo funciona sobre lo que ya tenga el catalogo.
@@ -174,6 +177,15 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   `canales_clasificacion` para poder reejecutar un periodo pasado (ADR 0005). Sin este feed
   no se puede poblar `9.5.4` de forma defendible; `9.5.5` (estandar) absorberia el resto
   solo por exclusion.
+- **P-18** Base de ponderacion de cine/teatro: `RD 9.2` dice "ingresos de taquilla" y el
+  ejemplo calcula sobre espectadores; `RD 9.3` remite a ese ejemplo. No es P-01 (base
+  tarifaria). Hasta confirmar, el motor lee `Snapshot.BaseCineTeatro`.
+- **P-19** Destino del recaudo de un **grupo de suscripcion sin obras** (y de importes
+  enteros excluidos por R-27). `RD 9.5` no contempla el caso; `RD 14.5.3` cierra la reserva
+  a reclamaciones administrativas; ONI (`RD 13.8`) es autor desconocido. El chapeau de
+  `RD 15` ("seran preservados") es el unico anclaje. El motor los deja en
+  `Resultado.NoDistribuido` con motivo, no en el residuo de redondeo.
+
 ## Agenda para la reunion con REDES
 
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
