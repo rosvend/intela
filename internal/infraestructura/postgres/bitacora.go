@@ -22,20 +22,25 @@ const columnasAsiento = `id::text, hecho, ref_tipo, ref_id, COALESCE(actor_id, '
 // silenciosa de asientos, que es justo lo que el comentario de la migracion
 // advierte.
 func (s *Store) Asentar(ctx context.Context, a aplicacion.Asiento) error {
-	return asentar(ctx, s.pool, a)
+	return asentar(ctx, s.q(ctx), a)
 }
 
-// asentar es el INSERT que comparten [Store.Asentar] -suelto, contra el
-// pool- y cualquier otro puerto que necesite el mismo asiento DENTRO de su
-// propia transaccion -ver [Store.Guardar] en declaraciones.go, que lo corre
-// contra una pgx.Tx para que la version y el asiento sean una sola operacion
-// (ADR 0006)-. ejecutor es la parte de *pgxpool.Pool y pgx.Tx que este INSERT
-// necesita; cual de los dos llega lo decide quien llama.
+// asentar es el INSERT que comparten [Store.Asentar] -contra q(ctx), para
+// que participe en UnidadDeTrabajo- y cualquier otro puerto que necesite el
+// mismo asiento DENTRO de su propia transaccion -ver [Store.Guardar] en
+// declaraciones.go, que lo corre contra una pgx.Tx para que la version y el
+// asiento sean una sola operacion (ADR 0006)-. ejecutor es la parte de
+// *pgxpool.Pool y pgx.Tx que este INSERT necesita; cual de los dos llega lo
+// decide quien llama.
 func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
+	payload := a.Payload
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO asientos (hecho, ref_tipo, ref_id, actor_id, payload, cuando)
 		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)`,
-		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.Payload, a.Cuando)
+		a.Hecho, a.RefTipo, a.RefID, a.ActorID, payload, a.Cuando)
 	if err != nil {
 		return traducirError(err, "asentar %q sobre %s %q", a.Hecho, a.RefTipo, a.RefID)
 	}
@@ -51,7 +56,7 @@ func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
 // que asientan-, y el ADR 0005 exige que este orden sea reproducible, no
 // arbitrario.
 func (s *Store) De(ctx context.Context, refTipo, refID string) ([]aplicacion.Asiento, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.q(ctx).Query(ctx,
 		`SELECT `+columnasAsiento+` FROM asientos
 		  WHERE ref_tipo = $1 AND ref_id = $2 ORDER BY cuando, id`,
 		refTipo, refID)
@@ -76,7 +81,7 @@ func (s *Store) De(ctx context.Context, refTipo, refID string) ([]aplicacion.Asi
 
 func (s *Store) AsientoPorID(ctx context.Context, id string) (aplicacion.Asiento, error) {
 	var a aplicacion.Asiento
-	err := s.pool.QueryRow(ctx,
+	err := s.q(ctx).QueryRow(ctx,
 		`SELECT `+columnasAsiento+` FROM asientos WHERE id = $1`, id).
 		Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.Payload, &a.Cuando)
 	if err != nil {

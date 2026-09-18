@@ -102,6 +102,20 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   return res;
 }
 
+// Lectura sin sesion. El listado ONI es publico (R-18): adjuntar el token
+// y redirigir a /login ante un 401 convertiria la publicacion legal en una
+// pagina interna.
+export async function apiPublica(path: string) {
+  const res = await fetch(path);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(res.status, await mensajeDeError(res));
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("json")) return res.json();
+  return res;
+}
+
 // El DELETE de /auth/session responde 204 sin cuerpo y sin content-type: no
 // se puede pedir .json() a ciegas en el camino de error tampoco.
 async function mensajeDeError(res: Response): Promise<string> {

@@ -57,6 +57,8 @@ type API struct {
 	salud         Salud
 	auth          Autenticacion
 	catalogo      Catalogo
+	listadoONI    LecturaONI
+	publicarONI   EscrituraONI
 	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
@@ -67,15 +69,17 @@ type API struct {
 
 // Casos agrupa los casos de uso que sirve el adaptador.
 //
-// Iban como parametros sueltos de [Nueva] mientras fueron dos. Con el tercero
-// la lista deja de ser legible en la llamada -- tres interfaces seguidas se
-// pueden cruzar sin que el compilador diga nada si dos comparten forma -- y
-// pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
-// entorno, esto son dependencias.
+// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
+// se cablea en cmd/api. Iban como parametros sueltos de [Nueva] mientras fueron
+// dos; con el tercero la lista deja de ser legible en la llamada -- tres
+// interfaces seguidas se pueden cruzar sin que el compilador diga nada si dos
+// comparten forma -- y pasan a campos con nombre.
 type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
 	Catalogo      Catalogo
+	ListadoONI    LecturaONI
+	PublicarONI   EscrituraONI
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
@@ -104,6 +108,8 @@ func Nueva(casos Casos, opts Opciones) *API {
 		salud:         casos.Salud,
 		auth:          casos.Auth,
 		catalogo:      casos.Catalogo,
+		listadoONI:    casos.ListadoONI,
+		publicarONI:   casos.PublicarONI,
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
@@ -136,6 +142,11 @@ func (a *API) Router() http.Handler {
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
 
+	// R-18: el listado ONI se publica en la web, sin autenticacion.
+	// security: [] en el contrato. Montarlo detras de conSesion violaría
+	// RD 13.8.1 y no arrancaria el reloj de R-19 para quien no tenga cuenta.
+	r.Get("/publico/oni", a.obtenerListadoONI)
+
 	// El login es la unica ruta de /auth/session que se llama sin token; las
 	// otras dos van detras del middleware. Se agrupan con r.Group para que la
 	// diferencia se vea de un vistazo: quien anada una ruta protegida la mete
@@ -150,11 +161,18 @@ func (a *API) Router() http.Handler {
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
 		// docs/architecture/roles.md; quien anada un endpoint lo mete
 		// en el grupo que le corresponde y no escribe el chequeo a mano.
+
+		protegido.Group(func(roles chi.Router) {
+			roles.Use(a.conRoles(aplicacion.RolAdministrador, aplicacion.RolDistribucion))
+			roles.Post("/oni/publicaciones", a.crearPublicacionONI)
+		})
+
 		protegido.Route("/admin", func(admin chi.Router) {
 			admin.Use(requiereRol(aplicacion.RolAdministrador))
 			admin.Get("/pipeline", superficieOK)
 			admin.Get("/cola-revision", a.listarColaRevision)
 		})
+
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", superficieOK)
