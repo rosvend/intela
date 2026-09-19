@@ -46,7 +46,8 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // nada y no hay nada en duda. El cajon neutro afirmaba de menos -"no se sabe
   // si la entrega se registro"- en la direccion que hace dudar al operador, que
   // es justo lo contrario de lo que este panel existe para hacer. Un 4xx prueba
-  // que ESA peticion no registro nada, y el aviso de PUDO_LLEGAR no lo lleva.
+  // que ESA peticion no dejo entrega en `reportes` -no que no se escribiera
+  // nada: ver `pudoHaberLlegado`-, y el aviso de PUDO_LLEGAR no lo lleva.
   // El 401 es otra cosa y no depende de este titulo: `api.ts` limpia el token y
   // navega a la pantalla de entrada (`alExpirarSesion`) ANTES de lanzar el
   // `ApiError`, asi que lo que el operador termina leyendo no es este panel.
@@ -67,7 +68,7 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // dejo entrega, pero lo que hay bajo la clave no es lo que se iba a
   // certificar. El
   // titulo dice solo el conflicto, que es lo unico cierto en las dos ramas, y
-  // el mensaje de debajo dice cual de las dos es.
+  // el mensaje de debajo dice cual de las dos es, cuando llega legible.
   409: "La entrega choca con lo que ya está guardado",
   413: "El archivo es demasiado grande",
   // Un 500 **no** esta aqui a proposito: es el status con numero que deja
@@ -150,8 +151,9 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  *   409 duplicado lo estaba, y la duda no es por eso. Y no garantiza que no se
  *   escribiera NADA: la evidencia se congela antes de decidir el conflicto
  *   (`congelarEvidencia`) y de la boveda no se borra. El 400, ademas, lo
- *   explica el backend en su cuerpo, cuando llega legible: nombra la causa -el
- *   campo del formulario o la columna del archivo que falta-, no que no se haya
+ *   explica el backend en su cuerpo, cuando llega legible: nombra la causa que
+ *   encontro -campo o columna que falta, periodo que no existe, par
+ *   (fuente, formato) sin adaptador, archivo ilegible-, no que no se haya
  *   escrito nada.
  */
 export function pudoHaberLlegado(status: StatusDeFallo): boolean {

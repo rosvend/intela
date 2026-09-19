@@ -164,12 +164,13 @@ describe("PanelResultado", () => {
   // unico que deja la pregunta abierta.
   //
   // Ojo con lo que prueba esa regla: prueba que la PETICION no dejo entrega, no
-  // que la entrega no este registrada. Son lo mismo para el 400 y el 413 -si el
-  // archivo no cumple la estructura o no cabe, no hay entrega que registrar-,
-  // pero NO para el 409, donde el conflicto es justo con lo que ya hay: por eso
-  // su titulo habla del conflicto y no del no-registro. Y no dice que no se
-  // escribiera NADA: la evidencia se congela antes de decidir el conflicto y de
-  // la boveda no se borra (el porque, en el docstring de `pudoHaberLlegado`).
+  // que la entrega no este registrada. Es lo mismo para el 413 -si no cabe, no
+  // hay entrega que registrar-, pero NO para el 400 -que aborta antes de
+  // consultar el UNIQUE, asi que los mismos bytes aceptados en una subida
+  // anterior siguen registrados- ni para el 409, donde el conflicto es justo
+  // con lo que ya hay. Y no dice que no se escribiera NADA: la evidencia se
+  // congela antes de decidir el conflicto y de la boveda no se borra (el
+  // porque, en el docstring de `pudoHaberLlegado`).
   //
   // El 403 entra en la lista por lo mismo, y con titulo propio: `requiereRol` lo
   // responde ANTES de que `subirReporte` corra, asi que no se escribio nada. Con
