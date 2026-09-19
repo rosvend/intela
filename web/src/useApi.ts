@@ -6,6 +6,10 @@ type EstadoDeApi<T> =
   | { datos: T; cargando: false; error: null }
   | { datos: null; cargando: false; error: Error };
 
+// Lo que se dice cuando un 2xx no trae JSON. `api()` devuelve entonces el
+// `Response` crudo, y eso no es el dato: es la respuesta sin leer.
+const MENSAJE_SIN_JSON = "la respuesta no vino en JSON";
+
 /**
  * Hook minimo sobre `api()` para un GET por pantalla.
  *
@@ -27,7 +31,24 @@ export function useApi<T>(path: string): EstadoDeApi<T> {
 
     (api(path) as Promise<T>)
       .then((datos) => {
-        if (vigente) setEstado({ datos, cargando: false, error: null });
+        if (!vigente) return;
+        // Un `Response` aqui significa que el 2xx no traia JSON: `api()`
+        // devuelve la respuesta cruda cuando el content-type no es JSON, y ese
+        // objeto no es el dato prometido. Entregarlo como `datos` es lo que
+        // tumbaba al listado: quien pidio `Carga[]` recibia un `Response` y
+        // reventaba al pedirle `.length` o `.map` -una pagina de error servida
+        // con un 2xx basta-. `T` es una promesa, no una comprobacion, asi que
+        // la unica frontera donde se puede notar es esta, que es la que conoce
+        // la diferencia. Se trata como lo que es: un fallo, no un dato.
+        if (datos instanceof Response) {
+          setEstado({
+            datos: null,
+            cargando: false,
+            error: new Error(MENSAJE_SIN_JSON),
+          });
+          return;
+        }
+        setEstado({ datos, cargando: false, error: null });
       })
       .catch((error: unknown) => {
         if (!vigente) return;

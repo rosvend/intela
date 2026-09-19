@@ -43,6 +43,27 @@ describe("useApi", () => {
     expect(result.current.error?.message).toBe("no autorizado");
   });
 
+  it("un 2xx que no trae JSON queda como error, nunca como datos", async () => {
+    // `api()` devuelve el `Response` crudo cuando el content-type no es JSON.
+    // Entregarlo como `datos` es lo que tumbaba al listado de ingesta: quien
+    // pidio `Carga[]` recibia un `Response` y reventaba al pedirle `.length` o
+    // `.map`. El hook es la unica frontera que puede notar la diferencia.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("<html><body>sin API</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useApi<{ estado: string }[]>("/api/reportes"),
+    );
+
+    await waitFor(() => expect(result.current.cargando).toBe(false));
+    expect(result.current.datos).toBeNull();
+    expect(result.current.error?.message).toBe("la respuesta no vino en JSON");
+  });
+
   it("vuelve a pedir los datos cuando cambia el path", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(
