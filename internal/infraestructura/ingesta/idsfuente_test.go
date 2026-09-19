@@ -164,7 +164,7 @@ func (s usosDelPeriodo) ListarCargas(context.Context, string) ([]aplicacion.Carg
 func (s usosDelPeriodo) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
-func (s usosDelPeriodo) RechazosDeReporte(context.Context, string) ([]aplicacion.UsoPersistido, error) {
+func (s usosDelPeriodo) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
 

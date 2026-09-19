@@ -143,14 +143,16 @@ func (r *repoIngestaMemoria) ListarRechazos(context.Context) ([]UsoPersistido, e
 	return us, nil
 }
 
-// RechazosDeReporte imita la lectura por entrega del adaptador real: el log
-// ENTERO de esa entrega y de ninguna otra, ErrNoEncontrado si la entrega no
-// existe y una lista vacia -no nil- si existe sin rechazos.
+// RechazosDeReporte imita la lectura por entrega del adaptador real: una PAGINA
+// del log de esa entrega y de ninguna otra, ErrNoEncontrado si la entrega no
+// existe y una lista vacia -no nil- si existe sin rechazos o si la pagina cae
+// mas alla del final.
 //
 // Ordena igual que el ORDER BY del adaptador, por longitud y despues por texto:
 // los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, y el orden
-// lexico pondria `-10` antes que `-2`.
-func (r *repoIngestaMemoria) RechazosDeReporte(_ context.Context, reporteID string) ([]UsoPersistido, error) {
+// lexico pondria `-10` antes que `-2`. Recorta DESPUES de ordenar, que es lo que
+// hace el LIMIT de la base; ordenar la pagina ya recortada daria otra cosa.
+func (r *repoIngestaMemoria) RechazosDeReporte(_ context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error) {
 	if _, hay := r.reportes[reporteID]; !hay {
 		return nil, ErrNoEncontrado
 	}
@@ -163,7 +165,21 @@ func (r *repoIngestaMemoria) RechazosDeReporte(_ context.Context, reporteID stri
 	slices.SortFunc(us, func(a, b UsoPersistido) int {
 		return cmp.Or(cmp.Compare(len(a.ID), len(b.ID)), strings.Compare(a.ID, b.ID))
 	})
-	return us, nil
+	return recortar(us, pag.ConDefecto()), nil
+}
+
+// recortar aplica la pagina a una lista ya ordenada, como el LIMIT/OFFSET de la
+// base. Un desplazamiento mas alla del final da lista vacia y no error: es una
+// pagina vacia de una lectura que existe.
+func recortar(us []UsoPersistido, pag Paginacion) []UsoPersistido {
+	if pag.Desplazamiento >= len(us) {
+		return []UsoPersistido{}
+	}
+	fin := pag.Desplazamiento + pag.Limite
+	if fin > len(us) {
+		fin = len(us)
+	}
+	return us[pag.Desplazamiento:fin]
 }
 
 // ListarCargas imita la proyeccion del adaptador real: una fila por entrega,
@@ -512,17 +528,22 @@ func TestGuardarReporteAceptaElObjetoAjenoSiEsElMismoContenido(t *testing.T) {
 
 // La estructura minima se comprueba ANTES de tocar la boveda: un periodo mal
 // formateado lo rechazaria el CHECK de la tabla despues de haber escrito un
-// objeto que ya no se puede borrar.
+// objeto que ya no se puede borrar. Un mes que no existe tampoco es un periodo:
+// la regla la pone el dominio (`recaudo.PeriodoValido`) y sin ella `2026-13`
+// quemaba la boveda bajo un periodo que ningun reparto cierra.
 func TestGuardarReporteRechazaLoQueElEsquemaNoAdmite(t *testing.T) {
 	casos := map[string]struct {
 		fuente, periodo string
 		datos           []byte
 	}{
-		"sin fuente":       {"", "2026-01", []byte("x")},
-		"periodo vacio":    {"caracol", "", []byte("x")},
-		"periodo con dia":  {"caracol", "2026-01-15", []byte("x")},
-		"periodo en letra": {"caracol", "enero", []byte("x")},
-		"sin bytes":        {"caracol", "2026-01", nil},
+		"sin fuente":            {"", "2026-01", []byte("x")},
+		"periodo vacio":         {"caracol", "", []byte("x")},
+		"periodo con dia":       {"caracol", "2026-01-15", []byte("x")},
+		"periodo en letra":      {"caracol", "enero", []byte("x")},
+		"periodo con mes trece": {"caracol", "2026-13", []byte("x")},
+		"periodo con mes cero":  {"caracol", "2026-00", []byte("x")},
+		"periodo de un digito":  {"caracol", "2026-1", []byte("x")},
+		"sin bytes":             {"caracol", "2026-01", nil},
 	}
 	for nombre, c := range casos {
 		t.Run(nombre, func(t *testing.T) {
@@ -1813,9 +1834,21 @@ func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
 	ingesta, _, _ := nuevaIngesta()
 
 	// "2026-1" no casa con ninguna fila y devolveria una lista vacia
-	// indistinguible de "ese periodo no tuvo cargas".
-	if _, err := ingesta.Cargas(t.Context(), "2026-1"); !errors.Is(err, ErrReporteInvalido) {
-		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	// indistinguible de "ese periodo no tuvo cargas". Un mes que no existe cae
+	// por lo mismo: antes se contestaba 200 con la lista vacia, que se lee como
+	// "ese mes no tuvo recaudo" cuando lo que pasa es que ese mes no existe.
+	for _, periodo := range []string{"2026-1", "2026-13", "2026-00", "enero"} {
+		if _, err := ingesta.Cargas(t.Context(), periodo); !errors.Is(err, ErrReporteInvalido) {
+			t.Errorf("periodo %q: err = %v, se esperaba ErrReporteInvalido", periodo, err)
+		}
+	}
+
+	// Y el filtro no es mas estricto que el constructor: un periodo que el
+	// nucleo acepta al escribir se puede consultar. Con dos patrones -el del
+	// filtro y el de la escritura- habia bolsas escribibles que no se podian
+	// consultar.
+	if _, err := ingesta.Cargas(t.Context(), "2026-12"); err != nil {
+		t.Fatalf("un periodo valido no puede rechazarse: %v", err)
 	}
 }
 
@@ -1829,7 +1862,7 @@ func TestRechazosDeCargaExigeElIDDeLaCarga(t *testing.T) {
 	// El NBSP es el blanco de los exports de Excel: TrimSpace lo recorta, un
 	// recorte propio de espacios no.
 	for _, id := range []string{"", "   ", " "} {
-		if _, err := ingesta.RechazosDeCarga(t.Context(), id); !errors.Is(err, ErrReporteInvalido) {
+		if _, err := ingesta.RechazosDeCarga(t.Context(), id, Paginacion{}); !errors.Is(err, ErrReporteInvalido) {
 			t.Errorf("id %q: err = %v, se esperaba ErrReporteInvalido", id, err)
 		}
 	}
@@ -1841,7 +1874,7 @@ func TestRechazosDeCargaDeUnaCargaQueNoExisteEsNoEncontrado(t *testing.T) {
 	// Una lista vacia no puede significar "esa carga no existe": seria la
 	// misma ambiguedad que Cargas evita validando el periodo, y la pantalla
 	// diria "sin rechazos" de una carga que nunca llego.
-	_, err := ingesta.RechazosDeCarga(t.Context(), "rep-que-no-existe")
+	_, err := ingesta.RechazosDeCarga(t.Context(), "rep-que-no-existe", Paginacion{})
 	if !errors.Is(err, ErrNoEncontrado) {
 		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
 	}
@@ -1874,7 +1907,7 @@ func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
 
 	// Con blancos alrededor: el id llega de un segmento de la URL, y el caso de
 	// uso lo recorta antes de buscar.
-	rechazos, err := ingesta.RechazosDeCarga(t.Context(), " "+enero.Reporte.ID+" ")
+	rechazos, err := ingesta.RechazosDeCarga(t.Context(), " "+enero.Reporte.ID+" ", Paginacion{})
 	if err != nil {
 		t.Fatalf("RechazosDeCarga: %v", err)
 	}
@@ -1890,5 +1923,60 @@ func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
 	// subio el archivo.
 	if !strings.Contains(rechazos[2].RechazoMotivo, "fila 10") {
 		t.Errorf("motivo = %q", rechazos[2].RechazoMotivo)
+	}
+}
+
+// La pagina NO puede truncar la cifra. El recuento total sigue saliendo del
+// listado, que es de donde la pantalla saca su "N de M": sin eso, acotar el log
+// seria truncarlo en silencio, que es justo lo que la cota existe para no hacer.
+func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
+	filas := make([]UsoPersistido, 3)
+	for n := range filas {
+		filas[n] = usoBueno("Fila " + strconv.Itoa(n))
+		filas[n].RechazoMotivo = "titulo vacio"
+	}
+	lec := &lectorFalso{filas: filas}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	if err != nil {
+		t.Fatalf("enero: %v", err)
+	}
+
+	// El listado dice cuantos rechazos hubo: la cifra que NO se acota.
+	cargas, err := ingesta.Cargas(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("Cargas: %v", err)
+	}
+	if len(cargas) != 1 || cargas[0].Rechazados != 3 {
+		t.Fatalf("cargas = %+v, se esperaban 3 rechazos contados", cargas)
+	}
+
+	// Y el log se pide por paginas: la primera trae una sola fila.
+	una, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID, Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("RechazosDeCarga: %v", err)
+	}
+	if len(una) != 1 {
+		t.Fatalf("la primera pagina trajo %d filas, se esperaba 1", len(una))
+	}
+	if quiero := enero.Reporte.ID + "-0"; una[0].ID != quiero {
+		t.Errorf("primera fila = %q, se esperaba %q", una[0].ID, quiero)
+	}
+
+	// Sin limite explicito manda el defecto, que es una cota y no "sin tope".
+	todas, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID, Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeCarga sin limite: %v", err)
+	}
+	if len(todas) != 3 {
+		t.Fatalf("sin limite trajo %d filas, se esperaban las 3", len(todas))
+	}
+
+	// Y una pagina mas alla del final es una lista vacia, no un error.
+	mas, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID,
+		Paginacion{Limite: 1, Desplazamiento: 9})
+	if err != nil || len(mas) != 0 {
+		t.Fatalf("pagina fuera de rango = %#v, err = %v", mas, err)
 	}
 }

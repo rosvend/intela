@@ -364,8 +364,8 @@ func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido,
 	return usos, nil
 }
 
-// RechazosDeReporte devuelve el log de rechazos entero de una entrega, en orden
-// de fila del archivo.
+// RechazosDeReporte devuelve una pagina del log de rechazos de una entrega, en
+// orden de fila del archivo.
 //
 // # Una sola sentencia, y por eso un LEFT JOIN desde `reportes`
 //
@@ -375,6 +375,15 @@ func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido,
 // la respuesta mezclaria dos estados de la base. Asi: cero filas es que la
 // entrega no existe; una sola fila con x.id NULL es la fila nula del LEFT JOIN,
 // o sea una entrega sin rechazos.
+//
+// # Por que la pagina va en un CTE y la existencia fuera
+//
+// La cota se aplica a la PAGINA y no a la lectura. Con el LIMIT en la sentencia
+// de arriba, una pagina vacia -`desplazamiento` mas alla del final, o una
+// entrega sin rechazos consultada desde la pagina 2- devolvia cero filas y el
+// adaptador la leia como "esa entrega no existe": un 404 sobre una entrega que
+// si existe. La existencia se resuelve fuera de la pagina, asi que una pagina
+// vacia sale como lista vacia y el 404 queda para lo que es.
 //
 // x.id se escanea como *string porque es el unico NULL que significa algo: lo
 // distingue de un rechazo de verdad, cuyo id es clave primaria. El resto va con
@@ -387,21 +396,40 @@ func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido,
 // Los ids de fila los deriva la ingesta como `<reporte>-<n>` sin ceros a la
 // izquierda, y el orden lexico pondria `-10` antes que `-2`. Dentro de UNA
 // entrega todos comparten el prefijo, asi que ordenar por longitud y despues
-// por texto es ordenar por n, que es la fila del archivo.
+// por texto es ordenar por n, que es la fila del archivo. Se repite en la
+// sentencia de fuera: el orden de un CTE no es una promesa del resultado.
 //
-// Sin LIMIT a proposito, a diferencia de [Store.ListarRechazos]: esa cota
-// protege la cola de revision, que lee la base entera, y aqui truncaria en
-// silencio el log de una carga. Va por el indice `usos_rechazados_reporte`.
-func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string) ([]aplicacion.UsoPersistido, error) {
+// Ojo con el indice: `usos_rechazados_reporte` sirve al JOIN -el WHERE por
+// `reporte_id`-, pero `ORDER BY length(x.id), x.id` NO lo puede usar, porque
+// Postgres ordena. El indice acota que filas entran; el orden se paga aparte.
+func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
+	// La cota la aplica la base y no el adaptador: traer el log entero para
+	// recortarlo aqui deja en pie el pico de memoria que la cota existe para
+	// evitar. `Paginacion{}` aplica [aplicacion.LimiteObrasPorDefecto], igual que
+	// las lecturas del catalogo; los valores ilegales los rechaza el adaptador
+	// HTTP con 400 antes de llegar aqui.
+	pag = pag.ConDefecto()
+
 	filas, err := s.pool.Query(ctx, `
-		SELECT x.id,
-		       COALESCE(x.reporte_id, ''), COALESCE(x.fuente, ''), COALESCE(x.titulo, ''),
-		       COALESCE(x.ids_fuente, ''), COALESCE(x.modalidad, ''), COALESCE(x.motivo, ''),
-		       COALESCE(x.tipo, ''), COALESCE(x.codigo, '')
-		  FROM reportes r
-		  LEFT JOIN usos_rechazados x ON x.reporte_id = r.id
-		 WHERE r.id = $1
-		 ORDER BY length(x.id), x.id`, reporteID)
+		WITH carga AS (
+			SELECT id FROM reportes WHERE id = $1
+		), pagina AS (
+			SELECT x.id, x.reporte_id, x.fuente, x.titulo, x.ids_fuente,
+			       x.modalidad, x.motivo, x.tipo, x.codigo
+			  FROM usos_rechazados x
+			 WHERE x.reporte_id = $1
+			 ORDER BY length(x.id), x.id
+			 LIMIT $2 OFFSET $3
+		)
+		SELECT p.id,
+		       COALESCE(p.reporte_id, ''), COALESCE(p.fuente, ''), COALESCE(p.titulo, ''),
+		       COALESCE(p.ids_fuente, ''), COALESCE(p.modalidad, ''), COALESCE(p.motivo, ''),
+		       COALESCE(p.tipo, ''), COALESCE(p.codigo, ''),
+		       c.id AS reporte
+		  FROM carga c
+		  LEFT JOIN pagina p ON true
+		 ORDER BY length(p.id), p.id`,
+		reporteID, pag.Limite, pag.Desplazamiento)
 	if err != nil {
 		return nil, traducirError(err, "rechazos del reporte %q", reporteID)
 	}
@@ -415,10 +443,11 @@ func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string) ([]apli
 			u         aplicacion.UsoPersistido
 			id        *string
 			modalidad string
+			reporte   string
 		)
 		if err := filas.Scan(
 			&id, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &modalidad,
-			&u.RechazoMotivo, &u.RechazoTipo, &u.RechazoCodigo,
+			&u.RechazoMotivo, &u.RechazoTipo, &u.RechazoCodigo, &reporte,
 		); err != nil {
 			return nil, traducirError(err, "escanear rechazo")
 		}

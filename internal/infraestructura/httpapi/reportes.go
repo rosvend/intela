@@ -23,7 +23,7 @@ import (
 type Ingesta interface {
 	IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error)
 	Cargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error)
-	RechazosDeCarga(ctx context.Context, id string) ([]aplicacion.UsoPersistido, error)
+	RechazosDeCarga(ctx context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error)
 }
 
 // tamanoMaximoEntrega es el tope del ARCHIVO de una subida.
@@ -270,13 +270,24 @@ func (a *API) listarCargas(w http.ResponseWriter, r *http.Request) {
 	escribirJSON(w, http.StatusOK, cuerpo)
 }
 
-// listarRechazosDeCarga sirve el log de rechazos entero de una carga: lo que
-// despliega una fila del listado, que solo trae el recuento.
+// listarRechazosDeCarga sirve una pagina del log de rechazos de una carga: lo
+// que despliega una fila del listado, que solo trae el recuento.
+//
+// Va paginado con la misma forma que `GET /obras` (limite y desplazamiento,
+// mismo defecto y mismo techo): el log de una entrega grande -un archivo con la
+// cabecera equivocada rechaza todas sus filas- no cabe en una respuesta ni en
+// una tabla. La cifra no se trunca: el total es `Carga.rechazados`, que el
+// listado ya tiene en la fila que se despliega, y es con lo que se dice "N de M".
 //
 // 404 y no una lista vacia cuando la carga no existe: "no llego" y "llego
-// entera" son justo las dos respuestas que esta lectura tiene que separar.
+// entera" son justo las dos respuestas que esta lectura tiene que separar. Una
+// pagina vacia de una carga que si existe es 200 con la lista vacia.
 func (a *API) listarRechazosDeCarga(w http.ResponseWriter, r *http.Request) {
-	usos, err := a.ingesta.RechazosDeCarga(r.Context(), chi.URLParam(r, "id"))
+	pag, ok := leerPaginacion(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	usos, err := a.ingesta.RechazosDeCarga(r.Context(), chi.URLParam(r, "id"), pag)
 	switch {
 	case err == nil:
 	case errors.Is(err, aplicacion.ErrReporteInvalido):

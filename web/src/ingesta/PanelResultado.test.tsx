@@ -1,8 +1,15 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiError, ErrorDeRed } from "../api";
 import PanelResultado, {
   type Entrega,
+  pudoHaberLlegado,
   resultadoDeError,
 } from "./PanelResultado";
 import TablaRechazos from "./TablaRechazos";
@@ -150,11 +157,18 @@ describe("PanelResultado", () => {
     expect(within(alerta).getByText(NO_SE_GUARDO)).toBeTruthy();
   });
 
-  // Estos tres status si cierran la pregunta de si quedo algo escrito: 409 y
-  // 413 no llegan a escribir y 503 ni entra, asi que su titulo puede afirmar el
+  // Estos status si cierran la pregunta de si quedo algo escrito -un 4xx prueba
+  // que ESA peticion no registro nada, y el 503 de esta ruta ni entra, porque lo
+  // produce una guarda previa al handler-, asi que su titulo puede afirmar el
   // no-registro y no hace falta el aviso. El 500 NO entra aqui: tiene su caso
   // propio debajo, porque es el unico que deja la pregunta abierta.
+  //
+  // El 403 entra en la lista por lo mismo, y con titulo propio: `requiereRol` lo
+  // responde ANTES de que `subirReporte` corra, asi que no se escribio nada. Con
+  // el cajon neutro ("no se sabe si la entrega se registro") el panel afirmaba de
+  // menos, y en la direccion que hace dudar al operador.
   it.each([
+    [403, "La sesión no tiene permiso para registrar entregas"],
     [409, "La entrega no se registró"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
@@ -202,6 +216,47 @@ describe("PanelResultado", () => {
     expect(within(alerta).getByText(mensaje)).toBeTruthy();
     expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
     expect(within(alerta).queryByText(NO_SE_GUARDO)).toBeNull();
+  });
+
+  // Un 5xx que nadie clasifico tampoco puede afirmar el no-registro. Hoy el
+  // handler de esta ruta solo produce el 500 entre los 5xx, pero el predicado no
+  // lo enumera: generaliza a 5xx, porque el precio de decir "pudo haber llegado"
+  // de mas es el lado seguro. El 503 queda fuera a proposito: lo emite
+  // `conIngesta`, una guarda PREVIA al handler.
+  it("un 5xx sin titulo propio cae en el cajon neutro y lleva el aviso", () => {
+    render(
+      <PanelResultado
+        resultado={{ tipo: "fallo", status: 501, mensaje: "no implementado" }}
+      />,
+    );
+
+    const alerta = screen.getByRole("alert");
+    expect(
+      within(alerta).getByRole("heading", {
+        name: "No se sabe si la entrega se registró",
+      }),
+    ).toBeTruthy();
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
+    expect(within(alerta).queryByText(NO_SE_GUARDO)).toBeNull();
+  });
+
+  // La duda es UNA definicion y de ella dependen las dos mitades de la pantalla:
+  // el aviso que se pinta y el listado que se vuelve a pedir. Se prueba suelta
+  // porque es lo unico que no puede divergir entre las dos.
+  it.each([
+    ["red", true],
+    ["desconocido", true],
+    [500, true],
+    [501, true],
+    [502, true],
+    [504, true],
+    [503, false],
+    [400, false],
+    [403, false],
+    [409, false],
+    [413, false],
+  ] as const)("pudoHaberLlegado(%s) = %s", (status, quiere) => {
+    expect(pudoHaberLlegado(status)).toBe(quiere);
   });
 
   // El 409 de evidencia corrupta entra por el mismo status que el duplicado,
@@ -350,5 +405,59 @@ describe("TablaRechazos", () => {
 
     expect(screen.getByText("No hay filas rechazadas.")).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  // El 201 trae el log entero en el cuerpo, asi que un archivo con la cabecera
+  // equivocada -todas sus filas rechazadas- llega hasta aqui con cientos de
+  // miles de elementos: un `<tr>` por fila congela la pestana. La pintura se
+  // acota, y lo que NO se acota es la cifra: se dice cuantas hay en total y el
+  // resto queda a un clic. Recortar sin decirlo seria esconder filas.
+  it("con mas rechazos de los que caben pinta los primeros y dice cuantos hay", () => {
+    const muchos = Array.from({ length: 250 }, (_, i) => ({
+      id: `rep-${SHA}-${i}`,
+      titulo: `Obra sintetica ${i}`,
+      ids_fuente: `id_ficha=F-${i}`,
+      motivo: `fila ${i}, titulo (columna "Titulo"): vacio`,
+    }));
+    render(<TablaRechazos rechazos={muchos} />);
+
+    const tabla = screen.getByRole("table", { name: "Filas rechazadas" });
+    // Cien filas pintadas, ni una mas: es el tope de la pintura.
+    expect(within(tabla).getAllByRole("row").slice(1)).toHaveLength(100);
+    // Y la cifra entera dicha en voz alta, con el resto a un clic.
+    expect(screen.getByText(/Mostrando 100 de 250 rechazos\./)).toBeTruthy();
+    const verMas = screen.getByRole("button", { name: "Ver 100 más" });
+    expect(within(tabla).queryByText(muchos[100].motivo)).toBeNull();
+
+    fireEvent.click(verMas);
+
+    expect(within(tabla).getAllByRole("row").slice(1)).toHaveLength(200);
+    expect(within(tabla).getByText(muchos[100].motivo)).toBeTruthy();
+    // En el ultimo tramo el boton no promete mas de lo que queda: quedan 50.
+    expect(screen.getByRole("button", { name: "Ver 50 más" })).toBeTruthy();
+  });
+
+  // El panel de la subida es el consumidor que lo necesita: el 201 trae el log
+  // en el cuerpo y no hay endpoint que paginar.
+  it("el panel acota la pintura del log que vino en el 201", () => {
+    const muchos = Array.from({ length: 150 }, (_, i) => ({
+      id: `rep-${SHA}-${i}`,
+      titulo: `Obra sintetica ${i}`,
+      ids_fuente: `id_ficha=F-${i}`,
+      motivo: `fila ${i}, titulo (columna "Titulo"): vacio`,
+    }));
+    render(
+      <PanelResultado
+        resultado={{
+          tipo: "entrega",
+          entrega: { ...sinRechazos, rechazados: muchos },
+        }}
+      />,
+    );
+
+    // El recuento del panel es el del log entero, no el de las filas pintadas.
+    expect(dato("Filas rechazadas")).toBe("150");
+    const tabla = screen.getByRole("table", { name: "Filas rechazadas" });
+    expect(within(tabla).getAllByRole("row").slice(1)).toHaveLength(100);
   });
 });

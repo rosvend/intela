@@ -5,6 +5,7 @@ import ListaCargas from "./ListaCargas";
 import PanelResultado, {
   type Entrega,
   type Resultado,
+  pudoHaberLlegado,
   resultadoDeError,
 } from "./PanelResultado";
 import { esRechazo } from "./TablaRechazos";
@@ -19,30 +20,22 @@ const FUENTES = [
   { valor: "cine", etiqueta: "Cine" },
 ] as const;
 
-// Repite la forma que acepta el backend (AAAA o AAAA-MM) solo para decidir si
-// el periodo pasa a la URL y el listado se vuelve a pedir. Es floja a
-// proposito: mientras se teclea se pasa por formas a medias, y consultar con
-// ellas llenaria la pantalla de 400. La autoridad para consultar sigue siendo
-// el backend, que ya contesta su mensaje si el periodo es imposible.
+// La forma de un periodo que merece una consulta: AAAA, o AAAA-MM. Es floja a
+// proposito -el mes no se mira aqui-: mientras se teclea se pasa por formas a
+// medias y consultar con ellas llenaria la pantalla de 400.
+//
+// Que el mes exista lo decide el servidor, y su 400 es el que se ve. Antes esta
+// guarda convivia con una tercera copia del patron del dominio
+// (`FORMA_PERIODO_DOMINIO`) que bloqueaba la subida en el navegador, y el
+// backend validaba el periodo con uno MAS FLOJO todavia
+// (`^[0-9]{4}(-[0-9]{2})?$`, internal/aplicacion/trabajos.go) en el camino que
+// escribe la boveda: `2026-13` entraba sin un solo 400 desde `curl`, el
+// scheduler o cualquier pantalla futura, y no hay vuelta atras que lo arregle
+// -la unicidad de una entrega es (sha256, fuente), la huella no incluye el
+// periodo y no hay ruta de borrado-. La regla se apretó donde vive, en el
+// dominio (internal/dominio/recaudo/bolsa.go), y su mensaje nombra el mes entre
+// 01 y 12; la copia de aqui se borro con ella.
 const FORMA_PERIODO = /^\d{4}(-\d{2})?$/;
-
-// El patron de un periodo de recaudo del dominio: un ano, o un ano y un mes
-// que existe. Es el mismo de internal/dominio/recaudo/bolsa.go, y es lo que
-// decide si se puede SUBIR.
-//
-// Hace falta porque el backend no lo va a frenar: la capa de aplicacion valida
-// el periodo con uno mas flojo (`^[0-9]{4}(-[0-9]{2})?$`, en
-// internal/aplicacion/trabajos.go), asi que `2026-00` y `2026-13` entran sin
-// un solo 400. El 0 y el 1 son teclas vecinas: `2026-03` se vuelve `2026-13`
-// con un solo error. Estrechar el del backend queda como arreglo pendiente,
-// fuera de esta pantalla.
-//
-// Y no hay vuelta atras que lo arregle: la unicidad es (sha256, fuente), la
-// huella del reporte no incluye el periodo y no hay ruta de borrado, asi que
-// un archivo subido a un mes que no existe queda quemado para siempre; volver
-// a subirlo con el periodo corregido da 409 y sus usos ponderan un periodo que
-// ningun reparto cierra.
-const FORMA_PERIODO_DOMINIO = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
 
 /** Un texto con algo dentro, que es lo que son los campos de texto `Entrega`. */
 function esTextoNoVacio(valor: unknown): valor is string {
@@ -128,8 +121,13 @@ export default function Ingesta() {
   const [arrastrando, setArrastrando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<Resultado | null>(null);
-  // Sube tras cada 201 para remontar el listado, que asi se vuelve a pedir sin
-  // tocar `useApi`.
+  // Sube para remontar el listado, que asi se vuelve a pedir sin tocar `useApi`.
+  // Lo hace en dos casos, y el segundo es el que importa: tras un 201, para ver
+  // la carga nueva, y tras cualquier desenlace que deje la duda de si la entrega
+  // quedo registrada (`pudoHaberLlegado`), porque el aviso del panel manda al
+  // operador a mirar JUSTO ese listado. Sin remontarlo ahi, lo que mira es la
+  // foto de antes del intento: si el COMMIT entro, no ve la fila nueva, concluye
+  // que no llego y reenvia -409 irreversible-.
   const [version, setVersion] = useState(0);
   // `disabled` llega en el siguiente render; el ref corta tambien un segundo
   // clic que entre antes.
@@ -143,20 +141,20 @@ export default function Ingesta() {
 
   // Con el campo a medias el periodo de la URL no es el que se ve: no se sube
   // con uno distinto del que muestra la pantalla.
+  //
+  // Lo unico que se decide aqui es que el periodo este COMPLETO. Que el mes
+  // exista lo decide el servidor, y su 400 se pinta tal cual: es la misma
+  // autoridad que juzga el archivo, y duplicar su regla en el cliente era una
+  // tercera copia del patron del dominio, la que menos cubria.
   const periodoListo =
     periodoAplicado !== "" && textoPeriodo === periodoAplicado;
-  // Que este completo no basta: el periodo tiene que ser uno que exista. La
-  // subida no se deshace, y `2026-00` o `2026-13` pasan el validador del
-  // backend sin protestar.
-  const periodoUtil =
-    periodoListo && FORMA_PERIODO_DOMINIO.test(periodoAplicado);
   const puedeSubir =
-    !enviando && periodoUtil && fuente !== "" && archivo !== null;
+    !enviando && periodoListo && fuente !== "" && archivo !== null;
 
   /** El texto del boton, que nombra el periodo al que subiria el archivo. */
   function etiquetaSubir(): string {
     if (enviando) return "Subiendo…";
-    if (periodoUtil) return `Subir a ${periodoAplicado}`;
+    if (periodoListo) return `Subir a ${periodoAplicado}`;
     return "Subir reporte";
   }
 
@@ -208,7 +206,14 @@ export default function Ingesta() {
       setResultado({ tipo: "entrega", entrega: cuerpo });
       setVersion((previa) => previa + 1);
     } catch (error) {
-      setResultado(resultadoDeError(error));
+      const fallo = resultadoDeError(error);
+      setResultado(fallo);
+      // La misma duda que hace salir el aviso de PUDO_LLEGAR en el panel, de la
+      // misma funcion: el aviso manda a mirar el listado, asi que el listado
+      // tiene que volver a pedirse o lo que se mira es la foto de antes.
+      if (pudoHaberLlegado(fallo.status)) {
+        setVersion((previa) => previa + 1);
+      }
     } finally {
       enVuelo.current = false;
       setEnviando(false);
@@ -240,7 +245,8 @@ export default function Ingesta() {
               aria-describedby={idAyudaPeriodo}
             />
             <p id={idAyudaPeriodo} className="ingesta-ayuda">
-              AAAA para un periodo anual, AAAA-MM para uno mensual.
+              AAAA para un periodo anual, AAAA-MM para uno mensual, con el mes
+              entre 01 y 12.
             </p>
           </div>
 
@@ -300,16 +306,17 @@ export default function Ingesta() {
             type="submit"
             className="boton-primario"
             disabled={!puedeSubir}
-            aria-describedby={periodoUtil ? undefined : idAvisoPeriodo}
+            aria-describedby={periodoListo ? undefined : idAvisoPeriodo}
           >
             {etiquetaSubir()}
           </button>
-          {/* Un solo aviso para las dos maneras de no servir el periodo: a
-              medias o completo pero imposible (un mes que no existe). */}
-          {!periodoUtil && (
+          {/* El aviso dice lo unico que decide el cliente: que el periodo este
+              completo. Que el mes exista lo contesta el servidor con su 400, y
+              el rango del mes se explica en la ayuda del campo. */}
+          {!periodoListo && (
             <p id={idAvisoPeriodo} className="ingesta-ayuda">
-              Escribe un periodo válido para poder subir el reporte: AAAA, o
-              AAAA-MM con el mes entre 01 y 12.
+              Escribe el periodo completo para poder subir el reporte: AAAA, o
+              AAAA-MM.
             </p>
           )}
         </div>
