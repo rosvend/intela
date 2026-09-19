@@ -152,9 +152,10 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  *   escribiera NADA: la evidencia se congela antes de decidir el conflicto
  *   (`congelarEvidencia`) y de la boveda no se borra. El 400, ademas, lo
  *   explica el backend en su cuerpo, cuando llega legible: nombra la causa que
- *   encontro -campo o columna que falta, periodo que no existe, par
- *   (fuente, formato) sin adaptador, archivo ilegible-, no que no se haya
- *   escrito nada.
+ *   encontro -el campo del formulario o la columna del archivo que falta, la
+ *   entrega que no trae ninguna fila, el periodo que no existe, el par
+ *   (fuente, formato) sin adaptador, el archivo ilegible (o el cuerpo que no
+ *   llega como multipart)-, no que no se haya escrito nada.
  */
 export function pudoHaberLlegado(status: StatusDeFallo): boolean {
   if (status === "red" || status === "desconocido") return true;
