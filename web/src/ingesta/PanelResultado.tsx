@@ -59,10 +59,10 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
   //
   // Y tampoco puede afirmar el no-registro, que es lo que decia antes ("La
-  // entrega no se registró"). Un 4xx prueba que ESA peticion no escribio nada,
-  // que no es lo mismo que "esa entrega no esta registrada": en el duplicado
-  // -el caso comun, el que le pasa a quien reenvia- la entrega SI esta, y es
-  // justo lo que hace saltar el UNIQUE (sha256, fuente) del esquema
+  // entrega no se registró"). Un 4xx prueba que ESA peticion no dejo entrega en
+  // `reportes`, que no es lo mismo que "esa entrega no esta registrada": en el
+  // duplicado -el caso comun, el que le pasa a quien reenvia- la entrega SI
+  // esta, y es justo lo que hace saltar el UNIQUE (sha256, fuente) del esquema
   // (migrations/00001_init.sql); en la evidencia corrupta tampoco se registro
   // esta, pero lo que hay bajo la clave no es lo que se iba a certificar. El
   // titulo dice solo el conflicto, que es lo unico cierto en las dos ramas, y
@@ -143,10 +143,13 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  *   (internal/infraestructura/httpapi/server.go), una guarda PREVIA al handler
  *   que responde cuando al binario le falta cablear la ingesta. No se escribio
  *   nada, y por eso tiene titulo propio y ningun aviso;
- * - un **4xx** cierra la pregunta: es una respuesta del servidor en la que ESA
- *   peticion no escribio nada, que es de lo que duda este predicado. No dice
- *   nada de si esa entrega estaba registrada de antes: en el 409 duplicado lo
- *   estaba, y la duda no es por eso. El 400, ademas, lo dice el backend.
+ * - un **4xx** cierra la pregunta: es una respuesta del servidor en la que esa
+ *   peticion no dejo entrega en `reportes`, que es lo unico de lo que duda este
+ *   predicado. No dice nada de si esa entrega estaba registrada de antes: en el
+ *   409 duplicado lo estaba, y la duda no es por eso. Y no garantiza que no se
+ *   escribiera NADA: la evidencia se congela antes de decidir el conflicto
+ *   (`congelarEvidencia`) y de la boveda no se borra. El 400, ademas, lo
+ *   explica el backend con el campo que le falta al archivo.
  */
 export function pudoHaberLlegado(status: StatusDeFallo): boolean {
   if (status === "red" || status === "desconocido") return true;
