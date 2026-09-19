@@ -66,6 +66,7 @@ jobs:
       python: ${{ steps.layers.outputs.python }}
       workflows: ${{ steps.layers.outputs.workflows }}
       go: ${{ steps.layers.outputs.go }}
+      migrations: ${{ steps.layers.outputs.migrations }}
       frontend: ${{ steps.layers.outputs.frontend }}
       contract: ${{ steps.layers.outputs.contract }}
       docker-backend: ${{ steps.layers.outputs.docker_backend }}
@@ -116,7 +117,11 @@ jobs:
           # stage that rule governs instead of slipping through unverified.
           P_PYTHON='(\.py$|^ruff\.toml$|^\.github/workflows/(ci|lint-python)\.yml$)'
           P_WORKFLOWS='^\.github/'
-          P_GO='(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture)\.yml$)'
+          # migrations/*.sql is in P_GO on purpose: a PR that only adds a
+          # migration used to skip test-go entirely, and the gap-under-applied
+          # failure only showed up in terraform apply (#110).
+          P_GO='(\.go$|^go\.(mod|sum)$|^migrations/|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture|migrations)\.yml$)'
+          P_MIGRATIONS='(^migrations/|^internal/infraestructura/migraciones/|^\.github/workflows/(ci|migrations)\.yml$)'
           # The contract is in here because the frontend commits types generated
           # from it (ADR 0010) and `npm test` checks them for drift: a PR that only
           # changes api/openapi.yaml has to re-run the frontend stages too.
@@ -125,12 +130,15 @@ jobs:
           # The Go sources are in here on purpose: the backend image is built
           # FROM them, so a change to `internal/` that breaks the build has to
           # re-run this stage, not wait for the merge to main to find out.
-          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|container|deploy)\.yml$)'
+          # migrations/*.sql is embedded into /app/migrate, so a SQL-only PR
+          # must rebuild the image too.
+          P_DOCKER='(^Dockerfile|^\.dockerignore$|\.go$|^go\.(mod|sum)$|^migrations/|^\.github/workflows/(ci|container|deploy)\.yml$)'
           # The Go sources are in here for the same reason they are in P_DOCKER:
           # the plan hashes the Lambda zips, which are built FROM them, so a
           # change under cmd/lambda has to re-plan rather than surprise the
           # deploy. The Makefile too, since it is what builds them.
-          P_TERRAFORM='(^infra/|^Makefile$|^cmd/lambda|\.go$|^go\.(mod|sum)$|^\.github/workflows/(ci|terraform|deploy)\.yml$)'
+          # migrations/*.sql is //go:embed-ed into migrate.zip, same reason.
+          P_TERRAFORM='(^infra/|^Makefile$|^cmd/lambda|\.go$|^go\.(mod|sum)$|^migrations/|^\.github/workflows/(ci|terraform|deploy)\.yml$)'
 
           python=false
           if find . -path ./.git -prune -o -name '*.py' -print -quit | grep -q . && touched "$P_PYTHON"; then
@@ -142,6 +150,11 @@ jobs:
 
           go=false
           if exists go.mod && touched "$P_GO"; then go=true; fi
+
+          migrations=false
+          if exists migrations/embed.go && touched "$P_MIGRATIONS"; then
+            migrations=true
+          fi
 
           frontend=false
           if exists web/package.json && touched "$P_FRONTEND"; then frontend=true; fi
@@ -162,6 +175,7 @@ jobs:
             echo "python=$python"
             echo "workflows=$workflows"
             echo "go=$go"
+            echo "migrations=$migrations"
             echo "frontend=$frontend"
             echo "contract=$contract"
             echo "docker_backend=$docker_backend"
@@ -177,8 +191,9 @@ jobs:
             echo "| lint-python | \`$python\` | there are \`*.py\` files and the PR touches Python or \`ruff.toml\` |"
             echo "| lint-workflows | \`$workflows\` | the PR touches \`.github/\` |"
             echo "| lint-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
-            echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
+            echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go or \`migrations/\` |"
             echo "| architecture | \`$go\` | depguard needs Go code to inspect |"
+            echo "| migrations | \`$migrations\` | \`migrations/\` exists and the PR touches migration numbering |"
             echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
             echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
             echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
@@ -263,6 +278,14 @@ jobs:
     needs: detect
     if: needs.detect.outputs.go == 'true'
     uses: ./.github/workflows/architecture.yml
+
+  # Goose version numbering: duplicates and numbers at or below the version
+  # already applied on main. Without this stage those only fail at apply (#110).
+  migrations:
+    name: Migration versions
+    needs: detect
+    if: needs.detect.outputs.migrations == 'true'
+    uses: ./.github/workflows/migrations.yml
 
   lint-frontend:
     name: Lint (frontend)
@@ -374,6 +397,7 @@ jobs:
       - lint-go
       - test-go
       - architecture
+      - migrations
       - lint-frontend
       - test-frontend
       - build-frontend

@@ -278,3 +278,7 @@ plans/*
 # Transcripcion de una sesion de trabajo pegada en la raiz. Es material de
 # traspaso entre sesiones, no un artefacto del repositorio.
 contexto-reflect.md
+
+# Binarios locales de herramientas (golangci-lint, etc.) instalados fuera del
+# PATH del CI. No versionar.
+.tools/
