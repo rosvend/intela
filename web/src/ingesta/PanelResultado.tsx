@@ -47,8 +47,9 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // si la entrega se registro"- en la direccion que hace dudar al operador, que
   // es justo lo contrario de lo que este panel existe para hacer. Un 4xx prueba
   // que ESA peticion no registro nada, y el aviso de PUDO_LLEGAR no lo lleva.
-  // El 401 no llega hasta aqui: `api.ts` borra el token y navega al login antes
-  // de que esto se pinte.
+  // El 401 es otra cosa y no depende de este titulo: `api.ts` limpia el token y
+  // navega a la pantalla de entrada (`alExpirarSesion`) ANTES de lanzar el
+  // `ApiError`, asi que lo que el operador termina leyendo no es este panel.
   403: "La sesión no tiene permiso para registrar entregas",
   // 409 es ambiguo y por eso no se titula con ninguna de sus dos causas: el
   // backend responde 409 tanto cuando esa fuente ya entrego exactamente ese

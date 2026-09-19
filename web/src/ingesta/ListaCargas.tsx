@@ -204,9 +204,10 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
   );
 }
 
-// Cuantos rechazos trae cada pagina del log. Es el mismo tope de pagina que usa
-// el catalogo, y queda muy por debajo del maximo de 500 que el servidor rechaza
-// con 400.
+// Cuantos rechazos trae cada pagina del log. Cien es una pagina que se lee de un
+// vistazo y queda muy por debajo del maximo de 500 que el servidor rechaza con
+// 400, asi que el operador llega al final del log en pocos clics y ninguno de
+// ellos le trae una respuesta desproporcionada.
 const LIMITE_POR_PAGINA = 100;
 
 /**

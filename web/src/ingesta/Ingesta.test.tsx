@@ -888,6 +888,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
 
     montarApp("/ingesta?periodo=2026-01");
     await screen.findByText(VACIO_2026_01);
+    const pedidosAntes = getsDelListado().length;
 
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
@@ -905,6 +906,15 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(alerta.textContent).not.toContain("detalle");
     expect(document.body.textContent).not.toContain('{"detalle"');
     expect(subidas()).toHaveLength(1);
+
+    // Y el listado que el aviso manda a mirar se vuelve a pedir. Es la mitad que
+    // faltaba: afirmar el texto de PUDO_LLEGAR sin comprobar el GET dejaba en
+    // verde una pantalla que mandaba al operador a la foto de ANTES de la
+    // subida -si el COMMIT entro, no ve la fila nueva, concluye que no llego y
+    // reenvia, y el 409 es irreversible-.
+    await vi.waitFor(() =>
+      expect(getsDelListado()).toHaveLength(pedidosAntes + 1),
+    );
   });
 
   it("un listado con un elemento que no es una carga deja el error en su sitio sin tumbar la pantalla", async () => {

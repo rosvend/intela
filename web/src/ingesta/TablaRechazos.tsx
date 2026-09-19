@@ -37,10 +37,11 @@ export function esRechazo(valor: unknown): valor is Rechazo {
 // Cuantas filas se pintan de una vez.
 //
 // No es la cota de la LECTURA -esa la pone el servidor en la pagina del log
-// (`GET /reportes/{id}/rechazos`)-, es la de la PINTURA: un `<tr>` por fila de
-// un archivo con la cabecera equivocada son cientos de miles de nodos, y eso
-// congela la pestana. Lo necesita sobre todo el panel de la subida, que pinta el
-// log que vino dentro del 201 y no puede pedirlo por paginas.
+// (`GET /reportes/{id}/rechazos`)-, es la de la PINTURA: las filas de un archivo
+// de hasta 32 MiB con la cabecera equivocada pueden ser cientos de miles, y un
+// `<tr>` por fila congela la pestana. Lo necesita sobre todo el panel de la
+// subida, que pinta el log que vino dentro del 201 y no puede pedirlo por
+// paginas.
 const LIMITE_VISIBLE = 100;
 
 /**
