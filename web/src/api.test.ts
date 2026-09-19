@@ -1,11 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  ErrorDeCuerpoIlegible,
   ErrorDeRed,
   api,
   setToken,
   setUnauthorizedHandler,
 } from "./api";
+
+// La pagina de error de nginx: la contestan el 502, el 504 y el 408 de
+// `client_body_timeout` (deploy/nginx.conf). No es un mensaje de la API.
+const PAGINA_DEL_PROXY =
+  "<html><head><title>409 Conflict</title></head><body><h1>nginx</h1></body></html>";
+
+/**
+ * Una respuesta que LLEGO -con su status- y cuyo cuerpo se corta a mitad: el
+ * stream falla y `res.text()` rechaza. Es la forma sintetica de un cuerpo
+ * truncado, y la unica que hace fallar la LECTURA del cuerpo sin que el status
+ * deje de existir. Un cuerpo que llega entero y no parsea es otro caso -lo cubre
+ * el del 200 de mas abajo-: aqui no hay texto que parsear.
+ */
+function respuestaConCuerpoCortado(status: number): Response {
+  const cuerpo = new ReadableStream({
+    start(controlador) {
+      controlador.error(new Error("la conexion se corto a mitad del cuerpo"));
+    },
+  });
+  return new Response(cuerpo, {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 describe("api", () => {
   beforeEach(() => {
@@ -143,6 +168,118 @@ describe("api", () => {
     );
 
     await expect(api("/api/obras")).rejects.toThrow("Internal Server Error");
+  });
+
+  it("un cuerpo de error que parsea pero no trae `error` no se pinta crudo", async () => {
+    // El contrato promete `{error: "..."}`. Un cuerpo que si parsea como JSON
+    // pero nombra el mensaje de otra manera -`{"detalle": ...}`, la forma de
+    // tantos proxies- no es un mensaje de esta API: devolverlo tal cual pintaba
+    // el JSON entero, con sus llaves y comillas, como explicacion del sistema.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detalle: "algo del proxy" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    expect((error as ApiError).message).not.toContain("detalle");
+    expect((error as ApiError).message).not.toContain("{");
+  });
+
+  it("un `error` vacio tambien es ilegible: una cadena vacia no es un mensaje", async () => {
+    // `cuerpo.error || texto` caia al `||` con `""` -que es falsy- y acababa
+    // pintando el JSON crudo.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni el JSON crudo: el mensaje propio no lleva llaves ni comillas.
+    expect((error as ApiError).message).not.toContain('"error"');
+  });
+
+  it("un cuerpo de error que no es JSON se sustituye: la pagina del proxy no es un mensaje del backend", async () => {
+    // El contrato promete que un error de la API viene como `{error: "..."}`,
+    // asi que un cuerpo que no parsea como JSON no lo puso la API. Devuelto
+    // crudo, el HTML de nginx acababa pintado como explicacion del sistema
+    // (escapado, pero entero) en cuanto el status no fuera 502/504: el 408 de
+    // `client_body_timeout` es el caso realista.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(PAGINA_DEL_PROXY, {
+        status: 409,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni una etiqueta ni el titulo de la pagina del proxy.
+    expect((error as ApiError).message).not.toContain("nginx");
+    expect((error as ApiError).message).not.toContain("<");
+  });
+
+  it("un 4xx cuyo cuerpo no se puede leer CONSERVA su status", async () => {
+    // El status llego; lo que no llego fue el cuerpo. Tirarlo aqui convierte un
+    // RECHAZO del servidor en un error sin tipo, y quien llama no puede volver a
+    // distinguirlo de un fallo del que no se sabe nada: en el editor del reparto
+    // eso pinta "No se sabe si el guardado abrió una versión" sobre un rechazo
+    // que prueba que no se escribio nada.
+    vi.mocked(fetch).mockResolvedValue(respuestaConCuerpoCortado(400));
+
+    const error = await api("/api/obras/obra-1/declaracion", {
+      method: "PUT",
+      body: "[]",
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni el texto de la causa: la pantalla no puede pintar un error de red ni el
+    // mensaje crudo de la lectura que fallo.
+    expect((error as ApiError).message).not.toContain("conexion");
+  });
+
+  it("un 2xx cuyo cuerpo no parsea rechaza con ErrorDeCuerpoIlegible y su status", async () => {
+    // La clase nueva de `api()` no tenia ningun caso propio en este fichero: se
+    // probaba de refilon desde la pantalla del editor. Aqui se fija lo que
+    // promete: la respuesta llego SIN error y lo que falta es su cuerpo, asi que
+    // el error dice eso, conserva el status y NO es un rechazo.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("esto no es json", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/obras/obra-1/declaracion", {
+      method: "PUT",
+      body: "[]",
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ErrorDeCuerpoIlegible);
+    expect((error as ErrorDeCuerpoIlegible).status).toBe(200);
+    // Un 2xx nunca es un rechazo, y confundir los dos es el defecto que esta
+    // clase existe para no repetir.
+    expect(error).not.toBeInstanceOf(ApiError);
   });
 
   it("un fetch que rechaza produce ErrorDeRed, no una excepcion sin tipar", async () => {

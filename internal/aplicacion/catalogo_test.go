@@ -3,19 +3,41 @@ package aplicacion
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 // catalogoFalso cuenta cuantas veces le tocaron la base. Es lo que hace
 // comprobable que la validacion corre ANTES y no despues.
+//
+// Satisface los dos puertos que el caso de uso inyecta. Los tres metodos de
+// [GestionDeclaraciones] que el catalogo NO usa -Guardar, Historial y
+// VigenteEn- entran por la interfaz embebida sin valor: si el catalogo llegara
+// a llamarlos, revienta aqui en vez de pasar la prueba con un doble que miente
+// sobre lo que el catalogo hace.
 type catalogoFalso struct {
+	GestionDeclaraciones
+
 	registros      int
 	actualizadas   int
 	obraRecibida   repertorio.Obra
 	filtroRecibido FiltroObras
 	err            error
+
+	// obras es lo que devuelve Buscar. Una pagina, no una obra.
+	obras []repertorio.Obra
+
+	// vigentes es lo que devuelve el puerto de declaraciones, y consultas
+	// cuenta cuantas veces se le llamo: con N obras tiene que ser UNA -es la
+	// razon de ser de [GestionDeclaraciones.VigentesDeObras]-.
+	vigentes    map[string]VersionDeclaracion
+	errVigentes error
+	consultas   int
+	idsPedidos  []string
 }
 
 func (c *catalogoFalso) Registrar(_ context.Context, o repertorio.Obra) error {
@@ -36,7 +58,19 @@ func (c *catalogoFalso) PorID(_ context.Context, _ string) (repertorio.Obra, err
 
 func (c *catalogoFalso) Buscar(_ context.Context, f FiltroObras) ([]repertorio.Obra, error) {
 	c.filtroRecibido = f
-	return nil, c.err
+	return c.obras, c.err
+}
+
+func (c *catalogoFalso) VigentesDeObras(_ context.Context, ids []string) (map[string]VersionDeclaracion, error) {
+	c.consultas++
+	c.idsPedidos = ids
+	return c.vigentes, c.errVigentes
+}
+
+// catalogoDePrueba cablea los dos puertos en el mismo doble: el tipo satisface
+// los dos, y el nucleo sigue viendo dos interfaces distintas.
+func catalogoDePrueba(repo *catalogoFalso) Catalogo {
+	return Catalogo{Obras: repo, Declaraciones: repo}
 }
 
 func metadatosValidos() repertorio.Metadatos {
@@ -53,7 +87,7 @@ func metadatosValidos() repertorio.Metadatos {
 
 func TestRegistrarObraConstruyeLaEntidadYLaGuarda(t *testing.T) {
 	repo := &catalogoFalso{}
-	cat := Catalogo{Obras: repo}
+	cat := catalogoDePrueba(repo)
 
 	obra, err := cat.RegistrarObra(t.Context(), "obra-1", metadatosValidos())
 	if err != nil {
@@ -90,7 +124,7 @@ func TestRegistrarObraInvalidaNoTocaElPuerto(t *testing.T) {
 			m := metadatosValidos()
 			romper(&m)
 
-			_, err := Catalogo{Obras: repo}.RegistrarObra(t.Context(), "obra-1", m)
+			_, err := catalogoDePrueba(repo).RegistrarObra(t.Context(), "obra-1", m)
 			if !errors.Is(err, repertorio.ErrObraInvalida) {
 				t.Fatalf("se esperaba ErrObraInvalida, se obtuvo %v", err)
 			}
@@ -106,7 +140,7 @@ func TestRegistrarObraInvalidaNoTocaElPuerto(t *testing.T) {
 func TestRegistrarObraPropagaElDuplicado(t *testing.T) {
 	repo := &catalogoFalso{err: ErrObraDuplicada}
 
-	_, err := Catalogo{Obras: repo}.RegistrarObra(t.Context(), "obra-1", metadatosValidos())
+	_, err := catalogoDePrueba(repo).RegistrarObra(t.Context(), "obra-1", metadatosValidos())
 	if !errors.Is(err, ErrObraDuplicada) {
 		t.Fatalf("se esperaba ErrObraDuplicada, se obtuvo %v", err)
 	}
@@ -119,7 +153,7 @@ func TestActualizarMetadatosObraRevalida(t *testing.T) {
 	m := metadatosValidos()
 	m.Coautores[0].Rol = "director" // RD 7.3.3: no genera derecho de autor
 
-	_, err := Catalogo{Obras: repo}.ActualizarMetadatosObra(t.Context(), "obra-1", m)
+	_, err := catalogoDePrueba(repo).ActualizarMetadatosObra(t.Context(), "obra-1", m)
 	if !errors.Is(err, repertorio.ErrObraInvalida) {
 		t.Fatalf("se esperaba ErrObraInvalida, se obtuvo %v", err)
 	}
@@ -133,7 +167,7 @@ func TestActualizarMetadatosObraRevalida(t *testing.T) {
 func TestActualizarMetadatosObraConservaElIdentificador(t *testing.T) {
 	repo := &catalogoFalso{}
 
-	obra, err := Catalogo{Obras: repo}.ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos())
+	obra, err := catalogoDePrueba(repo).ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos())
 	if err != nil {
 		t.Fatalf("ActualizarMetadatosObra: %v", err)
 	}
@@ -156,7 +190,7 @@ func TestBuscarObrasPasaElFiltroTalCual(t *testing.T) {
 		Paginacion: Paginacion{Limite: 25, Desplazamiento: 10},
 	}
 
-	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), quiero); err != nil {
+	if _, err := catalogoDePrueba(repo).BuscarObras(t.Context(), quiero); err != nil {
 		t.Fatalf("BuscarObras: %v", err)
 	}
 	if repo.filtroRecibido != quiero {
@@ -170,7 +204,7 @@ func TestBuscarObrasPasaElFiltroTalCual(t *testing.T) {
 func TestBuscarObrasAplicaPaginacionPorDefecto(t *testing.T) {
 	repo := &catalogoFalso{}
 
-	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), FiltroObras{}); err != nil {
+	if _, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{}); err != nil {
 		t.Fatalf("BuscarObras: %v", err)
 	}
 	if repo.filtroRecibido.Limite != LimiteObrasPorDefecto {
@@ -186,11 +220,246 @@ func TestBuscarObrasRespetaLimiteSinTope(t *testing.T) {
 	repo := &catalogoFalso{}
 	quiero := FiltroObras{Paginacion: Paginacion{Limite: LimiteSinTope}}
 
-	if _, err := (Catalogo{Obras: repo}).BuscarObras(t.Context(), quiero); err != nil {
+	if _, err := catalogoDePrueba(repo).BuscarObras(t.Context(), quiero); err != nil {
 		t.Fatalf("BuscarObras: %v", err)
 	}
 	if repo.filtroRecibido.Limite != LimiteSinTope {
 		t.Fatalf("Limite = %d, se esperaba LimiteSinTope (%d)",
 			repo.filtroRecibido.Limite, LimiteSinTope)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// El estado de la declaracion en el catalogo (D-008)
+
+// obraConID construye una obra valida y distinta por identificador.
+func obraConID(t *testing.T, id string) repertorio.Obra {
+	t.Helper()
+	m := metadatosValidos()
+	m.Titulo = "Obra " + id
+	o, err := repertorio.NuevaObra(id, m)
+	if err != nil {
+		t.Fatalf("construir la obra %q: %v", id, err)
+	}
+	return o
+}
+
+// parteDePrueba es una parte valida: cada indice es un titular distinto, con
+// su IPI. El estado de la declaracion sale de la suma, no del numero de
+// partes.
+func parteDePrueba(indice int, porcentaje int64) repertorio.Parte {
+	return repertorio.Parte{
+		TitularID:  fmt.Sprintf("tit-%d", indice),
+		IPI:        fmt.Sprintf("IPI-%08d", indice),
+		Porcentaje: decimal.NewFromInt(porcentaje),
+	}
+}
+
+func vigenteDePrueba(obraID string, version int, partes ...repertorio.Parte) VersionDeclaracion {
+	return VersionDeclaracion{
+		Version:     version,
+		Declaracion: repertorio.Declaracion{ObraID: obraID, Partes: partes},
+	}
+}
+
+// Lo que este caso comprueba es la distincion que motivo el campo
+// version_vigente: una obra SIN declaracion y una declarada a medias dan el
+// mismo estado -`incompleta` es un estado valido del negocio bajo R-04, no un
+// error-, y lo unico que las separa es que en la primera no hay ninguna
+// version. Si la version no viajara, la pantalla tendria que pintar
+// "incompleta" sobre una obra que nadie declaro.
+func TestObraSinDeclaracionSeDistingueDeUnaIncompleta(t *testing.T) {
+	sinDeclaracion := obraConID(t, "obra-sin-declaracion")
+	incompleta := obraConID(t, "obra-incompleta")
+
+	repo := &catalogoFalso{
+		obras: []repertorio.Obra{sinDeclaracion, incompleta},
+		vigentes: map[string]VersionDeclaracion{
+			"obra-incompleta": vigenteDePrueba("obra-incompleta", 2, parteDePrueba(0, 60)),
+		},
+	}
+
+	obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
+	if err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	if len(obras) != 2 {
+		t.Fatalf("se esperaban 2 obras, llegaron %d", len(obras))
+	}
+
+	sin := obras[0]
+	if sin.ID() != "obra-sin-declaracion" {
+		t.Fatalf("el orden de la pagina cambio: %q", sin.ID())
+	}
+	if sin.EstadoDecl != "incompleta" {
+		t.Fatalf("estado de una obra sin declarar = %q, se esperaba incompleta (R-04)", sin.EstadoDecl)
+	}
+	if sin.VersionVigente != nil {
+		t.Fatalf("version vigente de una obra sin declarar = %v, se esperaba nil", *sin.VersionVigente)
+	}
+	if !sin.SumaPorcentajes.IsZero() {
+		t.Fatalf("suma de una obra sin declarar = %s, se esperaba 0", sin.SumaPorcentajes)
+	}
+
+	conDeclaracion := obras[1]
+	if conDeclaracion.EstadoDecl != "incompleta" {
+		t.Fatalf("estado de una declaracion de 60 = %q, se esperaba incompleta", conDeclaracion.EstadoDecl)
+	}
+	if conDeclaracion.VersionVigente == nil || *conDeclaracion.VersionVigente != 2 {
+		t.Fatalf("version vigente = %v, se esperaba 2", conDeclaracion.VersionVigente)
+	}
+	if !conDeclaracion.SumaPorcentajes.Equal(decimal.NewFromInt(60)) {
+		t.Fatalf("suma = %s, se esperaba 60", conDeclaracion.SumaPorcentajes)
+	}
+}
+
+// Una pagina con N obras se resuelve con UNA consulta de declaraciones: es la
+// razon de ser de [GestionDeclaraciones.VigentesDeObras], y una version que
+// preguntara obra por obra pasaria este mismo caso con N consultas.
+func TestBuscarObrasLeeLaDeclaracionDeLaPaginaEnUnaConsulta(t *testing.T) {
+	repo := &catalogoFalso{
+		obras: []repertorio.Obra{
+			obraConID(t, "obra-1"), obraConID(t, "obra-2"), obraConID(t, "obra-3"),
+		},
+		vigentes: map[string]VersionDeclaracion{
+			"obra-1": vigenteDePrueba("obra-1", 1, parteDePrueba(0, 60), parteDePrueba(1, 40)),
+			"obra-3": vigenteDePrueba("obra-3", 7, parteDePrueba(0, 25)),
+		},
+	}
+
+	obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
+	if err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	if repo.consultas != 1 {
+		t.Fatalf("consultas de declaraciones = %d, se esperaba 1 para toda la pagina", repo.consultas)
+	}
+	if len(repo.idsPedidos) != 3 {
+		t.Fatalf("ids pedidos = %v, se esperaban los tres de la pagina", repo.idsPedidos)
+	}
+
+	if obras[0].EstadoDecl != "completa" || !obras[0].SumaPorcentajes.Equal(decimal.NewFromInt(100)) {
+		t.Fatalf("obra 1 = %s / %s, se esperaba completa / 100", obras[0].EstadoDecl, obras[0].SumaPorcentajes)
+	}
+	if obras[0].VersionVigente == nil || *obras[0].VersionVigente != 1 {
+		t.Fatalf("version vigente de la obra 1 = %v, se esperaba 1", obras[0].VersionVigente)
+	}
+	// obra-2 no aparece en el mapa del puerto: no tiene declaracion.
+	if obras[1].VersionVigente != nil || obras[1].EstadoDecl != "incompleta" {
+		t.Fatalf("obra 2 = %+v, se esperaba sin declaracion", obras[1])
+	}
+	if obras[2].VersionVigente == nil || *obras[2].VersionVigente != 7 {
+		t.Fatalf("version vigente de la obra 3 = %v, se esperaba 7", obras[2].VersionVigente)
+	}
+}
+
+// Una pagina sin resultados no va a la base a preguntar por cero obras.
+func TestBuscarObrasSinResultadosNoConsultaDeclaraciones(t *testing.T) {
+	repo := &catalogoFalso{}
+
+	obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
+	if err != nil {
+		t.Fatalf("BuscarObras: %v", err)
+	}
+	if obras == nil {
+		t.Fatal("una pagina vacia tiene que salir como [] y no como nil")
+	}
+	if repo.consultas != 0 {
+		t.Fatalf("consultas = %d, se esperaba ninguna para una pagina vacia", repo.consultas)
+	}
+}
+
+// Las CUATRO respuestas que devuelven una obra salen por el mismo camino: si
+// una sola dejara de componer el estado, el contrato prometeria tres campos
+// que esa respuesta no trae. Es el guardia del pre-mortem de este paso.
+func TestLasCuatroRespuestasDelCatalogoLlevanElEstado(t *testing.T) {
+	vigentes := map[string]VersionDeclaracion{
+		"obra-1": vigenteDePrueba("obra-1", 3, parteDePrueba(0, 70), parteDePrueba(1, 30)),
+	}
+	casos := map[string]func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error){
+		"RegistrarObra": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+			return catalogoDePrueba(repo).RegistrarObra(t.Context(), "obra-1", metadatosValidos())
+		},
+		"ActualizarMetadatosObra": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+			return catalogoDePrueba(repo).ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos())
+		},
+		"ObraPorID": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+			return catalogoDePrueba(repo).ObraPorID(t.Context(), "obra-1")
+		},
+		"BuscarObras": func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+			obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
+			if err != nil {
+				return ObraDelCatalogo{}, err
+			}
+			if len(obras) != 1 {
+				t.Fatalf("se esperaba 1 obra en la pagina, llegaron %d", len(obras))
+			}
+			return obras[0], nil
+		},
+	}
+
+	for nombre, llamar := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			repo := &catalogoFalso{
+				obraRecibida: obraConID(t, "obra-1"),
+				obras:        []repertorio.Obra{obraConID(t, "obra-1")},
+				vigentes:     vigentes,
+			}
+
+			obra, err := llamar(t, repo)
+			if err != nil {
+				t.Fatalf("%s: %v", nombre, err)
+			}
+			if obra.EstadoDecl != "completa" {
+				t.Fatalf("estado = %q, se esperaba completa", obra.EstadoDecl)
+			}
+			if !obra.SumaPorcentajes.Equal(decimal.NewFromInt(100)) {
+				t.Fatalf("suma = %s, se esperaba 100", obra.SumaPorcentajes)
+			}
+			if obra.VersionVigente == nil || *obra.VersionVigente != 3 {
+				t.Fatalf("version vigente = %v, se esperaba 3", obra.VersionVigente)
+			}
+			if repo.consultas != 1 {
+				t.Fatalf("consultas = %d, se esperaba 1", repo.consultas)
+			}
+		})
+	}
+}
+
+// La suma y el estado son dos datos distintos, y el catalogo manda los dos:
+// una declaracion de 100 con una parte sin IPI suma 100 y NO esta completa.
+// Deducir uno del otro mentiria en un sentido o en el otro, y el motor de
+// reparto se guia por el estado (R-04, RD 13.1.3).
+func TestLaSumaNoSeDeduceDelEstadoNiAlReves(t *testing.T) {
+	obra := obraConID(t, "obra-sin-ipi")
+	sinIPI := []repertorio.Parte{
+		parteDePrueba(0, 60),
+		{TitularID: "tit-1", IPI: "", Porcentaje: decimal.NewFromInt(40)},
+	}
+
+	proyectada := proyectarObra(obra, map[string]VersionDeclaracion{
+		"obra-sin-ipi": vigenteDePrueba("obra-sin-ipi", 1, sinIPI...),
+	})
+
+	if !proyectada.SumaPorcentajes.Equal(decimal.NewFromInt(100)) {
+		t.Fatalf("suma = %s, se esperaba 100", proyectada.SumaPorcentajes)
+	}
+	if proyectada.EstadoDecl != "incompleta" {
+		t.Fatalf("estado = %q: una parte sin IPI deja la declaracion incompleta aunque sume 100",
+			proyectada.EstadoDecl)
+	}
+}
+
+// Un error de la lectura de declaraciones no se traga: el catalogo no puede
+// devolver una obra a la que le falta el estado, porque el estado ausente se
+// leeria como "sin declaracion".
+func TestBuscarObrasPropagaElFalloDeDeclaraciones(t *testing.T) {
+	repo := &catalogoFalso{
+		obras:       []repertorio.Obra{obraConID(t, "obra-1")},
+		errVigentes: errors.New("la base no responde"),
+	}
+
+	if _, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{}); err == nil {
+		t.Fatal("se esperaba el error del puerto de declaraciones")
 	}
 }

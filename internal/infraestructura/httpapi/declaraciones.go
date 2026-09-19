@@ -26,9 +26,13 @@ type Declaraciones interface {
 // Formas de red
 
 type parteJSON struct {
-	TitularID  string          `json:"titular_id"`
-	IPI        string          `json:"ipi"`
-	Porcentaje decimal.Decimal `json:"porcentaje"`
+	TitularID string `json:"titular_id"`
+	IPI       string `json:"ipi"`
+
+	// Porcentaje va sin comillas porque el contrato lo declara `number`, y
+	// [decimalComoNumeroJSON] es la forma que lo consigue: lo que el editor de
+	// splits suma son estos numeros, y sobre una cadena la suma concatena.
+	Porcentaje decimalComoNumeroJSON `json:"porcentaje"`
 }
 
 // versionDeclaracionJSON es una version de la declaracion tal como la ve el
@@ -45,7 +49,7 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 	partes := make([]repertorio.Parte, 0, len(ps))
 	for _, p := range ps {
 		partes = append(partes, repertorio.Parte{
-			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje,
+			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: decimal.Decimal(p.Porcentaje),
 		})
 	}
 	return partes
@@ -54,7 +58,10 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 func aVersionJSON(vd aplicacion.VersionDeclaracion) versionDeclaracionJSON {
 	partes := make([]parteJSON, 0, len(vd.Declaracion.Partes))
 	for _, p := range vd.Declaracion.Partes {
-		partes = append(partes, parteJSON{TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje})
+		partes = append(partes, parteJSON{
+			TitularID: p.TitularID, IPI: p.IPI,
+			Porcentaje: decimalComoNumeroJSON(p.Porcentaje),
+		})
 	}
 	var vigenteHasta *string
 	if vd.VigenteHasta != nil {
@@ -119,6 +126,20 @@ func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoE
 		// este centinela sube envuelto por el adaptador y por el caso de uso, y
 		// esas frases son internas.
 		escribirError(w, http.StatusBadRequest, "uno de los titulares indicados no existe")
+		return
+	case errors.Is(err, aplicacion.ErrTitularNoEsPersonaNatural):
+		// 400 por la misma razon que el de arriba -el titular_id viene del
+		// cuerpo-, pero NO es el mismo error y por eso no comparte mensaje: ahi
+		// el identificador no resuelve a nadie y aqui resuelve a un titular del
+		// padron que la regla no admite como parte. Mandar "no existe" a quien
+		// mando el id de una sociedad que si existe lo manda a buscar un error
+		// que no cometio.
+		//
+		// El mensaje es fijo, y nombra la regla, porque es lo unico que permite
+		// entender el rechazo sin conocer `RD 4.5`. Fijo tambien porque el error
+		// del nucleo nombra la fila del padron y esas frases son internas.
+		escribirError(w, http.StatusBadRequest,
+			"uno de los titulares indicados no es persona natural, y solo un escritor persona natural puede recibir reparto (R-01, RD 4.5)")
 		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa obra no esta en el catalogo")

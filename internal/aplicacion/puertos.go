@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -101,6 +102,32 @@ type RepositorioAfiliacion interface {
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
 }
 
+// PadronTitulares es la lectura del padron: quien puede figurar como titular
+// de una Declaracion de Obra.
+//
+// Es la PRIMERA lectura de `titulares` en produccion. Hasta aqui su unico
+// consumidor era el trigger `exigir_persona_natural`, que la consulta al
+// pagar, y lo unico que la escribia era el seed: el padron no tenia ni tipo en
+// el nucleo, ni puerto, ni adaptador, y los tres entran con el editor de
+// reparto de la #30.
+//
+// # Devuelve el padron entero, personas juridicas incluidas
+//
+// Y no solo los elegibles para cobrar (`R-01`). Filtrar aqui la haria
+// invisible: quien edita un reparto tiene que poder ver que el titular del
+// padron que el editor no le ofrece como parte existe, y que no se lo ofrece
+// por una regla -`R-01`, `RD 4.5`- y no porque falte el dato. Un padron
+// recortado en silencio convierte la regla en una rareza inexplicable.
+//
+// # Por que el metodo no se llama Buscar
+//
+// Porque el mismo *Store ya tiene un `Buscar` -el del catalogo de obras, con
+// otra firma-, y dos metodos con el mismo nombre no caben en un tipo. Es la
+// misma razon por la que [BitacoraAuditoria.AsientoPorID] no se llama PorID.
+type PadronTitulares interface {
+	BuscarTitulares(ctx context.Context, f FiltroTitulares) ([]afiliacion.Titular, error)
+}
+
 // RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
 //
 // Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
@@ -195,6 +222,27 @@ type GestionDeclaraciones interface {
 	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
 	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+
+	// VigentesDeObras devuelve la version ABIERTA de cada una de las obras
+	// pedidas, indexada por obra, en UNA consulta para toda la lista.
+	//
+	// Existe aparte de [VigenteEn] porque responde otra pregunta. VigenteEn
+	// resuelve que regia en un INSTANTE -por eso recibe el momento y por eso
+	// su ausencia es [ErrNoEncontrado]-. Esto resuelve que rige AHORA MISMO
+	// para las obras de una pagina del catalogo, y con N obras preguntar una
+	// por una seria N+1 viajes contra la base: es la misma cuenta que
+	// [RepositorioRepertorio.ListarObras] ya evita para las partes.
+	//
+	// # Una obra sin declaracion NO aparece en el mapa
+	//
+	// Y la ausencia es el dato, no un hueco que rellenar con la Declaracion
+	// cero: `Estado()` da "incompleta" tanto para una obra que nunca se
+	// declaro como para una declarada que no suma 100 (`R-04`, `RD 13.1.3`),
+	// asi que devolver una entrada de ceros para la primera haria que el
+	// llamador no pudiera distinguir las dos -y una pantalla que las pinta
+	// igual afirma una declaracion que nadie hizo-. Quien necesite el estado
+	// de una obra ausente del mapa lo compone sabiendo que la version es nil.
+	VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]VersionDeclaracion, error)
 }
 
 // Paginacion es el recorte comun de [CatalogoObras.Buscar] y
@@ -219,6 +267,11 @@ const (
 	LimiteObrasPorDefecto = 100
 	// LimiteObrasMaximo es el techo que acepta GET /obras. Por encima es 400,
 	// no un silencio que lo recorte: quien pide 10_000 tiene que saber que no.
+	//
+	// Y el mismo techo que acepta GET /titulares (#30). El nombre se queda
+	// como esta a proposito: los dos son listados del mismo sistema, 500 es
+	// correcto para los dos, y renombrarlo a algo generico tocaria todo lo que
+	// ya lo usa para no cambiar ni un valor.
 	LimiteObrasMaximo = 500
 	// LimiteSinTope pide el catalogo entero. Solo tiene sentido en lecturas
 	// internas (p. ej. el motor de reparto via ListarObras); GET /obras lo
@@ -252,6 +305,31 @@ type FiltroObras struct {
 	Genero string
 	IPI    string
 	Anio   int
+	Paginacion
+}
+
+// FiltroTitulares recorta una busqueda en el padron. Un campo en su valor cero
+// NO filtra, y los que vienen se combinan con Y, igual que [FiltroObras].
+//
+// Nombre es parcial porque por el padron se busca sin saber el nombre exacto
+// -"Ana Escritora" o "Ana Escritora de Perez"-, y sin distinguir mayusculas.
+// El IPI es exacto: un IPI se conoce entero o no se conoce.
+//
+// PersonaNatural es un PUNTERO, y no es un capricho. Con un bool a secas, "no
+// filtrar" y "solo personas juridicas" serian el mismo valor cero -`false`- y
+// no habria forma de preguntar por las productoras, que es lo que ofrece
+// `GET /titulares`: quien esta en el padron y NO puede recibir reparto.
+//
+// IDs pide esas filas del padron y ninguna otra, y una lista vacia NO filtra,
+// igual que los tres de arriba. Existe porque `R-01` tiene que decidir sobre
+// los titulares que NOMBRA una declaracion, y esos son unos pocos: sin este
+// filtro, comprobar la regla en cada guardado obliga a leer el padron entero
+// -que no tiene tope- para responder por un punado de ids.
+type FiltroTitulares struct {
+	Nombre         string
+	IPI            string
+	PersonaNatural *bool
+	IDs            []string
 	Paginacion
 }
 
@@ -315,6 +393,23 @@ type RepositorioIngesta interface {
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
 	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
+
+	// RechazosDeReporte devuelve una PAGINA del log de rechazos de una entrega,
+	// en el orden de fila del archivo.
+	//
+	// La cota la elige quien llama y la aplica la base. No es una comodidad: un
+	// archivo con la cabecera equivocada rechaza TODAS sus filas, y el log entero
+	// se leia, se traducia a JSON y se pintaba completo -un `<tr>` por fila-, con
+	// lo que eso hace a la pestana y a la memoria del proceso. Paginar no es
+	// truncar en silencio: el recuento total sigue viajando en `Carga.rechazados`
+	// (ver [Ingesta.Cargas]), que es de donde quien lee saca el "N de M" sin
+	// afirmar una cifra que nadie conto.
+	//
+	// Devuelve [ErrNoEncontrado] si la entrega no existe, y una lista vacia -no
+	// nil- si existe y no tuvo rechazos, o si la pagina pedida cae mas alla del
+	// final. Una lista vacia no puede significar "no existe": seria la misma
+	// ambiguedad que [Ingesta.Cargas] evita validando el periodo.
+	RechazosDeReporte(ctx context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error)
 
 	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
 	// mas antigua. Un periodo vacio NO filtra.

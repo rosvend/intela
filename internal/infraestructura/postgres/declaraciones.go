@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -211,6 +212,98 @@ func (s *Store) VigenteEn(ctx context.Context, obraID string, momento time.Time)
 	}
 	vd.Declaracion = repertorio.Declaracion{ObraID: obraID, Partes: partes}
 	return vd, nil
+}
+
+// VigentesDeObras lee la version abierta de cada una de las obras pedidas, con
+// sus partes, en UNA consulta.
+//
+// Es la misma cuenta que partesDeObras (repertorio.go) para el otro extremo de
+// la relacion: con N obras, preguntar la version vigente de cada una es N+1
+// viajes contra la base. Aqui la fila base es `declaracion_versiones` -una por
+// obra declarada-, y las partes entran por LEFT JOIN.
+//
+// # Por que LEFT JOIN y no INNER
+//
+// Porque la version es el ORIGEN del estado: una version abierta sin ninguna
+// parte sigue siendo una version declarada, y con INNER JOIN desapareceria del
+// resultado y se leeria como "esta obra no tiene declaracion" -que es
+// exactamente la confusion que `version_vigente` existe para evitar-. Las
+// columnas de la parte llegan a NULL en ese caso y se saltan al armar la
+// lista: la version se reporta, la parte no.
+//
+// # Una obra sin ninguna version no sale
+//
+// Ausencia en el mapa es "no tiene declaracion", y el mapa no se rellena con
+// ceros por obra pedida: una declaracion vacia daria el mismo Estado() que una
+// sin declarar (`incompleta`, `R-04`) y el llamador perderia la distincion.
+// Por eso lo que devuelve es el mapa tal como salio de la consulta, sin
+// completar las obras que faltan.
+func (s *Store) VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]aplicacion.VersionDeclaracion, error) {
+	// Un slice vacio no consulta: ANY('{}') devuelve cero filas, pero no hay
+	// por que ir a la base a comprobarlo.
+	if len(obraIDs) == 0 {
+		return map[string]aplicacion.VersionDeclaracion{}, nil
+	}
+
+	// ORDER BY obra_id, titular_id: reproducibilidad (ADR 0005), y dentro de
+	// cada obra las partes en el mismo orden que en el resto del paquete. La
+	// version no entra en el orden porque no hace falta: el EXCLUDE de la
+	// migracion 00008 garantiza una sola version abierta por obra, asi que
+	// obra_id ya la determina.
+	filas, err := s.pool.Query(ctx,
+		`SELECT dv.obra_id, dv.version, dv.vigente_desde, d.titular_id, d.ipi, d.porcentaje
+		   FROM declaracion_versiones dv
+		   LEFT JOIN declaraciones d
+		     ON d.obra_id = dv.obra_id AND d.version = dv.version
+		  WHERE dv.vigente_hasta IS NULL AND dv.obra_id = ANY($1)
+		  ORDER BY dv.obra_id, d.titular_id`, obraIDs)
+	if err != nil {
+		return nil, traducirError(err, "declaraciones vigentes de obras")
+	}
+	defer filas.Close()
+
+	vigentes := map[string]aplicacion.VersionDeclaracion{}
+	for filas.Next() {
+		var (
+			obraID  string
+			version int
+			desde   time.Time
+			titular *string
+			ipi     *string
+			pct     *decimal.Decimal
+		)
+		if err := filas.Scan(&obraID, &version, &desde, &titular, &ipi, &pct); err != nil {
+			return nil, traducirError(err, "escanear declaracion vigente")
+		}
+		// La cabecera se toma de la PRIMERA fila de la obra y las partes se
+		// acumulan sobre la entrada que ya estaba: una version con dos partes
+		// llega como dos filas -es el precio de traerlas todas en una consulta
+		// plana-, y asignar la entrada en cada vuelta dejaria solo la ultima.
+		vd, hay := vigentes[obraID]
+		if !hay {
+			vd = aplicacion.VersionDeclaracion{
+				Version:      version,
+				VigenteDesde: desde,
+				Declaracion:  repertorio.Declaracion{ObraID: obraID},
+			}
+		}
+		if titular != nil {
+			vd.Declaracion.Partes = append(vd.Declaracion.Partes, repertorio.Parte{
+				TitularID: *titular,
+				// ipi y porcentaje son NOT NULL en la misma fila que
+				// titular_id, asi que si la parte existe los tres existen.
+				IPI:        *ipi,
+				Porcentaje: *pct,
+			})
+		}
+		vigentes[obraID] = vd
+	}
+	// No es opcional: un fallo a mitad de stream dejaria un mapa TRUNCADO
+	// pasando por pagina completa.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "declaraciones vigentes de obras")
+	}
+	return vigentes, nil
 }
 
 // partesDeVersion lee las partes de UNA version concreta. Distinta de
