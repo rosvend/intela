@@ -861,9 +861,12 @@ describe("pantalla de ingesta (integracion con App)", () => {
     const alerta = await screen.findByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "La entrega no se registró",
+        name: "La entrega choca con lo que ya está guardado",
       }),
     ).toBeTruthy();
+    // El 409 lo decide el UNIQUE (sha256, fuente) del esquema: esa entrega YA
+    // esta registrada, asi que el titulo no puede afirmar el no-registro.
+    expect(alerta.textContent).not.toMatch(/no se registró/i);
     expect(alerta.textContent).toContain(MENSAJE_ERROR_ILEGIBLE);
     // Ni el marcado ni el titulo de la pagina del proxy.
     expect(document.body.textContent).not.toContain("409 Conflict");

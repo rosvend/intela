@@ -956,9 +956,11 @@ export interface components {
          *     `persona_natural` viaja en la respuesta -es lo que permite explicar la
          *     regla- y por eso no se devuelven solo las personas naturales.
          *
-         *     Un titular de este padron es quien puede figurar como `Parte` de una
-         *     Declaracion de Obra. Eso NO le da derecho a cobrar por si solo: el
-         *     porcentaje sale de la declaracion (`R-02`, `R-03`).
+         *     Figurar en el padron NO basta para ser `Parte` de una Declaracion de
+         *     Obra: solo una persona natural puede figurar como `Parte` (`R-01`,
+         *     `RD 4.5`), y nombrar a una que no lo sea se rechaza con 400. Eso NO le
+         *     da derecho a cobrar por si solo: el porcentaje sale de la declaracion
+         *     (`R-02`, `R-03`).
          *
          *     No lleva `email`, y no es un olvido: el padron se sirve para armar un
          *     reparto, y la direccion de contacto de cada titular no es dato de

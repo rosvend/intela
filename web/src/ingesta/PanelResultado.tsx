@@ -57,7 +57,17 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // (evidencia corrupta, un incidente de integridad que hay que avisar a
   // operacion). Un titulo que afirmara el duplicado contradiria al mensaje que
   // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
-  409: "La entrega no se registró",
+  //
+  // Y tampoco puede afirmar el no-registro, que es lo que decia antes ("La
+  // entrega no se registró"). Un 4xx prueba que ESA peticion no escribio nada,
+  // que no es lo mismo que "esa entrega no esta registrada": en el duplicado
+  // -el caso comun, el que le pasa a quien reenvia- la entrega SI esta, y es
+  // justo lo que hace saltar el UNIQUE (sha256, fuente) del esquema
+  // (migrations/00001_init.sql); en la evidencia corrupta tampoco se registro
+  // esta, pero lo que hay bajo la clave no es lo que se iba a certificar. El
+  // titulo dice solo el conflicto, que es lo unico cierto en las dos ramas, y
+  // el mensaje de debajo dice cual de las dos es.
+  409: "La entrega choca con lo que ya está guardado",
   413: "El archivo es demasiado grande",
   // Un 500 **no** esta aqui a proposito: es el status con numero que deja
   // abierta la pregunta de si quedo algo escrito, asi que cae en el titulo
