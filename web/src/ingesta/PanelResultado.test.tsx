@@ -158,16 +158,18 @@ describe("PanelResultado", () => {
   });
 
   // Estos status si cierran la pregunta de si quedo algo escrito -un 4xx prueba
-  // que ESA peticion no registro nada, y el 503 de esta ruta ni entra, porque lo
-  // produce una guarda previa al handler-, y por eso no llevan el aviso. El 500
-  // NO entra aqui: tiene su caso propio debajo, porque es el unico que deja la
-  // pregunta abierta.
+  // que ESA peticion no dejo entrega en `reportes`, y el 503 de esta ruta ni
+  // entra, porque lo produce una guarda previa al handler-, y por eso no llevan
+  // el aviso. El 500 NO entra aqui: tiene su caso propio debajo, porque es el
+  // unico que deja la pregunta abierta.
   //
-  // Ojo con lo que prueba esa regla: prueba que la PETICION no escribio, no que
-  // la entrega no este registrada. Son lo mismo para el 400 y el 413 -si el
+  // Ojo con lo que prueba esa regla: prueba que la PETICION no dejo entrega, no
+  // que la entrega no este registrada. Son lo mismo para el 400 y el 413 -si el
   // archivo no cumple la estructura o no cabe, no hay entrega que registrar-,
   // pero NO para el 409, donde el conflicto es justo con lo que ya hay: por eso
-  // su titulo habla del conflicto y no del no-registro.
+  // su titulo habla del conflicto y no del no-registro. Y no dice que no se
+  // escribiera NADA: la evidencia se congela antes de decidir el conflicto y de
+  // la boveda no se borra (el porque, en el docstring de `pudoHaberLlegado`).
   //
   // El 403 entra en la lista por lo mismo, y con titulo propio: `requiereRol` lo
   // responde ANTES de que `subirReporte` corra, asi que no se escribio nada. Con

@@ -63,8 +63,9 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // `reportes`, que no es lo mismo que "esa entrega no esta registrada": en el
   // duplicado -el caso comun, el que le pasa a quien reenvia- la entrega SI
   // esta, y es justo lo que hace saltar el UNIQUE (sha256, fuente) del esquema
-  // (migrations/00001_init.sql); en la evidencia corrupta tampoco se registro
-  // esta, pero lo que hay bajo la clave no es lo que se iba a certificar. El
+  // (migrations/00001_init.sql); en la evidencia corrupta esta peticion tampoco
+  // dejo entrega, pero lo que hay bajo la clave no es lo que se iba a
+  // certificar. El
   // titulo dice solo el conflicto, que es lo unico cierto en las dos ramas, y
   // el mensaje de debajo dice cual de las dos es.
   409: "La entrega choca con lo que ya está guardado",
@@ -149,7 +150,9 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  *   409 duplicado lo estaba, y la duda no es por eso. Y no garantiza que no se
  *   escribiera NADA: la evidencia se congela antes de decidir el conflicto
  *   (`congelarEvidencia`) y de la boveda no se borra. El 400, ademas, lo
- *   explica el backend con el campo que le falta al archivo.
+ *   explica el backend en su cuerpo, cuando llega legible: nombra la causa -el
+ *   campo del formulario o la columna del archivo que falta-, no que no se haya
+ *   escrito nada.
  */
 export function pudoHaberLlegado(status: StatusDeFallo): boolean {
   if (status === "red" || status === "desconocido") return true;
