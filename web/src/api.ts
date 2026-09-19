@@ -153,9 +153,29 @@ const MENSAJE_ERROR_ILEGIBLE = "el servidor respondió un error ilegible";
 // se puede pedir .json() a ciegas en el camino de error tampoco. Un cuerpo
 // vacio sigue usando el `statusText` (eso si es del protocolo); uno que no
 // parsea como JSON -o que parsea sin traer un `error` de texto- se sustituye por
-// un mensaje propio: ver `MENSAJE_ERROR_ILEGIBLE`.
+// un mensaje propio: ver `MENSAJE_ERROR_ILEGIBLE`. Y uno que no se puede ni
+// leer -el stream se corta a mitad- usa ese mismo mensaje: que el cuerpo falte
+// no es razon para tirar el status, que ya llego.
 async function mensajeDeError(res: Response): Promise<string> {
-  const texto = await res.text();
+  // La lectura del cuerpo va envuelta ella sola, y solo ella: `res.ok` ya se
+  // consulto y es falso, asi que de aqui sale un mensaje para un error, nunca
+  // una conclusion sobre si el servidor escribio. Sin este `try`, un cuerpo
+  // truncado rechazaba la lectura y el `TypeError` del stream subia por encima
+  // del `ApiError` que `api()` estaba construyendo, o sea que **el status se
+  // tiraba**: un 400 en el que no se escribio nada llegaba a quien llama como un
+  // error sin tipo, indistinguible de un fallo del que no se sabe nada, y el
+  // editor del reparto lo pintaba como "no se sabe si el guardado abrió una
+  // versión" -afirmar no saber algo que el sistema sabe-.
+  //
+  // No se resuelve con `ErrorDeCuerpoIlegible`, que es la clase hermana: esa es
+  // de un **2xx** -la respuesta llego sin error y lo que falta es su cuerpo- y
+  // usarla aqui diria que el guardado ocurrio cuando el servidor lo rechazo.
+  let texto: string;
+  try {
+    texto = await res.text();
+  } catch {
+    return MENSAJE_ERROR_ILEGIBLE;
+  }
   if (!texto) return res.statusText;
   try {
     const cuerpo = JSON.parse(texto) as { error?: unknown };

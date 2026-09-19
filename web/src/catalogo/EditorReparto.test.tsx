@@ -19,6 +19,24 @@ function json(cuerpo: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Una respuesta que LLEGO -con su status- y cuyo cuerpo se corta a mitad: el
+ * stream falla, asi que leerlo rechaza. Es la forma sintetica de un cuerpo
+ * truncado, y la unica que prueba el caso sin depender de que haya un proxy de
+ * por medio.
+ */
+function respuestaConCuerpoCortado(status: number): Response {
+  const cuerpo = new ReadableStream({
+    start(controlador) {
+      controlador.error(new Error("la conexion se corto a mitad del cuerpo"));
+    },
+  });
+  return new Response(cuerpo, {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 // Fixtures tipados con el contrato generado: si `Obra`, `VersionDeclaracion` o
 // `Titular` cambian en api/openapi.yaml, `tsc` rompe aqui antes que en pantalla.
 // Nombres y titulos sinteticos, no de ningun canal real.
@@ -802,6 +820,44 @@ describe("editor de reparto (integracion con App)", () => {
     await screen.findByRole("alert");
     expect(avisoDeVersion().textContent).toMatch(
       /cerrará la versión 3 y abrirá la versión 4/,
+    );
+  });
+
+  // Concern 26 de la pasada 3, y el WARNING del reviewer: el status de un 4xx SI
+  // llega, y un 4xx prueba que no se escribio nada. Lo que puede faltar es su
+  // cuerpo. Mientras `api()` tire el status al no poder leerlo, este rechazo cae
+  // en `incierta`, se pinta como un guardado en duda y la duda envenena la
+  // pantalla hasta el proximo 200 legible -que es afirmar no saber algo que el
+  // sistema sabe, y nombrar dos causas que no ocurrieron-.
+  it("un 400 cuyo cuerpo no se puede leer es un rechazo, no un guardado en duda", async () => {
+    simularServidor({ guardado: () => respuestaConCuerpoCortado(400) });
+    await abrirElEditor();
+
+    // La guarda contra el verde por vacio, la misma de los tests vecinos: antes
+    // de guardar el aviso SI numera, y los numeros los saca del historial.
+    expect(avisoDeVersion().textContent).toMatch(
+      /cerrará la versión 3 y abrirá la versión 4/,
+    );
+
+    guardar();
+
+    // El panel del desenlace, que es el que se pinta cuando la respuesta llega.
+    await screen.findByRole("alert");
+
+    // La asercion lee el ELEMENTO del aviso y no el documento: el panel de abajo
+    // habla del mismo guardado, y una asercion sobre todo el DOM pasaria por su
+    // texto.
+    const aviso = avisoDeVersion().textContent ?? "";
+    expect(aviso).not.toMatch(/No se sabe si el guardado abrió una versión/);
+    // Y la mitad positiva, que es la que no deja pasar un aviso mudo: sin cuerpo
+    // legible el rechazo sigue siendo un rechazo, asi que el historial vuelve a
+    // ser la autoridad y el aviso sigue numerando.
+    expect(aviso).toMatch(/cerrará la versión 3 y abrirá la versión 4/);
+
+    // Y el panel, que es el que dice la consecuencia del rechazo: no se escribio
+    // nada, asi que reintentar es seguro.
+    await screen.findByText(
+      /No se guardó nada: corrige el reparto y vuelve a guardarlo\./,
     );
   });
 
