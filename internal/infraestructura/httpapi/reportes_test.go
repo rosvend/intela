@@ -31,6 +31,10 @@ type ingestaFalsa struct {
 	datos             []byte
 	periodoConsultado string
 	cargaConsultada   string
+	// La pagina que llego hasta el nucleo. Se registra porque el adaptador es
+	// quien la interpreta -ausente = defecto, fuera de rango = 400- y es lo unico
+	// que estas pruebas pueden comprobar sin base.
+	paginacionConsultada aplicacion.Paginacion
 }
 
 func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error) {
@@ -43,8 +47,9 @@ func (i *ingestaFalsa) Cargas(_ context.Context, periodo string) ([]aplicacion.C
 	return i.cargas, i.err
 }
 
-func (i *ingestaFalsa) RechazosDeCarga(_ context.Context, id string) ([]aplicacion.UsoPersistido, error) {
+func (i *ingestaFalsa) RechazosDeCarga(_ context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	i.cargaConsultada = id
+	i.paginacionConsultada = pag
 	return i.rechazos, i.err
 }
 
@@ -530,6 +535,73 @@ func TestRechazosDeCargaSinNingunoDevuelveListaVaciaYNoNull(t *testing.T) {
 	rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok")
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
 		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body)
+	}
+}
+
+// La pagina se interpreta en el adaptador -es quien habla HTTP- y llega al
+// nucleo ya resuelta: ausente es el defecto, no "sin tope".
+func TestRechazosDeCargaPasaLaPaginaAlNucleo(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		consulta string
+		quiero   aplicacion.Paginacion
+	}{
+		{
+			nombre: "sin parametros",
+			quiero: aplicacion.Paginacion{Limite: aplicacion.LimiteObrasPorDefecto},
+		},
+		{
+			nombre:   "limite y desplazamiento",
+			consulta: "?limite=10&desplazamiento=20",
+			quiero:   aplicacion.Paginacion{Limite: 10, Desplazamiento: 20},
+		},
+		{
+			nombre:   "el tope exacto",
+			consulta: "?limite=500",
+			quiero:   aplicacion.Paginacion{Limite: aplicacion.LimiteObrasMaximo},
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			h := servidorConIngesta(t, ing)
+
+			rec := pedir(t, h, http.MethodGet,
+				"/reportes/rep-1/rechazos"+c.consulta, "", "tok")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if ing.paginacionConsultada != c.quiero {
+				t.Errorf("paginacion = %+v, se esperaba %+v",
+					ing.paginacionConsultada, c.quiero)
+			}
+		})
+	}
+}
+
+// Fuera de rango es 400 y no un recorte en silencio: quien pide 10.000 tiene que
+// saber que no, y quien pide 0 no puede recibir una pagina vacia que se leeria
+// como "esta carga no tuvo rechazos".
+func TestRechazosDeCargaRechazaUnaPaginaInvalida(t *testing.T) {
+	for _, consulta := range []string{
+		"?limite=0", "?limite=-1", "?limite=abc", "?limite=501",
+		"?desplazamiento=-1", "?desplazamiento=x",
+	} {
+		t.Run(consulta, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			h := servidorConIngesta(t, ing)
+
+			rec := pedir(t, h, http.MethodGet,
+				"/reportes/rep-1/rechazos"+consulta, "", "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if ing.paginacionConsultada != (aplicacion.Paginacion{}) {
+				t.Errorf("una peticion rechazada no puede llegar al nucleo: %+v",
+					ing.paginacionConsultada)
+			}
+		})
 	}
 }
 

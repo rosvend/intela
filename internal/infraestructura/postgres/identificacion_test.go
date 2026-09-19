@@ -587,7 +587,7 @@ func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersis
 func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
-func (i ingestaDePrueba) RechazosDeReporte(context.Context, string) ([]aplicacion.UsoPersistido, error) {
+func (i ingestaDePrueba) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
 func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {

@@ -245,7 +245,10 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 }
 
 // leerPaginacion interpreta limite y desplazamiento. Misma forma que
-// ListarObras: ausente = defecto; mal formado o fuera de rango = 400.
+// ListarObras, y la comparten las dos rutas que paginan -`GET /obras` y
+// `GET /reportes/{id}/rechazos`-: una sola forma de decir "limite" evita la
+// traduccion que se desvia. Ausente = defecto; mal formado o fuera de rango =
+// 400, nunca un recorte en silencio de lo que se pidio.
 func leerPaginacion(w http.ResponseWriter, q url.Values) (aplicacion.Paginacion, bool) {
 	p := aplicacion.Paginacion{}
 	if bruto := q.Get("limite"); bruto != "" {

@@ -204,7 +204,7 @@ func TestGuardarUsosSeparaElLoteEnCanonicoYRechazado(t *testing.T) {
 
 	mala := usoPendiente("uso-mala", reporteEnero, "Radio Novela")
 	mala.Modalidad = "radio"
-	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 
 	err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
 		usoPendiente("uso-1", reporteEnero, "La Casa"),
@@ -1341,7 +1341,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 	// seis combinaciones, y los dos COUNT devuelven 6 y 6 sin que nada falle.
 	mala1 := usoPendiente("uso-mala-1", reporteEnero, "Radio Novela")
 	mala1.Modalidad = "radio"
-	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 	mala2 := usoPendiente("uso-mala-2", reporteEnero, "Sin duracion")
 	mala2.RechazoMotivo = `duracion_min: "cuarenta y cinco" no es un numero`
 
@@ -1481,7 +1481,7 @@ func TestRechazosDeReporteDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
 
-	rechazos, err := s.RechazosDeReporte(ctx, reporteEnero)
+	rechazos, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("RechazosDeReporte: %v", err)
 	}
@@ -1520,7 +1520,7 @@ func TestRechazosDeReporteDistingueSinRechazosDeNoExiste(t *testing.T) {
 
 	// Existe y no tuvo rechazos: lista VACIA, no nil. Es la fila nula del LEFT
 	// JOIN, y no puede salir como un rechazo con id vacio.
-	ninguno, err := s.RechazosDeReporte(ctx, reporteEnero)
+	ninguno, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("RechazosDeReporte(enero): %v", err)
 	}
@@ -1529,9 +1529,75 @@ func TestRechazosDeReporteDistingueSinRechazosDeNoExiste(t *testing.T) {
 	}
 
 	// No existe: ErrNoEncontrado, que la capa HTTP convierte en 404.
-	if _, err := s.RechazosDeReporte(ctx, "rep-que-no-existe"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := s.RechazosDeReporte(ctx, "rep-que-no-existe", aplicacion.Paginacion{}); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
 	}
+}
+
+// La pagina no puede cambiar lo que la lectura DICE sobre la entrega. Con el
+// LIMIT en la sentencia de arriba, una pagina vacia -un desplazamiento mas alla
+// del final, o una entrega sin rechazos consultada desde la pagina 2- devolvia
+// cero filas y el adaptador la leia como "esa entrega no existe": un 404 sobre
+// una entrega que si existe.
+func TestRechazosDeReportePaginadoDistinguePaginaVaciaDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		rechazoDe(reporteEnero+"-1", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-3", reporteEnero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// La primera pagina, corta.
+	primera, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2})
+	if err != nil {
+		t.Fatalf("primera pagina: %v", err)
+	}
+	if ids := idsDe(primera); strings.Join(ids, ",") != reporteEnero+"-1,"+reporteEnero+"-2" {
+		t.Fatalf("primera pagina = %v", ids)
+	}
+
+	// La segunda, con la que queda.
+	segunda, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("segunda pagina: %v", err)
+	}
+	if ids := idsDe(segunda); strings.Join(ids, ",") != reporteEnero+"-3" {
+		t.Fatalf("segunda pagina = %v", ids)
+	}
+
+	// Mas alla del final: lista VACIA, no ErrNoEncontrado. La entrega existe.
+	mas, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 50})
+	if err != nil {
+		t.Fatalf("una pagina vacia de una entrega que existe no es un error: %v", err)
+	}
+	if mas == nil || len(mas) != 0 {
+		t.Fatalf("pagina vacia = %#v, se esperaba [] y no nil", mas)
+	}
+
+	// Y una entrega SIN rechazos, pedida desde la pagina 2, tampoco desaparece.
+	vacia, err := s.RechazosDeReporte(ctx, reporteFebrero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("una entrega sin rechazos consultada desde la pagina 2 existe: %v", err)
+	}
+	if vacia == nil || len(vacia) != 0 {
+		t.Fatalf("rechazos de febrero = %#v", vacia)
+	}
+}
+
+func idsDe(usos []aplicacion.UsoPersistido) []string {
+	ids := make([]string, 0, len(usos))
+	for _, u := range usos {
+		ids = append(ids, u.ID)
+	}
+	return ids
 }
 
 func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {

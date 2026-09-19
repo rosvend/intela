@@ -562,17 +562,25 @@ export interface paths {
          *     su motivo. Existe porque `GET /reportes` solo trae el RECUENTO de
          *     rechazos por carga, y es lo que despliega una fila de ese listado.
          *
-         *     El log sale COMPLETO, sin cota, a diferencia de la cola de revision
-         *     (`/admin/cola-revision`), que lee la base entera y se acota a 1000
-         *     filas: filtrarla por carga truncaria en silencio justo la entrega
-         *     grande.
+         *     Sale PAGINADO, con la misma forma que `GET /obras`. Un archivo con la
+         *     cabecera equivocada rechaza todas sus filas, y leer ese log entero -y
+         *     pintarlo entero, un renglon por fila- congela la pestana y puede tumbar
+         *     el proceso de la API.
+         *
+         *     La cota NO trunca la cifra: el total de rechazos de la carga sigue
+         *     viajando en `Carga.rechazados` (`GET /reportes`), que es de donde quien
+         *     pinta saca su "N de M". Nadie tiene que adivinar cuantas filas quedaron
+         *     fuera de la pagina, y el log completo sigue siendo alcanzable pagina a
+         *     pagina.
          *
          *     Las filas salen en el orden en que venian en el archivo, que es el
          *     orden en que hay que pedirle al cliente lo que falta.
          *
          *     Una carga que no existe responde 404, y no una lista vacia: "no llego"
          *     y "llego sin rechazos" son las dos respuestas que esta lectura existe
-         *     para distinguir.
+         *     para distinguir. Una pagina vacia de una carga que SI existe es 200 con
+         *     la lista vacia, nunca un 404: quedar sin filas mas alla del final no
+         *     significa que la carga no este.
          */
         get: operations["listarRechazosDeCarga"];
         put?: never;
@@ -2942,11 +2950,15 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description Periodo de recaudo, `AAAA` o `AAAA-MM`. Ausente o vacio no filtra.
+                 * @description Periodo de recaudo, `AAAA` o `AAAA-MM`, con el mes entre `01` y
+                 *     `12`. Ausente o vacio no filtra.
                  *
                  *     Un periodo mal escrito se rechaza con 400 en vez de ignorarse: no
                  *     casaria con ninguna fila y devolveria una lista vacia
-                 *     indistinguible de "ese periodo no tuvo cargas".
+                 *     indistinguible de "ese periodo no tuvo cargas". Un mes que no existe
+                 *     -`2026-13`, `2026-00`- se rechaza por lo mismo, con la misma regla
+                 *     que aplica el alta de una entrega: es la del dominio
+                 *     (`internal/dominio/recaudo`), no una copia por capa.
                  * @example 2026-01
                  */
                 periodo?: string;
@@ -2966,7 +2978,7 @@ export interface operations {
                     "application/json": components["schemas"]["Carga"][];
                 };
             };
-            /** @description El periodo no tiene la forma AAAA o AAAA-MM. */
+            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2974,7 +2986,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "error": "reporte invalido: periodo \"2026-1\", se esperaba AAAA o AAAA-MM"
+                     *       "error": "reporte invalido: periodo \"2026-1\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
@@ -3046,7 +3058,11 @@ export interface operations {
                      */
                     fuente: string;
                     /**
-                     * @description Periodo de recaudo al que pondera la entrega.
+                     * @description Periodo de recaudo al que pondera la entrega. `AAAA` o
+                     *     `AAAA-MM` con el mes entre `01` y `12`: un mes que no existe
+                     *     no se admite, y no hay vuelta atras que lo arregle -la
+                     *     unicidad es (sha256, fuente), la huella no incluye el periodo
+                     *     y no hay ruta de borrado-.
                      * @example 2026-01
                      */
                     periodo: string;
@@ -3080,8 +3096,8 @@ export interface operations {
             /**
              * @description La entrega no cumple la estructura minima: falta una columna
              *     requerida, el archivo no se puede abrir, no hay adaptador para ese
-             *     par (fuente, formato), el periodo esta mal escrito o el archivo no
-             *     trae ninguna fila. NADA se persistio.
+             *     par (fuente, formato), el periodo esta mal escrito o el mes no
+             *     existe, o el archivo no trae ninguna fila. NADA se persistio.
              */
             400: {
                 headers: {
@@ -3179,7 +3195,20 @@ export interface operations {
     };
     listarRechazosDeCarga: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Cuantos rechazos trae la pagina. Si se omite, el servidor aplica
+                 *     100. Tiene que ser un entero positivo y no mayor que 500.
+                 * @example 100
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos rechazos saltarse desde el inicio del log, que va en orden
+                 *     de fila del archivo. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
             header?: never;
             path: {
                 /**
@@ -3193,8 +3222,10 @@ export interface operations {
         requestBody?: never;
         responses: {
             /**
-             * @description Los rechazos de la carga, en orden de fila. Lista vacia si no hubo
-             *     ninguno, nunca `null`.
+             * @description La pagina pedida del log, en orden de fila. Lista vacia si la carga
+             *     no tuvo rechazos o si el desplazamiento cae mas alla del final,
+             *     nunca `null`. El total de la carga no viene aqui: es
+             *     `Carga.rechazados` en `GET /reportes`.
              */
             200: {
                 headers: {
@@ -3204,7 +3235,7 @@ export interface operations {
                     "application/json": components["schemas"]["Rechazo"][];
                 };
             };
-            /** @description El identificador de la carga llego en blanco. */
+            /** @description El identificador de la carga llego en blanco, o el limite y el desplazamiento no son enteros validos. */
             400: {
                 headers: {
                     [name: string]: unknown;

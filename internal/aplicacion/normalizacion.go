@@ -217,6 +217,7 @@ func aFila(u UsoPersistido) normalizacion.Fila {
 		TituloOrig:     u.TituloOrig,
 		IDsFuente:      u.IDsFuente,
 		TipoObra:       u.TipoObra,
+		CanalID:        u.CanalID,
 		Fecha:          u.Fecha,
 		Hora:           u.Hora,
 		UnidadDuracion: u.UnidadDuracion,
@@ -239,6 +240,12 @@ func aFila(u UsoPersistido) normalizacion.Fila {
 	if !u.Taquilla.IsZero() {
 		f.Taquilla = u.Taquilla.String()
 	}
+	if !u.Espectadores.IsZero() {
+		f.Espectadores = u.Espectadores.String()
+	}
+	if u.Exhibiciones != 0 {
+		f.Exhibiciones = strconv.FormatInt(u.Exhibiciones, 10)
+	}
 	if !u.Vistas.IsZero() {
 		f.Vistas = u.Vistas.String()
 	}
@@ -260,12 +267,15 @@ func aPersistido(u normalizacion.Uso, rev *normalizacion.Revision) UsoPersistido
 		IDsFuente:     u.IDsFuente,
 		Modalidad:     reparto.Modalidad(u.Modalidad),
 		TipoObra:      u.TipoObra,
+		CanalID:       u.CanalID,
 		Fecha:         u.Fecha.String(),
 		Hora:          u.Hora,
 		DuracionMin:   u.DuracionMin,
 		Emisiones:     u.Emisiones,
 		Rating:        u.Rating,
 		Taquilla:      u.Taquilla,
+		Espectadores:  u.Espectadores,
+		Exhibiciones:  u.Exhibiciones,
 		Vistas:        u.Vistas,
 		MinutosVistos: u.MinutosVistos,
 		PB:            u.PB,

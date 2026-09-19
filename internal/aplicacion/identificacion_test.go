@@ -47,7 +47,7 @@ func (i *ingestaFalsa) UsosDePeriodo(_ context.Context, periodo string) ([]UsoPe
 func (i *ingestaFalsa) ListarRechazos(context.Context) ([]UsoPersistido, error) {
 	return nil, nil
 }
-func (i *ingestaFalsa) RechazosDeReporte(context.Context, string) ([]UsoPersistido, error) {
+func (i *ingestaFalsa) RechazosDeReporte(context.Context, string, Paginacion) ([]UsoPersistido, error) {
 	return nil, nil
 }
 

@@ -10,9 +10,17 @@ export type Entrega = components["schemas"]["Entrega"];
 // no se pudo leer, o un 502/504 que contesta el proxy y no la API.
 type StatusDeFallo = number | "red" | "desconocido";
 
-export type Resultado =
-  | { tipo: "entrega"; entrega: Entrega }
-  | { tipo: "fallo"; status: StatusDeFallo; mensaje: string };
+/**
+ * La subida que NO entro: con que status contesto y el mensaje que lo explica.
+ *
+ * Es un tipo propio y no una rama anonima de `Resultado` porque quien lo
+ * consume necesita el status suelto: la pantalla decide con el si vuelve a pedir
+ * el listado (ver `pudoHaberLlegado`), y `resultadoDeError` siempre devuelve
+ * esto, nunca una entrega.
+ */
+export type Fallo = { tipo: "fallo"; status: StatusDeFallo; mensaje: string };
+
+export type Resultado = { tipo: "entrega"; entrega: Entrega } | Fallo;
 
 // La huella completa (64 hex) queda en el `title`; a la vista basta un prefijo
 // para reconocer la evidencia.
@@ -32,6 +40,17 @@ export function huellaCorta(sha256: string): string {
 // siempre el mensaje del backend, que va debajo.
 const TITULO_POR_STATUS: Record<number, string> = {
   400: "La entrega no cumple la estructura mínima",
+  // El 403 se titula con su causa propia y NO cae en el cajon neutro, que es lo
+  // que hacia antes: `requiereRol` lo responde ANTES de que `subirReporte`
+  // (internal/infraestructura/httpapi/server.go) corra, asi que no se escribio
+  // nada y no hay nada en duda. El cajon neutro afirmaba de menos -"no se sabe
+  // si la entrega se registro"- en la direccion que hace dudar al operador, que
+  // es justo lo contrario de lo que este panel existe para hacer. Un 4xx prueba
+  // que ESA peticion no registro nada, y el aviso de PUDO_LLEGAR no lo lleva.
+  // El 401 es otra cosa y no depende de este titulo: `api.ts` limpia el token y
+  // navega a la pantalla de entrada (`alExpirarSesion`) ANTES de lanzar el
+  // `ApiError`, asi que lo que el operador termina leyendo no es este panel.
+  403: "La sesión no tiene permiso para registrar entregas",
   // 409 es ambiguo y por eso no se titula con ninguna de sus dos causas: el
   // backend responde 409 tanto cuando esa fuente ya entrego exactamente ese
   // archivo como cuando la boveda tiene contenido distinto bajo esa huella
@@ -40,9 +59,12 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
   409: "La entrega no se registró",
   413: "El archivo es demasiado grande",
-  // Un 500 **no** esta aqui a proposito: es el unico status con numero que deja
+  // Un 500 **no** esta aqui a proposito: es el status con numero que deja
   // abierta la pregunta de si quedo algo escrito, asi que cae en el titulo
-  // neutro y lleva el aviso. Ver `TITULO_POR_DEFECTO` y `avisarQuePudoLlegar`.
+  // neutro y lleva el aviso. Ver `TITULO_POR_DEFECTO` y `pudoHaberLlegado`.
+  //
+  // El 503 si esta, y tampoco lleva aviso, porque lo produce `conIngesta` -una
+  // guarda PREVIA al handler-: no se escribio nada. Ver `pudoHaberLlegado`.
   503: "La ingesta no está disponible en esta instalación",
 };
 
@@ -73,14 +95,52 @@ const TITULO_SIN_RESPUESTA = "No se pudo contactar al servidor";
 const MENSAJE_DESCONOCIDO = "error desconocido al subir el archivo";
 
 // Lo que se dice cuando no queda claro si la entrega se registro. Reintentar a
-// ciegas daria 409 si llego, y el 409 es irreversible. Lo llevan "red",
-// "desconocido" y el 500: ver `avisarQuePudoLlegar`.
+// ciegas daria 409 si llego, y el 409 es irreversible. Lo llevan exactamente los
+// desenlaces de `pudoHaberLlegado`, que es la unica definicion de esa duda.
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
 // El status con que contesta el proxy cuando la API no llego a responder. Ver
 // `resultadoDeError`, que los manda al caso no clasificable.
 const SIN_RESPUESTA_UTIL = new Set([502, 504]);
+
+/**
+ * Si un fallo deja abierta la pregunta de si la entrega quedo registrada.
+ *
+ * Es la UNICA definicion de esa duda, y la usan las dos mitades de la pantalla
+ * que dependen de ella:
+ *
+ * - el panel, para el aviso de `PUDO_LLEGAR`;
+ * - la pantalla (`Ingesta.tsx`), para volver a pedir el listado justo cuando se
+ *   le manda al operador mirarlo. Escrita dos veces -el aviso por un lado y el
+ *   `setVersion` de la rama de exito por otro-, las dos mitades discrepan: el
+ *   aviso dice que mire el listado y el listado no se vuelve a pedir, asi que lo
+ *   que mira es la foto de ANTES del intento. Si el COMMIT entro, el operador no
+ *   ve la fila nueva, concluye que no llego y reenvia: 409 irreversible.
+ *
+ * Los desenlaces:
+ *
+ * - `"red"` y `"desconocido"` no tienen status: `fetch` no llego a tener
+ *   respuesta -`ErrorDeRed`-, o el cuerpo de un 2xx no se dejo leer. De ahi no se
+ *   sabe nada;
+ * - un **5xx** es un fallo del servidor despues de haber recibido la peticion, y
+ *   el COMMIT puede haber entrado (el porque largo, en `TITULO_POR_DEFECTO`).
+ *   Hoy el handler de esta ruta solo produce el 500, pero el predicado **no lo
+ *   enumera**: un 5xx que nadie clasifico es exactamente el caso que hay que
+ *   tratar como duda, y el precio de equivocarse es decir "pudo haber llegado"
+ *   de mas, que es el lado seguro;
+ * - el **503** es la excepcion y no entra: lo produce `conIngesta`
+ *   (internal/infraestructura/httpapi/server.go), una guarda PREVIA al handler
+ *   que responde cuando al binario le falta cablear la ingesta. No se escribio
+ *   nada, y por eso tiene titulo propio y ningun aviso;
+ * - un **4xx** cierra la pregunta: es una respuesta del servidor en la que no
+ *   quedo entrega. El 400, ademas, lo dice el backend por escrito.
+ */
+export function pudoHaberLlegado(status: StatusDeFallo): boolean {
+  if (status === "red" || status === "desconocido") return true;
+  if (status === 503) return false;
+  return status >= 500;
+}
 
 /**
  * Traduce lo que lanza `api()` al subir un reporte en un `Resultado` de fallo.
@@ -91,7 +151,7 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  * - `ErrorDeRed` -> status "red" y su mensaje;
  * - cualquier otra cosa -> status "desconocido" y un mensaje generico.
  */
-export function resultadoDeError(error: unknown): Resultado {
+export function resultadoDeError(error: unknown): Fallo {
   // El 502 y el 504 los produce el proxy, no la API: nginx corta a los 120s
   // (deploy/nginx.conf) y el handler de Go tiene 60s de escritura, asi que una
   // ingesta larga -un archivo grande, un lote que tarda- puede quedarse sin
@@ -182,11 +242,11 @@ function PanelFallo({
   status: StatusDeFallo;
   mensaje: string;
 }) {
-  // El 500 va aqui por lo mismo que "red" y "desconocido": su error puede ser el
-  // de un COMMIT que si entro y cuya respuesta se perdio. Es el unico status con
-  // numero que deja la pregunta abierta; 400, 409, 413 y 503 la cierran.
-  const avisarQuePudoLlegar =
-    status === "red" || status === "desconocido" || status === 500;
+  // La duda la define `pudoHaberLlegado`, que es exactamente la misma que usa
+  // `Ingesta.tsx` para volver a pedir el listado: si el aviso manda a mirarlo,
+  // el listado que se mira tiene que ser el de DESPUES del intento. Con las dos
+  // escritas por separado, el aviso salia y el refetch no.
+  const avisarQuePudoLlegar = pudoHaberLlegado(status);
 
   return (
     <section className="panel-resultado panel-fallo" role="alert">

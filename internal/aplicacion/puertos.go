@@ -394,19 +394,22 @@ type RepositorioIngesta interface {
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
 	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
 
-	// RechazosDeReporte devuelve el log de rechazos COMPLETO de una entrega, en
-	// el orden de fila del archivo.
+	// RechazosDeReporte devuelve una PAGINA del log de rechazos de una entrega,
+	// en el orden de fila del archivo.
 	//
-	// Sin cota, a diferencia de ListarRechazos, que la cola de revision acota a
-	// 1000 filas globales: este es el log de UNA entrega, el que se le muestra a
-	// quien la subio para pedirle al cliente lo que falta, y truncarlo en
-	// silencio lo haria mentir sobre si la carga entro completa.
+	// La cota la elige quien llama y la aplica la base. No es una comodidad: un
+	// archivo con la cabecera equivocada rechaza TODAS sus filas, y el log entero
+	// se leia, se traducia a JSON y se pintaba completo -un `<tr>` por fila-, con
+	// lo que eso hace a la pestana y a la memoria del proceso. Paginar no es
+	// truncar en silencio: el recuento total sigue viajando en `Carga.rechazados`
+	// (ver [Ingesta.Cargas]), que es de donde quien lee saca el "N de M" sin
+	// afirmar una cifra que nadie conto.
 	//
 	// Devuelve [ErrNoEncontrado] si la entrega no existe, y una lista vacia -no
-	// nil- si existe y no tuvo rechazos. Una lista vacia no puede significar
-	// "no existe": seria la misma ambiguedad que [Ingesta.Cargas] evita
-	// validando el periodo.
-	RechazosDeReporte(ctx context.Context, reporteID string) ([]UsoPersistido, error)
+	// nil- si existe y no tuvo rechazos, o si la pagina pedida cae mas alla del
+	// final. Una lista vacia no puede significar "no existe": seria la misma
+	// ambiguedad que [Ingesta.Cargas] evita validando el periodo.
+	RechazosDeReporte(ctx context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error)
 
 	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
 	// mas antigua. Un periodo vacio NO filtra.

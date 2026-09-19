@@ -200,6 +200,7 @@ type UsoPersistido struct {
 	ONI            bool
 	Modalidad      reparto.Modalidad
 	TipoObra       string
+	CanalID        string
 	Fecha          string
 	Hora           string
 	Moneda         string
@@ -213,6 +214,8 @@ type UsoPersistido struct {
 	Emisiones      int64
 	Rating         decimal.Decimal
 	Taquilla       decimal.Decimal
+	Espectadores   decimal.Decimal
+	Exhibiciones   int64
 	Vistas         decimal.Decimal
 	MinutosVistos  decimal.Decimal
 	PB             decimal.Decimal

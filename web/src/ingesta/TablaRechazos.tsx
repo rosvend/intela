@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { components } from "../contrato";
+import { formatearEntero } from "../tablero/formato";
 
 export type Rechazo = components["schemas"]["Rechazo"];
 
@@ -32,6 +34,16 @@ export function esRechazo(valor: unknown): valor is Rechazo {
   );
 }
 
+// Cuantas filas se pintan de una vez.
+//
+// No es la cota de la LECTURA -esa la pone el servidor en la pagina del log
+// (`GET /reportes/{id}/rechazos`)-, es la de la PINTURA: las filas de un archivo
+// de hasta 32 MiB con la cabecera equivocada pueden ser cientos de miles, y un
+// `<tr>` por fila congela la pestana. Lo necesita sobre todo el panel de la
+// subida, que pinta el log que vino dentro del 201 y no puede pedirlo por
+// paginas.
+const LIMITE_VISIBLE = 100;
+
 /**
  * El log de rechazos de una entrega: una fila por cada fila del archivo que
  * no se pudo normalizar, con su motivo. La usan el panel de resultado de la
@@ -52,37 +64,65 @@ export function esRechazo(valor: unknown): valor is Rechazo {
  * (ADR 0016): un rechazo se explica por lo que le falto, no por lo que habria
  * pesado en el reparto. Con la lista vacia dice que no hay, en vez de pintar
  * una tabla sin filas.
+ *
+ * Cuando el log trae mas filas de las que caben se pintan las primeras y se dice
+ * cuantas hay en total, con el resto a un clic: recortar la PINTURA no puede
+ * esconder filas en silencio, y la cifra no se recorta nunca.
  */
 export default function TablaRechazos({
   rechazos,
 }: {
   rechazos: readonly Rechazo[];
 }) {
+  const [visibles, setVisibles] = useState(LIMITE_VISIBLE);
+
   if (rechazos.length === 0) {
     return <p className="muted">No hay filas rechazadas.</p>;
   }
 
+  const hayMas = rechazos.length > visibles;
+  const mostradas = hayMas ? rechazos.slice(0, visibles) : rechazos;
+  const siguientes = Math.min(
+    LIMITE_VISIBLE,
+    rechazos.length - mostradas.length,
+  );
+
   return (
-    <table className="tabla-rechazos" aria-label="Filas rechazadas">
-      <thead>
-        <tr>
-          <th scope="col">Id</th>
-          <th scope="col">Título</th>
-          <th scope="col">IDs de la fuente</th>
-          <th scope="col">Motivo</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rechazos.map((rechazo) => (
-          <tr key={rechazo.id}>
-            <td className="tabla-rechazos-id">{rechazo.id}</td>
-            <td>{rechazo.titulo}</td>
-            {/* Una linea `clave=valor` por identificador (ADR 0018). */}
-            <td className="tabla-rechazos-ids">{rechazo.ids_fuente}</td>
-            <td>{rechazo.motivo}</td>
+    <>
+      <table className="tabla-rechazos" aria-label="Filas rechazadas">
+        <thead>
+          <tr>
+            <th scope="col">Id</th>
+            <th scope="col">Título</th>
+            <th scope="col">IDs de la fuente</th>
+            <th scope="col">Motivo</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {mostradas.map((rechazo) => (
+            <tr key={rechazo.id}>
+              <td className="tabla-rechazos-id">{rechazo.id}</td>
+              <td>{rechazo.titulo}</td>
+              {/* Una linea `clave=valor` por identificador (ADR 0018). */}
+              <td className="tabla-rechazos-ids">{rechazo.ids_fuente}</td>
+              <td>{rechazo.motivo}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {hayMas && (
+        <p className="tabla-rechazos-aviso">
+          Mostrando {formatearEntero(mostradas.length)} de{" "}
+          {formatearEntero(rechazos.length)} rechazos.{" "}
+          <button
+            type="button"
+            className="tabla-rechazos-ver-mas"
+            onClick={() => setVisibles(visibles + LIMITE_VISIBLE)}
+          >
+            Ver {formatearEntero(siguientes)} más
+          </button>
+        </p>
+      )}
+    </>
   );
 }

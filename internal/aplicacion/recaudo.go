@@ -100,11 +100,12 @@ func (r Recaudo) Listar(ctx context.Context, periodo string) ([]BolsaPersistida,
 		return bolsas, nil
 	}
 
-	// Valida con el MISMO validador que [recaudo.NuevaBolsa] y no con
-	// `periodoValido` de este paquete, que usa `[0-9]{2}` para el mes: con esa
+	// Valida con el MISMO validador que [recaudo.NuevaBolsa] y no con una copia
+	// del patron en este paquete, que usaba `[0-9]{2}` para el mes: con esa
 	// copia, `?periodo=2025-13` pasaba el filtro y devolvia una lista vacia con
 	// 200, que se lee como "ese mes no tuvo recaudo" en vez de "ese mes no
-	// existe".
+	// existe". Esa copia ya no existe: hoy lo que este paquete comprueba es
+	// `recaudo.PeriodoValido`, la misma regla del constructor.
 	periodo, err := recaudo.ValidarPeriodo(periodo)
 	if err != nil {
 		return nil, err

@@ -177,7 +177,10 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
               {abierta && (
                 <tr id={idLog} className="tabla-cargas-log">
                   <td colSpan={COLUMNAS}>
-                    <RechazosDeCarga id={carga.id} />
+                    {/* El recuento de la fila es el TOTAL de la carga y viaja
+                        hasta el log: es con lo que se dice "de M" sin afirmar
+                        una cifra que nadie conto. */}
+                    <RechazosDeCarga id={carga.id} total={carga.rechazados} />
                   </td>
                 </tr>
               )}
@@ -189,16 +192,28 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
   );
 }
 
+// Cuantos rechazos trae cada pagina del log. Cien es una pagina que se lee de un
+// vistazo y queda muy por debajo del maximo de 500 que el servidor rechaza con
+// 400, asi que el operador llega al final del log en pocos clics y ninguno de
+// ellos le trae una respuesta desproporcionada.
+const LIMITE_POR_PAGINA = 100;
+
 /**
- * El log de una carga. Se monta solo al abrir la fila, asi que el GET sale
- * entonces y no al pintar el listado.
+ * El log de una carga, por paginas. Se monta solo al abrir la fila, asi que el
+ * GET sale entonces y no al pintar el listado.
+ *
+ * Va paginado porque el log de una entrega grande no cabe en una respuesta ni en
+ * una tabla: un archivo con la cabecera equivocada rechaza todas sus filas, y
+ * leerlo y pintarlo entero congela la pestana. La cota NO esconde filas: `total`
+ * es el recuento de la carga, se dice "Rechazos N a M de TOTAL" y la navegacion
+ * llega hasta la ultima. Lo unico que no se hace nunca es recortar en silencio.
  */
-function RechazosDeCarga({ id }: { id: string }) {
-  const {
-    datos: rechazos,
-    cargando,
-    error,
-  } = useApi<Rechazo[]>(`/api/reportes/${encodeURIComponent(id)}/rechazos`);
+function RechazosDeCarga({ id, total }: { id: string; total: number }) {
+  const [desplazamiento, setDesplazamiento] = useState(0);
+  const path =
+    `/api/reportes/${encodeURIComponent(id)}/rechazos` +
+    `?limite=${LIMITE_POR_PAGINA}&desplazamiento=${desplazamiento}`;
+  const { datos: rechazos, cargando, error } = useApi<Rechazo[]>(path);
 
   if (cargando) return <Cargando texto="Cargando rechazos…" />;
 
@@ -215,7 +230,7 @@ function RechazosDeCarga({ id }: { id: string }) {
   // -`id`, `titulo`, `ids_fuente` y `motivo`- que este tipo no comprueba. Los
   // valida `esRechazo`, definido junto al tipo `Rechazo`. Un log con un rechazo
   // ilegible se avisa entero en vez de dibujar solo las filas buenas: lo que el
-  // sistema promete es el log completo o un error explicito, nunca filas
+  // sistema promete es la pagina completa o un error explicito, nunca filas
   // escondidas sin decirlo.
   if (!Array.isArray(rechazos) || !rechazos.every(esRechazo)) {
     return (
@@ -225,7 +240,44 @@ function RechazosDeCarga({ id }: { id: string }) {
     );
   }
 
-  // Invariante 3: el log va entero, tal como lo devuelve el servidor (que no
-  // lo acota). Recortarlo aqui ocultaria filas sin decirlo.
-  return <TablaRechazos rechazos={rechazos} />;
+  const desde = desplazamiento + 1;
+  const hasta = desplazamiento + rechazos.length;
+  const hayMas = hasta < total;
+
+  return (
+    <>
+      <TablaRechazos rechazos={rechazos} />
+      <div className="tabla-rechazos-pie">
+        <span>
+          {rechazos.length > 0
+            ? `Rechazos ${formatearEntero(desde)} a ${formatearEntero(hasta)} de ${formatearEntero(total)}`
+            : `Esta carga tiene ${formatearEntero(total)} rechazos`}
+        </span>
+        <div className="tabla-rechazos-botones">
+          <button
+            type="button"
+            className="tabla-rechazos-pagina"
+            disabled={desplazamiento === 0}
+            onClick={() =>
+              setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
+            }
+          >
+            Anterior
+          </button>
+          {/* Sin el total no se podria decir si hay mas; con el, el boton se
+              apaga exactamente en la ultima pagina. */}
+          <button
+            type="button"
+            className="tabla-rechazos-pagina"
+            disabled={!hayMas}
+            onClick={() =>
+              setDesplazamiento(desplazamiento + LIMITE_POR_PAGINA)
+            }
+          >
+            Siguiente
+          </button>
+        </div>
+      </div>
+    </>
+  );
 }

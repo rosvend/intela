@@ -353,7 +353,7 @@ describe("ListaCargas", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("al abrir pide el log de esa carga y lo pinta entero; al cerrar lo oculta", async () => {
+  it("al abrir pide la primera pagina del log de esa carga y la pinta; al cerrar lo oculta", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(json([cargaSinRechazos, cargaConRechazos]))
       .mockResolvedValueOnce(json(rechazos));
@@ -364,13 +364,29 @@ describe("ListaCargas", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (3)" }));
 
     const log = await screen.findByRole("table", { name: "Filas rechazadas" });
-    expect(pedido(1)).toBe(`/api/reportes/${ID_NETFLIX}/rechazos`);
+    // La primera pagina, con el limite explicito: el servidor aplica 100 si no
+    // se manda, pero la pantalla lo dice para que el rango de abajo cuadre.
+    expect(pedido(1)).toBe(
+      `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=0`,
+    );
     expect(fetch).toHaveBeenCalledTimes(2);
-    // Invariante 3: todas las filas del log, ninguna recortada.
+    // Las filas que el servidor mando, ninguna recortada por la pantalla.
     expect(within(log).getAllByRole("row").slice(1)).toHaveLength(3);
     for (const rechazo of rechazos) {
       expect(within(log).getByText(rechazo.motivo)).toBeTruthy();
     }
+    // Y la cifra entera, del recuento de la carga: es "de M", no "de 3 filas
+    // que casualmente llegaron".
+    expect(screen.getByText("Rechazos 1 a 3 de 3")).toBeTruthy();
+    // En la ultima pagina no hay a donde seguir, y hacia atras no hay nada.
+    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("button", { name: "Anterior" })).toHaveProperty(
+      "disabled",
+      true,
+    );
     // La columna "Id" pinta el id entero, con sus 64 hex de huella: es la
     // unica vista que lo muestra a su ancho real (~70 caracteres).
     expect(within(log).getByText(rechazos[0].id)).toBeTruthy();
@@ -393,6 +409,64 @@ describe("ListaCargas", () => {
         .getByRole("button", { name: "Ver rechazos (3)" })
         .getAttribute("aria-expanded"),
     ).toBe("false");
+  });
+
+  it("el log se pide por paginas y cada una dice su tramo de la cifra total", async () => {
+    // Una carga con 250 rechazos: el listado dice 250, y el log se pide de 100
+    // en 100 con el desplazamiento de cada pagina.
+    const carga = { ...cargaConRechazos, rechazados: 250 } satisfies Carga;
+    const pagina = (n: number, desde: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `${ID_NETFLIX}-${desde + i}`,
+        titulo: `Obra sintetica ${desde + i}`,
+        ids_fuente: `id_netflix=${desde + i}`,
+        motivo: `fila ${desde + i}, titulo (columna "Title"): vacio`,
+      })) satisfies Rechazo[];
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json([carga]))
+      .mockResolvedValueOnce(json(pagina(100, 0)))
+      .mockResolvedValueOnce(json(pagina(100, 100)))
+      .mockResolvedValueOnce(json(pagina(50, 200)));
+
+    render(<ListaCargas periodo="2026-01" />);
+
+    await screen.findByRole("table", { name: "Cargas hechas" });
+    fireEvent.click(screen.getByRole("button", { name: "Ver rechazos (250)" }));
+    await screen.findByRole("table", { name: "Filas rechazadas" });
+
+    expect(screen.getByText("Rechazos 1 a 100 de 250")).toBeTruthy();
+    expect(pedido(1)).toBe(
+      `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=0`,
+    );
+    // Hay mas, asi que se puede seguir.
+    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Rechazos 101 a 200 de 250");
+    expect(pedido(2)).toBe(
+      `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Rechazos 201 a 250 de 250");
+    expect(pedido(3)).toBe(
+      `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=200`,
+    );
+    // Ultima pagina: se apaga el siguiente y se puede volver.
+    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    // Volver atras pide la pagina anterior otra vez: no hay cache.
+    vi.mocked(fetch).mockResolvedValueOnce(json(pagina(100, 100)));
+    fireEvent.click(screen.getByRole("button", { name: "Anterior" }));
+    await screen.findByText("Rechazos 101 a 200 de 250");
+    expect(pedido(4)).toBe(
+      `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,
+    );
   });
 
   it("varias cargas pueden tener su log abierto a la vez", async () => {
@@ -421,7 +495,9 @@ describe("ListaCargas", () => {
         screen.getAllByRole("table", { name: "Filas rechazadas" }),
       ).toHaveLength(2),
     );
-    expect(pedido(2)).toBe(`/api/reportes/${ID_CINE}/rechazos`);
+    expect(pedido(2)).toBe(
+      `/api/reportes/${ID_CINE}/rechazos?limite=100&desplazamiento=0`,
+    );
   });
 
   it("si la carga ya no existe, el error queda dentro de su fila", async () => {
@@ -481,10 +557,13 @@ function simularServidor({
   rol,
   cargas = () => [],
   subida,
+  listado,
 }: {
   rol: Rol;
   cargas?: (url: string) => Carga[];
   subida?: () => Promise<Response>;
+  /** Respuesta cruda del listado, para probar un 400 del backend. */
+  listado?: (url: string) => Response;
 }) {
   vi.mocked(fetch).mockImplementation((entrada, init) => {
     const url = String(entrada);
@@ -501,6 +580,7 @@ function simularServidor({
       );
     }
     if (metodo === "GET" && esListado(url)) {
+      if (listado) return Promise.resolve(listado(url));
       return Promise.resolve(json(cargas(url)));
     }
     if (metodo === "POST" && url === "/api/reportes" && subida) {
@@ -530,9 +610,9 @@ function subidas() {
   );
 }
 
-/** Los GET del log de rechazos de alguna carga: uno por cada fila abierta sin cache. */
+/** Los GET del log de rechazos de alguna carga: uno por cada fila abierta sin cache, y uno por cada cambio de pagina. */
 function logsDeRechazos() {
-  return llamadas().filter((l) => l.url.endsWith("/rechazos"));
+  return llamadas().filter((l) => l.url.includes("/rechazos"));
 }
 
 /** El valor que acompana a una etiqueta del resumen de la entrega. */
@@ -568,8 +648,10 @@ function escribirPeriodo(valor: string) {
 const botonSubir = () => screen.getByRole("button", { name: /^Subir/ });
 
 const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
+// El aviso del cliente dice lo unico que el cliente decide: que el periodo este
+// completo. Que el mes exista lo contesta el servidor con su 400.
 const FALTA_PERIODO =
-  "Escribe un periodo válido para poder subir el reporte: AAAA, o AAAA-MM con el mes entre 01 y 12.";
+  "Escribe el periodo completo para poder subir el reporte: AAAA, o AAAA-MM.";
 
 // El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
 // `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
@@ -806,6 +888,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
 
     montarApp("/ingesta?periodo=2026-01");
     await screen.findByText(VACIO_2026_01);
+    const pedidosAntes = getsDelListado().length;
 
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
@@ -823,6 +906,15 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(alerta.textContent).not.toContain("detalle");
     expect(document.body.textContent).not.toContain('{"detalle"');
     expect(subidas()).toHaveLength(1);
+
+    // Y el listado que el aviso manda a mirar se vuelve a pedir. Es la mitad que
+    // faltaba: afirmar el texto de PUDO_LLEGAR sin comprobar el GET dejaba en
+    // verde una pantalla que mandaba al operador a la foto de ANTES de la
+    // subida -si el COMMIT entro, no ve la fila nueva, concluye que no llego y
+    // reenvia, y el 409 es irreversible-.
+    await vi.waitFor(() =>
+      expect(getsDelListado()).toHaveLength(pedidosAntes + 1),
+    );
   });
 
   it("un listado con un elemento que no es una carga deja el error en su sitio sin tumbar la pantalla", async () => {
@@ -1003,9 +1095,26 @@ describe("pantalla de ingesta (integracion con App)", () => {
   });
 
   it.each(["2026-13", "2026-00"])(
-    "con el periodo %s la subida queda bloqueada, aunque el listado si se consulte",
+    "con el periodo %s el rechazo lo da el servidor, que es quien conoce la regla",
     async (periodo) => {
-      simularServidor({ rol: "administrador" });
+      // El cliente NO lleva una copia del patron del dominio: lo unico que
+      // decide es que el periodo este completo. Que el mes exista lo contesta el
+      // backend, y su 400 es el que se ve. Con la copia en el navegador, un mes
+      // imposible entraba por `curl`, por el scheduler o por cualquier pantalla
+      // futura, y la unicidad (sha256, fuente) lo dejaba quemado para siempre.
+      const mensaje = `reporte invalido: periodo "${periodo}", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12`;
+      simularServidor({
+        rol: "administrador",
+        // El backend rechaza el mes imposible en las DOS rutas: el listado
+        // contesta 400 en vez de una lista vacia, que se leeria como "ese mes no
+        // tuvo recaudo" cuando lo que pasa es que ese mes no existe. Sin periodo
+        // el listado sigue siendo el de siempre.
+        listado: (url) =>
+          url.includes(`periodo=${periodo}`)
+            ? json({ error: mensaje }, 400)
+            : json([]),
+        subida: () => Promise.resolve(json({ error: mensaje }, 400)),
+      });
 
       montarApp("/ingesta");
       await screen.findByText("Aún no hay cargas registradas.");
@@ -1014,25 +1123,33 @@ describe("pantalla de ingesta (integracion con App)", () => {
       elegirArchivo(archivoCaracol());
       escribirPeriodo(periodo);
 
-      // El backend no lo frena: su validador del periodo es mas flojo que el
-      // del dominio, asi que el listado lo consulta y contesta que en ese
-      // periodo no hay cargas.
+      // El periodo completo pasa a la URL y el listado se consulta con el.
       expect(ubicacion()).toBe(`/ingesta?periodo=${periodo}`);
-      await screen.findByText(
-        `No hay cargas registradas para el periodo ${periodo}.`,
+      await vi.waitFor(() =>
+        expect(getsDelListado()).toContain(`/api/reportes?periodo=${periodo}`),
       );
+      const alertas = await screen.findAllByRole("alert");
+      expect(alertas.some((a) => a.textContent?.includes(mensaje))).toBe(true);
 
-      // Pero subir a un mes que no existe no se deshace: la subida queda
-      // bloqueada y se dice por que.
-      expect(botonSubir()).toHaveProperty("disabled", true);
-      expect(botonSubir().textContent).toBe("Subir reporte");
-      expect(screen.getByText(FALTA_PERIODO)).toBeTruthy();
+      // La subida no queda bloqueada en el navegador: el periodo esta completo,
+      // y quien decide sobre el mes es el servidor.
+      expect(botonSubir()).toHaveProperty("disabled", false);
+      expect(botonSubir().textContent).toBe(`Subir a ${periodo}`);
+      expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
 
-      // Y no se cuela ni con un submit directo al formulario.
-      const formulario = botonSubir().closest("form");
-      if (!formulario) throw new Error("no se encontro el formulario");
-      fireEvent.submit(formulario);
-      expect(subidas()).toHaveLength(0);
+      fireEvent.click(botonSubir());
+
+      await vi.waitFor(() => expect(subidas()).toHaveLength(1));
+      // Y el mensaje del backend se pinta tal cual, sin reescribirlo.
+      await vi.waitFor(() => {
+        expect(
+          screen
+            .getAllByRole("alert")
+            .some((a) => a.textContent?.includes(mensaje)),
+        ).toBe(true);
+      });
+      // Un 400 cierra la duda: no lleva el aviso de que pudo haber llegado.
+      expect(screen.queryByText(PUDO_LLEGAR)).toBeNull();
     },
   );
 
