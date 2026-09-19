@@ -143,8 +143,10 @@ const SIN_RESPUESTA_UTIL = new Set([502, 504]);
  *   (internal/infraestructura/httpapi/server.go), una guarda PREVIA al handler
  *   que responde cuando al binario le falta cablear la ingesta. No se escribio
  *   nada, y por eso tiene titulo propio y ningun aviso;
- * - un **4xx** cierra la pregunta: es una respuesta del servidor en la que no
- *   quedo entrega. El 400, ademas, lo dice el backend por escrito.
+ * - un **4xx** cierra la pregunta: es una respuesta del servidor en la que ESA
+ *   peticion no escribio nada, que es de lo que duda este predicado. No dice
+ *   nada de si esa entrega estaba registrada de antes: en el 409 duplicado lo
+ *   estaba, y la duda no es por eso. El 400, ademas, lo dice el backend.
  */
 export function pudoHaberLlegado(status: StatusDeFallo): boolean {
   if (status === "red" || status === "desconocido") return true;
