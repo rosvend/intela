@@ -50,11 +50,12 @@ export const CLAVE_DE_VUELTA_AL_CATALOGO = "catalogoDeOrigen";
  * -el detalle se la pasa al historial, que se la devuelve al detalle-, de modo
  * que el camino de vuelta conserve la busqueda pase por donde pase.
  *
- * Vive aqui, y no en cada pantalla, porque son DOS las pantallas que la
- * reciben -el detalle de la obra y el historial de su declaracion, pasos 6 y
- * 7- y una copia por pantalla es exactamente lo que las deja discrepando: el
- * dia que una sola cambie, una conservara la busqueda y la otra no. El catalogo
- * es el dueno de su propia direccion y de como se vuelve a ella.
+ * Vive aqui, y no en cada pantalla, porque son TRES las pantallas que la
+ * reciben -el detalle de la obra, el historial de su declaracion y el editor de
+ * reparto, pasos 6, 7 y 8- y una copia por pantalla es exactamente lo que las
+ * deja discrepando: el dia que una sola cambie, una conservara la busqueda y
+ * las otras no. El catalogo es el dueno de su propia direccion y de como se
+ * vuelve a ella.
  *
  * Lo que se descarto fue `navigate(-1)`, que parece mas corto y es otra cosa:
  * retroceder el historial no es volver al catalogo, es ir a donde el navegador
