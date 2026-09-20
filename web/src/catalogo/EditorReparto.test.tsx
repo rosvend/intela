@@ -346,6 +346,22 @@ function dato(rotulo: string): string {
   return contenedor.textContent ?? "";
 }
 
+/**
+ * El nodo vivo -el que lleva `role="status"`- del dato con ese rotulo. Si el
+ * rotulo no esta dentro de uno, revienta: es lo que el item 8a pide y lo que no
+ * se puede comprobar con una busqueda por texto.
+ */
+function nodoVivo(rotulo: string): HTMLElement {
+  const contenedor = screen.getByText(rotulo).closest("div");
+  const vivo = contenedor?.querySelector<HTMLElement>('[role="status"]');
+  if (!vivo) {
+    throw new Error(
+      `"${rotulo}" no esta dentro de un nodo vivo (role="status")`,
+    );
+  }
+  return vivo;
+}
+
 /** El aviso de la version, que es un parrafo con su propia clase. */
 function avisoDeVersion(): HTMLElement {
   const aviso = document.querySelector(".editor-aviso-version");
@@ -1641,6 +1657,29 @@ describe("editor de reparto (integracion con App)", () => {
     expect(texto()).not.toContain(
       "pero el historial no trae esa versión como única versión abierta",
     );
+  });
+
+  it("el total, el estado y el aviso de la version se anuncian", async () => {
+    // El item 8a. Sin `role="status"`, cambiar un porcentaje mueve dos cifras
+    // que un lector de pantalla no anuncia: quien no ve la pantalla no se
+    // entera de que su reparto ya no suma 100.
+    simularServidor();
+    await abrirElEditor();
+
+    const total = nodoVivo("Total del borrador (calculado en esta pantalla)");
+    const estado = nodoVivo("Estado del borrador");
+    const antesDelTotal = total.textContent;
+    const antesDelEstado = estado.textContent;
+
+    // El nodo vivo es el que CAMBIA: si el que lleva el rol fuera otro, estas
+    // dos afirmaciones no dirian nada del que se anuncia.
+    escribirPorcentaje("tit-1", "60");
+    expect(total.textContent).not.toBe(antesDelTotal);
+    expect(estado.textContent).not.toBe(antesDelEstado);
+
+    // Y el aviso de la version tambien: es lo que hay que entender ANTES de
+    // tocar nada, y aparece sin que nadie haya movido el foco.
+    expect(avisoDeVersion().getAttribute("role")).toBe("status");
   });
 
   it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {

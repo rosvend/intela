@@ -835,14 +835,23 @@ function FormularioDeReparto({
             El estado de la declaración guardada lo calcula el servidor; lo de
             aquí es el borrador, que todavía no existe para el servidor.
           </p>
+          {/* `role="status"` en las dos cifras y en los avisos, siguiendo el
+              patron de `PanelDelGuardado`: son nodos VIVOS, y lo que cambia en
+              ellos -el total al teclear, el estado del borrador, el motivo por
+              el que no se ofrece guardar, el aviso de la version- es justo lo
+              que hay que anunciar sin mover el foco. No se anade `aria-live`
+              por encima ni se mete un `role="alert"` dentro: las dos cosas
+              anunciarian el mismo cambio dos veces. */}
           <dl className="detalle-ficha">
             <div>
               <dt>Total del borrador (calculado en esta pantalla)</dt>
-              <dd className="detalle-cifra">{formatearPorcentaje(total)}</dd>
+              <dd className="detalle-cifra" role="status">
+                {formatearPorcentaje(total)}
+              </dd>
             </div>
             <div>
               <dt>Estado del borrador</dt>
-              <dd className="detalle-cifra">
+              <dd className="detalle-cifra" role="status">
                 {ESTADO_DEL_BORRADOR[estado].texto}
               </dd>
             </div>
@@ -877,7 +886,7 @@ function FormularioDeReparto({
             {guardando ? "Guardando…" : "Guardar la declaración"}
           </button>
           {filasSinNumero > 0 && (
-            <p className="editor-aviso">
+            <p className="editor-aviso" role="status">
               {filasSinNumero === 1
                 ? "Hay 1 fila sin un porcentaje que se lea como número."
                 : `Hay ${filasSinNumero} filas sin un porcentaje que se lea como número.`}{" "}
@@ -886,7 +895,7 @@ function FormularioDeReparto({
             </p>
           )}
           {filasSinNumero === 0 && elHistorialCuadra && !puedeGuardar && (
-            <p className="editor-aviso">
+            <p className="editor-aviso" role="status">
               {estado === "vacia"
                 ? "Añade al menos una parte desde el padrón para poder guardar."
                 : "El total pasa de 100, y el servidor rechaza esa suma con un 400."}
@@ -898,7 +907,7 @@ function FormularioDeReparto({
               texto diga siempre el motivo verdadero -sin esta guarda, un
               historial que no cuadra saldria como "el total pasa de 100"-. */}
           {!elHistorialCuadra && (
-            <p className="editor-aviso">
+            <p className="editor-aviso" role="status">
               {obra.version_vigente === null
                 ? "El servidor no declara ninguna versión vigente,"
                 : `El servidor declara vigente la versión ${obra.version_vigente},`}{" "}
@@ -935,7 +944,7 @@ function AvisoDeVersionVisible({
 }) {
   if (aviso.tipo === "cierraYabre") {
     return (
-      <p className="editor-aviso-version">
+      <p className="editor-aviso-version" role="status">
         Al guardar, el servidor cerrará la versión {aviso.seCierra} y abrirá la
         versión {aviso.seAbre} con este reparto. La versión {aviso.seCierra} no
         se borra ni se modifica: queda en el historial con los porcentajes que
@@ -946,7 +955,7 @@ function AvisoDeVersionVisible({
 
   if (aviso.tipo === "abreLaPrimera") {
     return (
-      <p className="editor-aviso-version">
+      <p className="editor-aviso-version" role="status">
         Esta obra no tiene ninguna declaración todavía, así que al guardar se
         abrirá la primera versión. No hay ninguna versión anterior que cerrar.
       </p>
@@ -976,7 +985,7 @@ function AvisoDeVersionVisible({
 
   if (aviso.porque === "historialNoLeido") {
     return (
-      <p className="editor-aviso-version">
+      <p className="editor-aviso-version" role="status">
         No se pudo leer el historial de esta declaración ({mensaje}), así que
         esta pantalla no puede decir qué versión se cerrará ni con qué número se
         abre la nueva. {consecuencia}
@@ -993,7 +1002,7 @@ function AvisoDeVersionVisible({
   // es justo la que el 200 acaba de cerrar.
   if (aviso.porque === "guardadoSinLeer") {
     return (
-      <p className="editor-aviso-version">
+      <p className="editor-aviso-version" role="status">
         El servidor contestó sin error, así que una versión se abrió, pero la
         respuesta no llegó con la forma del contrato y esta pantalla no puede
         decir cuál es.{rechazoPosterior} Compruébalo en el historial antes de
@@ -1008,7 +1017,7 @@ function AvisoDeVersionVisible({
   // paso siguiente; aqui solo se deja de afirmar el numero.
   if (aviso.porque === "guardadoIncierto") {
     return (
-      <p className="editor-aviso-version">
+      <p className="editor-aviso-version" role="status">
         No se sabe si el guardado abrió una versión: un fallo al confirmar es
         indistinguible de una respuesta que se perdió, así que esta pantalla no
         puede decir qué versión se cerrará ni con qué número se abre la nueva.
