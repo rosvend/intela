@@ -1,7 +1,8 @@
 import { useId, useState, type ReactElement } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
-import { DEBOUNCE_TECLEO_MS, useApi } from "../useApi";
+import { useApi } from "../useApi";
+import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
 import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { esObra, type Obra } from "./tipos";
@@ -184,11 +185,11 @@ export default function Catalogo() {
   // atras o compartir el enlace conserven la busqueda, y lo que deja a `useApi`
   // pedir sola la consulta cuando cambia el path.
   //
-  // Con `DEBOUNCE_TECLEO_MS` la consulta espera a que el tecleo pare: los cuatro
-  // campos de arriba escriben en la URL a cada tecla, y sin esa espera cada una
-  // era una peticion al servidor -y la respuesta de la penultima podia llegar
-  // despues de la ultima-. El numero y su motivo estan declarados una sola vez,
-  // en `useApi.ts`.
+  // El TEXTO de los filtros se difiere (`DEBOUNCE_TECLEO_MS`): los cuatro campos
+  // de arriba escriben en la URL a cada tecla, y sin esa espera cada una era una
+  // peticion al servidor -y la respuesta de la penultima podia llegar despues de
+  // la ultima-. La pagina no se difiere: un clic en "Siguiente" no es tecleo. El
+  // numero y su motivo estan declarados una sola vez, en `useValorDiferido.ts`.
   const filtros: Record<Filtro, string> = {
     titulo: searchParams.get("titulo") ?? "",
     genero: searchParams.get("genero") ?? "",
@@ -200,11 +201,20 @@ export default function Catalogo() {
   ).length;
   const desplazamiento = leerDesplazamiento(searchParams.get("desplazamiento"));
 
-  const params = new URLSearchParams();
+  // La consulta de texto se arma siempre en el mismo orden: el `path` es la
+  // clave del efecto de `useApi`, y un orden inestable seria una peticion por
+  // render.
+  const consultaDeTexto = new URLSearchParams();
   for (const filtro of FILTROS) {
     const valor = filtros[filtro];
-    if (valor !== "") params.set(filtro, valor);
+    if (valor !== "") consultaDeTexto.set(filtro, valor);
   }
+  const textoDiferido = useValorDiferido(
+    consultaDeTexto.toString(),
+    DEBOUNCE_TECLEO_MS,
+  );
+
+  const params = new URLSearchParams(textoDiferido);
   params.set("limite", String(LIMITE_POR_PAGINA));
   if (desplazamiento > 0) {
     params.set("desplazamiento", String(desplazamiento));
@@ -213,7 +223,7 @@ export default function Catalogo() {
     datos: obras,
     cargando,
     error,
-  } = useApi<Obra[]>(`/api/obras?${params.toString()}`, DEBOUNCE_TECLEO_MS);
+  } = useApi<Obra[]>(`/api/obras?${params.toString()}`);
 
   /**
    * El texto del campo del anio y el ultimo valor que la URL tenia de el.

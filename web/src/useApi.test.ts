@@ -169,49 +169,6 @@ describe("useApi: tecleo y cancelacion (item 11)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("con debounceMs un cambio de ruta espera a que el tecleo pare, y la carga inicial no espera", async () => {
-    // El cronometro es del test: con temporizadores de verdad, "todavia no ha
-    // pedido" y "ya pidio" no se pueden separar sin dormir la prueba.
-    vi.useFakeTimers();
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ estado: "listo" }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-
-    const { rerender } = renderHook(({ path }) => useApi(path, 250), {
-      initialProps: { path: "/api/obras?titulo=C" },
-    });
-
-    // La carga inicial NO espera: no hay rafaga que agrupar, y hacer esperar
-    // 250 ms la primera pintura de la pantalla seria subirle la latencia a todas
-    // las pantallas que pidan el debounce, a cambio de nada.
-    expect(fetch).toHaveBeenCalledTimes(1);
-
-    // El cambio de ruta -lo que produce teclear- si espera.
-    await act(async () => {
-      rerender({ path: "/api/obras?titulo=Ca" });
-    });
-    expect(fetch).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(249);
-    });
-    expect(fetch).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-
-    // Control positivo: al vencer la espera, la peticion de la ruta NUEVA sale.
-    // Un hook que esperara para siempre pasaria todo lo de arriba sin servir
-    // para nada.
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(String(vi.mocked(fetch).mock.calls[1][0])).toBe(
-      "/api/obras?titulo=Ca",
-    );
-  });
-
   it("al cambiar de ruta aborta la peticion anterior, sin dejar la pantalla cargando ni un error inventado", async () => {
     const senales: AbortSignal[] = [];
     const enVuelo: ((respuesta: Response) => void)[] = [];

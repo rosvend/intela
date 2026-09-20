@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
-import { DEBOUNCE_TECLEO_MS } from "../useApi";
+import { DEBOUNCE_TECLEO_MS } from "../useValorDiferido";
 import type { Obra, Titular, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
@@ -2113,6 +2113,33 @@ describe("el Enter de un campo de texto no guarda (el 🟠)", () => {
     // esta contado aqui -mismo criterio que el resto de esta suite-.
     guardar();
     expect(guardados()).toHaveLength(1);
+  });
+
+  it("un clic de paginacion del padron pide de inmediato, sin esperar al debounce", async () => {
+    const llena = Array.from({ length: 50 }, (_, i) => ({
+      ...PADRON[0],
+      id: `tit-p${i}`,
+    }));
+    simularServidor({ titulares: () => json(llena) });
+    await abrirElEditorConPadron();
+
+    const delPadron = () =>
+      peticiones().filter((p) => p.url.startsWith("/api/titulares"));
+
+    // El reloj lo lleva el test y NUNCA avanza: si la peticion sale, sale sin
+    // esperar.
+    vi.useFakeTimers();
+    try {
+      const antes = delPadron().length;
+      fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+
+      expect(delPadron().length).toBe(antes + 1);
+      expect(delPadron().at(-1)?.url).toBe(
+        "/api/titulares?limite=50&desplazamiento=50",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Item 11 en el otro buscador de la pantalla: el padron del editor. Es un

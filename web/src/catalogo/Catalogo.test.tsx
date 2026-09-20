@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
-import { DEBOUNCE_TECLEO_MS } from "../useApi";
+import { DEBOUNCE_TECLEO_MS } from "../useValorDiferido";
 import type { Obra, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
@@ -723,6 +723,30 @@ describe("pantalla de catalogo (integracion con App)", () => {
       "disabled",
       false,
     );
+  });
+
+  it("un clic de paginacion pide de inmediato, sin esperar al debounce del tecleo", async () => {
+    const veinte = Array.from({ length: 20 }, (_, i) => ({
+      ...obraCompleta,
+      id: `obra-${i}`,
+      titulo: `Obra ${i}`,
+    })) satisfies Obra[];
+    simularServidor({ rol: "administrador", obras: () => veinte });
+    montarApp("/catalogo");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+
+    // El reloj lo lleva el test y NUNCA avanza: si la peticion sale, sale sin
+    // esperar. Con el debounce sobre todo el `path`, esperaba 250 ms para nada.
+    vi.useFakeTimers();
+    try {
+      const antes = consultas().length;
+      fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+
+      expect(consultas().length).toBe(antes + 1);
+      expect(ultimaConsulta()).toBe("/api/obras?limite=20&desplazamiento=20");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("una pagina que vino incompleta no ofrece siguiente", async () => {

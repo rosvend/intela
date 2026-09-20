@@ -12,7 +12,8 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
-import { DEBOUNCE_TECLEO_MS, useApi } from "../useApi";
+import { useApi } from "../useApi";
+import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import {
   avisoDelRechazo,
@@ -898,24 +899,24 @@ function PadronDelEditor({
   const idNombre = useId();
   const idAyuda = useId();
 
+  const nombreDiferido = useValorDiferido(busqueda, DEBOUNCE_TECLEO_MS);
+
   const params = new URLSearchParams();
-  if (busqueda !== "") params.set("nombre", busqueda);
+  if (nombreDiferido !== "") params.set("nombre", nombreDiferido);
   params.set("limite", String(LIMITE_PADRON));
   if (desplazamiento > 0) {
     params.set("desplazamiento", String(desplazamiento));
   }
-  // La busqueda se pide mientras se teclea, asi que la consulta espera a que el
-  // tecleo pare (`DEBOUNCE_TECLEO_MS`, declarado una sola vez en `useApi.ts`):
-  // sin esa espera cada tecla era una peticion al padron entero. El `path`
-  // cambia con la busqueda y con la pagina, y el hook aborta la que ya no sirve.
+  // La busqueda se pide mientras se teclea, asi que el NOMBRE se difiere hasta
+  // que el tecleo pare (`DEBOUNCE_TECLEO_MS`, declarado una sola vez en
+  // `useValorDiferido.ts`): sin esa espera cada tecla era una peticion al padron
+  // entero. La pagina no se difiere, un clic no es tecleo. El `path` cambia con
+  // el nombre y con la pagina, y el hook aborta la que ya no sirve.
   const {
     datos: titulares,
     cargando,
     error,
-  } = useApi<Titular[]>(
-    `/api/titulares?${params.toString()}`,
-    DEBOUNCE_TECLEO_MS,
-  );
+  } = useApi<Titular[]>(`/api/titulares?${params.toString()}`);
 
   /** Cambiar la busqueda vuelve a la primera pagina: la 3 de otra busqueda no existe. */
   function buscar(valor: string) {
