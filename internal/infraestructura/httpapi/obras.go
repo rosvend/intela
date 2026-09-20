@@ -245,10 +245,14 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 }
 
 // leerPaginacion interpreta limite y desplazamiento. Misma forma que
-// ListarObras, y la comparten las dos rutas que paginan -`GET /obras` y
-// `GET /reportes/{id}/rechazos`-: una sola forma de decir "limite" evita la
-// traduccion que se desvia. Ausente = defecto; mal formado o fuera de rango =
-// 400, nunca un recorte en silencio de lo que se pidio.
+// ListarObras, y la comparten las TRES rutas que paginan -`GET /obras`,
+// `GET /reportes/{id}/rechazos` y `GET /titulares`-: una sola forma de decir
+// "limite" evita la traduccion que se desvia. Ausente = defecto; mal formado o
+// fuera de rango = 400, nunca un recorte en silencio de lo que se pidio.
+//
+// Eran dos hasta que la #30 sirvio el padron por paginas: `GET /titulares`
+// entra aqui tambien. Si aparece una cuarta, se dice -el numero es la unica
+// parte de este comentario que envejece solo-.
 func leerPaginacion(w http.ResponseWriter, q url.Values) (aplicacion.Paginacion, bool) {
 	p := aplicacion.Paginacion{}
 	if bruto := q.Get("limite"); bruto != "" {
