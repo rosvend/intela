@@ -63,7 +63,7 @@ const columnasParteEscritura = `titular_id, ipi, porcentaje`
 func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, time.Time, error) {
 	ahora = ahora.Truncate(time.Microsecond)
 	var version int
-	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		var existe string
 		if err := tx.QueryRow(ctx, `SELECT id FROM obras WHERE id = $1 FOR UPDATE`, d.ObraID).
 			Scan(&existe); err != nil {
@@ -162,7 +162,7 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 // orden. ORDER BY explicito por lo mismo que en repertorio.go: reproducible
 // (ADR 0005).
 func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT version, vigente_desde, vigente_hasta FROM declaracion_versiones
 		  WHERE obra_id = $1 ORDER BY version`, obraID)
 	if err != nil {
@@ -197,7 +197,7 @@ func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.Vers
 // EXCLUDE de la migracion garantiza que esa fila, si existe, es unica.
 func (s *Store) VigenteEn(ctx context.Context, obraID string, momento time.Time) (aplicacion.VersionDeclaracion, error) {
 	var vd aplicacion.VersionDeclaracion
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT version, vigente_desde, vigente_hasta FROM declaracion_versiones
 		  WHERE obra_id = $1 AND vigente_desde <= $2 AND (vigente_hasta IS NULL OR vigente_hasta > $2)`,
 		obraID, momento).Scan(&vd.Version, &vd.VigenteDesde, &vd.VigenteHasta)
@@ -217,7 +217,7 @@ func (s *Store) VigenteEn(ctx context.Context, obraID string, momento time.Time)
 // partesDeObra (repertorio.go), que solo lee la version vigente para el
 // motor de reparto y el estado del catalogo.
 func (s *Store) partesDeVersion(ctx context.Context, obraID string, version int) ([]repertorio.Parte, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasParteEscritura+` FROM declaraciones
 		  WHERE obra_id = $1 AND version = $2 ORDER BY titular_id`,
 		obraID, version)

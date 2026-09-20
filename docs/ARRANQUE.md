@@ -6,7 +6,8 @@ make verificar                 # tidy, build, vet, gofmt y test - lo mismo que c
 ```
 
 UI: <http://localhost>
-API: <http://localhost/api>
+API: <http://localhost/api/health> -notese la barra final; `/api` a secas cae
+en la ruta del tablero y devuelve el index con 200
 
 > Esto deja la base **migrada y vacia**. Para un arranque de una sola orden que
 > ademas siembra el dataset -y una prueba de humo que lo comprueba-, ver
@@ -49,6 +50,16 @@ go run ./cmd/seed                             # equivalente, con DATABASE_URL
 tanto para `run` como para `up`. Antes estaba fijo a `"false"` en el compose: la
 unica forma de recargar era repetir el valor con `-e`, y para `up` no habia
 ninguna -el stack levantaba y no recargaba, sin decir nada-.
+
+Las dos ordenes de arriba con `SEED_RESET=true` **fallan** en cuanto hay un
+solo asiento en la bitacora -basta con haber tocado el tablero, o con #91 en
+adelante, con haber dado de alta o corregido una obra por la API-: `Cargar`
+rechaza el reset con `ErrBitacoraNoVacia` en vez de borrar el libro de
+auditoria (ADR 0006). Pasado ese punto el unico reset real es
+`docker compose down -v` y volver a levantar. Tambien es el unico que vacia
+`snapshots_parametros` -el corte congelado de una corrida-: esa tabla es
+inmutable por trigger y ni `vaciar()` ni ninguna de las dos ordenes de
+`SEED_RESET` la toca.
 
 El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
 tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -467,5 +469,173 @@ func TestEnUnidadRevierteLaAnidadaConLaDeFuera(t *testing.T) {
 	}
 	if len(asientos) != 0 {
 		t.Fatalf("el asiento sobrevivio al rollback: %+v", asientos)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// El cerrojo de fila (bloqueante 4)
+
+// bitacoraConPausa envuelve la bitacora real y se detiene justo antes de
+// escribir el asiento. Para entonces Actualizar ya corrio dentro de la MISMA
+// transaccion: el cerrojo de fila sigue tomado y sin confirmar. Es el punto
+// exacto en el que el test de concurrencia de abajo necesita congelar a T1
+// para forzar la ventana que el bloqueante 4 describe.
+type bitacoraConPausa struct {
+	*Store
+	listo  chan struct{}
+	seguir chan struct{}
+}
+
+func (b *bitacoraConPausa) Asentar(ctx context.Context, a aplicacion.Asiento) error {
+	close(b.listo)
+	<-b.seguir
+	return b.Store.Asentar(ctx, a)
+}
+
+// esperarBloqueoPorUpdate espera, consultando pg_stat_activity y no un sleep a
+// ciegas, a que otra sesion este de verdad bloqueada en un
+// "... FROM obras ... FOR UPDATE": es la prueba, contra el estado real del
+// servidor, de que [Store.Bloquear] de T2 quedo esperando el cerrojo de T1 y
+// no que le gano la carrera a un release prematuro.
+func esperarBloqueoPorUpdate(t *testing.T, vigia *pgx.Conn, ctx context.Context) {
+	t.Helper()
+	limite := time.Now().Add(10 * time.Second)
+	for time.Now().Before(limite) {
+		var bloqueada bool
+		err := vigia.QueryRow(ctx,
+			`SELECT EXISTS (
+			   SELECT 1 FROM pg_stat_activity
+			    WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM obras%FOR UPDATE%'
+			 )`).Scan(&bloqueada)
+		if err != nil {
+			t.Fatalf("consultar pg_stat_activity: %v", err)
+		}
+		if bloqueada {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("T2 nunca quedo bloqueada esperando el cerrojo de fila de T1")
+}
+
+// Criterio del bloqueante 4: dos PATCH concurrentes sobre la MISMA obra no
+// pueden dejar un asiento cuyo "antes" es un estado que esa transaccion no
+// sustituyo.
+//
+// No basta lanzar dos goroutines y confiar en el scheduler: sin control, casi
+// siempre corren en secuencia y la prueba pasaria igual con o sin el cerrojo
+// -que es exactamente por que ninguna prueba de #91 detectaba esto-. Aqui se
+// fuerza la ventana exacta: T1 se pausa justo despues de escribir (Actualizar
+// ya corrio, la fila esta bloqueada y sin confirmar) y ANTES de asentar; T2
+// arranca en ese punto, y el test espera -consultando el servidor, no con un
+// sleep a ciegas- a que la consulta FOR UPDATE de T2 quede realmente
+// bloqueada detras del cerrojo de T1 antes de soltarlo. Eso reproduce la
+// carrera siempre, no algunas veces.
+//
+// Sin [Store.Bloquear] antes de PorID, T2 leeria el estado ORIGINAL mientras
+// T1 sigue sin confirmar -su propio UPDATE la bloquearia igual, pero DESPUES
+// de que su PorID ya hubiera leido de mas-, y asentaria antes=original en vez
+// de antes=Version-T1. Ese es el escenario que esta prueba distingue.
+func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	if _, err := catalogoConBitacora(s).
+		RegistrarObra(ctx, obraNueva, metadatosDePrueba(), usuarioAdmin); err != nil {
+		t.Fatalf("RegistrarObra: %v", err)
+	}
+
+	// Conexion APARTE del pool de 2 que usan T1 y T2 (ver testhelp.Pool): si la
+	// consulta de vigilancia pidiera del mismo pool, competiria por la unica
+	// conexion libre y podria quedarse esperando detras de las dos
+	// transacciones que esta vigilando -un interbloqueo del propio test-.
+	vigia, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
+	if err != nil {
+		t.Fatalf("abrir conexion de vigilancia: %v", err)
+	}
+	defer func() { _ = vigia.Close(ctx) }()
+
+	listoT1 := make(chan struct{})
+	liberarT1 := make(chan struct{})
+	fin1 := make(chan error, 1)
+	fin2 := make(chan error, 1)
+
+	cat1 := aplicacion.Catalogo{
+		Obras:    s,
+		Bitacora: &bitacoraConPausa{Store: s, listo: listoT1, seguir: liberarT1},
+		Unidad:   s,
+		Reloj:    &relojEnPasos{},
+	}
+	go func() {
+		_, err := cat1.ActualizarMetadatosObra(ctx, obraNueva,
+			metadatosDePrueba(func(m *repertorio.Metadatos) { m.Titulo = "Version-T1" }), usuarioAdmin)
+		fin1 <- err
+	}()
+
+	select {
+	case <-listoT1:
+	case <-time.After(10 * time.Second):
+		t.Fatal("T1 nunca llego al punto de pausa (Actualizar corrido, asiento pendiente)")
+	}
+
+	cat2 := catalogoConBitacora(s)
+	go func() {
+		_, err := cat2.ActualizarMetadatosObra(ctx, obraNueva,
+			metadatosDePrueba(func(m *repertorio.Metadatos) { m.Titulo = "Version-T2" }), usuarioAdmin)
+		fin2 <- err
+	}()
+	esperarBloqueoPorUpdate(t, vigia, ctx)
+
+	close(liberarT1)
+	if err := <-fin1; err != nil {
+		t.Fatalf("ActualizarMetadatosObra de T1: %v", err)
+	}
+	if err := <-fin2; err != nil {
+		t.Fatalf("ActualizarMetadatosObra de T2: %v", err)
+	}
+
+	asientos, err := s.De(ctx, aplicacion.RefObra, obraNueva)
+	if err != nil {
+		t.Fatalf("De: %v", err)
+	}
+	// Se identifican por CONTENIDO y no por posicion: T1 y T2 usan relojes
+	// independientes, asi que el orden de `cuando` no es lo que esta prueba
+	// quiere comprobar -el invariante vale sin importar cual de los dos
+	// escriba primero.
+	var correccionT1, correccionT2 *aplicacion.Asiento
+	for i := range asientos {
+		if asientos[i].Hecho != aplicacion.HechoObraCorregida {
+			continue
+		}
+		switch asientoObra(t, asientos[i]).Despues.Titulo {
+		case "Version-T1":
+			correccionT1 = &asientos[i]
+		case "Version-T2":
+			correccionT2 = &asientos[i]
+		}
+	}
+	if len(asientos) != 3 || correccionT1 == nil || correccionT2 == nil {
+		t.Fatalf("se esperaban 3 asientos (alta y las dos correcciones), historia = %v", hechos(asientos))
+	}
+
+	p1, p2 := asientoObra(t, *correccionT1), asientoObra(t, *correccionT2)
+	if p1.Antes == nil || p1.Antes.Titulo != "Senoritas de Uribe" {
+		t.Fatalf("T1.antes = %+v, se esperaba el alta original", p1.Antes)
+	}
+	// El invariante que el bloqueante 4 protege: T2 tiene que ver el COMMIT de
+	// T1, no el estado de antes de que T1 empezara. Sin el cerrojo, esto sale
+	// "Senoritas de Uribe" -el mismo que T1.antes- y el tramo real
+	// (alta -> Version-T1 -> Version-T2) queda invisible para siempre, porque
+	// el estado anterior no sobrevive en ninguna otra tabla.
+	if p2.Antes == nil || p2.Antes.Titulo != "Version-T1" {
+		t.Fatalf("T2.antes = %+v, se esperaba %q (el despues de T1)", p2.Antes, "Version-T1")
+	}
+
+	final, err := s.PorID(ctx, obraNueva)
+	if err != nil {
+		t.Fatalf("PorID final: %v", err)
+	}
+	if final.Metadatos().Titulo != "Version-T2" {
+		t.Fatalf("titulo final = %q, se esperaba %q", final.Metadatos().Titulo, "Version-T2")
 	}
 }

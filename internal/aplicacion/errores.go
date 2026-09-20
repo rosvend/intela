@@ -50,6 +50,18 @@ var (
 	// encontrado".
 	ErrSnapshotCorrupto = errors.New("snapshot de parametros corrupto")
 
+	// ErrTasaAmbigua: dos claves `cambio.*` normalizan al mismo codigo ISO.
+	//
+	// `cambio.USD` y `cambio.usd` son filas DISTINTAS para el esquema --
+	// `parametros.clave` no tiene collation especial -- pero [reparto.Snapshot]
+	// solo tiene una entrada por moneda (`Tasas[iso]`). Sin este centinela, la
+	// que ordena despues por bytes pisa a la otra en el mapa sin que nada lo
+	// diga, y un factor de conversion que alguien cargo de verdad desaparece.
+	// Es la misma disciplina de "una sola respuesta por clave" que ya exige la
+	// EXCLUDE de vigencias, aplicada al codigo ISO derivado en vez de a la
+	// clave literal.
+	ErrTasaAmbigua = errors.New("tasa de cambio ambigua")
+
 	// ErrUsuarioInvalido: los datos de una cuenta nueva no cumplen el esquema.
 	//
 	// Se envuelve siempre con el campo concreto que falla, por la misma razon
@@ -200,3 +212,24 @@ func (e *ErrorParametroAusente) Error() string {
 // Unwrap deja que quien solo quiera saber "falta un parametro" siga usando
 // errors.Is(err, ErrParametroAusente) sin conocer este tipo.
 func (e *ErrorParametroAusente) Unwrap() error { return ErrParametroAusente }
+
+// ErrorTasaAmbigua nombra el codigo ISO y las dos claves de `parametros` que
+// compiten por el.
+//
+// Es un tipo y no solo el centinela por la misma razon que ErrorParametroAusente:
+// quien lo recibe tiene que poder actuar, y "tasa de cambio ambigua" a secas no
+// dice cual de las dos filas hay que cerrar o corregir.
+type ErrorTasaAmbigua struct {
+	// Codigo es el ISO ya normalizado a mayusculas, p.ej. "USD".
+	Codigo string
+	// Claves son las dos claves originales que colisionan.
+	Claves []string
+}
+
+func (e *ErrorTasaAmbigua) Error() string {
+	return fmt.Sprintf("%s %s: %s", ErrTasaAmbigua, e.Codigo, strings.Join(e.Claves, ", "))
+}
+
+// Unwrap deja que quien solo quiera saber "hay una tasa ambigua" siga usando
+// errors.Is(err, ErrTasaAmbigua) sin conocer este tipo.
+func (e *ErrorTasaAmbigua) Unwrap() error { return ErrTasaAmbigua }

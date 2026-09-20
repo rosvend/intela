@@ -28,6 +28,16 @@ x-backend: &backend
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
+    # Opcional: solo cuenta si el perfil `seed` o `demo` esta activo. Sin
+    # esto, `migrate` y `seed` corrian en paralelo con la API, y con
+    # SEED_RESET=true el seed podia borrar 21 tablas con la API ya conectada
+    # (ver docs/QUICKSTART.md). `required: false` es lo que permite un `up`
+    # pelado -sin `seed` en el proyecto-: Compose omite la arista del grafo
+    # de dependencias cuando el servicio esta deshabilitado por perfil, en
+    # vez de fallar porque no existe.
+    seed:
+      condition: service_completed_successfully
+      required: false
   restart: unless-stopped
 
 services:
@@ -37,7 +47,9 @@ services:
       POSTGRES_USER: intela
       POSTGRES_PASSWORD: intela
       POSTGRES_DB: intela
-    ports: ["5432:5432"]
+    # Solo loopback: la contrasena es fija y de desarrollo, y publicar en
+    # 0.0.0.0 la expone a toda la red del host, no solo a esta maquina.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U intela -d intela"]
@@ -103,6 +115,12 @@ services:
       # y eso no existe para `up`: `SEED_RESET=true docker compose --profile demo up`
       # levantaba el stack y NO recargaba, en silencio.
       SEED_RESET: "${SEED_RESET:-false}"
+      # Interpolado igual que SEED_RESET, y por la misma razon: sin esto el
+      # binario siempre cae al default "admin-local" (cmd/seed/main.go),
+      # aunque quien levante el stack exporte SEED_CLAVE_ADMIN -y entonces
+      # deploy/smoke.sh, que si lee esa variable del host, intenta iniciar
+      # sesion con una clave que el seed nunca uso.
+      SEED_CLAVE_ADMIN: "${SEED_CLAVE_ADMIN:-}"
     depends_on:
       postgres:
         condition: service_healthy

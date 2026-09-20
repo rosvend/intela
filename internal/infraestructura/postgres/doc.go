@@ -78,13 +78,39 @@
 // La transaccion de una unidad viaja EN EL CONTEXTO, y por eso un metodo solo
 // participa si pide su ejecutor con [Store.ejecutorDe] (lecturas y escrituras
 // sueltas) o abre con [Store.enTransaccionDe] (las que ya tenian transaccion
-// propia). Hoy lo hacen catalogo.go y bitacora.go, que son los dos puertos que
-// la unidad del catalogo abarca, y parametros.go, que desde la #118 congela el
-// snapshot con el que se abre un proceso -- el corte y el `procesos.snapshot_id`
-// que lo referencia son un solo hecho --; el resto va directo al pool. Quien
-// meta un puerto nuevo en una unidad tiene que cambiar tambien sus metodos: por
-// el pool escribirian FUERA de la transaccion y se confirmarian aparte, que es
-// justo el fallo que la unidad existe para impedir.
+// propia). Desde la revision de PR #134 lo hace TODO el paquete: catalogo.go
+// y bitacora.go, que son los dos puertos que la unidad del catalogo abarca
+// (#91); parametros.go, que desde la #118 congela el snapshot con el que se
+// abre un proceso -- el corte y el `procesos.snapshot_id` que lo referencia
+// son un solo hecho --; y el resto (afiliacion.go, calendario.go, cola.go,
+// declaraciones.go, identificacion.go, ingesta.go, provision.go, recaudo.go,
+// repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
+// metodo que NO puede participar en la unidad de otro puerto el dia que
+// alguien lo necesite, y ese dia no avisa con un fallo de compilacion: avisa
+// con una escritura que se confirma sola (ver
+// TestRegistrarBolsaDentroDeUnaUnidadRevierteConLaDeFuera en
+// recaudo_test.go) o con un interbloqueo por agotamiento del pool si la
+// unidad de fuera ya tiene su conexion y la de dentro pide otra (ver
+// TestRegistrarBolsaDentroDeUnaUnidadNoPideSegundaConexion, mismo fichero).
+//
+// La UNICA excepcion, y es a proposito, es [Store.Tomar] (cola.go): una sola
+// sentencia (`FOR UPDATE SKIP LOCKED` + `UPDATE`) pensada para soltar su
+// cerrojo de fila lo antes posible. Correr dentro de la transaccion de quien
+// la llame alargaria ese cerrojo hasta que ESA transaccion entera termine,
+// justo lo que el diseno de la cola quiere evitar. Tomar sigue yendo contra
+// `s.pool` sin mirar el contexto, asi que NO participa en ninguna unidad de
+// trabajo aunque el contexto traiga una: reclamar un trabajo desde dentro de
+// una EnUnidad abre hoy una conexion aparte para esa reclamacion, sin atarla
+// al destino de la unidad que la envuelve. Que un metodo pida su ejecutor es
+// una promesa metodo por metodo, no una garantia de que TODA la logica de
+// este paquete sea atomica con cualquier unidad que la envuelva -- Tomar es
+// el que se queda fuera, y quien lo llame desde dentro de una unidad tiene
+// que saberlo.
+//
+// Quien meta un puerto nuevo en una unidad tiene que revisar que sus metodos
+// pidan su ejecutor: por el pool escribirian FUERA de la transaccion y se
+// confirmarian aparte, que es justo el fallo que la unidad existe para
+// impedir.
 //
 // Lo que no se va a hacer, y conviene decirlo antes de que alguien lo intente:
 // meter en Store un campo mutable con la transaccion en curso. *Store es un
@@ -92,8 +118,10 @@
 // transaccion, y el fallo no seria un panico sino una cifra distinta. El
 // contexto no tiene ese problema porque es de la llamada, no del proceso.
 //
-// Las lecturas que no entran en ninguna unidad van directas al pool: no hay
-// nada que coordinar en una sola consulta.
+// Una lectura o escritura fuera de cualquier unidad sigue yendo contra el
+// pool -- [Store.ejecutorDe] se resuelve a el cuando el contexto no trae
+// transaccion --, que es lo que hace que el mismo metodo sirva suelto y
+// dentro de una unidad sin dos firmas.
 //
 // # Pruebas
 //

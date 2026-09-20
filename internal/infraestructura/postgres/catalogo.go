@@ -136,6 +136,38 @@ func (s *Store) escribirCoautores(ctx context.Context, tx pgx.Tx, o repertorio.O
 	return nil
 }
 
+// Bloquear toma el cerrojo de fila de `obras` sin leer nada de la fila: un
+// `SELECT 1 ... FOR UPDATE` aparte, y no un FOR UPDATE anadido a la sentencia
+// de PorID, porque esa sentencia agrega coautores con jsonb_agg en un
+// LEFT JOIN LATERAL, y PostgreSQL rechaza FOR UPDATE sobre una consulta con
+// funciones de agregado.
+//
+// # La carrera que evita
+//
+// [Catalogo.ActualizarMetadatosObra] lee PorID para saber que habia antes de
+// escribir, y ese "antes" es lo que el asiento promete que esta transaccion
+// sustituyo (catalogo.go, aplicacion). Sin este cerrojo, dos PATCH concurrentes
+// bajo READ COMMITTED corren asi: T2 lee A con PorID mientras T1 todavia no
+// confirma, T1 escribe B y confirma, T2 escribe C encima de B y asienta
+// antes=A, despues=C -- el salto real A-a-B-a-C queda con un tramo invisible
+// para siempre, porque el estado anterior no sobrevive en ninguna otra tabla.
+//
+// Bloquear antes de PorID, las DOS dentro de la misma unidad, serializa esto:
+// T2 se queda esperando el cerrojo de T1 y no llega a su propio PorID hasta
+// que T1 confirma, asi que T2 lee B y asienta antes=B, despues=C. Ningun
+// tramo de la historia se pierde. Ver
+// TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta en
+// catalogo_auditoria_test.go.
+func (s *Store) Bloquear(ctx context.Context, id string) error {
+	var existe string
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
+		`SELECT id FROM obras WHERE id = $1 FOR UPDATE`, id).Scan(&existe)
+	if err != nil {
+		return traducirError(err, "bloquear obra %q", id)
+	}
+	return nil
+}
+
 // PorID reconstruye una obra del catalogo en una sola sentencia: metadatos y
 // coautores salen de la misma instantanea (issue #90).
 //

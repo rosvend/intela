@@ -24,8 +24,9 @@ var _ aplicacion.RepositorioIngesta = (*Store)(nil)
 // No hay columna de dinero que proyectar, y no la va a haber: un reporte de uso
 // PONDERA la bolsa, no la aporta.
 const columnasUso = `id, reporte_id, fuente, titulo, ids_fuente, COALESCE(obra_id, ''),
-	escalon, evidencia, oni, modalidad, tipo_obra, fecha, hora,
-	duracion_min, emisiones, rating, taquilla, vistas, minutos_vistos, pb`
+	escalon, evidencia, oni, modalidad, tipo_obra, canal_id, fecha, hora,
+	duracion_min, emisiones, rating, taquilla, espectadores, exhibiciones,
+	vistas, minutos_vistos, pb`
 
 // escanearUso lee columnasUso. Una sola funcion para las tres consultas que la
 // comparten: con una por consulta, una columna nueva hay que anadirla en tres
@@ -42,9 +43,9 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 	// conviene que dependa de que plan de escaneo elija la libreria.
 	err := fila.Scan(
 		&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
-		&u.Escalon, &u.Evidencia, &u.ONI, &modalidad, &u.TipoObra, &u.Fecha, &u.Hora,
-		&u.DuracionMin, &u.Emisiones, &u.Rating, &u.Taquilla, &u.Vistas,
-		&u.MinutosVistos, &u.PB,
+		&u.Escalon, &u.Evidencia, &u.ONI, &modalidad, &u.TipoObra, &u.CanalID, &u.Fecha, &u.Hora,
+		&u.DuracionMin, &u.Emisiones, &u.Rating, &u.Taquilla, &u.Espectadores,
+		&u.Exhibiciones, &u.Vistas, &u.MinutosVistos, &u.PB,
 	)
 	u.Modalidad = reparto.Modalidad(modalidad)
 	return u, err
@@ -63,7 +64,7 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 // eso basta con mirar el codigo de unicidad y no hace falta distinguir que
 // restriccion salto.
 func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
-	_, err := s.pool.Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
+	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
 	return traducirErrorDeReporte(err, fuente, periodo)
 }
 
@@ -109,7 +110,7 @@ func traducirErrorDeReporte(err error, fuente, periodo string) error {
 // dos; la transaccion la abre el adaptador porque el nucleo no puede tocar pgx.
 // Es la misma forma que [Store.Registrar] con la obra y sus coautores.
 func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, sqlInsertarReporte,
 			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
 		if err != nil {
@@ -140,7 +141,7 @@ func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos
 // dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
 // produccion -- salen en orden arbitrario y el listado cambia entre lecturas.
 func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
-	filas, err := s.pool.Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
 		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
 		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
@@ -197,7 +198,7 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 		return nil
 	}
 
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		return escribirLote(ctx, tx, usos)
 	})
 }
@@ -248,14 +249,17 @@ func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) err
 	_, err := tx.Exec(ctx,
 		`INSERT INTO usos (
 		   id, reporte_id, fuente, titulo, ids_fuente, obra_id, escalon, evidencia,
-		   oni, modalidad, tipo_obra, fecha, hora,
-		   duracion_min, emisiones, rating, taquilla, vistas, minutos_vistos, pb)
+		   oni, modalidad, tipo_obra, canal_id, fecha, hora,
+		   duracion_min, emisiones, rating, taquilla, espectadores, exhibiciones,
+		   vistas, minutos_vistos, pb)
 		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8,
-		         $9, $10, $11, $12, $13,
-		         $14, $15, $16, $17, $18, $19, $20)`,
+		         $9, $10, $11, $12, $13, $14,
+		         $15, $16, $17, $18, $19, $20,
+		         $21, $22, $23)`,
 		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, u.ObraID, u.Escalon, u.Evidencia,
-		u.ONI, string(u.Modalidad), u.TipoObra, u.Fecha, u.Hora,
-		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Vistas, u.MinutosVistos, u.PB)
+		u.ONI, string(u.Modalidad), u.TipoObra, u.CanalID, u.Fecha, u.Hora,
+		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores, u.Exhibiciones,
+		u.Vistas, u.MinutosVistos, u.PB)
 	return err
 }
 
@@ -313,7 +317,7 @@ func (s *Store) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion
 // correcto: esa fila no es un uso. Que no se pueda leer por aqui es la misma
 // propiedad que la hace invisible para el reparto.
 func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersistido, error) {
-	fila := s.pool.QueryRow(ctx, `SELECT `+columnasUso+` FROM usos WHERE id = $1`, id)
+	fila := s.ejecutorDe(ctx).QueryRow(ctx, `SELECT `+columnasUso+` FROM usos WHERE id = $1`, id)
 
 	u, err := escanearUso(fila)
 	if err != nil {
@@ -329,7 +333,7 @@ func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersisti
 //
 // LIMIT 1000: sin cota, /admin/cola-revision devolveria el log entero (S5).
 func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo, tipo, codigo
 		   FROM usos_rechazados
 		  ORDER BY id
@@ -360,6 +364,113 @@ func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido,
 	return usos, nil
 }
 
+// RechazosDeReporte devuelve una pagina del log de rechazos de una entrega, en
+// orden de fila del archivo.
+//
+// # Una sola sentencia, y por eso un LEFT JOIN desde `reportes`
+//
+// "La entrega no existe" y "existe sin rechazos" tienen que salir de la MISMA
+// lectura. Con un SELECT de existencia y despues otro de filas, la entrega
+// puede borrarse entre los dos -el log cuelga de ella con ON DELETE CASCADE- y
+// la respuesta mezclaria dos estados de la base. Asi: cero filas es que la
+// entrega no existe; una sola fila con x.id NULL es la fila nula del LEFT JOIN,
+// o sea una entrega sin rechazos.
+//
+// # Por que la pagina va en un CTE y la existencia fuera
+//
+// La cota se aplica a la PAGINA y no a la lectura. Con el LIMIT en la sentencia
+// de arriba, una pagina vacia -`desplazamiento` mas alla del final, o una
+// entrega sin rechazos consultada desde la pagina 2- devolvia cero filas y el
+// adaptador la leia como "esa entrega no existe": un 404 sobre una entrega que
+// si existe. La existencia se resuelve fuera de la pagina, asi que una pagina
+// vacia sale como lista vacia y el 404 queda para lo que es.
+//
+// x.id se escanea como *string porque es el unico NULL que significa algo: lo
+// distingue de un rechazo de verdad, cuyo id es clave primaria. El resto va con
+// COALESCE, por la misma razon que obra_id en columnasUso: sin tipos nullable
+// en el adaptador para columnas que son NOT NULL en su tabla y solo salen NULL
+// en esa fila.
+//
+// # El orden: longitud y despues texto
+//
+// Los ids de fila los deriva la ingesta como `<reporte>-<n>` sin ceros a la
+// izquierda, y el orden lexico pondria `-10` antes que `-2`. Dentro de UNA
+// entrega todos comparten el prefijo, asi que ordenar por longitud y despues
+// por texto es ordenar por n, que es la fila del archivo. Se repite en la
+// sentencia de fuera: el orden de un CTE no es una promesa del resultado.
+//
+// Ojo con el indice: `usos_rechazados_reporte` sirve al JOIN -el WHERE por
+// `reporte_id`-, pero `ORDER BY length(x.id), x.id` NO lo puede usar, porque
+// Postgres ordena. El indice acota que filas entran; el orden se paga aparte.
+func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
+	// La cota la aplica la base y no el adaptador: traer el log entero para
+	// recortarlo aqui deja en pie el pico de memoria que la cota existe para
+	// evitar. `Paginacion{}` aplica [aplicacion.LimiteObrasPorDefecto], igual que
+	// las lecturas del catalogo; los valores ilegales los rechaza el adaptador
+	// HTTP con 400 antes de llegar aqui.
+	pag = pag.ConDefecto()
+
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
+		WITH carga AS (
+			SELECT id FROM reportes WHERE id = $1
+		), pagina AS (
+			SELECT x.id, x.reporte_id, x.fuente, x.titulo, x.ids_fuente,
+			       x.modalidad, x.motivo, x.tipo, x.codigo
+			  FROM usos_rechazados x
+			 WHERE x.reporte_id = $1
+			 ORDER BY length(x.id), x.id
+			 LIMIT $2 OFFSET $3
+		)
+		SELECT p.id,
+		       COALESCE(p.reporte_id, ''), COALESCE(p.fuente, ''), COALESCE(p.titulo, ''),
+		       COALESCE(p.ids_fuente, ''), COALESCE(p.modalidad, ''), COALESCE(p.motivo, ''),
+		       COALESCE(p.tipo, ''), COALESCE(p.codigo, ''),
+		       c.id AS reporte
+		  FROM carga c
+		  LEFT JOIN pagina p ON true
+		 ORDER BY length(p.id), p.id`,
+		reporteID, pag.Limite, pag.Desplazamiento)
+	if err != nil {
+		return nil, traducirError(err, "rechazos del reporte %q", reporteID)
+	}
+	defer filas.Close()
+
+	existe := false
+	usos := make([]aplicacion.UsoPersistido, 0)
+	for filas.Next() {
+		existe = true
+		var (
+			u         aplicacion.UsoPersistido
+			id        *string
+			modalidad string
+			reporte   string
+		)
+		if err := filas.Scan(
+			&id, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &modalidad,
+			&u.RechazoMotivo, &u.RechazoTipo, &u.RechazoCodigo, &reporte,
+		); err != nil {
+			return nil, traducirError(err, "escanear rechazo")
+		}
+		if id == nil {
+			continue
+		}
+		u.ID = *id
+		// Igual que en ListarRechazos: a string y despues al tipo, sin depender
+		// del plan de escaneo de la libreria.
+		u.Modalidad = reparto.Modalidad(modalidad)
+		usos = append(usos, u)
+	}
+	// Igual que en ListarCargas: sin esto un log TRUNCADO por un fallo a mitad
+	// de stream se devuelve como log completo.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "rechazos del reporte %q", reporteID)
+	}
+	if !existe {
+		return nil, fmt.Errorf("rechazos del reporte %q: %w", reporteID, aplicacion.ErrNoEncontrado)
+	}
+	return usos, nil
+}
+
 // UsosPorIDs resuelve un lote de ids en un solo viaje (S5). Los que no
 // existen simplemente no aparecen en el mapa.
 func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplicacion.UsoPersistido, error) {
@@ -367,7 +478,7 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 	if len(ids) == 0 {
 		return out, nil
 	}
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasUso+` FROM usos WHERE id = ANY($1)`, ids)
 	if err != nil {
 		return nil, traducirError(err, "usos por ids")
@@ -394,7 +505,7 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 // pesos. La lista de monedas NO vive en Go: solo se convierten las que
 // tengan fila cambio.<ISO>.
 func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, error) {
-	filas, err := s.pool.Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT clave, valor FROM parametros
 		 WHERE vigente_hasta IS NULL
 		    OR vigente_hasta > CURRENT_DATE
@@ -443,7 +554,7 @@ func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, er
 // Si algun dia hicieran falta dos parametros distintos, se parten; hoy
 // unificarlos evita repetir el bucle y su filas.Err().
 func (s *Store) consultarUsos(ctx context.Context, sql, contexto string, args ...any) ([]aplicacion.UsoPersistido, error) {
-	filas, err := s.pool.Query(ctx, sql, args...)
+	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, contexto, args...)
 	}

@@ -168,7 +168,10 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 }
 
 // leerPaginacion interpreta limite y desplazamiento. Misma forma que
-// ListarObras: ausente = defecto; mal formado o fuera de rango = 400.
+// ListarObras, y la comparten las dos rutas que paginan -`GET /obras` y
+// `GET /reportes/{id}/rechazos`-: una sola forma de decir "limite" evita la
+// traduccion que se desvia. Ausente = defecto; mal formado o fuera de rango =
+// 400, nunca un recorte en silencio de lo que se pidio.
 func leerPaginacion(w http.ResponseWriter, q url.Values) (aplicacion.Paginacion, bool) {
 	p := aplicacion.Paginacion{}
 	if bruto := q.Get("limite"); bruto != "" {
@@ -210,12 +213,23 @@ func (a *API) obraPorID(w http.ResponseWriter, r *http.Request) {
 	escribirJSON(w, http.StatusOK, aObraJSON(obra))
 }
 
+// maxCuerpoObra acota el JSON del cuerpo antes de decodificarlo: sin limite,
+// un array arbitrariamente grande de coautores se asigna entero en memoria
+// antes de que repertorio.NuevaObra tenga oportunidad de rechazarlo, y desde
+// #91 cada PATCH escribe esos coautores en `asientos.payload` -- una tabla
+// append-only, indexada por GIN entera y conservada diez anos (ADR 0006).
+// Mismo tope que maxCuerpoDeclaracion, en declaraciones.go: ninguna obra real
+// tiene miles de coautores.
+const maxCuerpoObra = 1 << 20 // 1 MiB
+
 // registrarObra da de alta una obra.
 //
 // El identificador lo trae el cuerpo: es el numero de obra de REDES-SYS, que
 // se asigna fuera de este sistema. Por eso el duplicado es 409 y no un id
 // nuevo inventado en silencio.
 func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoObra)
+
 	var cuerpo obraJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con la obra")
@@ -257,6 +271,8 @@ func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
 // escrito en una obra fantasma del catalogo, y contra el catalogo resuelve
 // todo el matching.
 func (a *API) actualizarObra(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoObra)
+
 	var cuerpo metadatosJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con los metadatos")

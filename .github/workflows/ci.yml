@@ -123,7 +123,10 @@ jobs:
           # failure only showed up in terraform apply (#110).
           P_GO='(\.go$|^go\.(mod|sum)$|^migrations/|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture|migrations)\.yml$)'
           P_MIGRATIONS='(^migrations/|^internal/infraestructura/migraciones/|^\.github/workflows/(ci|migrations)\.yml$)'
-          P_FRONTEND='(^web/|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
+          # The contract is in here because the frontend commits types generated
+          # from it (ADR 0010) and `npm test` checks them for drift: a PR that only
+          # changes api/openapi.yaml has to re-run the frontend stages too.
+          P_FRONTEND='(^web/|^api/openapi\.yaml$|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
           P_CONTRACT='(^api/|^\.github/workflows/(ci|contract)\.yml$)'
           # The Go sources are in here on purpose: the backend image is built
           # FROM them, so a change to `internal/` that breaks the build has to
@@ -203,13 +206,13 @@ jobs:
             echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go or \`migrations/\` |"
             echo "| architecture | \`$go\` | depguard needs Go code to inspect |"
             echo "| migrations | \`$migrations\` | \`migrations/\` exists and the PR touches migration numbering |"
-            echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
-            echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
-            echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` |"
+            echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
+            echo "| test-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
+            echo "| build-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
             echo "| contract | \`$contract\` | \`api/openapi.yaml\` exists and the PR touches the contract |"
             echo "| container-backend | \`$docker_backend\` | \`Dockerfile\` exists and the PR touches the container |"
-            echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` |"
             echo "| smoke | \`$smoke\` | \`docker-compose.yml\` and \`deploy/smoke.sh\` exist and the PR touches anything the bring-up depends on |"
+            echo "| container-frontend | \`$docker_frontend\` | \`web/Dockerfile\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
             echo "| terraform | \`$terraform\` | \`infra/\` exists and the PR touches infrastructure or what it packages |"
             echo "| deploy | \`false\` on a PR | only on a push to \`main\`, after the \`ci\` gate |"
           } >> "$GITHUB_STEP_SUMMARY"

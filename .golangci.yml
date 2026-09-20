@@ -156,6 +156,26 @@ linters:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
               desc: "ADR 0003: reparto reads from recaudo. recaudo does not know reparto."
 
+        # Reparto mueve dinero: solo habla con repertorio (declaraciones) y
+        # recaudo (bolsa). No conoce liquidacion, anticipos, ONI ni afiliacion.
+        modulos-reparto:
+          files:
+            - "**/internal/dominio/reparto/*.go"
+            - "**/internal/dominio/reparto/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: liquidacion consumes the corrida; reparto does not know it."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: anticipos settle against liquidacion, not against the engine."
+            - pkg: github.com/rosvend/intela/internal/dominio/prescripcion
+              desc: "ADR 0003: prescribing is not recomputing."
+            - pkg: github.com/rosvend/intela/internal/dominio/oni
+              desc: "ADR 0003: the manual queue does not feed the engine."
+            - pkg: github.com/rosvend/intela/internal/dominio/afiliacion
+              desc: "ADR 0003: the padron is resolved before the corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/reclamaciones
+              desc: "ADR 0005: a reclamacion does not reopen a corrida."
+
         # Normalizacion produces the canonical Uso the engine consumes; it
         # does not touch money, recaudo or the matching cascade.
         modulos-normalizacion:

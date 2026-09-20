@@ -156,11 +156,19 @@ type RepositorioRepertorio interface {
 // Registrar y Actualizar son ATOMICOS por contrato -la obra y sus coautores
 // entran o no entran-. Una obra a medias, sin coautores, viola la invariante
 // de [repertorio.Obra] en cuanto alguien la lea de vuelta.
+//
+// Bloquear toma el cerrojo de fila de una obra sin leerla, o devuelve
+// [ErrNoEncontrado]. Solo tiene sentido DENTRO de una [UnidadDeTrabajo]:
+// [Catalogo.ActualizarMetadatosObra] la llama justo antes de PorID para que
+// esa lectura no pueda adelantarse al commit de otro PATCH concurrente sobre
+// la MISMA obra -- ver el comentario de ese metodo para la carrera exacta que
+// evita.
 type CatalogoObras interface {
 	Registrar(ctx context.Context, o repertorio.Obra) error
 	Actualizar(ctx context.Context, o repertorio.Obra) error
 	PorID(ctx context.Context, id string) (repertorio.Obra, error)
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
+	Bloquear(ctx context.Context, id string) error
 }
 
 // GestionDeclaraciones es la escritura y el historial de la Declaracion de
@@ -315,6 +323,23 @@ type RepositorioIngesta interface {
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
 	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
+
+	// RechazosDeReporte devuelve una PAGINA del log de rechazos de una entrega,
+	// en el orden de fila del archivo.
+	//
+	// La cota la elige quien llama y la aplica la base. No es una comodidad: un
+	// archivo con la cabecera equivocada rechaza TODAS sus filas, y el log entero
+	// se leia, se traducia a JSON y se pintaba completo -un `<tr>` por fila-, con
+	// lo que eso hace a la pestana y a la memoria del proceso. Paginar no es
+	// truncar en silencio: el recuento total sigue viajando en `Carga.rechazados`
+	// (ver [Ingesta.Cargas]), que es de donde quien lee saca el "N de M" sin
+	// afirmar una cifra que nadie conto.
+	//
+	// Devuelve [ErrNoEncontrado] si la entrega no existe, y una lista vacia -no
+	// nil- si existe y no tuvo rechazos, o si la pagina pedida cae mas alla del
+	// final. Una lista vacia no puede significar "no existe": seria la misma
+	// ambiguedad que [Ingesta.Cargas] evita validando el periodo.
+	RechazosDeReporte(ctx context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error)
 
 	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
 	// mas antigua. Un periodo vacio NO filtra.

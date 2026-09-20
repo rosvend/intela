@@ -44,14 +44,21 @@ se lee como un fallo del codigo y es una imagen rancia.
 
 Sembrar es **idempotente**: repetir el `up` con la base ya sembrada no duplica
 nada, el sembrador detecta el dataset completo y sale con exito. Para recargar
-de cero, `SEED_RESET=true docker compose --profile demo up`.
+de cero, `docker compose --profile demo down -v` y volver a levantar -no
+`SEED_RESET=true`: en cuanto hay un solo asiento en la bitacora (basta con
+haber tocado el tablero), el seed rechaza el reset con `ErrBitacoraNoVacia`
+en vez de borrar el libro de auditoria. `SEED_RESET=true` solo recarga en la
+ventana entre `migrate` y el primer asiento; pasada esa ventana, `down -v` es
+el unico camino. Tambien es el unico que limpia `snapshots_parametros` -el
+corte congelado de una corrida-: esa tabla es inmutable por trigger y el
+sembrador no la toca, asi que un reset no la vacia.
 
 ## Que queda levantado
 
 | URL | Que es |
 | --- | --- |
 | <http://localhost> | El tablero |
-| <http://localhost/api> | La API, detras del mismo nginx |
+| <http://localhost/api/health> | La API, detras del mismo nginx -notese la barra final; `/api` a secas cae en la ruta del tablero y devuelve el index con 200 |
 | <http://localhost/ready> | Sonda: el proceso vive **y** la base responde |
 | <http://localhost/health> | Sonda: solo que el proceso vive |
 
@@ -69,16 +76,17 @@ Es la misma prueba de humo que corre CI en cada pull request. No se conforma con
 que los contenedores esten arriba: pasa por nginx como lo haria un navegador y
 comprueba lo que tiene que ser cierto para que el sistema *sirva*.
 
-1. `/ready` responde 200 -la API llega a Postgres-.
-2. `/api/health` responde 200 -el prefijo `/api/` enruta; es otro camino en
-   nginx y se rompe por su cuenta-.
-3. La raiz devuelve el index del tablero **y su bundle de JavaScript carga**.
-4. `/api/obras` sin token responde 401.
-5. Se puede iniciar sesion con el usuario del seed.
-6. `/api/obras` con token devuelve **al menos una obra**: es lo que distingue
+1. `/ready` responde 200 -la API llega a Postgres- **y** `/api/health` responde
+   200 -el prefijo `/api/` enruta; es otro camino en nginx y se rompe por su
+   cuenta-.
+2. La raiz devuelve el index del tablero **y su bundle de JavaScript carga**.
+3. `/api/obras` sin token responde 401.
+4. Se puede iniciar sesion con el usuario del seed.
+5. `/api/obras` con token devuelve **al menos una obra**: es lo que distingue
    "levanto" de "levanto sembrado".
-7. `worker` y `scheduler` siguen en pie. No publican puerto, asi que un reinicio
-   en bucle no lo ve ninguna de las comprobaciones anteriores.
+6. `worker` y `scheduler` siguen en pie, comprobado dos veces con margen entre
+   medias. No publican puerto, asi que ni un reinicio en bucle ni una foto
+   unica lo ve ninguna de las comprobaciones anteriores.
 
 Sale 0 si todo pasa. Si algo falla, sale 1 diciendo que comprobacion fue y
 vuelca el estado de los contenedores y la cola de sus logs, para no tener que
@@ -120,6 +128,6 @@ docker compose --profile demo down -v --rmi local
 | `rootlessport listen tcp 0.0.0.0:80: bind: permission denied` | podman sin privilegios no puede publicar puertos por debajo de `net.ipv4.ip_unprivileged_port_start` | `sudo sysctl net.ipv4.ip_unprivileged_port_start=80`, o publicar el tablero en otro puerto |
 | `404 ruta no encontrada` en rutas que existen | Imagenes viejas | `docker compose --profile demo up -d --build` |
 | `credenciales invalidas` | La base esta migrada pero sin sembrar (se arranco sin `--profile demo`) | `docker compose run --rm seed` |
-| El seed dice `semilla a medias` | Una corrida anterior se corto por la mitad | `SEED_RESET=true docker compose --profile demo up` |
+| El seed dice `semilla a medias` | Una corrida anterior se corto por la mitad | `SEED_RESET=true docker compose --profile demo up`, y si lo rechaza con `ErrBitacoraNoVacia` (ya hay un asiento en la bitacora), `docker compose --profile demo down -v` en su lugar |
 
 Mas sintomas y el detalle de las variables, en [`ARRANQUE.md`](ARRANQUE.md).

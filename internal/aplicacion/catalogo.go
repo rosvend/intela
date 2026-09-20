@@ -3,6 +3,7 @@ package aplicacion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -84,7 +85,7 @@ func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Met
 		return repertorio.Obra{}, err
 	}
 
-	err = c.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+	err = c.enUnidad(ctx, func(ctx context.Context) error {
 		if err := c.Obras.Registrar(ctx, obra); err != nil {
 			// Sin envolver ErrObraDuplicada en un texto que lo tape: quien llama
 			// lo distingue con errors.Is, y el adaptador ya le pone su contexto.
@@ -126,6 +127,17 @@ func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Met
 // Devuelve ErrNoEncontrado si la obra no existe. No la crea: un PATCH que
 // inserta convierte un id mal escrito en una obra fantasma del catalogo, y
 // contra el catalogo resuelve todo el matching.
+//
+// # Por que se bloquea la fila antes de leerla
+//
+// Dos PATCH concurrentes sobre la MISMA obra, bajo READ COMMITTED: sin
+// cerrojo, T2 podria leer con PorID el estado A mientras T1 todavia no
+// confirma, T1 escribe B y confirma, y T2 escribe C encima de B asentando
+// antes=A, despues=C. El tramo real A-a-B-a-C se pierde para siempre, porque
+// el estado anterior no sobrevive en ninguna otra tabla (ver el comentario de
+// arriba). [CatalogoObras.Bloquear] toma el cerrojo de fila ANTES de PorID:
+// T2 se queda esperando el commit de T1 y solo entonces lee, asi que su
+// "antes" es lo que esta transaccion de verdad sustituyo.
 func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
 	// Se construye una obra completa y valida ANTES de tocar la base: es el
 	// mismo constructor que el alta, asi que una obra corregida cumple lo
@@ -135,10 +147,13 @@ func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repe
 		return repertorio.Obra{}, err
 	}
 
-	err = c.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+	err = c.enUnidad(ctx, func(ctx context.Context) error {
+		if err := c.Obras.Bloquear(ctx, id); err != nil {
+			return err
+		}
 		anterior, err := c.Obras.PorID(ctx, id)
 		if err != nil {
-			return fmt.Errorf("obra %q: %w", id, err)
+			return err
 		}
 		if err := c.Obras.Actualizar(ctx, obra); err != nil {
 			return err
@@ -160,7 +175,18 @@ func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repe
 // NO se descarta en ningun camino: el ADR 0006 declara el asiento "parte de la
 // definicion de hecho de cada caso de uso", asi que un caso de uso cuyo
 // asiento fallo no esta hecho, y devolverlo es lo que revierte la unidad.
+//
+// actorID vacio se rechaza aqui, no solo en el adaptador. [postgres.asentar]
+// lo escribe con NULLIF sobre la cadena vacia, y `asientos.actor_id` es
+// nullable -- un asiento sin firmar es una fila valida para la base, pero no
+// para el ADR 0006, que
+// exige saber QUIEN hizo cada hecho. Por HTTP nunca llega vacio (sale de la
+// sesion, ver httpapi/obras.go), pero el contrato de este caso de uso es el
+// que lo sostiene, no el adaptador que llame antes.
 func (c Catalogo) asentar(ctx context.Context, hecho, obraID, actorID string, p AsientoObra) error {
+	if actorID == "" {
+		return fmt.Errorf("asentar %q sobre la obra %q: actorID vacio", hecho, obraID)
+	}
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("serializar el asiento de la obra %q: %w", obraID, err)
@@ -180,6 +206,34 @@ func (c Catalogo) asentar(ctx context.Context, hecho, obraID, actorID string, p 
 	return nil
 }
 
+// enUnidad es [UnidadDeTrabajo.EnUnidad] con una guarda: un Catalogo cableado
+// a medias -- cargar_test.go, en semilla, construye Catalogo{Obras: store} a
+// proposito para las dos lecturas que no necesitan nada mas -- devuelve un
+// error legible en vez de un nil pointer dereference en cuanto RegistrarObra
+// o ActualizarMetadatosObra intenten escribir.
+//
+// Comprueba las CUATRO dependencias que un camino de escritura toca -Obras,
+// Unidad, Bitacora y Reloj-, no solo Unidad: un
+// Catalogo{Obras: ..., Unidad: ..., Bitacora: ...} sin Reloj paniqueaba
+// igual, solo que mas tarde -- DENTRO de la transaccion ya abierta, porque
+// [Catalogo.asentar] llama c.Reloj.Ahora() -- y con un mensaje ("catalogo mal
+// cableado: falta UnidadDeTrabajo") que apuntaba a la dependencia que no era.
+// Las cuatro se comprueban ANTES de abrir la unidad, asi que una escritura
+// con cualquiera de las cuatro ausente falla limpio sin tocar la base.
+func (c Catalogo) enUnidad(ctx context.Context, fn func(context.Context) error) error {
+	switch {
+	case c.Obras == nil:
+		return errors.New("catalogo mal cableado: falta CatalogoObras")
+	case c.Unidad == nil:
+		return errors.New("catalogo mal cableado: falta UnidadDeTrabajo")
+	case c.Bitacora == nil:
+		return errors.New("catalogo mal cableado: falta BitacoraAuditoria")
+	case c.Reloj == nil:
+		return errors.New("catalogo mal cableado: falta Reloj")
+	}
+	return c.Unidad.EnUnidad(ctx, fn)
+}
+
 // HistorialObra devuelve los asientos de una obra, del mas antiguo al mas
 // nuevo. Es la lectura del ADR 0006 sobre el catalogo: alta, correcciones y
 // -- porque comparten [RefObra] -- tambien lo que asentaron sus declaraciones.
@@ -197,11 +251,11 @@ func (c Catalogo) HistorialObra(ctx context.Context, obraID string) ([]Asiento, 
 
 // ObraPorID devuelve una obra del catalogo, o ErrNoEncontrado.
 func (c Catalogo) ObraPorID(ctx context.Context, id string) (repertorio.Obra, error) {
-	obra, err := c.Obras.PorID(ctx, id)
-	if err != nil {
-		return repertorio.Obra{}, fmt.Errorf("obra %q: %w", id, err)
-	}
-	return obra, nil
+	// Sin envolver de nuevo: el adaptador ya nombra la obra y la operacion en
+	// su propio error (ver [postgres.Store.PorID]). Hacerlo tambien aqui
+	// duplicaba el "obra %q" -- una vez del caso de uso, otra del adaptador --
+	// en el mismo mensaje sin anadir nada que errors.Is no pueda ver ya.
+	return c.Obras.PorID(ctx, id)
 }
 
 // BuscarObras resuelve una consulta del catalogo.
@@ -268,12 +322,15 @@ type CoautorAsentado struct {
 
 // metadatosAsentados traduce una obra a la forma del libro.
 //
-// Los coautores salen ORDENADOS por (IPI, rol), que es el mismo orden en que
-// los devuelve la lectura del catalogo. Sin ordenar, el bloque dependeria del
-// orden en que quien llama los mando -- el de un cuerpo HTTP, que no significa
-// nada -- y dos asientos identicos se verian distintos: el ADR 0005 exige que
-// esto sea reproducible, y [camposCambiados] anunciaria un cambio de coautores
-// en cada PATCH que no cambio ninguno.
+// Los coautores salen ORDENADOS por (IPI, rol), el mismo orden en que los
+// devuelve la lectura del catalogo (ver lateralCoautores en
+// postgres/catalogo.go). Sin ordenar, el bloque dependeria del orden en que
+// quien llama los mando -- el de un cuerpo HTTP, que no significa nada -- y
+// dos asientos identicos se verian distintos: el ADR 0005 exige que esto sea
+// reproducible, y [camposCambiados] anunciaria un cambio de coautores en
+// cada PATCH que no cambio ninguno. (IPI, rol) ya es clave unica por obra
+// -repertorio.normalizarCoautores la exige-, asi que este orden es total y
+// no hace falta un tercer campo de desempate.
 func metadatosAsentados(o repertorio.Obra) MetadatosAsentados {
 	m := o.Metadatos()
 	coautores := make([]CoautorAsentado, 0, len(m.Coautores))

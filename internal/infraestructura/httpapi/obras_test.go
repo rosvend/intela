@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -350,6 +351,21 @@ func TestRegistrarObraConCuerpoQueNoEsJSONEs400(t *testing.T) {
 	}
 }
 
+// Un cuerpo que excede maxCuerpoObra se corta ANTES de decodificarse por
+// entero: sin el limite, un array de coautores arbitrariamente grande se
+// asigna completo en memoria antes de que el dominio tenga oportunidad de
+// rechazarlo, y desde #91 cada PATCH ademas escribe esos coautores en
+// `asientos.payload`, que no se puede recortar despues (bloqueante 5).
+func TestRegistrarObraConCuerpoDemasiadoGrandeEs400(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPost, "/obras", cuerpoDemasiadoGrande(), "tok")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Correccion de metadatos
 
@@ -404,6 +420,35 @@ func TestActualizarObraInvalidaEs400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400", rec.Code)
 	}
+}
+
+// Mismo tope que en el alta (bloqueante 5): el PATCH es el camino por el que
+// #91 escribe coautores en la bitacora, y esa tabla es la que no se puede
+// recortar despues de escrita.
+func TestActualizarObraConCuerpoDemasiadoGrandeEs400(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPatch, "/obras/obra-1", cuerpoDemasiadoGrande(), "tok")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// cuerpoDemasiadoGrande arma un JSON valido pero mas grande que maxCuerpoObra,
+// a base de coautores: es el vector que #91 vuelve caro, porque cada uno
+// termina escrito en `asientos.payload`.
+func cuerpoDemasiadoGrande() string {
+	var b strings.Builder
+	b.WriteString(`{"id":"obra-1","titulo":"T","genero":"G","anio":1991,"tipo":"serie","coautores":[`)
+	for i := 0; i < 40_000; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{"nombre":"Coautor de relleno","ipi":"IPI-00000001","rol":"guionista"}`)
+	}
+	b.WriteString(`]}`)
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------

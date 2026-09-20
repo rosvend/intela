@@ -257,3 +257,28 @@ override.tf.json
 # defecto (./data/objetos): es evidencia GENERADA por el dataset sintetico, no
 # los archivos del cliente, que si van versionados en data/files/.
 /data/objetos/
+
+# Planes del skill iterative-planner. El directorio de cada plan es memoria de
+# trabajo y no se versiona; ANCHORS.md si, porque es el manifiesto de decisiones
+# ancladas que el protocolo audita en cada cierre.
+plans/*
+!plans/ANCHORS.md
+
+# Instalacion del skill iterative-planner: es una herramienta vendorizada, no
+# codigo del proyecto. Las demas skills de .agents/skills/ y .claude/skills/ SI
+# van versionadas, asi que la regla nombra solo esta.
+.agents/skills/iterative-planner/
+# En .claude/skills/ la misma skill entra como junction a la ruta de arriba.
+.claude/skills/iterative-planner
+
+# Cerebro y telemetria del agente local (.dshwolf): estado de sesion, bitacora
+# de bugs y contador de tokens. No es del proyecto.
+.dshwolf/
+
+# Transcripcion de una sesion de trabajo pegada en la raiz. Es material de
+# traspaso entre sesiones, no un artefacto del repositorio.
+contexto-reflect.md
+
+# Binarios locales de herramientas (golangci-lint, etc.) instalados fuera del
+# PATH del CI. No versionar.
+.tools/

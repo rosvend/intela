@@ -25,6 +25,16 @@ type catalogoFalso struct {
 	anterior      repertorio.Obra
 	errPorID      error
 	errAlEscribir error
+
+	// bloqueos cuenta las llamadas a Bloquear, y errBloquear deja simular que
+	// la obra no existe en ese primer paso, antes de llegar a PorID.
+	bloqueos    int
+	errBloquear error
+}
+
+func (c *catalogoFalso) Bloquear(_ context.Context, _ string) error {
+	c.bloqueos++
+	return c.errBloquear
 }
 
 func (c *catalogoFalso) Registrar(_ context.Context, o repertorio.Obra) error {
@@ -506,6 +516,144 @@ func TestRegistrarObraNoAsientaSiLaEscrituraFalla(t *testing.T) {
 	}
 	if unidad.confirmo {
 		t.Fatal("la unidad se confirmo con la escritura fallida")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// El cerrojo antes de reconstruir (bloqueante 4)
+
+// ActualizarMetadatosObra tiene que bloquear la fila ANTES de leerla: es lo
+// que impide que la lectura adelante el commit de un PATCH concurrente sobre
+// la misma obra (ver el comentario del metodo en catalogo.go). El doble no
+// puede probar la serializacion de verdad -eso es
+// TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta, contra
+// Postgres, en postgres/catalogo_auditoria_test.go-, pero si puede probar que
+// el caso de uso PIDE el cerrojo, y que lo pide antes que la lectura.
+func TestActualizarMetadatosObraBloqueaAntesDeLeer(t *testing.T) {
+	repo := &catalogoFalso{anterior: obraDePrueba(t, metadatosValidos())}
+	cat := cableado(repo)
+
+	if _, err := cat.ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos(), actorDePrueba); err != nil {
+		t.Fatalf("ActualizarMetadatosObra: %v", err)
+	}
+	if repo.bloqueos != 1 {
+		t.Fatalf("se esperaba 1 llamada a Bloquear, hubo %d", repo.bloqueos)
+	}
+}
+
+// Si Bloquear falla -tipicamente porque la obra no existe-, ni PorID ni
+// Actualizar se llegan a intentar: el caso de uso falla en el primer paso.
+func TestActualizarMetadatosObraNoLeeSiBloquearFalla(t *testing.T) {
+	repo := &catalogoFalso{errBloquear: ErrNoEncontrado, errPorID: errors.New("PorID no deberia llamarse")}
+	cat := cableado(repo)
+
+	_, err := cat.ActualizarMetadatosObra(t.Context(), "obra-fantasma", metadatosValidos(), actorDePrueba)
+	if !errors.Is(err, ErrNoEncontrado) {
+		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
+	}
+	if repo.actualizadas != 0 {
+		t.Fatal("se escribio una obra cuyo cerrojo fallo")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Guardas del caso de uso
+
+// Un Catalogo cableado a medias -como el Catalogo{Obras: store} que arma
+// semilla/cargar_test.go para las dos lecturas que no necesitan nada mas-
+// tiene que fallar con un error legible en cuanto se intenta ESCRIBIR con
+// cualquiera de las cuatro dependencias ausente, no con un nil pointer
+// dereference. Las cuatro por separado: enUnidad las comprueba todas antes
+// de abrir la unidad (ver su comentario en catalogo.go), y antes solo
+// comprobaba Unidad -un Catalogo sin Reloj paniqueaba igual, mas tarde y con
+// un mensaje que apuntaba a la dependencia equivocada.
+func TestEscrituraConDependenciaFaltanteFallaSinPanicar(t *testing.T) {
+	completo := func() Catalogo {
+		return Catalogo{
+			Obras:    &catalogoFalso{anterior: obraDePrueba(t, metadatosValidos())},
+			Bitacora: &bitacoraFalsa{},
+			Unidad:   &unidadFalsa{},
+			Reloj:    relojFijo{instante: instanteDePrueba},
+		}
+	}
+	casos := map[string]func(*Catalogo){
+		"sin Obras":    func(c *Catalogo) { c.Obras = nil },
+		"sin Bitacora": func(c *Catalogo) { c.Bitacora = nil },
+		"sin Unidad":   func(c *Catalogo) { c.Unidad = nil },
+		"sin Reloj":    func(c *Catalogo) { c.Reloj = nil },
+	}
+
+	for nombre, romper := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			cat := completo()
+			romper(&cat)
+
+			if err := sinPanic(t, func() error {
+				_, err := cat.RegistrarObra(t.Context(), "obra-1", metadatosValidos(), actorDePrueba)
+				return err
+			}); err == nil {
+				t.Fatal("RegistrarObra: se esperaba un error, no nil")
+			}
+			if err := sinPanic(t, func() error {
+				_, err := cat.ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos(), actorDePrueba)
+				return err
+			}); err == nil {
+				t.Fatal("ActualizarMetadatosObra: se esperaba un error, no nil")
+			}
+		})
+	}
+}
+
+// sinPanic ejecuta fn y CONVIERTE cualquier panic en un t.Fatal legible, en
+// vez de dejar que tumbe el binario de pruebas entero: es lo que hace que
+// una regresion a "vuelve a paniquear" se vea como el fallo de ESTA prueba y
+// no como un cuelgue de todo el paquete.
+func sinPanic(t *testing.T, fn func() error) error {
+	t.Helper()
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v", r)
+			}
+		}()
+		err = fn()
+	}()
+	return err
+}
+
+// Un actorID vacio no puede producir un asiento sin firmar: el caso de uso es
+// quien sostiene el contrato del ADR 0006, no el adaptador HTTP que lo llame
+// antes (bitacora.go usa NULLIF sobre la cadena vacia y actor_id es nullable
+// en la base).
+func TestRegistrarObraConActorVacioFalla(t *testing.T) {
+	repo := &catalogoFalso{}
+	libro, unidad := &bitacoraFalsa{}, &unidadFalsa{}
+
+	_, err := catalogoDePrueba(repo, libro, unidad).
+		RegistrarObra(t.Context(), "obra-1", metadatosValidos(), "")
+	if err == nil {
+		t.Fatal("se esperaba un error con actorID vacio")
+	}
+	if len(libro.asientos) != 0 {
+		t.Fatalf("se asento un hecho sin actor: %+v", libro.asientos)
+	}
+	if unidad.confirmo {
+		t.Fatal("la unidad se confirmo con un asiento sin firmar")
+	}
+}
+
+func TestActualizarMetadatosObraConActorVacioFalla(t *testing.T) {
+	repo := &catalogoFalso{anterior: obraDePrueba(t, metadatosValidos())}
+	libro, unidad := &bitacoraFalsa{}, &unidadFalsa{}
+
+	_, err := catalogoDePrueba(repo, libro, unidad).
+		ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos(), "")
+	if err == nil {
+		t.Fatal("se esperaba un error con actorID vacio")
+	}
+	if len(libro.asientos) != 0 {
+		t.Fatalf("se asento un hecho sin actor: %+v", libro.asientos)
 	}
 }
 

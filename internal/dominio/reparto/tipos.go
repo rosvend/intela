@@ -1,6 +1,10 @@
 package reparto
 
 import (
+	"errors"
+	"fmt"
+	"slices"
+
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/recaudo"
@@ -11,10 +15,66 @@ import (
 type Modalidad string
 
 const (
-	TV    Modalidad = "tv"
-	Cine  Modalidad = "cine"
-	OTT   Modalidad = "ott"
-	Hotel Modalidad = "hotel"
+	TV          Modalidad = "tv"
+	Cine        Modalidad = "cine"
+	OTT         Modalidad = "ott"
+	Hotel       Modalidad = "hotel" // RD 9.6: remite a 9.5 (misma estrategia que Suscripcion)
+	Teatro      Modalidad = "teatro"
+	Transporte  Modalidad = "transporte"
+	Suscripcion Modalidad = "suscripcion"
+)
+
+// Modalidades devuelve los valores validos, en el orden del CHECK de usos.
+func Modalidades() []Modalidad {
+	return []Modalidad{TV, Cine, OTT, Hotel, Teatro, Transporte, Suscripcion}
+}
+
+// ParseModalidad valida una modalidad. Una desconocida es error tipado, no
+// cero puntos silenciosos (#119 / #33).
+func ParseModalidad(s string) (Modalidad, error) {
+	m := Modalidad(s)
+	if !slices.Contains(Modalidades(), m) {
+		return "", fmt.Errorf("%w: %q", ErrModalidadDesconocida, s)
+	}
+	return m, nil
+}
+
+// GrupoCanal es la clasificacion efectiva de un canal para RD 9.5.
+// La resuelve la capa de aplicacion contra canales_clasificacion del ano
+// anterior; el motor la recibe ya fijada (ADR 0005).
+type GrupoCanal string
+
+const (
+	GrupoPrivadosNacionales GrupoCanal = "privado_nacional"
+	GrupoRegionalesPublicos GrupoCanal = "regional_publico"
+	GrupoPremium            GrupoCanal = "premium"
+	GrupoLideresRating      GrupoCanal = "lideres_rating"
+	GrupoEstandar           GrupoCanal = "estandar"
+)
+
+// GruposCanal devuelve los cinco grupos de RD 9.5.1–9.5.5.
+func GruposCanal() []GrupoCanal {
+	return []GrupoCanal{
+		GrupoPrivadosNacionales, GrupoRegionalesPublicos, GrupoPremium,
+		GrupoLideresRating, GrupoEstandar,
+	}
+}
+
+// ParseGrupoCanal valida un grupo de canal. Simetrico a [ParseModalidad]:
+// desconocido o vacio es error tipado, no cero puntos silenciosos (P-04).
+func ParseGrupoCanal(s string) (GrupoCanal, error) {
+	g := GrupoCanal(s)
+	if !slices.Contains(GruposCanal(), g) {
+		return "", fmt.Errorf("%w: %q", ErrGrupoDesconocido, s)
+	}
+	return g, nil
+}
+
+// BaseCineTeatro elige la medida de ponderacion de cine/teatro (P-18).
+// No es P-01: P-01 es la base tarifaria (RT 3.2 vs RT 4) y no desbloquea codigo.
+const (
+	BaseEspectadores = "espectadores"
+	BaseTaquilla     = "taquilla"
 )
 
 // Circuito de la corrida. Son dos recorridos distintos, no una variante de
@@ -58,6 +118,15 @@ type Firma struct {
 // periodo. Se resuelve al ABRIR el proceso y queda referenciado por la
 // corrida; recalcular no vuelve a resolverlo (ADR 0004, ADR 0005). Sin esto
 // una corrida no se reproduce bit a bit anos despues.
+//
+// Ningun porcentaje de grupo ni la asignacion de plataformas de terceros es
+// literal en el motor: viven aqui (ADR 0004, RD 9.5, RD 9.7).
+//
+// Unidad de los porcentajes (Admin/Social/Reserva, grupos, terceros): 0-100
+// (cincuenta por ciento = 50). No son fracciones 0-1. El sembrador escribe
+// deducciones como "0.20" en parametros.valor; SnapshotEnFecha (#34) debe
+// convertir a esta unidad al armar el Snapshot. Cero en un porcentaje se
+// trata como ausente (ADR 0004); SinDeducciones cubre el salto legitimo (R-16).
 type Snapshot struct {
 	AdminPct     decimal.Decimal
 	SocialPct    decimal.Decimal
@@ -70,7 +139,20 @@ type Snapshot struct {
 	Wb           decimal.Decimal
 	Wc           decimal.Decimal
 	UmbralMatch  decimal.Decimal
-	Reglamento   string
+
+	GrupoPrivadosPct      decimal.Decimal
+	GrupoRegionalesPct    decimal.Decimal
+	GrupoPremiumPct       decimal.Decimal
+	GrupoLideresPct       decimal.Decimal
+	GrupoEstandarPct      decimal.Decimal
+	AsignacionTercerosPct decimal.Decimal
+
+	// BaseCineTeatro es "espectadores" o "taquilla" (P-18). Vacio es error.
+	// Es string a proposito: no cabe en parametros.valor NUMERIC(18,6);
+	// la resolucion del snapshot (#34) lo lee de una clave textual aparte.
+	BaseCineTeatro string
+
+	Reglamento string
 
 	// Coeficientes de RD 9.1.1(c). Viven en el snapshot y no en el codigo
 	// (ADR 0004): el 80% artistico y los 48 minutos de la hora televisiva
@@ -96,13 +178,22 @@ type Uso struct {
 	ObraID        string
 	Modalidad     Modalidad
 	TipoObra      string
+	CanalID       string
+	Grupo         GrupoCanal // clasificacion efectiva; solo suscripcion/hotel
 	DuracionMin   decimal.Decimal
 	Emisiones     int64
 	Rating        decimal.Decimal
 	Taquilla      decimal.Decimal
+	Espectadores  decimal.Decimal
+	Exhibiciones  int64
 	Vistas        decimal.Decimal
 	MinutosVistos decimal.Decimal
 	PB            decimal.Decimal
+
+	// FueraDeRepertorio marca un canal sin contenido del catalogo (R-27).
+	// Cero-valor = dentro del repertorio. Solo la estrategia de suscripcion
+	// lo aplica, y lo hace ANTES del split por grupos.
+	FueraDeRepertorio bool
 }
 
 // Bolsa a repartir en un periodo. Es lo unico que Recaudo pasa aguas abajo:
@@ -144,29 +235,68 @@ type LineaTitular struct {
 	Importe    decimal.Decimal
 }
 
+// MotivoNoDistribuido explica por que un importe no llego a titulares ni a
+// retenido. Residuo queda reservado al redondeo (ADR 0005); esto es otra cosa.
+type MotivoNoDistribuido string
+
+const (
+	MotivoGrupoSinObras MotivoNoDistribuido = "grupo_sin_obras"
+	MotivoExclusionR27  MotivoNoDistribuido = "exclusion_r27"
+	MotivoPesoCero      MotivoNoDistribuido = "peso_cero"
+)
+
+// ParteNoDistribuida es un tramo de NoDistribuido con motivo auditable (RD 16).
+type ParteNoDistribuida struct {
+	Motivo  MotivoNoDistribuido
+	Grupo   GrupoCanal
+	ObraID  string
+	Importe decimal.Decimal
+}
+
+// LineaGrupo deja observable el valor punto de cada grupo (RD 9.5 / #120).
+type LineaGrupo struct {
+	Grupo       GrupoCanal
+	Bolsa       decimal.Decimal
+	TotalPuntos decimal.Decimal
+	ValorPunto  decimal.Decimal
+	Residuo     decimal.Decimal
+}
+
 // Resultado de una corrida.
 //
 // La invariante de cierre que el motor tiene que probar:
 //
-//	Neto == suma(Titulares.Importe) + Retenido + Residuo
+//	Neto == suma(Titulares.Importe) + Retenido + Residuo + NoDistribuido
 //
-// Retenido y Residuo existen como campos propios precisamente para que esa
-// igualdad se pueda comprobar. El ADR 0005 pide que el residuo de redondeo
-// sea explicito y reproducible, no un sobrante que absorbe la ultima linea.
+// Residuo es SOLO el residuo de redondeo (ADR 0005). NoDistribuido concentra
+// importes enteros que el reglamento no reparte (grupo sin obras, exclusion
+// R-27 a posteriori, peso total cero). Ante RD 16, PartesNoDistribuidas dice
+// a donde fue cada tramo.
 //
 // Snapshot y Reglamento guardan la procedencia: sin ellos no se puede
 // defender una cifra ante una auditoria de RD 16.
 type Resultado struct {
-	Neto       decimal.Decimal
-	Admin      decimal.Decimal
-	Social     decimal.Decimal
-	Reserva    decimal.Decimal
-	Retenido   decimal.Decimal
-	Residuo    decimal.Decimal
-	ValorPunto decimal.Decimal
-	Obras      []LineaObra
-	Titulares  []LineaTitular
+	Neto                 decimal.Decimal
+	Admin                decimal.Decimal
+	Social               decimal.Decimal
+	Reserva              decimal.Decimal
+	Retenido             decimal.Decimal
+	Residuo              decimal.Decimal
+	NoDistribuido        decimal.Decimal
+	PartesNoDistribuidas []ParteNoDistribuida
+	ValorPunto           decimal.Decimal
+	PorGrupo             []LineaGrupo
+	Obras                []LineaObra
+	Titulares            []LineaTitular
 
 	SnapshotID string
 	Reglamento string
 }
+
+// Sentinel errors del paquete. Un solo centinela por clase de fallo.
+var (
+	ErrModalidadDesconocida = errors.New("modalidad desconocida")
+	ErrGrupoDesconocido     = errors.New("grupo de canal desconocido")
+	ErrParametroAusente     = errors.New("parametro normativo ausente")
+	ErrRepartoInvalido      = errors.New("reparto invalido")
+)

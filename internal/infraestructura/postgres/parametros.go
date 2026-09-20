@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,10 +36,6 @@ const (
 	// cambiado la representacion del contenido.
 	escalaParametro = 6
 
-	// prefijoSnapshot marca el id como lo que es. El resto son los 64 hex del
-	// sha256; el CHECK de la tabla exige exactamente esta forma.
-	prefijoSnapshot = "snp-"
-
 	// prefijoTasa es la familia de claves de cambio de moneda: `cambio.<ISO>`.
 	// No hay lista de monedas en Go (ADR 0004, B4): solo se convierte lo que
 	// tenga fila, y el euro sin fila propia no hereda la tasa del dolar.
@@ -60,11 +58,34 @@ const (
 // exactamente lo que devolvio la resolucion que lo congelo.
 const columnasParametro = `clave, valor, organo, reglamento, vigente_desde`
 
+// escalaValor dice si `parametros.valor` ya esta en la unidad que
+// [reparto.Snapshot] exige, o si hay que convertirlo al armar el snapshot.
+//
+// Existe porque el Snapshot NO usa una sola unidad (tipos.go:125-129):
+// Admin/Social/Reserva, los grupos de canal y la asignacion a terceros son
+// 0-100, pero ott.w*, ponderacion.* y duracion.artistica_pct son
+// multiplicadores crudos que el motor usa tal cual. Que la unidad sea un
+// campo explicito de la clausula, y no algo que cada setter tenga que
+// recordar, es lo que evita que una clausula nueva se escriba en la unidad
+// equivocada sin que nada lo note: bloqueante 1 de la revision de PR #134 fue
+// exactamente eso, y en silencio.
+type escalaValor int
+
+const (
+	// escalaDirecta: el valor de la columna es ya la unidad del Snapshot.
+	escalaDirecta escalaValor = iota
+	// escalaFraccionAPorcentaje: la columna trae una fraccion 0-1 ("0.20") y
+	// el Snapshot exige 0-100. Solo deduccion.* y reserva.* vienen asi; el
+	// sembrador ya sirve grupo.*_pct y asignacion.terceros_pct en 0-100.
+	escalaFraccionAPorcentaje
+)
+
 // clausula es una clave de `parametros` con el hueco de [reparto.Snapshot] que
 // llena.
 type clausula struct {
-	clave string
-	en    func(*reparto.Snapshot, decimal.Decimal)
+	clave  string
+	escala escalaValor
+	en     func(*reparto.Snapshot, decimal.Decimal)
 }
 
 // clausulasDelSnapshot es el contrato entre la tabla y el tipo del dominio:
@@ -84,32 +105,135 @@ type clausula struct {
 // entran por [prefijoTasa]. Pero entran en el id igual que estas, porque
 // cambian el resultado igual que estas.
 var clausulasDelSnapshot = []clausula{
-	// R-06 (Ley 44/1993 Art. 21) y R-07 (RD 14.5.1).
-	{"deduccion.administrativa", func(s *reparto.Snapshot, v decimal.Decimal) { s.AdminPct = v }},
-	{"deduccion.social", func(s *reparto.Snapshot, v decimal.Decimal) { s.SocialPct = v }},
-	{"reserva.errores_tecnicos", func(s *reparto.Snapshot, v decimal.Decimal) { s.ReservaPct = v }},
+	// R-06 (Ley 44/1993 Art. 21) y R-07 (RD 14.5.1). El sembrador las escribe
+	// como fraccion 0-1 ("0.20"); el Snapshot las exige en 0-100
+	// (tipos.go:125-129) porque asi las consume pctDe en el motor
+	// (redondeo.go). escalaFraccionAPorcentaje es esa conversion, hecha aqui
+	// -- donde tipos.go dice que tiene que pasar -- y no en el setter, donde
+	// no protestaba ni exigirPositivo ni ninguna prueba (bloqueante 1, PR
+	// #134).
+	{"deduccion.administrativa", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.AdminPct = v }},
+	{"deduccion.social", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.SocialPct = v }},
+	{"reserva.errores_tecnicos", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.ReservaPct = v }},
 
-	// Ponderacion por tipo de obra, RD 9.1.1.
-	{"ponderacion.cinematografica", func(s *reparto.Snapshot, v decimal.Decimal) { s.PondCine = v }},
-	{"ponderacion.unitario", func(s *reparto.Snapshot, v decimal.Decimal) { s.PondUnitario = v }},
-	{"ponderacion.serie", func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSerie = v }},
-	{"ponderacion.sketches", func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSketch = v }},
+	// Ponderacion por tipo de obra, RD 9.1.1. Multiplicadores crudos: no se
+	// escalan.
+	{"ponderacion.cinematografica", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondCine = v }},
+	{"ponderacion.unitario", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondUnitario = v }},
+	{"ponderacion.serie", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSerie = v }},
+	{"ponderacion.sketches", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSketch = v }},
 
-	// Coeficientes de la formula OTT, RD 9.7. Sin publicar (P-10).
-	{"ott.wa", func(s *reparto.Snapshot, v decimal.Decimal) { s.Wa = v }},
-	{"ott.wb", func(s *reparto.Snapshot, v decimal.Decimal) { s.Wb = v }},
-	{"ott.wc", func(s *reparto.Snapshot, v decimal.Decimal) { s.Wc = v }},
+	// Coeficientes de la formula OTT, RD 9.7. Sin publicar (P-10). Tambien
+	// multiplicadores crudos.
+	{"ott.wa", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wa = v }},
+	{"ott.wb", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wb = v }},
+	{"ott.wc", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wc = v }},
 
 	// Umbral de similitud de la cascada, ADR 0007. No es normativo, pero
 	// cambia el resultado de una corrida y por eso entra en el snapshot: sin
 	// congelarlo, recalibrarlo reidentificaria obras de un reparto cerrado.
-	{"matching.umbral", func(s *reparto.Snapshot, v decimal.Decimal) { s.UmbralMatch = v }},
+	{"matching.umbral", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.UmbralMatch = v }},
 
 	// RD 9.1.1(c): 80% artistico y hora televisiva de 48 minutos. Los aplica
-	// normalizacion al canonizar la fila, no el motor, pero se congelan aqui
-	// por lo mismo que todo lo demas.
-	{"duracion.artistica_pct", func(s *reparto.Snapshot, v decimal.Decimal) { s.DuracionArtisticaPct = v }},
-	{"duracion.minutos_hora_tv", func(s *reparto.Snapshot, v decimal.Decimal) { s.MinutosHoraTV = v }},
+	// normalizacion al canonizar la fila (duracion.go), multiplicando
+	// directo -- no pasan por pctDe --, asi que van directas.
+	{"duracion.artistica_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.DuracionArtisticaPct = v }},
+	{"duracion.minutos_hora_tv", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.MinutosHoraTV = v }},
+
+	// Porcentajes de grupo de canal (RD 9.5) y asignacion a plataformas de
+	// terceros (RD 9.7). #126 anadio estos seis campos a Snapshot
+	// (pctGrupo en estrategia.go, AsignacionTercerosPct en motor.go) sin que
+	// este adaptador les diera clausula: se quedaban en cero sin que
+	// ErrorParametroAusente saliera nunca, porque para el snapshot esas
+	// claves sencillamente no existian (bloqueante 3, PR #134). El sembrador
+	// ya las sirve en 0-100 -- la misma unidad que exige el motor --, asi que
+	// van con escalaDirecta.
+	{"grupo.privados_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPrivadosPct = v }},
+	{"grupo.regionales_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoRegionalesPct = v }},
+	{"grupo.premium_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPremiumPct = v }},
+	{"grupo.lideres_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoLideresPct = v }},
+	{"grupo.estandar_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoEstandarPct = v }},
+	{"asignacion.terceros_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.AsignacionTercerosPct = v }},
+}
+
+// versionClausulasActual es la version del conjunto [clausulasDelSnapshot]
+// que ESTE BINARIO congela. Vive en el prefijo de todo id nuevo (ver
+// prefijoSnapshot) porque anadir o quitar una clausula es un cambio de
+// FORMATO del snapshot, no solo de contenido -- el bloqueante 3 de PR #134
+// (seis clausulas nuevas) es exactamente ese cambio, y paso "gratis" solo
+// porque hoy no hay ningun snapshot ya congelado. La proxima vez que pase, no
+// sera gratis sin esto. Ver ADR 0005, "La identidad del snapshot esta
+// versionada".
+const versionClausulasActual = 1
+
+// prefijoSnapshot marca el id como lo que es y con que version del conjunto
+// de clausulas se congelo: "snp1-", no "snp-". El resto son los 64 hex del
+// sha256; el CHECK de `snapshots_parametros` (migracion 00012) exige la forma
+// general `snp[0-9]+-[0-9a-f]{64}`, no una version fija, porque tiene que
+// seguir aceptando ids mas viejos que dejen de ser "la version actual".
+var prefijoSnapshot = fmt.Sprintf("snp%d-", versionClausulasActual)
+
+// clausulasPorVersion es el registro de conjuntos de clausulas: uno por cada
+// version que un id de snapshot puede nombrar en su prefijo.
+//
+// Politica de mantenimiento (ADR 0005): el dia que una clausula se anada, se
+// quite o cambie de escala, [clausulasDelSnapshot] NO se edita in situ. Antes
+// de tocarlo, el conjunto vigente HASTA ESE MOMENTO se copia a una constante
+// nueva nombrada por su version (p.ej. `clausulasDelSnapshotV1` el dia que
+// exista una V2) y esa copia se registra aqui bajo su numero. Solo entonces
+// `clausulasDelSnapshot` pasa a apuntar al conjunto NUEVO y
+// `versionClausulasActual` sube en uno. Hoy solo hay una version: la entrada
+// de este mapa y la variable `clausulasDelSnapshot` son el mismo slice, y no
+// hace falta el sufijo "V1" hasta que haya un V2 del que distinguirse. La
+// entrada vieja, cuando exista, no se borra: se queda mientras dure la
+// ventana de retencion de RD 13.2/13.4 (diez anos) o hasta que un cambio
+// explicito -citando esta politica, no un descuido de refactor- decida
+// retirarla.
+//
+// SnapshotEnFecha siempre congela bajo `versionClausulasActual`.
+// SnapshotPorID nunca reconstruye contra "la version actual": reconstruye
+// contra la entrada que el propio id nombra en su prefijo. Un id de una
+// version que no esta en este mapa falla cerrado con un mensaje que nombra la
+// version pedida y las que este binario conoce (ver
+// snapshotDesdeTablaCongelada), en vez de reinterpretarse en silencio con el
+// conjunto de clausulas equivocado.
+var clausulasPorVersion = map[int][]clausula{
+	versionClausulasActual: clausulasDelSnapshot,
+}
+
+// versionesConocidas devuelve las versiones registradas, ordenadas -- para
+// que el mensaje de una version desconocida sea reproducible y no dependa del
+// orden de iteracion de un map.
+func versionesConocidas() []int {
+	out := make([]int, 0, len(clausulasPorVersion))
+	for v := range clausulasPorVersion {
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// patronIDSnapshot es la forma GENERAL de un id de snapshot: `snp<version>-<hex64>`.
+// Mas laxo que el CHECK de la tabla -que fija la version exacta que este
+// binario escribe hoy- porque tiene que reconocer tambien versiones mas
+// viejas que ya no son la actual.
+var patronIDSnapshot = regexp.MustCompile(`^snp([0-9]+)-[0-9a-f]{64}$`)
+
+// versionDeID extrae la version embebida en el prefijo de un id
+// ("snp1-<hash>" -> 1, true). ok=false si el id no tiene ni la forma general
+// de un snapshot -- eso tambien lo rechaza el CHECK de la tabla en cuanto se
+// intenta escribir, pero un id que llega por PARAMETRO (SnapshotPorID) no
+// pasa por ese CHECK hasta un INSERT que aqui todavia no se ha hecho.
+func versionDeID(id string) (version int, ok bool) {
+	m := patronIDSnapshot.FindStringSubmatch(id)
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // parametroResuelto es una fila de vigencia ya elegida para una fecha, con su
@@ -175,15 +299,33 @@ func (s *Store) SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (st
 			return err
 		}
 
-		pares := consumidos(filas)
-		resuelto, armado, faltan := armarSnapshot(pares)
+		pares := consumidos(filas, clausulasDelSnapshot)
+		resuelto, _, faltan, err := armarSnapshot(pares, clausulasDelSnapshot, prefijoSnapshot)
+		if err != nil {
+			return err
+		}
 		if len(faltan) > 0 {
 			return &aplicacion.ErrorParametroAusente{Fecha: dia, Claves: faltan}
 		}
 		if err := congelar(ctx, tx, resuelto, pares); err != nil {
 			return err
 		}
-		id, snap = resuelto, armado
+
+		// Se relee lo que QUEDO grabado bajo `resuelto` en vez de devolver
+		// `armado` -el snapshot de esta resolucion-. Normalmente son el mismo
+		// contenido, pero si el id ya existia con otra procedencia -misma
+		// cifra, ratificada por otra Asamblea en otra fecha- ON CONFLICT DO
+		// NOTHING (en congelar) dejo la procedencia VIEJA en la tabla, y
+		// devolver `armado` aqui haria que esta llamada reportara un
+		// Reglamento que SnapshotPorID(resuelto) jamas volveria a dar para el
+		// mismo id. Releer dentro de la misma transaccion es lo que hace que
+		// "lo que se resolvio" y "lo que se puede releer despues" sean
+		// siempre la misma respuesta (ADR 0005; bloqueante 6, PR #134).
+		congelado, err := snapshotDesdeTablaCongelada(ctx, tx, resuelto)
+		if err != nil {
+			return err
+		}
+		id, snap = resuelto, congelado
 		return nil
 	})
 	if err != nil {
@@ -193,12 +335,16 @@ func (s *Store) SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (st
 }
 
 // SnapshotPorID recupera un snapshot ya congelado.
-//
-// Reconstruye por el MISMO camino que la resolucion -- [consumidos] y
-// [armarSnapshot] sobre las filas guardadas -- por la misma razon que
-// [fila.entidad] reconstruye una obra con el constructor del dominio: si lo
-// guardado no forma un snapshot valido, la lectura FALLA en vez de servir algo
-// que la escritura no habria producido.
+func (s *Store) SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot, error) {
+	return snapshotDesdeTablaCongelada(ctx, s.ejecutorDe(ctx), id)
+}
+
+// snapshotDesdeTablaCongelada relee `snapshots_parametros` bajo `id` y
+// reconstruye el snapshot por el MISMO camino que la resolucion --
+// [consumidos] y [armarSnapshot] sobre las filas guardadas -- por la misma
+// razon que [fila.entidad] reconstruye una obra con el constructor del
+// dominio: si lo guardado no forma un snapshot valido, la lectura FALLA en
+// vez de servir algo que la escritura no habria producido.
 //
 // Y recalcula el id. Estando direccionado por contenido, el id ES la suma de
 // verificacion de las filas: comprobarlo cuesta un hash y convierte "estas
@@ -206,8 +352,39 @@ func (s *Store) SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (st
 // alternativa -- confiar en la clave primaria -- deja pasar una fila alterada
 // por fuera del adaptador, y el resultado seria una corrida "reproducida" con
 // cifras que nunca se pagaron.
-func (s *Store) SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot, error) {
-	filas, err := leerParametros(ctx, s.ejecutorDe(ctx),
+//
+// La usan SnapshotPorID -un snapshot de hace anos- y SnapshotEnFecha justo
+// despues de congelar -para devolver la procedencia que realmente quedo
+// grabada-. Una sola definicion de "que es releer un snapshot" para las dos.
+//
+// # La version se valida ANTES de tocar la tabla
+//
+// El prefijo del id nombra la version del conjunto de clausulas con que se
+// congelo (ver [versionClausulasActual] y [clausulasPorVersion]). Reconstruir
+// contra "la version actual" en vez de contra la version que el id nombra es
+// exactamente el fallo de reproducibilidad que N1-b de la revision de PR #134
+// senalo: un id viejo, bajo un conjunto de clausulas mas nuevo (con MAS
+// campos), no "le faltan clausulas" -que es corregible, cargar la fila que
+// falta-; es que este binario esta usando la regla EQUIVOCADA para
+// interpretarlo. Fallar antes de leer una sola fila, nombrando la version
+// pedida y las que este binario conoce, es lo que distingue "version que no
+// conozco" de "estas filas estan corruptas" -- son dos causas distintas y el
+// ADR 0005 pide que la respuesta sea honesta sobre cual es.
+func snapshotDesdeTablaCongelada(ctx context.Context, ej ejecutor, id string) (reparto.Snapshot, error) {
+	version, ok := versionDeID(id)
+	if !ok {
+		return reparto.Snapshot{}, fmt.Errorf("snapshot %q: %w: no tiene la forma snp<version>-<hex64>",
+			id, aplicacion.ErrSnapshotCorrupto)
+	}
+	clausulas, conocida := clausulasPorVersion[version]
+	if !conocida {
+		return reparto.Snapshot{}, fmt.Errorf(
+			"snapshot %q: %w: version %d desconocida, este binario reconstruye las versiones %v",
+			id, aplicacion.ErrSnapshotCorrupto, version, versionesConocidas())
+	}
+	prefijo := fmt.Sprintf("snp%d-", version)
+
+	filas, err := leerParametros(ctx, ej,
 		`SELECT `+columnasParametro+` FROM snapshots_parametros WHERE snapshot_id = $1`,
 		fmt.Sprintf("snapshot %q", id), id)
 	if err != nil {
@@ -219,8 +396,17 @@ func (s *Store) SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot,
 		return reparto.Snapshot{}, fmt.Errorf("snapshot %q: %w", id, aplicacion.ErrNoEncontrado)
 	}
 
-	pares := consumidos(filas)
-	recalculado, snap, faltan := armarSnapshot(pares)
+	pares := consumidos(filas, clausulas)
+	recalculado, snap, faltan, err := armarSnapshot(pares, clausulas, prefijo)
+	if err != nil {
+		// Los dos %w, no uno con %s: un conjunto congelado que resulta
+		// ambiguo (dos `cambio.*` que normalizan al mismo ISO, coladas antes
+		// de que existiera esta comprobacion) SI esta corrupto -ErrSnapshotCorrupto
+		// sigue siendo la causa de fondo-, pero quien relee tambien tiene que
+		// poder distinguir *por que* con errors.As(err, &ErrorTasaAmbigua{}),
+		// no solo enterarse de que algo esta mal.
+		return reparto.Snapshot{}, fmt.Errorf("snapshot %q: %w: %w", id, aplicacion.ErrSnapshotCorrupto, err)
+	}
 	if len(faltan) > 0 {
 		return reparto.Snapshot{}, fmt.Errorf("snapshot %q: %w: le faltan clausulas (%s)",
 			id, aplicacion.ErrSnapshotCorrupto, strings.Join(faltan, ", "))
@@ -326,14 +512,29 @@ func congelar(ctx context.Context, tx pgx.Tx, id string, pares []parametroResuel
 		desdes[i] = texto(p.vigenteDesde)
 	}
 
-	_, err := tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`INSERT INTO snapshots_parametros (snapshot_id, `+columnasParametro+`)
 		 SELECT $1, u.clave, u.valor::numeric, u.organo, u.reglamento, u.vigente_desde::date
 		   FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
 		     AS u(clave, valor, organo, reglamento, vigente_desde)
 		 ON CONFLICT (snapshot_id, clave) DO NOTHING`,
 		id, claves, valores, organos, reglamentos, desdes)
-	return traducirError(err, "congelar el snapshot %q", id)
+	if err != nil {
+		return traducirError(err, "congelar el snapshot %q", id)
+	}
+
+	// RowsAffected descartado seria indistinguible de un exito: n==0 es "ya
+	// estaba TODO" (la carrera que ON CONFLICT DO NOTHING existe para
+	// resolver) y n==len(pares) es "no habia nada". Cualquier otro numero es
+	// una escritura A MEDIAS -una corrida anterior se corto entre el primer y
+	// el ultimo INSERT de este mismo id- y hay que gritarlo ahora: leer ese
+	// id despues con menos filas de las que promete el hash da
+	// ErrSnapshotCorrupto sin decir por que se corrompio (bloqueante 6, PR
+	// #134).
+	if n, total := tag.RowsAffected(), int64(len(pares)); n != 0 && n != total {
+		return fmt.Errorf("congelar el snapshot %q: escritura parcial (%d de %d filas)", id, n, total)
+	}
+	return nil
 }
 
 // consumidos deja las filas que el snapshot USA, en forma canonica y ordenadas
@@ -360,10 +561,16 @@ func congelar(ctx context.Context, tx pgx.Tx, id string, pares []parametroResuel
 // Round a la escala de la columna fija la representacion antes de hashearla, y
 // devuelve el mismo decimal por los dos caminos -- resolver y leer por id --,
 // que es lo que hace que los valores sean identicos y no solo iguales.
-func consumidos(filas []parametroResuelto) []parametroResuelto {
+// clausulas es EXPLICITO -- nunca el global [clausulasDelSnapshot] -- porque
+// esta funcion sirve tanto a una resolucion fresca (siempre contra la version
+// actual) como a la reconstruccion de un id viejo (contra la version que ESE
+// id nombra). Usar el global aqui haria que reconstruir una version antigua
+// filtrara con las clausulas de la version de hoy, que es precisamente el
+// fallo de identidad que N1-b de la revision de PR #134 señalo.
+func consumidos(filas []parametroResuelto, clausulas []clausula) []parametroResuelto {
 	out := make([]parametroResuelto, 0, len(filas))
 	for _, p := range filas {
-		if !loConsume(p.clave) {
+		if !loConsume(p.clave, clausulas) {
 			continue
 		}
 		p.valor = p.valor.Round(escalaParametro)
@@ -373,13 +580,15 @@ func consumidos(filas []parametroResuelto) []parametroResuelto {
 	return out
 }
 
-// loConsume dice si esa clave entra en el snapshot: o es una de las clausulas
-// exigidas, o es una tasa `cambio.<ISO>` con codigo.
+// loConsume dice si esa clave entra en el snapshot bajo el conjunto
+// `clausulas` dado: o es una de las clausulas exigidas, o es una tasa
+// `cambio.<ISO>` con codigo -- las tasas no estan versionadas, son una
+// familia de tamano variable en cualquier version.
 //
 // `cambio.` a secas no es una tasa de nada y se descarta: con el prefijo vacio
 // acabaria en Tasas[""] y convertiria el importe sin moneda de cualquier fila.
-func loConsume(clave string) bool {
-	if slices.ContainsFunc(clausulasDelSnapshot, func(c clausula) bool { return c.clave == clave }) {
+func loConsume(clave string, clausulas []clausula) bool {
+	if slices.ContainsFunc(clausulas, func(c clausula) bool { return c.clave == clave }) {
 		return true
 	}
 	codigo, esTasa := strings.CutPrefix(clave, prefijoTasa)
@@ -400,7 +609,20 @@ func loConsume(clave string) bool {
 // [aplicacion.ErrorParametroAusente] -- hay filas que cargar --, y un conjunto
 // CONGELADO al que le falta una es ErrSnapshotCorrupto, porque nunca fue un
 // snapshot valido y no hay nada que cargar.
-func armarSnapshot(pares []parametroResuelto) (string, reparto.Snapshot, []string) {
+//
+// El error de retorno es distinto de "faltan": es que DOS claves entran en
+// conflicto entre si (hoy, dos tasas `cambio.*` que normalizan al mismo
+// codigo ISO). No es "falta cargar algo" ni "el conjunto esta corrupto", asi
+// que no cabe en `faltan` sin que un `errors.Is(err, ErrParametroAusente)`
+// aguas abajo lo confunda con lo otro.
+//
+// `clausulas` y `prefijo` son explicitos por la misma razon que en
+// [consumidos]: armar una resolucion fresca siempre usa la version actual
+// ([clausulasDelSnapshot], [prefijoSnapshot]), pero reconstruir un id viejo
+// tiene que usar el conjunto y el prefijo que ESE id nombra -- ver
+// [snapshotDesdeTablaCongelada] y la seccion de ADR 0005 sobre el versionado
+// de la identidad.
+func armarSnapshot(pares []parametroResuelto, clausulas []clausula, prefijo string) (string, reparto.Snapshot, []string, error) {
 	porClave := make(map[string]parametroResuelto, len(pares))
 	for _, p := range pares {
 		porClave[p.clave] = p
@@ -411,24 +633,46 @@ func armarSnapshot(pares []parametroResuelto) (string, reparto.Snapshot, []strin
 		Tasas:      map[string]decimal.Decimal{},
 	}
 	var faltan []string
-	for _, c := range clausulasDelSnapshot {
+	for _, c := range clausulas {
 		p, hay := porClave[c.clave]
 		if !hay {
 			faltan = append(faltan, c.clave)
 			continue
 		}
-		c.en(&snap, p.valor)
+		v := p.valor
+		if c.escala == escalaFraccionAPorcentaje {
+			v = v.Mul(decimal.NewFromInt(100))
+		}
+		c.en(&snap, v)
 	}
 	// Se devuelven TODAS las que falten, no la primera: enterarse de una por
 	// intento son tantos viajes como parametros sin cargar.
 	if len(faltan) > 0 {
-		return "", reparto.Snapshot{}, faltan
+		return "", reparto.Snapshot{}, faltan, nil
 	}
 
 	var reglamentos []string
+	// isoDeClave recuerda, por codigo ISO ya normalizado, cual clave original
+	// lo fijo primero. pares llega ordenado por [consumidos], asi que el
+	// resultado no depende de en que orden entraron las filas.
+	isoDeClave := make(map[string]string, len(pares))
 	for _, p := range pares {
 		if codigo, esTasa := strings.CutPrefix(p.clave, prefijoTasa); esTasa {
-			snap.Tasas[strings.ToUpper(codigo)] = p.valor
+			iso := strings.ToUpper(codigo)
+			// cambio.USD y cambio.usd son DOS filas de `parametros` -el
+			// esquema no las distingue de dos monedas legitimas- que colapsan
+			// a la misma Tasas["USD"]. Sin esta comprobacion la que ordena
+			// despues por bytes gana en silencio y la otra desaparece sin
+			// error (bloqueante 6, PR #134): un factor de conversion que
+			// alguien cargo de verdad se pierde sin que nada lo diga.
+			if otra, ya := isoDeClave[iso]; ya {
+				return "", reparto.Snapshot{}, nil, &aplicacion.ErrorTasaAmbigua{
+					Codigo: iso,
+					Claves: []string{otra, p.clave},
+				}
+			}
+			isoDeClave[iso] = p.clave
+			snap.Tasas[iso] = p.valor
 		}
 		if !slices.Contains(reglamentos, p.reglamento) {
 			reglamentos = append(reglamentos, p.reglamento)
@@ -442,24 +686,45 @@ func armarSnapshot(pares []parametroResuelto) (string, reparto.Snapshot, []strin
 	slices.Sort(reglamentos)
 	snap.Reglamento = strings.Join(reglamentos, "+")
 
-	return idDeSnapshot(pares), snap, nil
+	return idDeSnapshot(pares, monedaBase, prefijo), snap, nil, nil
 }
 
+// claveMetaMonedaBase es la clave RESERVADA bajo la que [idDeSnapshot] mete la
+// moneda base en el digest. Nunca puede llegar por fila real: empieza por
+// "_", y el CHECK de `parametros.clave` y `snapshots_parametros.clave`
+// (migracion 00012) exige que el primer caracter sea una letra.
+const claveMetaMonedaBase = "_meta.moneda_base"
+
 // idDeSnapshot es el sha256 de los pares (clave, valor) canonicos, uno por
-// linea.
+// linea, mas la moneda base a la que estan expresadas las tasas `cambio.*`.
 //
-// Solo clave y valor. La procedencia -- organo, reglamento, vigencia -- viaja
-// congelada con cada fila y se lee con ella, pero NO entra en el id: corregir
-// una errata en el nombre del organo no cambia ni una cifra del reparto, y si
-// entrara, cambiaria el id y dejaria huerfana la corrida que lo referencia.
-// Lo que el id direcciona es lo que el motor consume.
-func idDeSnapshot(pares []parametroResuelto) string {
+// De `pares` solo entran clave y valor. La procedencia -- organo, reglamento,
+// vigencia -- viaja congelada con cada fila y se lee con ella, pero NO entra
+// en el id: corregir una errata en el nombre del organo no cambia ni una
+// cifra del reparto, y si entrara, cambiaria el id y dejaria huerfana la
+// corrida que lo referencia.
+//
+// monedaBase si entra, aunque hoy sea una constante de Go y no una fila
+// (ver la constante del mismo nombre): [reparto.Snapshot.MonedaBase] es una
+// cifra que el motor consume tanto como cualquier tasa, y dejarla fuera del
+// digest significaria que cambiarla reinterpretaria en silencio TODOS los
+// snapshots ya congelados -mismo id, tasas que de repente se leen contra otra
+// moneda-. Con ella dentro, cambiar la moneda base mueve los ids nuevos y dejaria
+// releer uno viejo con la constante nueva devolviendo ErrSnapshotCorrupto en vez
+// de una reinterpretacion silenciosa, que es justo lo que el ADR 0005 exige.
+//
+// `prefijo` es explicito -- nunca el global [prefijoSnapshot] -- para que esta
+// funcion pueda recalcular el id de una version VIEJA con SU prefijo (ver
+// [armarSnapshot]) sin que el resultado se compare contra el prefijo de la
+// version de hoy.
+func idDeSnapshot(pares []parametroResuelto, monedaBase, prefijo string) string {
 	var b strings.Builder
 	for _, p := range pares {
 		fmt.Fprintf(&b, "%s=%s\n", p.clave, p.texto())
 	}
+	fmt.Fprintf(&b, "%s=%s\n", claveMetaMonedaBase, monedaBase)
 	suma := sha256.Sum256([]byte(b.String()))
-	return prefijoSnapshot + hex.EncodeToString(suma[:])
+	return prefijo + hex.EncodeToString(suma[:])
 }
 
 // enDia reduce un instante a su fecha en UTC. Ver el comentario de

@@ -48,6 +48,42 @@ su valor vigente (ver `0004-parametros-normativos-como-dato.md`), congela el con
 referencia junto con la version del reglamento aplicada. El motor recibe ese snapshot; no tiene
 acceso al puerto de parametros.
 
+**La identidad del snapshot esta versionada.** El id es un hash direccionado por contenido sobre los
+pares (clave, valor) que el snapshot consume, pero EL CONJUNTO DE CLAVES QUE CUENTA no es un dato
+fijo para siempre: `#118` fijo once, `#126` (posterior) obligo a anadir seis mas -- los porcentajes de
+grupo de canal y la asignacion a terceros --, y nada impide que un issue futuro anada otra. Si el id
+no dijera CONTRA QUE CONJUNTO se calculo, anadir una clave seria un cambio de FORMATO disfrazado de
+cambio de contenido: releer un snapshot viejo con el conjunto de hoy reportaria "le falta
+`grupo.privados_pct`" -que suena a corrupcion- cuando lo que pasa es que esa clave todavia no existia
+el dia que se congelo. Peor: si el nombre de una clave se reutilizara alguna vez con otro significado,
+dos conjuntos distintos podrian, en principio, converger al mismo hash bajo una definicion de "que
+cuenta" que cambio entre medias.
+
+La forma del id es `snp<version>-<sha256>` (`postgres/parametros.go`, `versionClausulasActual`). La
+version identifica CONTRA QUE conjunto de clausulas se calculo el hash, no el reglamento ni la
+procedencia -esos ya viajan aparte, ver mas arriba-. Politica de mantenimiento, para cuando haga
+falta una version 2:
+
+1. El conjunto de clausulas vigente NO se edita in situ. Antes de tocarlo se copia a una constante
+   nueva, nombrada por su version (`clausulasDelSnapshotV1` el dia que exista una V2), y esa copia se
+   registra en `clausulasPorVersion` bajo su numero. La copia vieja no se toca nunca mas. Hoy solo
+   existe la version 1 y no hace falta el sufijo hasta que haya una segunda de la que distinguirse.
+2. `clausulasDelSnapshot` (el conjunto que el binario CONGELA) pasa a apuntar al conjunto nuevo, y
+   `versionClausulasActual` sube en uno. Toda resolucion fresca a partir de ahi congela bajo la
+   version nueva.
+3. La entrada vieja en `clausulasPorVersion` se queda mientras dure la ventana de retencion de
+   `RD 13.2` / `RD 13.4` (diez anos). Retirarla antes tiene que ser una decision explicita que cite
+   esta politica -nunca un efecto colateral de un refactor que "limpia" codigo que parece muerto.
+4. Leer un id de una version que no esta en `clausulasPorVersion` **falla cerrado**: un error tipado
+   que nombra la version pedida y las que el binario reconoce, no una reinterpretacion silenciosa con
+   el conjunto equivocado ni una degradacion a "no encontrado" -la fila SI existe, es la regla para
+   leerla la que no.
+
+Sin este mecanismo, la propiedad de reproducibilidad de esta ADR fallaria exactamente en el punto
+ciego que ninguna prueba de un solo binario puede ver: un snapshot que hoy se reconstruye bien deja de
+hacerlo el dia que el propio codigo que lo interpreta cambia, y nadie lo nota hasta que un auditor
+pide reejecutar un reparto de hace anos.
+
 **Las entradas se congelan igual que los parametros.** Los reportes crudos se guardan inmutables y
 versionados en el almacen de objetos, y la corrida referencia la version exacta que consumio. Un
 reproceso posterior no vuelve a leer "el archivo de Caracol": lee el archivo que se uso.

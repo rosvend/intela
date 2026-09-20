@@ -22,7 +22,11 @@
 #   SMOKE_ESPERA     Segundos de margen por comprobacion. Por defecto 180
 #   SMOKE_EMAIL      Usuario con el que se entra. Por defecto admin@redes.co
 #   SMOKE_CLAVE      Su clave. Por defecto SEED_CLAVE_ADMIN, o admin-local
-#   SMOKE_COMPOSE    Orden de compose. Por defecto "docker compose"
+#   SMOKE_COMPOSE    Orden de compose. Por defecto "docker compose --profile
+#                    demo": sin el perfil, `ps`/`logs` en fatal() no ven el
+#                    contenedor del seed -Compose v2 los excluye de esos dos
+#                    comandos en cuanto un servicio declara `profiles`-, y el
+#                    seed es el fallo mas probable de toda la funcionalidad.
 #   SMOKE_SIN_COMPOSE  =1 para omitir el estado de los contenedores (util
 #                      cuando se apunta a un despliegue remoto)
 #
@@ -30,14 +34,14 @@
 # los contenedores y la cola de sus logs: un fallo aqui tiene que ser
 # diagnosticable sin volver a levantar nada.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 BASE="${SMOKE_BASE_URL:-http://localhost}"
 BASE="${BASE%/}"
 ESPERA="${SMOKE_ESPERA:-180}"
 EMAIL="${SMOKE_EMAIL:-admin@redes.co}"
 CLAVE="${SMOKE_CLAVE:-${SEED_CLAVE_ADMIN:-admin-local}}"
-read -r -a COMPOSE <<<"${SMOKE_COMPOSE:-docker compose}"
+read -r -a COMPOSE <<<"${SMOKE_COMPOSE:-docker compose --profile demo}"
 
 # Los servicios que tienen que seguir en pie al final. `migrate` y `seed` no
 # estan: son de una sola pasada y su exito lo demuestra el resto del script
@@ -71,13 +75,20 @@ fatal() {
 
   if [ "${SMOKE_SIN_COMPOSE:-0}" != "1" ] && command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
     printf '\n--- estado de los contenedores ---\n' >&2
-    "${COMPOSE[@]}" ps --all >&2 2>&1 || true
+    "${COMPOSE[@]}" ps --all >&2 || true
     printf '\n--- ultimas 60 lineas de cada servicio ---\n' >&2
-    "${COMPOSE[@]}" logs --tail 60 --no-color >&2 2>&1 || true
+    "${COMPOSE[@]}" logs --tail 60 --no-color >&2 || true
   fi
 
   exit 1
 }
+
+# Red de seguridad para lo que "set -e" por si solo no verbaliza: una
+# asignacion desnuda como `x=$(curl ...)` aborta el script sin pasar por
+# fatal() si curl falla en el transporte (timeout, conexion rechazada) en vez
+# de responder con un codigo HTTP. El trap convierte ese abort silencioso en
+# el mismo volcado de diagnostico que ya usan las comprobaciones explicitas.
+trap 'fatal "fallo inesperado en la linea $LINENO: revisa la salida de arriba"' ERR
 
 # esperar repite una comprobacion hasta que pasa o hasta agotar SMOKE_ESPERA.
 #
@@ -138,7 +149,17 @@ ok "GET $BASE/ -> index de la SPA"
 # vacio y no haya aplicacion ninguna. El bundle es lo que distingue "nginx
 # responde" de "el tablero carga", y ademas prueba el `location /assets/` de
 # web/nginx.conf, que es otro camino distinto.
-bundle=$(grep -o '/assets/[^"]*\.js' <<<"$raiz" | head -1) ||
+# awk con match()+exit, no grep+head. `grep -m1 -o` para en la primera LINEA
+# que casa, pero -o sigue imprimiendo TODAS las coincidencias de esa linea: si
+# el index trae mas de un bundle en la misma linea (un <script> y un
+# modulepreload, por ejemplo), la salida tiene varias rutas y `codigo
+# "$BASE$bundle"` pide una URL rota. Encadenar `| head -n1` detras arregla eso
+# pero reintroduce el problema original para una linea larga: `head` puede
+# seguir cerrando la tuberia a mitad de la escritura de `grep`, SIGPIPE, y con
+# `pipefail` el `|| bundle=""` de abajo pisaria un valor que ya se habia
+# capturado bien. match()+exit es un solo proceso: sin tuberia, no hay lector
+# que pueda matar al escritor a mitad de nada, sea la linea del largo que sea.
+bundle=$(awk 'match($0, /\/assets\/[^"]*\.js/) { print substr($0, RSTART, RLENGTH); exit }' <<<"$raiz") ||
   bundle=""
 [ -n "$bundle" ] ||
   fatal "el index no referencia ningun bundle en /assets/: el build del tablero salio vacio"
@@ -189,19 +210,35 @@ printf '   %d obras en el catalogo: %s\n' \
 # 6. Lo que HTTP no puede ver. `worker` y `scheduler` no publican puerto: si
 #    uno de los dos esta reiniciandose en bucle, todo lo de arriba sigue en
 #    verde y el sistema esta roto igual.
+#
+# `ps --status running` es una foto: un contenedor con `restart:
+# unless-stopped` que muere y revive cada par de segundos esta "running" en
+# casi cualquier instante en que se le mire, asi que una sola foto no
+# distingue un bucle de reinicio de un servicio sano. Se pide la foto dos
+# veces con margen entre medias -sin fiarse de RestartCount, que podman no
+# expone igual que Docker- para que un servicio que muere en el hueco salga
+# en al menos una de las dos como no corriendo.
+en_pie() {
+  local corriendo
+  corriendo=$("${COMPOSE[@]}" ps --status running --services 2>/dev/null) || return 1
+  local servicio
+  for servicio in "${SERVICIOS[@]}"; do
+    grep -qx "$servicio" <<<"$corriendo" || return 1
+  done
+}
+
 paso "6/6  todos los servicios siguen en pie"
 if [ "${SMOKE_SIN_COMPOSE:-0}" = "1" ]; then
   ok "omitido (SMOKE_SIN_COMPOSE=1)"
 elif ! command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
   ok "omitido: '${COMPOSE[0]}' no esta en el PATH"
 else
-  corriendo=$("${COMPOSE[@]}" ps --status running --services 2>/dev/null) ||
-    fatal "no se pudo consultar '${COMPOSE[*]} ps' (¿se corre desde la raiz del repositorio?)"
-  for servicio in "${SERVICIOS[@]}"; do
-    grep -qx "$servicio" <<<"$corriendo" ||
-      fatal "el servicio '$servicio' no esta corriendo"
-  done
-  ok "en pie: ${SERVICIOS[*]}"
+  en_pie ||
+    fatal "no se pudo consultar '${COMPOSE[*]} ps', o algun servicio de ${SERVICIOS[*]} no esta corriendo"
+  sleep 3
+  en_pie ||
+    fatal "algun servicio de ${SERVICIOS[*]} dejo de estar en pie entre dos comprobaciones: parece un bucle de reinicio"
+  ok "en pie: ${SERVICIOS[*]} (comprobado dos veces, con 3s de margen)"
 fi
 
 printf '\n%sLa prueba de humo paso%s: el stack arranca y sirve.\n' "$verde" "$neutro"
