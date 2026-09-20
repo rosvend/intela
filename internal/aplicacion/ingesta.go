@@ -63,6 +63,17 @@ type Ingesta struct {
 	SnapshotNormalizacion func(ctx context.Context) (reparto.Snapshot, error)
 }
 
+// DeducirFormato deduce el formato de una entrega por la extension de su
+// nombre de archivo. Es [FormatoDeNombre], expuesto como metodo para que la
+// interfaz que el adaptador HTTP declara describa TODO lo que el handler
+// necesita del nucleo -incluida esta deduccion- en vez de importar un
+// paquete hermano de infraestructura para una sola funcion. Un doble de
+// prueba puede alterar la deduccion, que es justo lo que el patron del
+// fichero promete y lo que el import directo rompia.
+func (i Ingesta) DeducirFormato(nombre string) string {
+	return FormatoDeNombre(nombre)
+}
+
 // IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
 // la evidencia y persiste las filas.
 //
@@ -185,14 +196,15 @@ func (i Ingesta) lectoresDisponibles() string {
 // Lo mismo vale para un mes que no existe: `2026-13` se rechaza con 400 en vez
 // de contestar una lista vacia que se lee como "ese mes no tuvo recaudo". La
 // regla es la del dominio, `recaudo.PeriodoValido`, sin copia en este paquete.
-func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+func (i Ingesta) Cargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	periodo = strings.TrimSpace(periodo)
 	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, fmt.Errorf(
 			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
 			ErrReporteInvalido, periodo)
 	}
-	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	pag = pag.ConDefecto()
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo, pag)
 	if err != nil {
 		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
 	}
@@ -658,13 +670,13 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		// Compara contra "" a secas, y tiene que seguir siendo asi: el TrimSpace
 		// esta arriba, una vez. Repetirlo aqui volveria a dar dos criterios que
-		// pueden separarse, y el de mas abajo -el NULLIF del INSERT- no se puede
-		// repetir en Go de ninguna manera.
+		// pueden separarse, y el de mas abajo -el nil del COPY para obra_id-
+		// compara contra la misma cadena vacia literal.
 		if u.ObraID == "" {
 			// A la salida de ingesta ninguna fila esta identificada: es lo que
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
-			// DEFAULT TRUE de la columna no llega a aplicarse porque
-			// insertarUso manda el valor siempre, asi que el que vale es este.
+			// DEFAULT TRUE de la columna no llega a aplicarse porque el COPY
+			// manda el valor siempre, asi que el que vale es este.
 			//
 			// Es ademas lo que deja el CHECK uso_resuelto_tiene_obra fuera del
 			// alcance de esta ruta, y por eso validarUso ya no lo repite.
@@ -679,7 +691,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		if u.Emisiones == 0 && u.EmisionesTexto != "0" {
 			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
-			// porque insertarUso manda el valor siempre. Una celda vacia es el
+			// porque el COPY manda el valor siempre. Una celda vacia es el
 			// cero de Go, no un dato. Un "0" explicito (S4) llega con
 			// EmisionesTexto=="0" desde normalizacion y se respeta.
 			u.Emisiones = 1

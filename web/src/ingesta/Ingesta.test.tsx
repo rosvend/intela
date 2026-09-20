@@ -112,6 +112,56 @@ describe("ListaCargas", () => {
     vi.unstubAllGlobals();
   });
 
+  it("pide la primera pagina del listado con limite y desplazamiento", async () => {
+    vi.mocked(fetch).mockResolvedValue(json([]));
+
+    render(<ListaCargas periodo="" />);
+
+    await screen.findByText("Aún no hay cargas registradas.");
+    expect(pedido(0)).toBe("/api/reportes?limite=100&desplazamiento=0");
+  });
+
+  it("el listado se pagina y cada pagina dice su tramo", async () => {
+    const paginaLlena = Array.from({ length: 100 }, (_, i) => ({
+      ...cargaConRechazos,
+      id: `rep-${i}`,
+      rechazados: 0,
+    }));
+    // Respuesta fresca por llamada, como `simularServidor`: un `Response`
+    // preconstruido y grande se sirve una vez y el cuerpo no se deja leer
+    // despues (jsdom), que es justo el fallo que esta prueba no busca.
+    vi.mocked(fetch).mockImplementation(async (entrada) => {
+      const url = String(entrada);
+      if (url.includes("desplazamiento=100")) return json([]);
+      return json(paginaLlena);
+    });
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 100", {}, { timeout: 3000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Adelante" }));
+    await screen.findByText("No hay más cargas.");
+    expect(pedido(1)).toBe("/api/reportes?limite=100&desplazamiento=100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Atrás" }));
+    await screen.findByText("Cargas 1 a 100");
+    expect(pedido(2)).toBe("/api/reportes?limite=100&desplazamiento=0");
+  });
+
+  it("una pagina corta es la ultima: sin boton de siguiente", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json([{ ...cargaConRechazos, rechazados: 0 }]),
+    );
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 1");
+
+    expect(screen.getByRole("button", { name: "Adelante" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
   it("pide las cargas del periodo en la query", async () => {
     vi.mocked(fetch).mockResolvedValue(json([]));
 
@@ -120,7 +170,9 @@ describe("ListaCargas", () => {
     await screen.findByText(
       "No hay cargas registradas para el periodo 2026-01.",
     );
-    expect(pedido(0)).toBe("/api/reportes?periodo=2026-01");
+    expect(pedido(0)).toBe(
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    );
   });
 
   it("codifica el periodo para que no parta la query", async () => {
@@ -129,7 +181,9 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="2026-01&fuente=x" />);
 
     await screen.findByText(/No hay cargas registradas/);
-    expect(pedido(0)).toBe("/api/reportes?periodo=2026-01%26fuente%3Dx");
+    expect(pedido(0)).toBe(
+      "/api/reportes?periodo=2026-01%26fuente%3Dx&limite=100&desplazamiento=0",
+    );
   });
 
   it("sin periodo pide todas las cargas y lo dice si no hay ninguna", async () => {
@@ -138,7 +192,7 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="" />);
 
     await screen.findByText("Aún no hay cargas registradas.");
-    expect(pedido(0)).toBe("/api/reportes");
+    expect(pedido(0)).toBe("/api/reportes?limite=100&desplazamiento=0");
   });
 
   it("mientras llega la respuesta muestra que esta cargando", () => {
@@ -758,7 +812,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
       "2026-01",
     );
     await screen.findByText(VACIO_2026_01);
-    expect(getsDelListado()).toEqual(["/api/reportes?periodo=2026-01"]);
+    expect(getsDelListado()).toEqual([
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    ]);
 
     // Si la URL cambia por fuera del campo (aqui, el enlace de la nav), el
     // campo la sigue en vez de ensenar un periodo que ya no se aplica.
@@ -810,7 +866,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
     // El listado se remonta al subir, vuelve a pedirse y trae la carga nueva.
     await screen.findByRole("table", { name: "Cargas hechas" });
     expect(getsDelListado()).toHaveLength(pedidosAntes + 1);
-    expect(getsDelListado().at(-1)).toBe("/api/reportes?periodo=2026-01");
+    expect(getsDelListado().at(-1)).toBe(
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    );
   });
 
   it("un archivo mal formado muestra el 400 tal cual, sin recargar ni navegar", async () => {
@@ -1048,7 +1106,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
 
     montarApp("/ingesta");
     await screen.findByText("Aún no hay cargas registradas.");
-    expect(getsDelListado()).toEqual(["/api/reportes"]);
+    expect(getsDelListado()).toEqual([
+      "/api/reportes?limite=100&desplazamiento=0",
+    ]);
 
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
@@ -1064,8 +1124,8 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
     await screen.findByText(VACIO_2026_01);
     expect(getsDelListado()).toEqual([
-      "/api/reportes",
-      "/api/reportes?periodo=2026-01",
+      "/api/reportes?limite=100&desplazamiento=0",
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
     ]);
     expect(botonSubir()).toHaveProperty("disabled", false);
     expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
@@ -1134,7 +1194,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
       // El periodo completo pasa a la URL y el listado se consulta con el.
       expect(ubicacion()).toBe(`/ingesta?periodo=${periodo}`);
       await vi.waitFor(() =>
-        expect(getsDelListado()).toContain(`/api/reportes?periodo=${periodo}`),
+        expect(getsDelListado()).toContain(
+          `/api/reportes?periodo=${periodo}&limite=100&desplazamiento=0`,
+        ),
       );
       const alertas = await screen.findAllByRole("alert");
       expect(alertas.some((a) => a.textContent?.includes(mensaje))).toBe(true);

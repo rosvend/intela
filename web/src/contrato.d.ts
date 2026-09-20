@@ -520,6 +520,10 @@ export interface paths {
          *     Es la unica lectura que responde "¿entro completo lo que subi?": el
          *     recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
          *
+         *     Va paginado con la misma forma que el resto de listados (limite y
+         *     desplazamiento, mismo defecto y mismo techo): el listado crece sin
+         *     cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+         *
          *     Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
          *     volver al archivo EXACTO que pondero una corrida y no "al archivo de
@@ -3053,6 +3057,18 @@ export interface operations {
                  * @example 2026-01
                  */
                 periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+                 *     la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
             };
             header?: never;
             path?: never;
@@ -3233,8 +3249,7 @@ export interface operations {
             };
             /**
              * @description Esa fuente ya entrego exactamente esos bytes -lo decide el
-             *     UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-             *     tiene contenido distinto bajo esa huella.
+             *     UNIQUE (sha256, fuente), no el nombre del archivo-.
              */
             409: {
                 headers: {

@@ -36,7 +36,7 @@ func (i *ingestaFalsa) UsosSinResolver(context.Context) ([]UsoPersistido, error)
 func (i *ingestaFalsa) UsoPorID(context.Context, string) (UsoPersistido, error) {
 	return UsoPersistido{}, nil
 }
-func (i *ingestaFalsa) ListarCargas(context.Context, string) ([]CargaReporte, error) {
+func (i *ingestaFalsa) ListarCargas(context.Context, string, Paginacion) ([]CargaReporte, error) {
 	return nil, nil
 }
 

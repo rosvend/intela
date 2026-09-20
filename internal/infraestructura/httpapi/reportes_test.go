@@ -42,8 +42,9 @@ func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, period
 	return i.rec, i.err
 }
 
-func (i *ingestaFalsa) Cargas(_ context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
+func (i *ingestaFalsa) Cargas(_ context.Context, periodo string, pag aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	i.periodoConsultado = periodo
+	i.paginacionConsultada = pag
 	return i.cargas, i.err
 }
 
@@ -51,6 +52,10 @@ func (i *ingestaFalsa) RechazosDeCarga(_ context.Context, id string, pag aplicac
 	i.cargaConsultada = id
 	i.paginacionConsultada = pag
 	return i.rechazos, i.err
+}
+
+func (i *ingestaFalsa) DeducirFormato(nombre string) string {
+	return aplicacion.FormatoDeNombre(nombre)
 }
 
 func servidorConIngesta(t *testing.T, ing Ingesta) http.Handler {
@@ -250,6 +255,48 @@ func TestSubirReporteRespetaElFormatoExplicito(t *testing.T) {
 	}
 }
 
+func TestSubirReporteLaQueryNoPisaAlFormulario(t *testing.T) {
+	// `r.FormValue` consulta primero la query: `POST /reportes?fuente=netflix`
+	// con un multipart `fuente=cine` encaminaba el archivo al adaptador
+	// equivocado, y `fuente` decide el id del reporte, la clave de
+	// deduplicacion y el indice de alias. El contrato declara los tres campos
+	// como propiedades multipart.
+	ing := &ingestaFalsa{rec: recepcionDePrueba()}
+	h := servidorConIngesta(t, ing)
+
+	var cuerpo bytes.Buffer
+	escritor := multipart.NewWriter(&cuerpo)
+	for k, v := range map[string]string{"fuente": "cine", "periodo": "2026-01"} {
+		if err := escritor.WriteField(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parte, err := escritor.CreateFormFile("archivo", "sala.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parte.Write([]byte("titulo\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := escritor.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/reportes?fuente=netflix&periodo=2025&formato=xlsx", &cuerpo)
+	req.Header.Set("Content-Type", escritor.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.fuente != "cine" || ing.periodo != "2026-01" || ing.formato != aplicacion.FormatoCSV {
+		t.Fatalf("fuente/periodo/formato = %q/%q/%q, se esperaban los del formulario",
+			ing.fuente, ing.periodo, ing.formato)
+	}
+}
+
 func TestSubirReporteTraduceLosErroresDelNucleo(t *testing.T) {
 	casos := []struct {
 		nombre   string
@@ -275,7 +322,7 @@ func TestSubirReporteTraduceLosErroresDelNucleo(t *testing.T) {
 		{
 			nombre:   "boveda con contenido ajeno",
 			err:      fmt.Errorf("%w: bajo la clave hay otros bytes", aplicacion.ErrEvidenciaCorrupta),
-			codigo:   http.StatusConflict,
+			codigo:   http.StatusInternalServerError,
 			enCuerpo: "avise a operacion",
 		},
 		{
@@ -456,6 +503,30 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 	}
 	if cuerpo[0]["clave_objeto"] != "reportes/"+strings.Repeat("a", 64) {
 		t.Errorf("clave_objeto = %v", cuerpo[0]["clave_objeto"])
+	}
+}
+
+func TestListarCargasPasaLaPaginaAlNucleo(t *testing.T) {
+	ing := &ingestaFalsa{}
+	h := servidorConIngesta(t, ing)
+
+	rec := pedir(t, h, http.MethodGet, "/reportes?limite=10&desplazamiento=20", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.paginacionConsultada.Limite != 10 || ing.paginacionConsultada.Desplazamiento != 20 {
+		t.Fatalf("pagina = %+v, se esperaba limite 10 desplazamiento 20", ing.paginacionConsultada)
+	}
+}
+
+func TestListarCargasRechazaUnaPaginaInvalida(t *testing.T) {
+	h := servidorConIngesta(t, &ingestaFalsa{})
+
+	for _, ruta := range []string{"/reportes?limite=0", "/reportes?limite=501", "/reportes?desplazamiento=-1"} {
+		rec := pedir(t, h, http.MethodGet, ruta, "", "tok")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: codigo = %d, se esperaba 400. Cuerpo: %s", ruta, rec.Code, rec.Body)
+		}
 	}
 }
 

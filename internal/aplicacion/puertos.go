@@ -2,6 +2,7 @@ package aplicacion
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
@@ -420,7 +421,7 @@ type RepositorioIngesta interface {
 	// una carga de la que solo se sabe que llego no dice si entro entera, y
 	// "entro entera" es justamente lo que hay que poder mirar para saber si
 	// falta pedirle algo al cliente.
-	ListarCargas(ctx context.Context, periodo string) ([]CargaReporte, error)
+	ListarCargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error)
 }
 
 // Formatos en los que puede llegar una entrega. Son la mitad de la clave con
@@ -436,6 +437,45 @@ const (
 	FormatoCSV  = "csv"
 	FormatoJSON = "json"
 )
+
+// FormatoDeNombre deduce el formato de una entrega por la extension de su
+// nombre de archivo.
+//
+// Vive en el nucleo y no en el adaptador HTTP ni en el de ingesta aunque
+// hable de extensiones: es la mitad de la [ClaveLector] con la que el caso de
+// uso elige adaptador, y tanto el handler (que solo tiene un nombre de
+// fichero) como los adaptadores (que se registran por formato) la necesitan
+// sin importarse entre si. El caso de uso la expone como [Ingesta.DeducirFormato]
+// para que la interfaz del consumidor describa todo lo que el handler
+// necesita.
+//
+// Devuelve "" para lo que no reconoce, y el caso de uso lo convierte en un
+// mensaje que lista los formatos que si sabe leer. NO adivina por el contenido:
+// un .csv renombrado a .xlsx tiene que fallar diciendolo, no colarse.
+//
+// `multipart.FileHeader.Filename` no es de fiar -- lo advierte la propia
+// documentacion de Go --, asi que de el sale UNICAMENTE esta decision, que se
+// puede equivocar sin consecuencias: un formato mal deducido da un error de
+// lectura. La clave del objeto de la boveda sigue derivandose de la huella.
+func FormatoDeNombre(nombre string) string {
+	i := strings.LastIndex(nombre, ".")
+	if i < 0 {
+		return ""
+	}
+	switch strings.ToLower(nombre[i+1:]) {
+	case "xlsx", "xlsm":
+		return FormatoXLSX
+	case "csv":
+		return FormatoCSV
+	case "json":
+		return FormatoJSON
+	default:
+		// .xls -- el formato binario viejo, el del padron IPI -- entra aqui a
+		// proposito: excelize no lo lee, y devolver FormatoXLSX daria un error
+		// de parseo en vez de decir que ese formato no esta soportado.
+		return ""
+	}
+}
 
 // ClaveLector identifica al adaptador de formato de una entrega.
 //
@@ -483,6 +523,11 @@ type ClaveLector struct {
 // en [ErrReporteInvalido] y nombrando el campo, que es lo que permite volver a
 // pedirle al cliente exactamente eso.
 type LectorReporte interface {
+	// Leer convierte los bytes COMPLETOS de una entrega en filas. La firma
+	// fija de hecho el techo de 32 MiB: el parseo -la operacion mas larga de
+	// la peticion- no recibe ctx y no se puede cancelar, y el streaming de
+	// archivos grandes (#46) no sera un cambio de adaptador sino de puerto
+	// mas reescritura del caso de uso.
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 

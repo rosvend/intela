@@ -187,7 +187,7 @@ func recortar(us []UsoPersistido, pag Paginacion) []UsoPersistido {
 //
 // El orden es por id y no por instante de recepcion: este doble no tiene reloj,
 // y un orden estable es lo que hace comprobable el listado.
-func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string) ([]CargaReporte, error) {
+func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	ids := make([]string, 0, len(r.reportes))
 	for id := range r.reportes {
 		ids = append(ids, id)
@@ -212,7 +212,18 @@ func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string) ([]
 		}
 		cargas = append(cargas, c)
 	}
-	return cargas, nil
+	pag = pag.ConDefecto()
+	if pag.Limite == LimiteSinTope {
+		return cargas, nil
+	}
+	if pag.Desplazamiento >= len(cargas) {
+		return []CargaReporte{}, nil
+	}
+	fin := pag.Desplazamiento + pag.Limite
+	if fin > len(cargas) {
+		fin = len(cargas)
+	}
+	return cargas[pag.Desplazamiento:fin], nil
 }
 
 // canonicos deja fuera las filas rechazadas, igual que el adaptador real: las
@@ -1804,7 +1815,7 @@ func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
 		t.Fatalf("febrero: %v", err)
 	}
 
-	todas, err := ingesta.Cargas(t.Context(), "")
+	todas, err := ingesta.Cargas(t.Context(), "", Paginacion{})
 	if err != nil {
 		t.Fatalf("Cargas: %v", err)
 	}
@@ -1812,7 +1823,7 @@ func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
 		t.Fatalf("cargas = %d, se esperaban 2", len(todas))
 	}
 
-	enero, err := ingesta.Cargas(t.Context(), "2026-01")
+	enero, err := ingesta.Cargas(t.Context(), "2026-01", Paginacion{})
 	if err != nil {
 		t.Fatalf("Cargas(2026-01): %v", err)
 	}
@@ -1838,7 +1849,7 @@ func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
 	// por lo mismo: antes se contestaba 200 con la lista vacia, que se lee como
 	// "ese mes no tuvo recaudo" cuando lo que pasa es que ese mes no existe.
 	for _, periodo := range []string{"2026-1", "2026-13", "2026-00", "enero"} {
-		if _, err := ingesta.Cargas(t.Context(), periodo); !errors.Is(err, ErrReporteInvalido) {
+		if _, err := ingesta.Cargas(t.Context(), periodo, Paginacion{}); !errors.Is(err, ErrReporteInvalido) {
 			t.Errorf("periodo %q: err = %v, se esperaba ErrReporteInvalido", periodo, err)
 		}
 	}
@@ -1847,8 +1858,38 @@ func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
 	// nucleo acepta al escribir se puede consultar. Con dos patrones -el del
 	// filtro y el de la escritura- habia bolsas escribibles que no se podian
 	// consultar.
-	if _, err := ingesta.Cargas(t.Context(), "2026-12"); err != nil {
+	if _, err := ingesta.Cargas(t.Context(), "2026-12", Paginacion{}); err != nil {
 		t.Fatalf("un periodo valido no puede rechazarse: %v", err)
+	}
+}
+
+func TestCargasPagina(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Buena")}}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	for _, periodo := range []string{"2026-01", "2026-02", "2026-03"} {
+		if _, err := ingesta.IngerirReporte(
+			t.Context(), "caracol", FormatoXLSX, periodo, []byte(periodo)); err != nil {
+			t.Fatalf("%s: %v", periodo, err)
+		}
+	}
+
+	// El defecto es la primera pagina completa: sin paginacion pedida, el
+	// listado no se recorta en silencio.
+	todas, err := ingesta.Cargas(t.Context(), "", Paginacion{})
+	if err != nil {
+		t.Fatalf("Cargas: %v", err)
+	}
+	if len(todas) != 3 {
+		t.Fatalf("cargas = %d, se esperaban 3", len(todas))
+	}
+
+	una, err := ingesta.Cargas(t.Context(), "", Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("Cargas(pagina): %v", err)
+	}
+	if len(una) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(una))
 	}
 }
 
@@ -1944,7 +1985,7 @@ func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
 	}
 
 	// El listado dice cuantos rechazos hubo: la cifra que NO se acota.
-	cargas, err := ingesta.Cargas(t.Context(), "2026-01")
+	cargas, err := ingesta.Cargas(t.Context(), "2026-01", Paginacion{})
 	if err != nil {
 		t.Fatalf("Cargas: %v", err)
 	}

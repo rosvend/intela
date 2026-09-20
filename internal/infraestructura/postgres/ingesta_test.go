@@ -576,7 +576,7 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 // a leer #26 y el reparto.
 //
 // Los DEFAULT del esquema (`oni DEFAULT TRUE`, `emisiones DEFAULT 1`) no
-// intervienen: insertarUso manda los tres valores siempre, asi que el unico
+// intervienen: el COPY manda los tres valores siempre, asi que el unico
 // sitio donde pueden ponerse es el caso de uso.
 func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	s, pool := sembrarReportes(t)
@@ -1355,7 +1355,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
@@ -1394,7 +1394,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
 
-	enero, err := s.ListarCargas(ctx, "2026-01")
+	enero, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2026-01): %v", err)
 	}
@@ -1402,9 +1402,10 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 		t.Fatalf("cargas de enero = %+v", enero)
 	}
 
-	// El filtro va como parametro y el vacio significa "todas". Es lo que
-	// permite una sola sentencia y un solo plan.
-	todas, err := s.ListarCargas(ctx, "")
+	// El filtro va como parametro y el vacio significa "todas". Cada caso
+	// tiene su sentencia y su plan: el `OR` no es sargable y anulaba el
+	// indice `reportes_periodo`.
+	todas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(): %v", err)
 	}
@@ -1413,7 +1414,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	}
 
 	// Un periodo sin cargas es lista vacia, no error.
-	ninguna, err := s.ListarCargas(ctx, "2025-12")
+	ninguna, err := s.ListarCargas(ctx, "2025-12", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2025-12): %v", err)
 	}
@@ -1438,13 +1439,40 @@ func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
 		t.Fatalf("fijar creado de febrero: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
 	if cargas[0].ID != reporteFebrero || cargas[1].ID != reporteEnero {
 		t.Fatalf("orden = %s, %s; se esperaba la mas reciente primero",
 			cargas[0].ID, cargas[1].ID)
+	}
+}
+
+func TestListarCargasPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	primera, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba pagina vacia", vacia)
 	}
 }
 

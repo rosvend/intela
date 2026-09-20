@@ -1679,6 +1679,10 @@ paths:
         Es la unica lectura que responde "¿entro completo lo que subi?": el
         recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
 
+        Va paginado con la misma forma que el resto de listados (limite y
+        desplazamiento, mismo defecto y mismo techo): el listado crece sin
+        cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+
         Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
         de la que salio (`sha256`, `clave_objeto`), que es lo que permite
         volver al archivo EXACTO que pondero una corrida y no "al archivo de
@@ -1705,6 +1709,29 @@ paths:
             type: string
             pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: 2026-01
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+            la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
           description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
@@ -1852,8 +1879,7 @@ paths:
         "409":
           description: |
             Esa fuente ya entrego exactamente esos bytes -lo decide el
-            UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-            tiene contenido distinto bajo esa huella.
+            UNIQUE (sha256, fuente), no el nombre del archivo-.
           content:
             application/json:
               schema:
