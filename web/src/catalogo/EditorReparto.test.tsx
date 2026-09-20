@@ -1597,6 +1597,52 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
+  it("si el historial no cuadra con la version vigente, no ofrece guardar y lo dice", async () => {
+    // El item 7: la pantalla que ESCRIBE tiene que ser tan estricta como la que
+    // lee. La obra declara vigente la 7 y el historial solo trae la 3 abierta:
+    // guardar cerraria una version que `GET /obras/{id}` no esta sosteniendo.
+    simularServidor({ obra: () => json(obraAvanzada) });
+
+    await abrirElEditor("/catalogo/obra-7/declaracion");
+
+    // El borrador SI tiene filas y el total SI es 100: lo que falta no es el
+    // reparto, es que las dos lecturas de la obra no cuadran. Sin esto, un
+    // arreglo que cerrara la puerta por cualquier motivo pasaria igual.
+    expect(campoPorcentaje("tit-1")).toHaveProperty("value", "75");
+    expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
+      "100",
+    );
+
+    expect(botonGuardar()).toHaveProperty("disabled", true);
+    expect(texto()).toContain(
+      "El servidor declara vigente la versión 7, pero el historial no trae esa versión como única versión abierta.",
+    );
+    // Y el texto no atribuye el bloqueo al borrador, que esta bien: sin la
+    // guarda del motivo, esta pantalla diria "el total pasa de 100" con el
+    // total en 100.
+    expect(texto()).not.toContain("El total pasa de 100");
+
+    // Ni con un clic se guarda.
+    guardar();
+    expect(guardados()).toHaveLength(0);
+  });
+
+  it("cuando el historial SI cuadra con la version vigente, se ofrece guardar", async () => {
+    // Control positivo: la puerta no se cierra de mas. Es la misma obra de
+    // arriba con el historial coherente.
+    simularServidor({
+      obra: () => json(obraAvanzada),
+      historial: () => json([versionSeisCerrada, versionSieteAbierta]),
+    });
+
+    await abrirElEditor("/catalogo/obra-7/declaracion");
+
+    expect(botonGuardar()).toHaveProperty("disabled", false);
+    expect(texto()).not.toContain(
+      "pero el historial no trae esa versión como única versión abierta",
+    );
+  });
+
   it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {
     simularServidor({
       historial: () => json([{ ...versionVigente, vigente_hasta: undefined }]),

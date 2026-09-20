@@ -684,7 +684,25 @@ function FormularioDeReparto({
   const filasSinNumero = filas.filter(
     (fila) => !Number.isFinite(porcentajeDeTexto(fila.porcentaje)),
   ).length;
-  const puedeGuardar = puedeGuardarBorrador(estado) && filasSinNumero === 0;
+  // La obra dice cual es su version vigente y el historial cual tiene abierta:
+  // son dos lecturas del mismo hecho, y si no coinciden -una declaracion se
+  // guardo entre las dos peticiones, o el historial no trae ninguna abierta-
+  // guardar cerraria una version que `GET /obras/{id}` no esta sosteniendo. Es
+  // la MISMA comprobacion que hace el detalle (`DetalleObra.tsx:381`), con el
+  // mismo razonamiento, y aqui importa mas porque esta pantalla ESCRIBE: la de
+  // solo lectura se niega a pintar, esta se niega a guardar.
+  //
+  // Se compara solo cuando el historial se pudo leer. `null` es "no se pudo
+  // leer", y ese caso ya tiene su aviso -y guardar sin haber leido el historial
+  // es justo lo que el aviso advierte-: prohibirlo aqui seria cambiar una
+  // advertencia por una puerta cerrada sin haberselo pedido a nadie.
+  const versionAbiertaDelHistorial =
+    historial === null ? null : (versionAbierta(historial)?.version ?? null);
+  const elHistorialCuadra =
+    historial === null || versionAbiertaDelHistorial === obra.version_vigente;
+
+  const puedeGuardar =
+    puedeGuardarBorrador(estado) && filasSinNumero === 0 && elHistorialCuadra;
   // Las tres fuentes: el historial, la version que el `PUT` devolvio y la duda
   // que un guardado dejo pendiente. La duda manda, y por eso no basta con las dos
   // primeras -ver `avisoDeVersion`-.
@@ -867,11 +885,27 @@ function FormularioDeReparto({
               así que la pantalla no envía nada mientras falte.
             </p>
           )}
-          {filasSinNumero === 0 && !puedeGuardar && (
+          {filasSinNumero === 0 && elHistorialCuadra && !puedeGuardar && (
             <p className="editor-aviso">
               {estado === "vacia"
                 ? "Añade al menos una parte desde el padrón para poder guardar."
                 : "El total pasa de 100, y el servidor rechaza esa suma con un 400."}
+            </p>
+          )}
+          {/* El tercer motivo por el que no se ofrece guardar, y el unico que
+              NO es del borrador: el historial no cuadra con la version vigente
+              que declara la obra. Va aparte de los dos de arriba para que el
+              texto diga siempre el motivo verdadero -sin esta guarda, un
+              historial que no cuadra saldria como "el total pasa de 100"-. */}
+          {!elHistorialCuadra && (
+            <p className="editor-aviso">
+              {obra.version_vigente === null
+                ? "El servidor no declara ninguna versión vigente,"
+                : `El servidor declara vigente la versión ${obra.version_vigente},`}{" "}
+              pero el historial no trae esa versión como única versión abierta.
+              Mientras las dos lecturas no cuadren, esta pantalla no ofrece
+              guardar: guardaría cerrando una versión que el sistema no está
+              sosteniendo. Recarga la pantalla y vuelve a mirar el historial.
             </p>
           )}
         </div>
