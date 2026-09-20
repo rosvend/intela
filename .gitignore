@@ -282,25 +282,3 @@ contexto-reflect.md
 # Binarios locales de herramientas (golangci-lint, etc.) instalados fuera del
 # PATH del CI. No versionar.
 .tools/
-
-# Agente de IA local: sus skills y su taxonomia son configuracion de trabajo de
-# quien revisa, no codigo ni documentacion del proyecto. Las dos reglas nombran
-# rutas exactas a proposito, sin comodines, para no rozar ningun archivo real.
-/.local-ai-agent/
-/.local-ai-rules.md
-
-# Union (junction) que hace descubrible el revisor ante DSH: DSH busca skills en
-# .agents/skills/, pero el contenido real vive en .local-ai-agent/ (ignorado
-# arriba) y solo hay UNA copia de los ficheros. Mismo patron que
-# .claude/skills/iterative-planner. Esta regla es obligatoria: sin ella Git
-# atraviesa la union y versiona los ficheros del agente por la ruta enlazada.
-.agents/skills/revisor
-
-# DSH escanea .dsh/skills como raiz de proyecto (rank 100, por delante de
-# .agents/skills). Aqui va una union a .claude/skills para que DSH vea TAMBIEN
-# las skills de DOMINIO (ingesta-y-normalizacion, trazabilidad-y-auditoria,
-# reparto-y-distribucion...), que hasta ahora solo existian para Claude Code:
-# un agente de DSH construyo la pantalla de ingesta sin poder consultar la skill
-# de ingesta. Sin esta regla, Git atraviesa la union y versiona las 22 skills
-# que hoy viven en .claude/skills.
-/.dsh/
