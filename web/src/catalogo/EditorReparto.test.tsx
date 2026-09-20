@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   createEvent,
   fireEvent,
@@ -11,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
+import { DEBOUNCE_TECLEO_MS } from "../useApi";
 import type { Obra, Titular, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
@@ -1328,14 +1330,20 @@ describe("editor de reparto (integracion con App)", () => {
       target: { value: "Ana" },
     });
 
-    const delPadron = peticiones().filter((p) =>
-      p.url.startsWith("/api/titulares"),
+    const delPadron = () =>
+      peticiones().filter((p) => p.url.startsWith("/api/titulares"));
+    // La consulta espera a que el tecleo pare (item 11), asi que la peticion no
+    // sale en el mismo act del `change`. Lo que se afirma es CUAL es la
+    // consulta y con que parametros, no en que instante sale.
+    await vi.waitFor(() =>
+      expect(delPadron().at(-1)?.url).toBe(
+        "/api/titulares?nombre=Ana&limite=50",
+      ),
     );
-    expect(delPadron.at(-1)?.url).toBe("/api/titulares?nombre=Ana&limite=50");
 
     // Y el limite viaja explicito, sin `persona_natural`, en todas.
-    expect(delPadron.every((p) => p.url.includes("limite=50"))).toBe(true);
-    expect(delPadron.every((p) => !p.url.includes("persona_natural"))).toBe(
+    expect(delPadron().every((p) => p.url.includes("limite=50"))).toBe(true);
+    expect(delPadron().every((p) => !p.url.includes("persona_natural"))).toBe(
       true,
     );
   });
@@ -2086,5 +2094,53 @@ describe("el Enter de un campo de texto no guarda (el 🟠)", () => {
     // esta contado aqui -mismo criterio que el resto de esta suite-.
     guardar();
     expect(guardados()).toHaveLength(1);
+  });
+
+  // Item 11 en el otro buscador de la pantalla: el padron del editor. Es un
+  // consumidor distinto de `useApi` -y de la misma constante compartida-, asi
+  // que sin esta prueba quitarle el `debounceMs` a este sitio no lo notaria
+  // nadie.
+  describe("tecleo en la busqueda del padron (item 11)", () => {
+    afterEach(() => {
+      cleanup();
+      vi.useRealTimers();
+    });
+
+    it("teclear en la busqueda no pide una vez por tecla: agrupa la palabra", async () => {
+      simularServidor();
+      await abrirElEditorConPadron();
+
+      const delPadron = () =>
+        peticiones().filter((p) => p.url.startsWith("/api/titulares"));
+
+      // Precondicion: el padron ya se pidio al montar. Un contador que nunca
+      // sube no distingue "agrupa el tecleo" de "no pide nada", y las dos cosas
+      // no son lo mismo.
+      expect(delPadron().length).toBeGreaterThanOrEqual(1);
+
+      // El reloj lo lleva el test: con temporizadores de verdad, "todavia esta
+      // tecleando" y "ya pidio" no se separan sin dormir la prueba.
+      vi.useFakeTimers();
+      const antes = delPadron().length;
+
+      for (const texto of ["A", "An", "Ana", "Ana ", "Ana E", "Ana Es"]) {
+        fireEvent.change(screen.getByLabelText("Buscar por nombre"), {
+          target: { value: texto },
+        });
+      }
+
+      // Nada ha salido mientras se teclea...
+      expect(delPadron().length).toBe(antes);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS);
+      });
+
+      // ...y al parar sale UNA, la de la palabra entera.
+      expect(delPadron().length).toBe(antes + 1);
+      expect(delPadron().at(-1)?.url).toBe(
+        "/api/titulares?nombre=Ana+Es&limite=50",
+      );
+    });
   });
 });

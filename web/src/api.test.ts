@@ -289,6 +289,69 @@ describe("api", () => {
     expect(error).toBeInstanceOf(ErrorDeRed);
   });
 
+  it("un `signal` abortado propaga el aborto, no un ErrorDeRed", async () => {
+    // El `signal` es del que llama: cancelar no es un fallo, y quien cancelo ya
+    // sabe que cancelo. Envolver el rechazo en `ErrorDeRed` -"no se pudo
+    // contactar al servidor"- diria que el servidor no contesto cuando lo que
+    // paso es que dejamos de escucharle.
+    const controlador = new AbortController();
+    const senales: AbortSignal[] = [];
+    vi.mocked(fetch).mockImplementation((_entrada, init) => {
+      const signal = init?.signal ?? undefined;
+      if (signal) senales.push(signal);
+      return new Promise<Response>((_resolver, rechazar) => {
+        // Un doble que RESPETA la señal: uno que la ignorara dejaria esta
+        // prueba pasando sin haber probado nada.
+        signal?.addEventListener("abort", () =>
+          rechazar(new DOMException("la peticion se cancelo", "AbortError")),
+        );
+      });
+    });
+
+    const promesa = api("/api/obras", { signal: controlador.signal });
+
+    // Precondicion: la peticion llego a salir, y con ESTA señal. Sin esto, el
+    // aborto de abajo podria ser el de una peticion que nunca se hizo.
+    expect(senales).toHaveLength(1);
+    expect(senales[0]).toBe(controlador.signal);
+
+    controlador.abort();
+
+    const error = await promesa.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as Error).name).toBe("AbortError");
+    expect(error).not.toBeInstanceOf(ErrorDeRed);
+    expect(error).not.toBeInstanceOf(ApiError);
+  });
+
+  it("un aborto con la respuesta ya recibida no se convierte en un cuerpo ilegible", async () => {
+    // La respuesta llega y lo que falla es su LECTURA, con el mismo error con
+    // el que `fetch` rechaza una peticion cancelada. Decir de esto que "el
+    // servidor contesto sin error y lo que no llego fue el cuerpo" afirma algo
+    // que no paso: dejamos de leer.
+    const controlador = new AbortController();
+    const cuerpo = new ReadableStream({
+      start(controladorDelCuerpo) {
+        controladorDelCuerpo.error(
+          new DOMException("la peticion se cancelo", "AbortError"),
+        );
+      },
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(cuerpo, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const promesa = api("/api/obras", { signal: controlador.signal });
+    controlador.abort();
+
+    const error = await promesa.catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(ErrorDeCuerpoIlegible);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
   it("no llama a res.json() en una respuesta 204 sin content-type (DELETE de sesion)", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
 

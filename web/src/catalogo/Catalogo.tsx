@@ -1,7 +1,7 @@
 import { useId, useState, type ReactElement } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
-import { useApi } from "../useApi";
+import { DEBOUNCE_TECLEO_MS, useApi } from "../useApi";
 import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { esObra, type Obra } from "./tipos";
@@ -183,6 +183,12 @@ export default function Catalogo() {
   // Los filtros los manda la URL: es lo que hace que recargar la pagina, volver
   // atras o compartir el enlace conserven la busqueda, y lo que deja a `useApi`
   // pedir sola la consulta cuando cambia el path.
+  //
+  // Con `DEBOUNCE_TECLEO_MS` la consulta espera a que el tecleo pare: los cuatro
+  // campos de arriba escriben en la URL a cada tecla, y sin esa espera cada una
+  // era una peticion al servidor -y la respuesta de la penultima podia llegar
+  // despues de la ultima-. El numero y su motivo estan declarados una sola vez,
+  // en `useApi.ts`.
   const filtros: Record<Filtro, string> = {
     titulo: searchParams.get("titulo") ?? "",
     genero: searchParams.get("genero") ?? "",
@@ -207,7 +213,7 @@ export default function Catalogo() {
     datos: obras,
     cargando,
     error,
-  } = useApi<Obra[]>(`/api/obras?${params.toString()}`);
+  } = useApi<Obra[]>(`/api/obras?${params.toString()}`, DEBOUNCE_TECLEO_MS);
 
   /**
    * El texto del campo del anio y el ultimo valor que la URL tenia de el.

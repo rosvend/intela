@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
+import { DEBOUNCE_TECLEO_MS } from "../useApi";
 import type { Obra, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
@@ -202,6 +204,37 @@ function simularServidor({
     }
     return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
   });
+}
+
+/**
+ * Un backend falso que RESPETA la señal: la sesion contesta, y cada consulta
+ * del catalogo queda en vuelo -con su `AbortSignal` anotado- hasta que el test
+ * la resuelve. Una peticion cancelada rechaza con el mismo aborto que daria
+ * `fetch`; un doble que ignorara la señal dejaria la prueba del aborto pasando
+ * sin haber probado nada, porque la respuesta vieja llegaria tarde y el hook la
+ * descartaria igual con su bandera.
+ */
+function servidorQueRespetaLaSenal(rol: Rol) {
+  const senales: AbortSignal[] = [];
+  const enVuelo: ((respuesta: Response) => void)[] = [];
+  vi.mocked(fetch).mockImplementation((entrada, init) => {
+    const url = String(entrada);
+    if (url === "/api/auth/session") {
+      return Promise.resolve(respuestaDeSesion(rol));
+    }
+    if (!esConsultaDeObras(url)) {
+      return Promise.resolve(json({ error: "ruta no encontrada" }, 404));
+    }
+    const signal = init?.signal ?? undefined;
+    if (signal) senales.push(signal);
+    return new Promise<Response>((resolver, rechazar) => {
+      signal?.addEventListener("abort", () =>
+        rechazar(new DOMException("la peticion se cancelo", "AbortError")),
+      );
+      enVuelo.push(resolver);
+    });
+  });
+  return { senales, enVuelo };
 }
 
 /**
@@ -836,5 +869,124 @@ describe("pantalla de catalogo (integracion con App)", () => {
       screen.queryByRole("heading", { name: "Catálogo de obras" }),
     ).toBeNull();
     expect(consultas()).toEqual([]);
+  });
+
+  // Item 11: el tecleo deja de ser una peticion por tecla y el cambio de filtro
+  // cancela la que ya no sirve. Las dos pruebas miden una cosa distinta -cuantas
+  // peticiones salen, y si la vieja se cancela-, y por eso cada una tiene su
+  // control: la primera, dos tecleos separados mas que la espera; la segunda, la
+  // precondicion de que la peticion llego a salir con su señal.
+  describe("tecleo y cancelacion (item 11)", () => {
+    afterEach(() => {
+      // Desmontar con los temporizadores falsos puestos deja la limpieza del
+      // efecto escribiendo sobre el reloj de mentira.
+      cleanup();
+      vi.useRealTimers();
+    });
+
+    it("teclear diez caracteres seguidos produce UNA sola peticion, y dos tecleos separados dos", async () => {
+      simularServidor({ rol: "administrador", obras: () => [obraCompleta] });
+
+      montarApp("/catalogo");
+      await screen.findByRole("table", { name: "Catálogo de obras" });
+
+      // A partir de aqui el reloj lo lleva el test: con temporizadores de
+      // verdad no se puede separar "todavia esta tecleando" de "la respuesta
+      // llego".
+      vi.useFakeTimers();
+      const antes = consultas().length;
+
+      // Precondicion del contador: el doble YA vio una peticion -la del
+      // montaje-. Un contador que nunca sube mide lo mismo que un debounce que
+      // funciona, y este repo ya pago esa trampa con el filtro del driver CDP,
+      // que devolvia 0 sin haber medido nada.
+      expect(antes).toBeGreaterThanOrEqual(1);
+
+      // Diez teclas, una detras de otra y sin pausa: una palabra escrita.
+      const tecleo = [
+        "C",
+        "Ca",
+        "Cas",
+        "Casa",
+        "Casa ",
+        "Casa d",
+        "Casa de",
+        "Casa de ",
+        "Casa de l",
+        "Casa de la",
+      ];
+      for (const texto of tecleo) {
+        fireEvent.change(screen.getByLabelText("Título"), {
+          target: { value: texto },
+        });
+      }
+
+      // Mientras el tecleo sigue, no ha salido ninguna peticion...
+      expect(consultas().length).toBe(antes);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS);
+      });
+
+      // ...y cuando para, sale UNA: la palabra entera, no las nueve anteriores.
+      expect(consultas().length).toBe(antes + 1);
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=20");
+
+      // Control negativo: dos tecleos SEPARADOS mas que la espera son dos
+      // peticiones. Sin el, un contador que no sube nunca -o un debounce que no
+      // agrupara nada- pasaria la afirmacion de arriba igual.
+      fireEvent.change(screen.getByLabelText("Título"), {
+        target: { value: "Casa de la P" },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS + 1);
+      });
+      fireEvent.change(screen.getByLabelText("Título"), {
+        target: { value: "Casa de la Pa" },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS + 1);
+      });
+
+      expect(consultas()).toEqual([
+        "/api/obras?limite=20",
+        "/api/obras?titulo=Casa+de+la&limite=20",
+        "/api/obras?titulo=Casa+de+la+P&limite=20",
+        "/api/obras?titulo=Casa+de+la+Pa&limite=20",
+      ]);
+    });
+
+    it("cambiar de filtro aborta la peticion anterior, y la nueva llega igual", async () => {
+      const servidor = servidorQueRespetaLaSenal("administrador");
+
+      montarApp("/catalogo?titulo=Casa");
+
+      // Precondicion: la peticion del primer filtro SALIO, con su señal, y
+      // sigue en vuelo. El doble no resuelve hasta que el test lo diga, asi que
+      // el "antes de que la primera resuelva" no depende de ningun reloj.
+      await vi.waitFor(() => expect(servidor.senales).toHaveLength(1));
+      expect(servidor.senales[0].aborted).toBe(false);
+
+      fireEvent.change(screen.getByLabelText("Título"), {
+        target: { value: "Casa de la" },
+      });
+
+      // El cambio de filtro cancela la peticion que ya no sirve: sin esto sale
+      // igual, consume servidor y puede llegar tarde sobre la nueva.
+      await vi.waitFor(() => expect(servidor.senales[0].aborted).toBe(true));
+      await vi.waitFor(() => expect(servidor.senales).toHaveLength(2));
+      expect(servidor.senales[1].aborted).toBe(false);
+      expect(servidor.senales[1]).not.toBe(servidor.senales[0]);
+
+      // Y la nueva llega y se pinta: el aborto de la vieja no deja la pantalla
+      // cargando para siempre ni se convierte en un error en pantalla.
+      await act(async () => {
+        servidor.enVuelo[1](json([obraCompleta]));
+      });
+
+      await screen.findByRole("table", { name: "Catálogo de obras" });
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=20");
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
   });
 });

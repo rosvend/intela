@@ -156,3 +156,112 @@ describe("useApi", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("useApi: tecleo y cancelacion (item 11)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    // Los temporizadores falsos son de estas dos pruebas: dejarlos puestos
+    // rompe cualquier prueba posterior del fichero.
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("con debounceMs un cambio de ruta espera a que el tecleo pare, y la carga inicial no espera", async () => {
+    // El cronometro es del test: con temporizadores de verdad, "todavia no ha
+    // pedido" y "ya pidio" no se pueden separar sin dormir la prueba.
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ estado: "listo" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const { rerender } = renderHook(({ path }) => useApi(path, 250), {
+      initialProps: { path: "/api/obras?titulo=C" },
+    });
+
+    // La carga inicial NO espera: no hay rafaga que agrupar, y hacer esperar
+    // 250 ms la primera pintura de la pantalla seria subirle la latencia a todas
+    // las pantallas que pidan el debounce, a cambio de nada.
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // El cambio de ruta -lo que produce teclear- si espera.
+    await act(async () => {
+      rerender({ path: "/api/obras?titulo=Ca" });
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(249);
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    // Control positivo: al vencer la espera, la peticion de la ruta NUEVA sale.
+    // Un hook que esperara para siempre pasaria todo lo de arriba sin servir
+    // para nada.
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toBe(
+      "/api/obras?titulo=Ca",
+    );
+  });
+
+  it("al cambiar de ruta aborta la peticion anterior, sin dejar la pantalla cargando ni un error inventado", async () => {
+    const senales: AbortSignal[] = [];
+    const enVuelo: ((respuesta: Response) => void)[] = [];
+    vi.mocked(fetch).mockImplementation((_entrada, init) => {
+      const signal = init?.signal ?? undefined;
+      if (signal) senales.push(signal);
+      return new Promise<Response>((resolver, rechazar) => {
+        // Un doble que RESPETA la señal: cancelada la peticion, rechaza como
+        // rechazaria `fetch`. Uno que la ignorara dejaria esta prueba pasando
+        // sin haber probado la cancelacion -la respuesta llegaria tarde y el
+        // hook la descartaria con la bandera, que es justo lo que no basta-.
+        signal?.addEventListener("abort", () =>
+          rechazar(new DOMException("la peticion se cancelo", "AbortError")),
+        );
+        enVuelo.push(resolver);
+      });
+    });
+
+    const { result, rerender } = renderHook(
+      ({ path }) => useApi<{ id: string }>(path),
+      { initialProps: { path: "/api/obras/1" } },
+    );
+
+    // Precondicion: la peticion salio, con una señal, y sigue en vuelo. Sin
+    // esto, el `aborted` de abajo podria ser el de una peticion que nunca se
+    // hizo.
+    expect(senales).toHaveLength(1);
+    expect(senales[0].aborted).toBe(false);
+
+    act(() => rerender({ path: "/api/obras/2" }));
+
+    // Cada peticion trae su propio control: la vieja se cancela, la nueva no.
+    expect(senales[0].aborted).toBe(true);
+    expect(senales).toHaveLength(2);
+    expect(senales[1].aborted).toBe(false);
+    // Y el aborto no se convierte en nada: ni error, ni un `cargando` que se
+    // quede puesto -el modo de fallo que la adenda del paso avisa-.
+    expect(result.current.error).toBeNull();
+    expect(result.current.cargando).toBe(true);
+
+    await act(async () => {
+      enVuelo[1](
+        new Response(JSON.stringify({ id: "2" }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+
+    expect(result.current.datos).toEqual({ id: "2" });
+    expect(result.current.cargando).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+});

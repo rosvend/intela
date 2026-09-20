@@ -68,6 +68,42 @@ export class ErrorDeCuerpoIlegible extends Error {
   }
 }
 
+/**
+ * `true` si el error es uno de los tres que `api()` sabe lanzar.
+ *
+ * Contrato: recibe `unknown` -la forma en la que un `catch` entrega lo que sea
+ * que fallo- y, cuando devuelve `true`, estrecha el tipo a
+ * `ApiError | ErrorDeRed | ErrorDeCuerpoIlegible`, que son los tres unicos
+ * errores que construye este modulo y los unicos cuyo `message` esta escrito
+ * para leerse en pantalla. Devuelve `false` para cualquier otro fallo -el
+ * `TypeError` de un `res.json()`, un `RangeError`- y para cualquier cosa que no
+ * sea un error: quien lo use tiene que tener su propio texto para ese caso. No
+ * lanza y no mira el `message` de nada.
+ *
+ * La union vive aqui, en el modulo que DEFINE las tres clases, y no copiada en
+ * cada consumidor: una cuarta subclase de error se añade a esta funcion y quien
+ * la use la hereda sin enterarse, mientras que con la union repetida la mitad
+ * de las copias se actualizaria y la otra no, y el defecto volveria en silencio
+ * al texto generico -que es exactamente lo que el paso 13 cerro con
+ * `ErrorDeCuerpoIlegible`-.
+ */
+// DECISION plan-2026-09-20T043343-f3785d3e/D-016: la union de errores tipados
+// es UNA regla y vive en un solo sitio. NO la vuelvas a escribir en un
+// consumidor -ni con `instanceof` en linea ni con una lista paralela-: si
+// aparece una cuarta clase, se añade AQUI y los consumidores la heredan. Dos
+// copias que tienen que cambiar juntas son un invariante en lockstep, que es un
+// defecto declarado en el protocolo, no un patron. El porque completo esta en
+// `decisions.md` D-016.
+export function esErrorDeApi(
+  error: unknown,
+): error is ApiError | ErrorDeRed | ErrorDeCuerpoIlegible {
+  return (
+    error instanceof ApiError ||
+    error instanceof ErrorDeRed ||
+    error instanceof ErrorDeCuerpoIlegible
+  );
+}
+
 // Sustituible para que un 401 navegue con el router en vez de recargar la
 // pagina entera y perder el estado en memoria. Sin registrar ninguno, el
 // comportamiento es el de siempre: window.location.href.
@@ -86,6 +122,15 @@ type Opciones = RequestInit & {
    * de mostrar "credenciales invalidas".
    */
   anonima?: boolean;
+  /**
+   * Cancela la peticion en vuelo. Es el `signal` de `RequestInit`, nombrado
+   * aqui porque `api()` hace una promesa sobre el: un `signal` abortado
+   * propaga el aborto TAL CUAL, sin envolverlo en `ErrorDeRed`. Quien cancela
+   * sabe que cancelo, y "no se pudo contactar al servidor" le diria que el
+   * servidor fallo cuando lo que paso es que dejamos de escucharle. Opcional:
+   * sin el, `api()` se comporta como siempre.
+   */
+  signal?: AbortSignal;
 };
 
 // Sin esta anotacion, TypeScript infiere `Promise<any>` (por `res.json()`), y
@@ -94,7 +139,7 @@ type Opciones = RequestInit & {
 // nada avisaria hasta que algo explotara en pantalla. `unknown` obliga a que
 // cada frontera sin validar quede con un cast explicito y a la vista.
 export async function api(path: string, init: Opciones = {}): Promise<unknown> {
-  const { anonima, ...resto } = init;
+  const { anonima, signal, ...resto } = init;
   const headers = new Headers(resto.headers);
   if (!anonima && token()) headers.set("Authorization", `Bearer ${token()}`);
   if (
@@ -107,8 +152,13 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
 
   let res: Response;
   try {
-    res = await fetch(path, { ...resto, headers });
+    res = await fetch(path, { ...resto, headers, signal });
   } catch (err) {
+    // Se mira la SEÑAL y no el nombre del error: `abort(razon)` rechaza el
+    // `fetch` en vuelo con lo que se le haya pasado a `abort`, que no tiene por
+    // que llamarse `AbortError`. La señal abortada, en cambio, es exactamente
+    // el hecho -dejamos de escuchar- y es lo que sabe quien cancelo.
+    if (signal?.aborted) throw err;
     throw new ErrorDeRed(err);
   }
 
@@ -134,6 +184,11 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
     try {
       return await res.json();
     } catch (err) {
+      // La respuesta llego, pero la cancelacion tambien puede alcanzar a la
+      // LECTURA del cuerpo. Decir de eso que "el servidor contesto sin error y
+      // lo que no llego fue el cuerpo" afirma algo que no paso -dejamos de
+      // leer-, asi que el aborto sigue siendo el aborto.
+      if (signal?.aborted) throw err;
       throw new ErrorDeCuerpoIlegible(res.status, err);
     }
   }

@@ -12,7 +12,7 @@ import { Link, useParams } from "react-router-dom";
 import { ApiError, ErrorDeCuerpoIlegible, ErrorDeRed, api } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
-import { useApi } from "../useApi";
+import { DEBOUNCE_TECLEO_MS, useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import {
   estadoDelBorrador,
@@ -1317,11 +1317,18 @@ function PadronDelEditor({
   if (desplazamiento > 0) {
     params.set("desplazamiento", String(desplazamiento));
   }
+  // La busqueda se pide mientras se teclea, asi que la consulta espera a que el
+  // tecleo pare (`DEBOUNCE_TECLEO_MS`, declarado una sola vez en `useApi.ts`):
+  // sin esa espera cada tecla era una peticion al padron entero. El `path`
+  // cambia con la busqueda y con la pagina, y el hook aborta la que ya no sirve.
   const {
     datos: titulares,
     cargando,
     error,
-  } = useApi<Titular[]>(`/api/titulares?${params.toString()}`);
+  } = useApi<Titular[]>(
+    `/api/titulares?${params.toString()}`,
+    DEBOUNCE_TECLEO_MS,
+  );
 
   /** Cambiar la busqueda vuelve a la primera pagina: la 3 de otra busqueda no existe. */
   function buscar(valor: string) {
