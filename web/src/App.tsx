@@ -1,4 +1,3 @@
-import { ReactElement } from "react";
 import type { ReactElement } from "react";
 import { Route, Routes } from "react-router-dom";
 import EnConstruccion from "./EnConstruccion";
@@ -8,19 +7,14 @@ import Layout from "./Layout";
 import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import RutaProtegida from "./RutaProtegida";
+import Catalogo from "./catalogo/Catalogo";
+import DetalleObra from "./catalogo/DetalleObra";
+import EditorReparto from "./catalogo/EditorReparto";
+import HistorialVersiones from "./catalogo/HistorialVersiones";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
 import PanelCorridas from "./reparto/PanelCorridas";
 import TableroAnomalias from "./reparto/TableroAnomalias";
-
-/**
- * Pantallas reales que sustituyen el placeholder de Sprint 3-5. Quien
- * aterrice un modulo nuevo solo toca esta tabla (issue #19).
- */
-const PANTALLAS: Record<string, ReactElement> = {
-  "/distribucion": <PanelCorridas />,
-  "/anomalias": <TableroAnomalias />,
-};
 
 /**
  * Las pantallas reales de los modulos de `RUTAS`, por ruta. Un modulo que no
@@ -30,7 +24,40 @@ const PANTALLAS: Record<string, ReactElement> = {
  */
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
+  "/catalogo": <Catalogo />,
+  "/distribucion": <PanelCorridas />,
+  "/anomalias": <TableroAnomalias />,
 };
+
+/**
+ * Las sub-rutas del detalle de obra, anidadas a mano y NO como entradas de
+ * `RUTAS` (D-007).
+ *
+ * `/catalogo/:id` no es un modulo del mockup: es una vista de detalle. Meterla
+ * en `RUTAS` la pondria en la barra lateral y obligaria a decidir su
+ * visibilidad por rol en cada entrada; como ruta hija, el detalle conserva el
+ * item de nav activo y hereda el guard de rol sin tocar el shell, porque
+ * `Layout.tsx` resuelve el modulo por PREFIJO. El precio, aceptado: `App.tsx`
+ * deja de ser un mapeo plano de `RUTAS`.
+ *
+ * Las tres vistas son de #30 y las tres tienen ya pantalla: el detalle (paso 6),
+ * el historial (paso 7) y el editor de reparto (paso 8). Se declaran todas aqui
+ * para que su direccion sea la que D-007 fijo, y cada paso solo cambio el
+ * elemento -el ultimo, el editor, dejo de montar <EnConstruccion> cuando su
+ * pantalla existio: un placeholder sobre una ruta que ya funciona dice lo
+ * contrario de lo que pasa-.
+ *
+ * Quien enlaza a cada una: el detalle se abre desde la fila de su obra en el
+ * catalogo, el historial desde el detalle -al final de su declaracion vigente-,
+ * y el editor desde el detalle tambien, en el bloque de la declaracion. Ninguna
+ * de las tres es alcanzable solo escribiendo su URL.
+ */
+const SUBRUTAS_DEL_DETALLE: readonly { path: string; element: ReactElement }[] =
+  [
+    { path: "/catalogo/:id", element: <DetalleObra /> },
+    { path: "/catalogo/:id/historial", element: <HistorialVersiones /> },
+    { path: "/catalogo/:id/declaracion", element: <EditorReparto /> },
+  ];
 
 /**
  * Shell del tablero.
@@ -40,7 +67,8 @@ const PANTALLAS: Partial<Record<string, ReactElement>> = {
  * -que hasta ahora tampoco estaba- devuelve 404 directamente.
  *
  * Las rutas de `RUTAS` (Sprint 3-5) salen de `PANTALLAS`, o de
- * <EnConstruccion> mientras su pantalla no exista.
+ * <EnConstruccion> mientras su pantalla no exista. Las tres sub-rutas del
+ * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`.
  */
 export default function App() {
   return (
@@ -60,6 +88,13 @@ export default function App() {
             />
           ))}
           <Route path="/distribucion/:id" element={<PanelCorridas />} />
+          {SUBRUTAS_DEL_DETALLE.map((subruta) => (
+            <Route
+              key={subruta.path}
+              path={subruta.path}
+              element={subruta.element}
+            />
+          ))}
         </Route>
       </Route>
       <Route path="*" element={<NoEncontrado />} />
