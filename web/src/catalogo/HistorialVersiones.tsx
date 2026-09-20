@@ -1,17 +1,17 @@
 import { Link, useParams } from "react-router-dom";
-import { ApiError } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
 import { useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
+import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
 import { TablaDePartes } from "./TablaDePartes";
 import {
-  esObra,
   esVersionDeclaracion,
   type Obra,
   type VersionDeclaracion,
 } from "./tipos";
+import { useObra } from "./useObra";
 
 /**
  * El historial de versiones de la Declaracion de Obra, en SOLO LECTURA (issue
@@ -61,34 +61,38 @@ export default function HistorialVersiones() {
   // que las deja discrepando-, y `destino` se usa aqui para el unico caso en el
   // que volver a la obra no lleva a ninguna parte: que la obra no este.
   const { busqueda, destino } = useVueltaAlCatalogo();
-  const {
-    datos: obra,
-    cargando,
-    error,
-  } = useApi<Obra>(`/api/obras/${encodeURIComponent(id)}`);
+  // La obra y sus desenlaces, de `useObra` (item 13): el preambulo que esta
+  // pantalla compartia con el detalle y el editor -la peticion, el 404 como caso
+  // propio y la guarda de forma- vive alli, en un solo sitio.
+  const estado = useObra(id);
 
-  if (cargando) return <Cargando texto="Cargando el historial…" />;
+  if (estado.estado === "cargando")
+    return <Cargando texto="Cargando el historial…" />;
 
-  if (error) {
-    // El 404 no es un fallo del sistema: es el servidor diciendo que con ese
-    // identificador no hay ninguna obra, y por tanto que no hay historial que
-    // enseñar. La vuelta, en ese caso, no es la ficha de una obra que no esta
-    // -volveria a decir lo mismo- sino el catalogo, que existe siempre.
-    if (error instanceof ApiError && error.status === 404) {
-      return <ObraAusente id={id} volver={destino} />;
-    }
+  if (estado.estado === "ausente") {
+    return (
+      <ObraAusente
+        id={estado.id}
+        volver={destino}
+        className="historial-versiones"
+        explicacion=", así que no hay ningún historial de declaración que mostrar. El historial de una obra que sí existe y todavía no se ha declarado llega como una lista vacía, no como un error: los dos casos no son el mismo."
+      />
+    );
+  }
+
+  if (estado.estado === "error") {
     return (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar la obra: {error.message}
+        No se pudo consultar la obra: {estado.mensaje}
       </p>
     );
   }
 
-  // `useApi<Obra>` promete una obra, pero `T` es una promesa y no una
-  // comprobacion: un 2xx con otra forma llega hasta aqui y `obra.titulo` o
-  // `obra.id` -lo unico que esta pantalla lee- tumbarian el historial entero.
-  // La guarda es la del tipo, la misma que usan el listado y el detalle.
-  if (!esObra(obra)) {
+  if (estado.estado === "ilegible") {
+    // `useApi<Obra>` promete una obra, pero `T` es una promesa y no una
+    // comprobacion: un 2xx con otra forma llega hasta aqui y `obra.titulo` o
+    // `obra.id` -lo unico que esta pantalla lee- tumbarian el historial entero.
+    // La guarda es la del tipo, la misma que usan el listado y el detalle.
     return (
       <p className="catalogo-error" role="alert">
         La obra no llegó con la forma que el contrato promete para una obra.
@@ -96,25 +100,7 @@ export default function HistorialVersiones() {
     );
   }
 
-  return <HistorialDeObra obra={obra} busqueda={busqueda} />;
-}
-
-/** Lo que se ve cuando el servidor no tiene ninguna obra con ese identificador. */
-function ObraAusente({ id, volver }: { id: string; volver: string }) {
-  return (
-    <section className="historial-versiones">
-      <h1>Esa obra no está en el catálogo</h1>
-      <p className="muted">
-        El servidor no tiene ninguna obra con el identificador <code>{id}</code>
-        , así que no hay ningún historial de declaración que mostrar. El
-        historial de una obra que sí existe y todavía no se ha declarado llega
-        como una lista vacía, no como un error: los dos casos no son el mismo.
-      </p>
-      <p className="detalle-volver">
-        <Link to={volver}>Volver al catálogo</Link>
-      </p>
-    </section>
-  );
+  return <HistorialDeObra obra={estado.obra} busqueda={busqueda} />;
 }
 
 /**

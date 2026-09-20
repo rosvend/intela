@@ -9,7 +9,7 @@ import {
   type ReactElement,
 } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, api } from "../api";
+import { api } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
 import { DEBOUNCE_TECLEO_MS, useApi } from "../useApi";
@@ -31,14 +31,13 @@ import {
   formatearPorcentaje,
   puedeGuardarBorrador,
   totalDeclarado,
-  versionAbierta,
   type AvisoDeVersion,
   type EstadoBorrador,
   type MotivoDeDuda,
 } from "./declaracion";
+import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
 import {
-  esObra,
   esTitular,
   esVersionDeclaracion,
   puedeSerParte,
@@ -47,6 +46,7 @@ import {
   type Titular,
   type VersionDeclaracion,
 } from "./tipos";
+import { conciliarConElHistorial, useObra } from "./useObra";
 
 /**
  * Cuantos titulares se piden por pagina del padron. El servidor aplica 100 si
@@ -144,33 +144,39 @@ export default function EditorReparto() {
   // el historial: las tres salidas de la pantalla -la ficha, la obra ausente y
   // el aviso de que la obra se fue al guardar- salen de un solo sitio.
   const { busqueda, destino } = useVueltaAlCatalogo();
-  const {
-    datos: obra,
-    cargando,
-    error,
-  } = useApi<Obra>(`/api/obras/${encodeURIComponent(id)}`);
+  // La obra y sus desenlaces, de `useObra` (item 13): la peticion, el 404 como
+  // caso propio -el servidor diciendo que con ese identificador no hay ninguna
+  // obra, y por tanto que no hay reparto que declarar- y la guarda de forma
+  // viven alli, donde tambien las leen el detalle y el historial.
+  const estado = useObra(id);
 
-  if (cargando) return <Cargando texto="Cargando la obra…" />;
+  if (estado.estado === "cargando")
+    return <Cargando texto="Cargando la obra…" />;
 
-  if (error) {
-    // El 404 no es un fallo del sistema: es el servidor diciendo que con ese
-    // identificador no hay ninguna obra, y por tanto que no hay reparto que
-    // declarar.
-    if (error instanceof ApiError && error.status === 404) {
-      return <ObraAusente id={id} volver={destino} />;
-    }
+  if (estado.estado === "ausente") {
+    return (
+      <ObraAusente
+        id={estado.id}
+        volver={destino}
+        className="editor-reparto"
+        explicacion=", así que no hay ninguna declaración que abrir. El reparto de una obra se declara sobre la obra: sin ella no hay nada que editar."
+      />
+    );
+  }
+
+  if (estado.estado === "error") {
     return (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar la obra: {error.message}
+        No se pudo consultar la obra: {estado.mensaje}
       </p>
     );
   }
 
-  // `useApi<Obra>` promete una obra, pero `T` es una promesa y no una
-  // comprobacion: un 2xx con otra forma llegaria hasta aqui y `obra.titulo` o
-  // `obra.id` -lo que esta pantalla lee- la tumbarian. La guarda es la del tipo,
-  // la misma que usan el listado, el detalle y el historial.
-  if (!esObra(obra)) {
+  if (estado.estado === "ilegible") {
+    // `useApi<Obra>` promete una obra, pero `T` es una promesa y no una
+    // comprobacion: un 2xx con otra forma llegaria hasta aqui y `obra.titulo` o
+    // `obra.id` -lo que esta pantalla lee- la tumbarian. La guarda es la del
+    // tipo, la misma que usan el listado, el detalle y el historial.
     return (
       <p className="catalogo-error" role="alert">
         La obra no llegó con la forma que el contrato promete para una obra.
@@ -178,23 +184,8 @@ export default function EditorReparto() {
     );
   }
 
-  return <EditorDeLaObra obra={obra} busqueda={busqueda} destino={destino} />;
-}
-
-/** Lo que se ve cuando el servidor no tiene ninguna obra con ese identificador. */
-function ObraAusente({ id, volver }: { id: string; volver: string }) {
   return (
-    <section className="editor-reparto">
-      <h1>Esa obra no está en el catálogo</h1>
-      <p className="muted">
-        El servidor no tiene ninguna obra con el identificador <code>{id}</code>
-        , así que no hay ninguna declaración que abrir. El reparto de una obra
-        se declara sobre la obra: sin ella no hay nada que editar.
-      </p>
-      <p className="detalle-volver">
-        <Link to={volver}>Volver al catálogo</Link>
-      </p>
-    </section>
+    <EditorDeLaObra obra={estado.obra} busqueda={busqueda} destino={destino} />
   );
 }
 
@@ -343,21 +334,30 @@ function FormularioDeReparto({
   // son dos lecturas del mismo hecho, y si no coinciden -una declaracion se
   // guardo entre las dos peticiones, o el historial no trae ninguna abierta-
   // guardar cerraria una version que `GET /obras/{id}` no esta sosteniendo. Es
-  // la MISMA comprobacion que hace el detalle (`DetalleObra.tsx:381`), con el
-  // mismo razonamiento, y aqui importa mas porque esta pantalla ESCRIBE: la de
-  // solo lectura se niega a pintar, esta se niega a guardar.
+  // la MISMA comprobacion que hace el detalle, y desde el paso 16 es el MISMO
+  // codigo: `conciliarConElHistorial`, en `useObra.ts` (PM-6 del plan). Antes de
+  // este paso cada pantalla tenia su copia -aqui un `filter` con `versionAbierta`
+  // y en el detalle otro-, que es el defecto que el item 13 existe para cerrar.
   //
   // Se compara solo cuando el historial se pudo leer. `null` es "no se pudo
   // leer", y ese caso ya tiene su aviso -y guardar sin haber leido el historial
   // es justo lo que el aviso advierte-: prohibirlo aqui seria cambiar una
-  // advertencia por una puerta cerrada sin haberselo pedido a nadie.
-  const versionAbiertaDelHistorial =
-    historial === null ? null : (versionAbierta(historial)?.version ?? null);
-  const elHistorialCuadra =
-    historial === null || versionAbiertaDelHistorial === obra.version_vigente;
+  // advertencia por una puerta cerrada sin haberselo pedido a nadie. Por eso el
+  // historial no leido no entra en la conciliacion: entra en el `null` del
+  // diagnostico de abajo.
+  const conciliacion =
+    historial === null ? null : conciliarConElHistorial(obra, historial);
+  // El diagnostico del descuadre, y `null` cuando no lo hay -ni cuando las dos
+  // lecturas cuadran ni cuando el historial no se leyo-. Es la unica forma de
+  // esa frase en la pantalla: el texto dice el motivo verdadero en vez de
+  // reescribirlo, que es como se acaba discrepando del diagnostico.
+  const descuadre =
+    conciliacion !== null && conciliacion.estado === "descuadrado"
+      ? conciliacion.mensaje
+      : null;
 
   const puedeGuardar =
-    puedeGuardarBorrador(estado) && filasSinNumero === 0 && elHistorialCuadra;
+    puedeGuardarBorrador(estado) && filasSinNumero === 0 && descuadre === null;
   // Las tres fuentes: el historial, la version que el `PUT` devolvio y la duda
   // que un guardado dejo pendiente. La duda manda, y por eso no basta con las dos
   // primeras -ver `avisoDeVersion`-.
@@ -568,7 +568,7 @@ function FormularioDeReparto({
               así que la pantalla no envía nada mientras falte.
             </p>
           )}
-          {filasSinNumero === 0 && elHistorialCuadra && !puedeGuardar && (
+          {filasSinNumero === 0 && descuadre === null && !puedeGuardar && (
             <p className="editor-aviso" role="status">
               {estado === "vacia"
                 ? "Añade al menos una parte desde el padrón para poder guardar."
@@ -579,16 +579,17 @@ function FormularioDeReparto({
               NO es del borrador: el historial no cuadra con la version vigente
               que declara la obra. Va aparte de los dos de arriba para que el
               texto diga siempre el motivo verdadero -sin esta guarda, un
-              historial que no cuadra saldria como "el total pasa de 100"-. */}
-          {!elHistorialCuadra && (
+              historial que no cuadra saldria como "el total pasa de 100"-.
+              La primera frase es el diagnostico de `useObra` -el unico sitio
+              donde se decide que las dos lecturas no cuadran-, y la segunda es
+              la consecuencia de ESTA pantalla: la que lee se niega a pintar, la
+              que escribe se niega a escribir. */}
+          {descuadre !== null && (
             <p className="editor-aviso" role="status">
-              {obra.version_vigente === null
-                ? "El servidor no declara ninguna versión vigente,"
-                : `El servidor declara vigente la versión ${obra.version_vigente},`}{" "}
-              pero el historial no trae esa versión como única versión abierta.
-              Mientras las dos lecturas no cuadren, esta pantalla no ofrece
-              guardar: guardaría cerrando una versión que el sistema no está
-              sosteniendo. Recarga la pantalla y vuelve a mirar el historial.
+              {descuadre} Mientras las dos lecturas no cuadren, esta pantalla no
+              ofrece guardar: guardaría cerrando una versión que el sistema no
+              está sosteniendo. Recarga la pantalla y vuelve a mirar el
+              historial.
             </p>
           )}
         </div>

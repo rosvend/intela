@@ -1,5 +1,4 @@
 import { Link, useParams } from "react-router-dom";
-import { ApiError } from "../api";
 import Cargando from "../Cargando";
 import { useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
@@ -7,11 +6,11 @@ import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { TablaDePartes } from "./TablaDePartes";
 import {
-  esObra,
   esVersionDeclaracion,
   type Obra,
   type VersionDeclaracion,
 } from "./tipos";
+import { conciliarConElHistorial, useObra } from "./useObra";
 
 /**
  * El detalle de una obra con su Declaracion de Obra vigente (issue #30, paso 6).
@@ -46,37 +45,39 @@ export default function DetalleObra() {
   // el catalogo vuelve a su busqueda en los dos casos, que es lo que quiere
   // quien acaba de ver que la obra se fue.
   const { busqueda, destino: destinoDeVuelta } = useVueltaAlCatalogo();
-  const {
-    datos: obra,
-    cargando,
-    error,
-  } = useApi<Obra>(`/api/obras/${encodeURIComponent(id)}`);
+  // La obra y sus desenlaces, de `useObra` (item 13): el preambulo que esta
+  // pantalla compartia con el historial y el editor -la peticion, el 404 como
+  // caso propio y la guarda de forma- vive alli, en un solo sitio. Lo que se
+  // decide aqui es solo que se pinta con cada desenlace.
+  const estado = useObra(id);
 
-  if (cargando) return <Cargando texto="Cargando la obra…" />;
+  if (estado.estado === "cargando")
+    return <Cargando texto="Cargando la obra…" />;
 
-  if (error) {
-    // El 404 no es un fallo del sistema: es el servidor diciendo que con ese
-    // identificador no hay ninguna obra. El issue #30 lo tiene como caso propio
-    // -una obra que se listo hace un momento y ya no esta-, y pintarlo con el
-    // error generico de "no se pudo consultar" diria que algo se rompio cuando
-    // lo que pasa es que esa obra ya no esta en el catalogo.
-    if (error instanceof ApiError && error.status === 404) {
-      return <ObraAusente id={id} volver={destinoDeVuelta} />;
-    }
+  if (estado.estado === "ausente") {
+    return (
+      <ObraAusente
+        id={estado.id}
+        volver={destinoDeVuelta}
+        className="detalle-obra"
+        explicacion=". Si has llegado desde el catálogo, la lista y esta pantalla son dos consultas distintas: la de aquí es la que acaba de responder, y con ese identificador no encontró nada."
+      />
+    );
+  }
+
+  if (estado.estado === "error") {
     return (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar la obra: {error.message}
+        No se pudo consultar la obra: {estado.mensaje}
       </p>
     );
   }
 
-  // `useApi<Obra>` promete una obra, pero `T` es una promesa y no una
-  // comprobacion: un 2xx con otra forma -el `{error: ...}` de un proxy, un
-  // backend a medias- llega hasta aqui, y `obra.titulo` o `obra.version_vigente`
-  // tumbarian la pantalla entera. Sin ErrorBoundary en `web/src`, eso la deja en
-  // blanco. La guarda es la misma del listado del catalogo: los dos leen los
-  // mismos campos, y una obra ilegible no se pinta a medias.
-  if (!esObra(obra)) {
+  if (estado.estado === "ilegible") {
+    // El texto sigue siendo el de esta pantalla -"los datos que esta pantalla
+    // lee"- y no el de las otras dos: `useObra` no lo pone el porque no lo sabe,
+    // y unificarlo seria cambiar lo que el administrador lee sin que nada lo
+    // haya pedido.
     return (
       <p className="catalogo-error" role="alert">
         La obra no llegó con los datos que esta pantalla lee.
@@ -85,20 +86,52 @@ export default function DetalleObra() {
   }
 
   return (
-    <FichaDeObra obra={obra} volver={destinoDeVuelta} busqueda={busqueda} />
+    <FichaDeObra
+      obra={estado.obra}
+      volver={destinoDeVuelta}
+      busqueda={busqueda}
+    />
   );
 }
 
-/** Lo que se ve cuando el servidor no tiene ninguna obra con ese identificador. */
-function ObraAusente({ id, volver }: { id: string; volver: string }) {
+/**
+ * Lo que se ve cuando el servidor no tiene ninguna obra con ese identificador.
+ *
+ * Es UNO para las tres pantallas de la obra -el detalle, el historial y el
+ * editor-, que hasta el item 13 tenian su copia con la misma cabecera, el mismo
+ * enlace y la misma `<section>`: tres textos que podian divergir y tres sitios
+ * donde arreglar el mismo defecto. Lo que cambia entre las tres no es el aviso,
+ * es el PORQUE -"la lista y esta pantalla son dos consultas distintas", "no hay
+ * historial que mostrar", "no hay declaracion que abrir"-, y por eso entra como
+ * `explicacion` en vez de duplicarse: el hecho es el mismo y quien lo lee
+ * necesita su caso.
+ *
+ * Vive en este modulo y no en `useObra.ts` porque ese es un modulo de hook
+ * (`.ts`) y el plan del paso 13 autoriza cinco ficheros: la alternativa era una
+ * `<section>` copiada en cada pantalla, que es el defecto que este paso cierra.
+ * Es el mismo reparto que `Catalogo.tsx`, que ya exporta a las tres pantallas su
+ * `useVueltaAlCatalogo` y su `CLAVE_DE_VUELTA_AL_CATALOGO`.
+ *
+ * `className` entra como parametro porque la seccion de cada pantalla es la
+ * suya: el aviso no cambia de forma al cambiar de pantalla, pero si de sitio.
+ */
+export function ObraAusente({
+  id,
+  volver,
+  className,
+  explicacion,
+}: {
+  id: string;
+  volver: string;
+  className: string;
+  explicacion: string;
+}) {
   return (
-    <section className="detalle-obra">
+    <section className={className}>
       <h1>Esa obra no está en el catálogo</h1>
       <p className="muted">
         El servidor no tiene ninguna obra con el identificador <code>{id}</code>
-        . Si has llegado desde el catálogo, la lista y esta pantalla son dos
-        consultas distintas: la de aquí es la que acaba de responder, y con ese
-        identificador no encontró nada.
+        {explicacion}
       </p>
       <p className="detalle-volver">
         <Link to={volver}>Volver al catálogo</Link>
@@ -106,6 +139,20 @@ function ObraAusente({ id, volver }: { id: string; volver: string }) {
     </section>
   );
 }
+
+/**
+ * Lo que se dice cuando la obra no tiene ninguna declaracion registrada.
+ *
+ * Es una constante porque el mismo hecho se dice en DOS sitios de esta pantalla,
+ * y son el mismo hecho y no dos parecidos: la ficha, cuando `version_vigente`
+ * llega en `null` -y entonces no se pide el historial, porque ya dijo lo que
+ * diria-, y el bloque de partes, en el desenlace `sinVigente` de la conciliacion
+ * -que esta pantalla no alcanza, pero la union trae porque el editor si pasa por
+ * el-. Dos copias del texto serian dos sitios donde se puede quedar mintiendo
+ * una de las dos, que es el defecto que este paso existe para no repetir.
+ */
+const SIN_DECLARACION =
+  "La obra no tiene ninguna declaración registrada, así que no hay porcentajes declarados que repartir: bajo R-04 (RD 13.1.3) el importe completo de la obra queda en reserva y nunca se prorratea.";
 
 /**
  * La obra ya legible: sus metadatos y su declaracion vigente.
@@ -204,11 +251,7 @@ function FichaDeObra({
         </dl>
 
         {sinDeclaracion ? (
-          <p className="muted detalle-nota">
-            La obra no tiene ninguna declaración registrada, así que no hay
-            porcentajes declarados que repartir: bajo R-04 (RD 13.1.3) el
-            importe completo de la obra queda en reserva y nunca se prorratea.
-          </p>
+          <p className="muted detalle-nota">{SIN_DECLARACION}</p>
         ) : (
           <>
             {obra.estado_declaracion === "incompleta" && (
@@ -225,10 +268,7 @@ function FichaDeObra({
                 reserva, nunca se prorratea.
               </p>
             )}
-            <PartesDeLaVersionVigente
-              obraId={obra.id}
-              versionVigente={versionVigente}
-            />
+            <PartesDeLaVersionVigente obra={obra} />
             <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
           </>
         )}
@@ -334,19 +374,13 @@ function EnlaceAlEditor({
  * una vez-, asi que pedir el historial para volver a oirlo seria una peticion
  * que no puede cambiar nada de lo que se ve.
  */
-function PartesDeLaVersionVigente({
-  obraId,
-  versionVigente,
-}: {
-  obraId: string;
-  versionVigente: number;
-}) {
+function PartesDeLaVersionVigente({ obra }: { obra: Obra }) {
   const {
     datos: historial,
     cargando,
     error,
   } = useApi<VersionDeclaracion[]>(
-    `/api/obras/${encodeURIComponent(obraId)}/declaracion/historial`,
+    `/api/obras/${encodeURIComponent(obra.id)}/declaracion/historial`,
   );
 
   if (cargando) return <Cargando texto="Cargando la declaración vigente…" />;
@@ -367,29 +401,41 @@ function PartesDeLaVersionVigente({
     );
   }
 
-  const abiertas = historial.filter(
-    (version) => version.vigente_hasta === null,
-  );
-  const vigente = abiertas.at(0);
-
   // La obra dice cual es su version vigente y el historial dice cual tiene
   // abierta: son dos lecturas del mismo hecho, y si no coinciden -una
   // declaracion se guardo entre las dos peticiones, o el historial no trae
-  // ninguna- pintar las partes de la que el historial abre afirmaria un reparto
-  // que `GET /obras/{id}` no esta sosteniendo. Se dice que no coinciden y no se
-  // pinta ninguna: la pantalla no elige entre las dos.
-  if (!vigente || abiertas.length > 1 || vigente.version !== versionVigente) {
+  // ninguna abierta- pintar las partes de la que el historial abre afirmaria un
+  // reparto que `GET /obras/{id}` no esta sosteniendo. Se dice que no coinciden
+  // y no se pinta ninguna: la pantalla no elige entre las dos.
+  //
+  // Quien decide eso es `conciliarConElHistorial`, en `useObra.ts`, y es la
+  // UNICA expresion de esa regla: el editor del reparto comprueba exactamente lo
+  // mismo con el mismo codigo desde el paso 16, en vez de con su propia copia
+  // del `filter` (PM-6 del plan). Aqui solo se decide QUE se pinta con cada
+  // desenlace.
+  const conciliacion = conciliarConElHistorial(obra, historial);
+
+  if (conciliacion.estado === "descuadrado") {
     return (
       <p className="catalogo-error" role="alert">
-        El servidor declara vigente la versión {versionVigente}, pero el
-        historial no trae esa versión como única versión abierta. No se muestran
-        partes: pintar las de otra versión como la declaración vigente afirmaría
-        un reparto que el sistema no está sosteniendo.
+        {conciliacion.mensaje} No se muestran partes: pintar las de otra versión
+        como la declaración vigente afirmaría un reparto que el sistema no está
+        sosteniendo.
       </p>
     );
   }
 
-  if (vigente.partes.length === 0) {
+  // La obra no declara ninguna version vigente y el historial no abre ninguna.
+  // Esta pantalla NO llega aqui -la ficha no monta este bloque sin
+  // `version_vigente`, y por eso no pide un historial que ya sabe vacio-, y se
+  // pinta el hecho verdadero en vez de un aviso de error que seria falso: la
+  // union trae este desenlace porque el EDITOR si pasa por el, que es la obra a
+  // la que va a abrirle su primera version.
+  if (conciliacion.estado === "sinVigente") {
+    return <p className="muted detalle-nota">{SIN_DECLARACION}</p>;
+  }
+
+  if (conciliacion.vigente.partes.length === 0) {
     return (
       <p className="muted detalle-nota">
         La versión vigente no trae ninguna parte declarada.
@@ -399,7 +445,7 @@ function PartesDeLaVersionVigente({
 
   return (
     <TablaDePartes
-      partes={vigente.partes}
+      partes={conciliacion.vigente.partes}
       titulo="Partes de la declaración vigente"
     />
   );
