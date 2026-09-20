@@ -136,15 +136,31 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// El mismo *Store satisface tambien CatalogoObras y -por el puerto
+	// GestionDeclaraciones- la lectura de la declaracion vigente que el
+	// catalogo necesita para decir en que estado esta cada obra. El nucleo
+	// sigue viendo puertos separados: que el adaptador sea uno solo es asunto
+	// suyo.
+	catalogo := aplicacion.Catalogo{Obras: store, Declaraciones: store}
+
+	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
+	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
+	// al contrario que la boveda de la ingesta de abajo.
+	padron := aplicacion.Titulares{Padron: store}
 
 	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
 	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
+	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
+	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
+	// padron debe mostrar-, y un guardia que mira lo recortado deja pasar en
+	// silencio lo que no ve. `padron` sigue construido arriba porque lo usa el
+	// handler HTTP de `GET /titulares`.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
@@ -177,6 +193,7 @@ func construir() (http.Handler, error) {
 		Salud:         store,
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
+		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Liquidaciones: liquidaciones,
