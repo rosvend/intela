@@ -4,10 +4,11 @@ import { useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
-import { TablaDePartes } from "./TablaDePartes";
+import { TablaDePartes, useNombresDeTitulares } from "./TablaDePartes";
 import {
   esVersionDeclaracion,
   type Obra,
+  type Parte,
   type VersionDeclaracion,
 } from "./tipos";
 import { conciliarConElHistorial, useObra } from "./useObra";
@@ -444,9 +445,37 @@ function PartesDeLaVersionVigente({ obra }: { obra: Obra }) {
   }
 
   return (
-    <TablaDePartes
+    <TablaDePartesConNombres
       partes={conciliacion.vigente.partes}
       titulo="Partes de la declaración vigente"
     />
   );
+}
+
+/**
+ * La tabla de la version vigente con los nombres de sus partes resueltos.
+ *
+ * Los `titular_id` que viajan al padron son los de las filas que se van a
+ * pintar, y en UNA peticion para la pantalla entera (item 9b): lo que no puede
+ * crecer con los datos es el numero de peticiones, ni una por fila ni una por
+ * columna.
+ *
+ * Se monta solo cuando hay partes; el bloque de arriba ya devolvio el texto de
+ * "no trae ninguna parte" cuando no las hay. Es la guarda que el hook necesita y
+ * no puede poner el: con una lista de identificadores vacia, `ids` no filtra
+ * -el contrato dice que es la misma pregunta que no mandarlo-, asi que la
+ * peticion pediria el padron entero y no podria cambiar nada de lo que se ve.
+ */
+function TablaDePartesConNombres({
+  partes,
+  titulo,
+}: {
+  partes: readonly Parte[];
+  titulo: string;
+}) {
+  const nombres = useNombresDeTitulares(
+    partes.map((parte) => parte.titular_id),
+  );
+
+  return <TablaDePartes partes={partes} titulo={titulo} nombres={nombres} />;
 }

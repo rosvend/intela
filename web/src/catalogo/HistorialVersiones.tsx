@@ -5,7 +5,12 @@ import { useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
-import { TablaDePartes } from "./TablaDePartes";
+import {
+  SIN_NOMBRES,
+  TablaDePartes,
+  useNombresDeTitulares,
+  type NombresDeTitulares,
+} from "./TablaDePartes";
 import {
   esVersionDeclaracion,
   type Obra,
@@ -217,11 +222,70 @@ function VersionesDeLaObra({ obraId }: { obraId: string }) {
         esta pantalla no las reordena. La que rige hoy es la que llega sin
         cerrar.
       </p>
-      {historial.map((version) => (
-        <BloqueDeVersion key={version.version} version={version} />
+      {/* Una version sin partes no monta tabla, asi que si NINGUNA trae partes no
+          hay un solo nombre que resolver -y el hook no sabe pedir "ninguno":
+          `ids` vacio es, en el contrato, el padron entero-. Quien decide cual de
+          los dos caminos se toma es esta pantalla, que ya conoce el historial;
+          por eso son dos componentes y no una condicion dentro de uno. */}
+      {historial.every((version) => version.partes.length === 0) ? (
+        <BloquesDeVersiones versiones={historial} nombres={SIN_NOMBRES} />
+      ) : (
+        <BloquesDeVersionesConNombres versiones={historial} />
+      )}
+    </>
+  );
+}
+
+/**
+ * Los bloques de version de la pantalla, con los nombres ya resueltos.
+ *
+ * Es lo que la pantalla monta SIEMPRE -con o sin nombres-: las versiones se
+ * pintan una por una en el orden en que llegaron, y cada bloque decide si su
+ * tabla existe (una version sin partes no tiene ninguna).
+ */
+function BloquesDeVersiones({
+  versiones,
+  nombres,
+}: {
+  versiones: readonly VersionDeclaracion[];
+  nombres: NombresDeTitulares;
+}) {
+  return (
+    <>
+      {versiones.map((version) => (
+        <BloqueDeVersion
+          key={version.version}
+          version={version}
+          nombres={nombres}
+        />
       ))}
     </>
   );
+}
+
+/**
+ * Los mismos bloques, con los nombres de sus partes resueltos en UNA sola
+ * peticion para la pantalla entera.
+ *
+ * Los identificadores que viajan son los de las partes de TODAS las versiones, y
+ * sin repetir: `ids` es un filtro por lista, asi que el titular que aparece en
+ * tres versiones se pide una vez. Es lo que hace que el numero de peticiones no
+ * crezca con los datos: una version mas con los mismos titulares no anade una
+ * consulta, anade filas a la que ya se hace, y una version con un titular nuevo
+ * anade un elemento a la misma lista.
+ */
+function BloquesDeVersionesConNombres({
+  versiones,
+}: {
+  versiones: readonly VersionDeclaracion[];
+}) {
+  const nombres = useNombresDeTitulares(
+    versiones.flatMap((version) =>
+      version.partes.map((parte) => parte.titular_id),
+    ),
+  );
+
+  return <BloquesDeVersiones versiones={versiones} nombres={nombres} />;
 }
 
 /**
@@ -234,7 +298,13 @@ function VersionesDeLaObra({ obraId }: { obraId: string }) {
  * version no se ha cerrado. Es lo unico que distingue la version vigente de las
  * cerradas, y por eso la palabra no es un adorno.
  */
-function BloqueDeVersion({ version }: { version: VersionDeclaracion }) {
+function BloqueDeVersion({
+  version,
+  nombres,
+}: {
+  version: VersionDeclaracion;
+  nombres: NombresDeTitulares;
+}) {
   return (
     <article className="historial-version">
       <h2>Versión {version.version}</h2>
@@ -297,6 +367,10 @@ function BloqueDeVersion({ version }: { version: VersionDeclaracion }) {
           // pinta una por version y sin el no se podria decir cual se esta
           // leyendo -ni un lector de pantalla ni un test-.
           titulo={`Partes de la versión ${version.version}`}
+          // Los nombres son los MISMOS para todas las tablas de la pantalla: se
+          // resolvieron una vez, arriba, por la union de los identificadores de
+          // todas las versiones (item 9b).
+          nombres={nombres}
         />
       )}
     </article>

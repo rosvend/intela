@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
@@ -88,6 +89,41 @@ func (a *API) buscarTitulares(w http.ResponseWriter, r *http.Request) {
 			escribirError(w, http.StatusBadRequest, "persona_natural tiene que ser true o false")
 			return
 		}
+	}
+	// `ids` es la consulta ACOTADA por identificador: los pocos titulares que
+	// nombra una declaracion y ninguno mas. Es la misma forma que usa
+	// `exigirPuedenRecibirReparto` para comprobar R-01 en cada guardado, que
+	// hasta ahora era el unico consumidor de `FiltroTitulares.IDs`.
+	//
+	// Se leen las DOS formas del parametro porque son la misma pregunta y
+	// ninguna es "la rara": repetir la clave (`?ids=a&ids=b`) es lo que manda un
+	// cliente generado a partir del contrato, y la coma (`?ids=a,b`) es lo que
+	// escribe una mano. Se leen juntas y no como dos caminos -si una de las dos
+	// se quedara sin leer, el filtro se perderia EN SILENCIO y quien pinta no
+	// tendria sintoma: le llegaria el padron entero y elegiria las filas que ya
+	// tiene por su cuenta, que es el defecto que este parametro existe para no
+	// repetir-.
+	//
+	// Un elemento vacio NO viaja: una coma de mas (`?ids=a,,b`) dejaria un
+	// identificador vacio en la lista, y `id = ANY('{""}')` no encuentra nada,
+	// asi que pasarlo convertiria una lista de dos ids utiles en una que no
+	// devuelve ninguno.
+	//
+	// Y una lista que se queda VACIA -`?ids=`, solo comas, solo espacios- NO se
+	// asigna: es la misma pregunta que no mandar el parametro, y el puerto lo
+	// documenta asi ("un IDs vacio y uno nil son la misma pregunta: sin filtro").
+	// Traducirla a "sin resultados" seria romper ese contrato desde el
+	// adaptador: el padron no se filtra por lo que nadie pidio.
+	ids := make([]string, 0, len(q["ids"]))
+	for _, bruto := range q["ids"] {
+		for _, id := range strings.Split(bruto, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) > 0 {
+		filtro.IDs = ids
 	}
 
 	pag, ok := leerPaginacion(w, q)

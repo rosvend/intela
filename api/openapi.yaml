@@ -1117,7 +1117,8 @@ paths:
         del padron que no le ofrecen como parte existe y no se le ofrece.
 
         Los filtros se combinan con Y. `nombre` es PARCIAL y no distingue
-        mayusculas; `ipi` es exacto.
+        mayusculas; `ipi` es exacto. `ids` pide esos titulares y ninguno mas: es
+        la consulta ACOTADA por identificador.
 
         `limite` y `desplazamiento` son la misma forma que en `/obras`. Sin
         `limite` el servidor aplica 100; por encima de 500 responde 400.
@@ -1154,6 +1155,38 @@ paths:
           schema:
             type: boolean
           example: false
+        - name: ids
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: |
+            Los identificadores del padron que se quieren, y ninguno mas. Es la
+            consulta ACOTADA que ya usa en produccion la comprobacion de `R-01`
+            (`RD 4.5`) al armar una declaracion: el reparto nombra unos pocos
+            titulares, y sin este filtro comprobar la regla obliga a leer el
+            padron entero -que no tiene tope- para responder por un punado de
+            ids. Es la misma pregunta que `FiltroTitulares.IDs` del puerto.
+
+            Se serializa de la forma estandar -la clave repetida,
+            `?ids=tit-ana&ids=tit-luis`-, que es lo que produce un cliente
+            generado a partir de este contrato. Una lista separada por comas
+            (`?ids=tit-ana,tit-luis`) se acepta tambien, porque es lo que
+            escribe una mano y es la misma pregunta. Los elementos vacios que
+            deje una coma de mas se ignoran: no son identificadores.
+
+            **Un identificador que no existe NO es un error**, ni del cliente ni
+            del servidor: `ids` es un filtro, no una promesa de existencia. La
+            respuesta es una lista vacia con 200 y quien pinta decide que hacer
+            con el hueco.
+
+            **Un `ids` vacio tampoco filtra**: `?ids=` -o solo comas- es la
+            misma pregunta que no mandar el parametro, o sea el padron entero.
+          schema:
+            type: array
+            items:
+              type: string
+          example: [tit-ana, tit-luis]
         - name: limite
           in: query
           required: false
