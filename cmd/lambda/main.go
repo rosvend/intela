@@ -188,6 +188,7 @@ func construir() (http.Handler, error) {
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Auditoria:     aplicacion.Auditoria{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
