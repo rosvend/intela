@@ -85,6 +85,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/liquidaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar liquidaciones (admin)
+         * @description Devuelve las ordenes de pago de todos los titulares.
+         *
+         *     Cada orden muestra bruto, cada deduccion y neto por separado
+         *     (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
+         *     bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
+         *     silencio (`R-10`).
+         *
+         *     Reservada a administrador, distribucion, contabilidad y auditor.
+         *     Un titular usa `/mis-liquidaciones`.
+         */
+        get: operations["listarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/pipeline": {
         parameters: {
             query?: never;
@@ -103,6 +131,30 @@ export interface paths {
          *     sesion de otro rol responde 403.
          */
         get: operations["adminPipeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liquidaciones del titular autenticado
+         * @description Devuelve las ordenes de pago del titular de la sesion.
+         *
+         *     El identificador no viaja en la URL: sale del token, para que un
+         *     titular no consulte las de otro. Mismo desglose bruto / deducciones
+         *     / neto que el listado de administracion (`RD 13.2`).
+         */
+        get: operations["misLiquidaciones"];
         put?: never;
         post?: never;
         delete?: never;
@@ -955,6 +1007,60 @@ export interface components {
              */
             error: string;
         };
+        Deduccion: {
+            /**
+             * @description Que se desconto. Los de la corrida son `gastos_administrativos`,
+             *     `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
+             *     entra con su propio concepto.
+             */
+            concepto: string;
+            /**
+             * @description Importe descontado, decimal exacto con dos decimales. String y
+             *     no number: un JSON number es IEEE-754 y no puede representar
+             *     dinero.
+             */
+            monto: string;
+        };
+        OrdenDePago: {
+            /** @description Identificador opaco de la orden. */
+            id: string;
+            /** @description Proceso de reparto del que salio la orden. */
+            proceso_id: string;
+            /** @description Titular que cobra. */
+            titular_id: string;
+            /** @description Periodo de la corrida, `YYYY` o `YYYY-MM`. */
+            periodo: string;
+            /** @description Monto bruto, decimal exacto con dos decimales. */
+            bruto: string;
+            /**
+             * @description Desglose. No se colapsa en el neto: `RD 13.2` exige ver cada
+             *     renglon.
+             */
+            deducciones: components["schemas"]["Deduccion"][];
+            /** @description Bruto menos la suma de las deducciones. */
+            neto: string;
+            /**
+             * @description Maquina de R-10 y R-11. `enviada` espera respuesta;
+             *     `aceptada_por_silencio` a los 15 dias calendario si el neto
+             *     supera el 2% SMMLV; `diferida` si no lo supera.
+             * @enum {string}
+             */
+            estado: "enviada" | "aceptada" | "aceptada_por_silencio" | "diferida" | "acumulada" | "objetada";
+            /**
+             * @description Aceptada (por respuesta o por silencio) y con RUT mas
+             *     certificacion bancaria en expediente (`R-12`). Falso no es
+             *     un error: se liquido, todavia no se puede girar.
+             */
+            pagable: boolean;
+            /**
+             * Format: date
+             * @description Dia civil del envio, sobre el que corre el plazo de 15 dias.
+             */
+            enviada: string;
+        };
+        ListadoLiquidaciones: {
+            liquidaciones: components["schemas"]["OrdenDePago"][];
+        };
         /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
          *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
@@ -1205,6 +1311,57 @@ export interface operations {
             };
         };
     };
+    listarLiquidaciones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Listado de ordenes de pago. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "liquidaciones": [
+                     *         {
+                     *           "id": "liq-prc-nac-2026-tit-ana",
+                     *           "proceso_id": "prc-nac-2026",
+                     *           "titular_id": "tit-ana",
+                     *           "periodo": "2026",
+                     *           "bruto": "1000.00",
+                     *           "deducciones": [
+                     *             {
+                     *               "concepto": "gastos_administrativos",
+                     *               "monto": "200.00"
+                     *             },
+                     *             {
+                     *               "concepto": "bienestar_social",
+                     *               "monto": "100.00"
+                     *             },
+                     *             {
+                     *               "concepto": "reserva_errores_tecnicos",
+                     *               "monto": "50.00"
+                     *             }
+                     *           ],
+                     *           "neto": "650.00",
+                     *           "estado": "aceptada_por_silencio",
+                     *           "pagable": true,
+                     *           "enviada": "2026-01-01"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoLiquidaciones"];
+                };
+            };
+        };
+    };
     adminPipeline: {
         parameters: {
             query?: never;
@@ -1235,7 +1392,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Autenticado, pero el rol no basta. */
+            /** @description El rol de la sesion no alcanza para ver el listado. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1247,6 +1404,49 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    misLiquidaciones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Las ordenes del titular. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "liquidaciones": [
+                     *         {
+                     *           "id": "liq-prc-nac-2026-tit-ana",
+                     *           "proceso_id": "prc-nac-2026",
+                     *           "titular_id": "tit-ana",
+                     *           "periodo": "2026",
+                     *           "bruto": "1000.00",
+                     *           "deducciones": [
+                     *             {
+                     *               "concepto": "gastos_administrativos",
+                     *               "monto": "200.00"
+                     *             }
+                     *           ],
+                     *           "neto": "800.00",
+                     *           "estado": "enviada",
+                     *           "pagable": false,
+                     *           "enviada": "2026-01-01"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoLiquidaciones"];
                 };
             };
         };
@@ -1342,7 +1542,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Autenticado, pero el rol no basta. */
+            /** @description La sesion no es de un titular. */
             403: {
                 headers: {
                     [name: string]: unknown;
