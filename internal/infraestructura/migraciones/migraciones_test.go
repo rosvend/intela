@@ -186,3 +186,57 @@ func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, d
 		t.Fatalf("dejar la base en la version desplegada: %v", err)
 	}
 }
+
+// TestUpYDownRecorrenTodasLasMigraciones baja y vuelve a subir el esquema
+// entero, que hasta ahora no lo hacia nadie: CI solo prueba el `up`, y un
+// bloque `-- +goose Down` roto no se descubriria hasta necesitarlo, que es el
+// peor momento posible.
+//
+// Con Provider y no con las globales de [migraciones.Aplicar]: esas son estado
+// del proceso y esto corre dentro de un binario de pruebas con -race.
+//
+// Sobre base VACIA a proposito. Un `down` con datos que solo el esquema nuevo
+// admite -- una fila en `teatro`, que el CHECK anterior no acepta -- tiene que
+// fallar, y eso es correcto: lo que se comprueba aqui es que los bloques Down
+// estan bien escritos, no que se pueda revertir sobre cualquier dato.
+func TestUpYDownRecorrenTodasLasMigraciones(t *testing.T) {
+	ctx := t.Context()
+
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir el esquema: %v", err)
+	}
+	version, err := p.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("leer la version: %v", err)
+	}
+	if version == 0 {
+		t.Fatal("el esquema quedo en la version 0 despues de un up")
+	}
+
+	if _, err := p.DownTo(ctx, 0); err != nil {
+		t.Fatalf("bajar el esquema entero: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != 0 {
+		t.Fatalf("version tras el down = %d (err %v), se esperaba 0", v, err)
+	}
+
+	// Volver a subir sobre lo que dejo el down: si un Down olvida soltar algo,
+	// el Up siguiente choca contra el resto.
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir despues de un down limpio: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != version {
+		t.Fatalf("version tras el segundo up = %d (err %v), se esperaba %d", v, err, version)
+	}
+}
