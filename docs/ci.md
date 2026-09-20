@@ -66,6 +66,8 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Lint (workflows)` | `actionlint` con shellcheck sobre cada `run:` | El PR toca `.github/` |
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
+| `Perf (10k batch)` | KR-1: el lote de 10.000 registros en menos de 5 min, sin `-race` | Hay `go.mod` y el PR toca Go |
+| `Reproducibility (engine re-run)` | ADR 0005: los dorados del Canal Z dos veces, byte a byte, con `-race` | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
 | `Migration versions` | Versiones goose unicas, nombres parseables, ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
@@ -188,6 +190,9 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 - **El `plan` de infraestructura necesita AWS.** `Infrastructure` valida siempre, pero su job de
   `plan` solo corre si el secreto del rol esta cargado; sin el, la etapa reporta y no bloquea.
   Detalle en [`docs/cd.md`](cd.md).
-- **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
-  corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
-  ejemplos resueltos de los propios reglamentos.
+- **Golden files y reejecucion del reparto.** Los dorados viven en
+  `internal/dominio/reparto` (Canal Z, RD 9.1.1) y la etapa `Reproducibility`
+  los corre dos veces comparando byte a byte (ADR 0005). La etapa `Perf`
+  cronometra el lote de 10.000 registros contra la KR-1 (menos de 5 min):
+  medido en decenas de ms en local, cuatro ordenes de magnitud por debajo,
+  sin cambios de indices ni de tamano de lote.
