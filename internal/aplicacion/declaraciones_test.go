@@ -480,3 +480,44 @@ func TestVigenteEnPasaElMomento(t *testing.T) {
 		t.Fatalf("version = %d", got.Version)
 	}
 }
+
+// Un IPI declarado con espacios sobrantes es el mismo IPI que el del padron: el
+// padron guarda recortado y la declaracion se normaliza al entrar.
+func TestGuardarSplitsConciliaElIPIIgnorandoEspaciosSobrantes(t *testing.T) {
+	gestion := &gestionFalsa{versionADevolver: 1}
+	ana := titularDePrueba(t, "t1", "Ana Escritora", "IPI-00000001", true, afiliacion.ClaseSocio)
+	padron := &padronFalso{titulares: []afiliacion.Titular{ana}}
+	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: "t1", IPI: "IPI-00000001 ", Porcentaje: decimal.NewFromInt(100)},
+	}
+	if _, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin"); err != nil {
+		t.Fatalf("GuardarSplits con IPI con espacio sobrante: %v", err)
+	}
+	if got := gestion.declRecibida.Partes[0].IPI; got != "IPI-00000001" {
+		t.Fatalf("se persistio el IPI %q, se esperaba recortado", got)
+	}
+}
+
+// Un titular_id con espacios no puede esquivar R-01: la consulta al padron
+// lleva el id recortado, vuelve la fila de la sociedad y se rechaza.
+func TestGuardarSplitsAplicaR01AUnTitularIDConEspacios(t *testing.T) {
+	gestion := &gestionFalsa{}
+	padron := &padronFalso{titulares: []afiliacion.Titular{sociedadDelPadron(t)}}
+	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: " t2 ", IPI: "IPI-2", Porcentaje: decimal.NewFromInt(100)},
+	}
+	_, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if !errors.Is(err, ErrTitularNoEsPersonaNatural) {
+		t.Fatalf("se esperaba ErrTitularNoEsPersonaNatural, se obtuvo %v", err)
+	}
+	if !slices.Equal(padron.filtroRecibido.IDs, []string{"t2"}) {
+		t.Fatalf("ids consultados = %q, se esperaba [t2] recortado", padron.filtroRecibido.IDs)
+	}
+	if gestion.guardadas != 0 {
+		t.Fatal("se guardo una declaracion con una sociedad dentro")
+	}
+}

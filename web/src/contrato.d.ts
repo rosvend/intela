@@ -902,12 +902,16 @@ export interface components {
          *     contrato de escritura-.
          */
         Parte: {
-            /** @description Identificador del titular al que corresponde esta parte. */
+            /**
+             * @description Identificador del titular al que corresponde esta parte. Se ignoran
+             *     los espacios al inicio y al final.
+             */
             titular_id: string;
             /**
              * @description IPI del titular. Obligatorio, igual que en un coautor del catalogo,
              *     y ademas tiene que ser el que el padron tiene para `titular_id`: al
              *     guardar una declaracion, un IPI que no coincide se rechaza con 400.
+             *     Se ignoran los espacios al inicio y al final.
              */
             ipi: string;
             /**

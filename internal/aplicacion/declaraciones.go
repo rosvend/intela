@@ -60,7 +60,7 @@ func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes 
 		return VersionDeclaracion{}, err
 	}
 
-	if err := d.exigirPuedenRecibirReparto(ctx, partes); err != nil {
+	if err := d.exigirPuedenRecibirReparto(ctx, decl.Partes); err != nil {
 		return VersionDeclaracion{}, err
 	}
 
@@ -75,6 +75,12 @@ func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes 
 // exigirPuedenRecibirReparto es `R-01` (`RD 4.5`) de este lado: ninguna parte
 // de una declaracion puede apuntar a un titular del padron que no sea persona
 // natural. Devuelve [ErrTitularNoEsPersonaNatural] si alguna lo apunta.
+//
+// Recibe las partes YA normalizadas por [repertorio.NuevaDeclaracion] (ids e
+// IPI recortados): no vuelve a recortar porque no es quien decide la forma
+// canonica, y comparar contra el padron -que guarda recortado- con valores
+// crudos dejaba pasar sin comprobar un `" tit-ana"` y rechazaba un IPI con un
+// espacio sobrante.
 //
 // Y ademas concilia el IPI: la parte tiene que declarar el mismo que el padron
 // tiene para ese titular, o sale [ErrIPIQueNoCuadra]. No es una regla distinta
