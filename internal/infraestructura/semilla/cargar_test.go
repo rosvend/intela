@@ -82,12 +82,108 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
 	}
 
+	// Contra el dataset y no contra un literal: los valores viven en
+	// dataset.go, que es la unica fuente de verdad (fixtures.md).
+	d := Construir()
+
 	var nBolsas int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM bolsas`).Scan(&nBolsas); err != nil {
 		t.Fatalf("contar bolsas: %v", err)
 	}
-	if nBolsas != 4 {
-		t.Fatalf("bolsas = %d, se esperaban 4", nBolsas)
+	if nBolsas != len(d.Bolsas) {
+		t.Fatalf("bolsas = %d, se esperaban %d", nBolsas, len(d.Bolsas))
+	}
+
+	var nCanales, nClasificaciones int
+	if err := pool.QueryRow(ctx,
+		`SELECT (SELECT COUNT(*) FROM canales), (SELECT COUNT(*) FROM canales_clasificacion)`,
+	).Scan(&nCanales, &nClasificaciones); err != nil {
+		t.Fatalf("contar canales: %v", err)
+	}
+	if nCanales != len(d.Canales) || nClasificaciones != len(d.Canales) {
+		t.Fatalf("canales = %d y clasificaciones = %d, se esperaban %d de cada",
+			nCanales, nClasificaciones, len(d.Canales))
+	}
+}
+
+// TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo es la fixture que exige
+// #119: sin dos canales en el mismo periodo, "el valor punto es por canal"
+// (`RD 9.1.1`) no se distingue de "el valor punto es por periodo".
+func TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	filas, err := pool.Query(ctx, `
+		SELECT u.canal_id, COUNT(*)
+		  FROM usos u
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE u.modalidad = 'tv' AND r.periodo = $1
+		 GROUP BY u.canal_id
+		 ORDER BY u.canal_id`, Periodo)
+	if err != nil {
+		t.Fatalf("agrupar los usos de TV por canal: %v", err)
+	}
+	defer filas.Close()
+
+	porCanal := map[string]int{}
+	for filas.Next() {
+		var canal string
+		var n int
+		if err := filas.Scan(&canal, &n); err != nil {
+			t.Fatalf("escanear: %v", err)
+		}
+		porCanal[canal] = n
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("recorrer: %v", err)
+	}
+
+	if len(porCanal) != 2 {
+		t.Fatalf("canales de TV en %s = %v, se esperaban 2", Periodo, porCanal)
+	}
+	for _, canal := range []string{FuenteTV, FuenteTVSegundo} {
+		if porCanal[canal] == 0 {
+			t.Errorf("el canal %q no tiene usos de TV en %s", canal, Periodo)
+		}
+	}
+	// Y cada uno con su bolsa: una corrida por bolsa (ADR 0019).
+	var nBolsasTV int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bolsas WHERE periodo = $1 AND usuario_id = ANY($2)`,
+		Periodo, []string{FuenteTV, FuenteTVSegundo}).Scan(&nBolsasTV); err != nil {
+		t.Fatalf("contar bolsas de TV: %v", err)
+	}
+	if nBolsasTV != 2 {
+		t.Fatalf("bolsas de los dos canales = %d, se esperaban 2", nBolsasTV)
+	}
+}
+
+// Las dos medidas que anadio la migracion 00011 tienen que llegar sembradas, o
+// `RD 9.2` y `RD 9.4` no se pueden ejercitar contra datos.
+func TestElSembradorEscribeEspectadoresYExhibiciones(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var espectadores, exhibiciones int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM usos WHERE espectadores > 0),
+		       (SELECT COUNT(*) FROM usos WHERE exhibiciones > 0)`,
+	).Scan(&espectadores, &exhibiciones); err != nil {
+		t.Fatalf("contar medidas: %v", err)
+	}
+	if espectadores == 0 {
+		t.Error("ningun uso trae espectadores (RD 9.2)")
+	}
+	if exhibiciones == 0 {
+		t.Error("ningun uso trae exhibiciones (RD 9.4)")
 	}
 }
 

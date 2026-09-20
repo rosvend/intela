@@ -237,6 +237,8 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"obra_coautores",
 		"declaraciones",
 		"bolsas",
+		"canales_clasificacion",
+		"canales",
 		"usuarios_recaudo",
 		"parametros",
 		"sesiones",
@@ -400,6 +402,24 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 			VALUES ($1, $2, $3, $4)`,
 			usuario.ID(), datos.Nombre, datos.NIT, string(datos.Categoria)); err != nil {
 			return fmt.Errorf("insertar usuario de recaudo %s: %w", u.ID, err)
+		}
+	}
+
+	// Los canales van por SQL directo como las bolsas: no hay adaptador para
+	// `canales` todavia, y el registro es dato de demostracion, no un hecho de
+	// negocio que deba asentarse.
+	for _, c := range d.Canales {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales (id, nombre, grupo_estructural)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.Nombre, c.GrupoEstructural); err != nil {
+			return fmt.Errorf("insertar canal %s: %w", c.ID, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.AnioAudiencia, c.GrupoEfectivo); err != nil {
+			return fmt.Errorf("clasificar canal %s: %w", c.ID, err)
 		}
 	}
 
