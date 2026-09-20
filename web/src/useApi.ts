@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, esErrorDeApi } from "./api";
 
-type EstadoDeApi<T> =
+export type EstadoDeApi<T> =
   | { datos: null; cargando: true; error: null }
   | { datos: T; cargando: false; error: null }
   | { datos: null; cargando: false; error: Error };

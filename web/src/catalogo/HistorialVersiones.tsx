@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
-import { useApi } from "../useApi";
+import { useApi, type EstadoDeApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
@@ -16,7 +16,7 @@ import {
   type Obra,
   type VersionDeclaracion,
 } from "./tipos";
-import { useObra } from "./useObra";
+import { rutaDelHistorial, useObra } from "./useObra";
 
 /**
  * El historial de versiones de la Declaracion de Obra, en SOLO LECTURA (issue
@@ -26,8 +26,9 @@ import { useObra } from "./useObra";
  * abajo:
  *
  * - las VERSIONES -con su ventana de vigencia, su estado y sus partes- vienen de
- *   `GET /obras/{id}/declaracion/historial`, que las devuelve todas y ordenadas
- *   de la mas antigua a la mas reciente (api/openapi.yaml). La pantalla las
+ *   `GET /obras/{id}/declaracion/historial`, que sirve una pagina -la de las
+ *   mas recientes- ordenada de la mas antigua a la mas reciente
+ *   (api/openapi.yaml). La pantalla las
  *   pinta en ESE orden y no las reordena: el orden es del servidor y una
  *   segunda opinion del cliente sobre el registro es como el cliente empieza a
  *   discrepar de el;
@@ -70,6 +71,10 @@ export default function HistorialVersiones() {
   // pantalla compartia con el detalle y el editor -la peticion, el 404 como caso
   // propio y la guarda de forma- vive alli, en un solo sitio.
   const estado = useObra(id);
+  // El historial depende solo del `id` de la ruta: pedirlo aqui, junto a la
+  // obra, hace que las dos peticiones salgan en el mismo tick en vez de una
+  // detras de la otra. Con una obra ausente su resultado no se lee.
+  const historial = useApi<VersionDeclaracion[]>(rutaDelHistorial(id));
 
   if (estado.estado === "cargando")
     return <Cargando texto="Cargando el historial…" />;
@@ -105,7 +110,13 @@ export default function HistorialVersiones() {
     );
   }
 
-  return <HistorialDeObra obra={estado.obra} busqueda={busqueda} />;
+  return (
+    <HistorialDeObra
+      obra={estado.obra}
+      historial={historial}
+      busqueda={busqueda}
+    />
+  );
 }
 
 /**
@@ -115,7 +126,15 @@ export default function HistorialVersiones() {
  * "Volver a la obra", para que el camino de regreso al catalogo conserve la
  * busqueda aunque el administrador haya pasado por dos pantallas.
  */
-function HistorialDeObra({ obra, busqueda }: { obra: Obra; busqueda: string }) {
+function HistorialDeObra({
+  obra,
+  historial,
+  busqueda,
+}: {
+  obra: Obra;
+  historial: EstadoDeApi<VersionDeclaracion[]>;
+  busqueda: string;
+}) {
   return (
     <section className="historial-versiones">
       <p className="detalle-volver">
@@ -150,7 +169,7 @@ function HistorialDeObra({ obra, busqueda }: { obra: Obra; busqueda: string }) {
         </p>
       </header>
 
-      <VersionesDeLaObra obraId={obra.id} />
+      <VersionesDeLaObra lectura={historial} />
     </section>
   );
 }
@@ -158,18 +177,16 @@ function HistorialDeObra({ obra, busqueda }: { obra: Obra; busqueda: string }) {
 /**
  * Las versiones de la declaracion, tal como llegan.
  *
- * Se monta SOLO cuando la obra se pudo leer: pedir el historial de una obra que
- * no esta -o que no se pudo comprobar- seria una peticion que no puede cambiar
- * nada de lo que se ve, y su 404 no diria mas que el de la obra.
+ * Se monta SOLO cuando la obra se pudo leer: con una obra que no esta -o que no
+ * se pudo comprobar- el resultado del historial no se lee, y su lista vacia no
+ * diria mas que el 404 de la obra.
  */
-function VersionesDeLaObra({ obraId }: { obraId: string }) {
-  const {
-    datos: historial,
-    cargando,
-    error,
-  } = useApi<VersionDeclaracion[]>(
-    `/api/obras/${encodeURIComponent(obraId)}/declaracion/historial`,
-  );
+function VersionesDeLaObra({
+  lectura,
+}: {
+  lectura: EstadoDeApi<VersionDeclaracion[]>;
+}) {
+  const { datos: historial, cargando, error } = lectura;
 
   if (cargando) return <Cargando texto="Cargando las versiones…" />;
 

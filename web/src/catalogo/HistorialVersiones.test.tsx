@@ -156,7 +156,7 @@ function respuestaDeSesion(rol: Rol): Response {
 
 const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
 const esElHistorial = (url: string) =>
-  /^\/api\/obras\/[^/]+\/declaracion\/historial$/.test(url);
+  /^\/api\/obras\/[^/]+\/declaracion\/historial(\?.*)?$/.test(url);
 
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del test,
@@ -606,10 +606,12 @@ describe("historial de versiones (integracion con App)", () => {
     expect(enElHistorial).toContain(ROTULO_NOMBRE_EN_PADRON_ACTUAL);
   });
 
-  it("un 404 de la obra se dice como lo que es, y no se pide su historial", async () => {
-    // El historial de una obra que no existe llegaria como lista vacia, no como
-    // 404: sin leer la obra, esa lista vacia se pintaria como "esta obra no
-    // tiene ninguna version", que es afirmar algo de una obra que no esta.
+  it("un 404 de la obra se dice como lo que es, aunque su historial ya se haya pedido", async () => {
+    // El historial se pide junto a la obra, en el mismo tick, porque solo
+    // depende del `id` de la ruta. El de una obra que no existe llega como lista
+    // vacia, no como 404: sin leer la obra, esa lista vacia se pintaria como
+    // "esta obra no tiene ninguna version", que es afirmar algo de una obra que
+    // no esta. Por eso lo que decide es la OBRA, y el historial no se pinta.
     simularServidor({
       obra: () => json({ error: "esa obra no esta en el catalogo" }, 404),
     });
@@ -623,8 +625,10 @@ describe("historial de versiones (integracion con App)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
     expect(document.body.textContent).not.toMatch(/no tiene ninguna versión/i);
-    // No se pide el historial de una obra que no esta.
-    expect(consultas()).toEqual(["/api/obras/obra-1"]);
+    expect(consultas()).toEqual([
+      "/api/obras/obra-1",
+      "/api/obras/obra-1/declaracion/historial",
+    ]);
     // La vuelta no es la ficha -volveria a decir lo mismo-, sino el catalogo.
     expect(
       screen
@@ -666,7 +670,31 @@ describe("historial de versiones (integracion con App)", () => {
     const alerta = await screen.findByRole("alert");
     expect(alerta.textContent).toContain("No se pudo consultar la obra:");
     expect(alerta.textContent).toContain("la base esta caida");
-    expect(consultas()).toEqual(["/api/obras/obra-1"]);
+    expect(consultas()).toEqual([
+      "/api/obras/obra-1",
+      "/api/obras/obra-1/declaracion/historial",
+    ]);
+  });
+
+  it("la obra y su historial se piden en el mismo tick, no uno detras del otro", async () => {
+    simularServidor();
+    // La obra NO resuelve nunca: si el historial saliera despues de ella, no
+    // saldria, y esta prueba lo vería.
+    const responder = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation((entrada, init) =>
+      String(entrada) === "/api/obras/obra-1"
+        ? new Promise<Response>(() => {})
+        : (responder as typeof fetch)(entrada, init),
+    );
+
+    montarApp("/catalogo/obra-1/historial");
+
+    await vi.waitFor(() =>
+      expect(consultas()).toEqual([
+        "/api/obras/obra-1",
+        "/api/obras/obra-1/declaracion/historial",
+      ]),
+    );
   });
 
   it("mientras llega la respuesta dice que esta cargando, sin versiones", async () => {

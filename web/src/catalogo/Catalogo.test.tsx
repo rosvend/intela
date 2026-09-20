@@ -115,7 +115,7 @@ const esConsultaDeObras = (url: string) => url.startsWith("/api/obras");
  */
 const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
 const esElHistorial = (url: string) =>
-  /^\/api\/obras\/[^/]+\/declaracion\/historial$/.test(url);
+  /^\/api\/obras\/[^/]+\/declaracion\/historial(\?.*)?$/.test(url);
 
 /** Los GET de la busqueda, en orden: una por cada cambio de filtro o de pagina. */
 function consultas(): string[] {

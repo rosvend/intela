@@ -118,6 +118,20 @@ export function useObra(id: string): LecturaDeObra {
 }
 
 /**
+ * La ruta del historial de una obra, en un solo sitio: las tres pantallas la
+ * piden y `limite` es lo unico que cambia entre ellas.
+ *
+ * El servidor pagina el historial desde la version MAS RECIENTE hacia atras, asi
+ * que `limite: 1` trae exactamente la version abierta: lo que el detalle necesita
+ * para pintar las partes vigentes, a coste constante y sin traer las versiones
+ * cerradas que no va a pintar.
+ */
+export function rutaDelHistorial(obraId: string, limite?: number): string {
+  const ruta = `/api/obras/${encodeURIComponent(obraId)}/declaracion/historial`;
+  return limite === undefined ? ruta : `${ruta}?limite=${limite}`;
+}
+
+/**
  * Si la version que el historial deja abierta es la que la obra declara vigente.
  *
  * `historial` NO admite `null` -"no se pudo leer"- porque no es una lectura: es

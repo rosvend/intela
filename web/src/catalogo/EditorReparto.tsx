@@ -12,7 +12,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import Cargando from "../Cargando";
 import { formatearInstante } from "../tablero/formato";
-import { useApi } from "../useApi";
+import { useApi, type EstadoDeApi } from "../useApi";
 import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import {
@@ -47,7 +47,7 @@ import {
   type Titular,
   type VersionDeclaracion,
 } from "./tipos";
-import { conciliarConElHistorial, useObra } from "./useObra";
+import { conciliarConElHistorial, rutaDelHistorial, useObra } from "./useObra";
 
 /**
  * Cuantos titulares se piden por pagina del padron. El servidor aplica 100 si
@@ -150,6 +150,12 @@ export default function EditorReparto() {
   // obra, y por tanto que no hay reparto que declarar- y la guarda de forma
   // viven alli, donde tambien las leen el detalle y el historial.
   const estado = useObra(id);
+  // El historial depende solo del `id` de la ruta, no de que la obra ya haya
+  // llegado: pedirlo aqui, junto a la obra, hace que las dos peticiones salgan
+  // en el mismo tick en vez de una detras de la otra. Con una obra ausente o
+  // ilegible su resultado no se lee, y el historial de una obra que no existe es
+  // una lista vacia -nunca 404-, asi que no cuesta un error.
+  const historial = useApi<VersionDeclaracion[]>(rutaDelHistorial(id));
 
   if (estado.estado === "cargando")
     return <Cargando texto="Cargando la obra…" />;
@@ -186,18 +192,24 @@ export default function EditorReparto() {
   }
 
   return (
-    <EditorDeLaObra obra={estado.obra} busqueda={busqueda} destino={destino} />
+    <EditorDeLaObra
+      obra={estado.obra}
+      historial={historial}
+      busqueda={busqueda}
+      destino={destino}
+    />
   );
 }
 
 /**
  * La obra ya legible: primero su declaracion vigente, y con ella el borrador.
  *
- * El historial se lee UNA vez y de aqui sale todo lo que depende de el: con que
- * reparto empieza el borrador y que version se cerrara. Se lee antes de montar
- * el formulario a proposito: asi el borrador se construye con el reparto
- * vigente ya en la mano en vez de sembrarse despues -que sobrescribiria lo que
- * se hubiera tecleado mientras llegaba la respuesta-.
+ * El historial se lee UNA vez -lo pide el componente de la ruta, junto a la
+ * obra- y de aqui sale todo lo que depende de el: con que reparto empieza el
+ * borrador y que version se cerrara. Se espera a el antes de montar el
+ * formulario a proposito: asi el borrador se construye con el reparto vigente ya
+ * en la mano en vez de sembrarse despues -que sobrescribiria lo que se hubiera
+ * tecleado mientras llegaba la respuesta-.
  *
  * Que el historial falle NO impide editar: el borrador empieza sin filas, el
  * aviso dice que no se sabe que version se cerrara, y el padron sigue estando
@@ -206,20 +218,16 @@ export default function EditorReparto() {
  */
 function EditorDeLaObra({
   obra,
+  historial: lecturaDelHistorial,
   busqueda,
   destino,
 }: {
   obra: Obra;
+  historial: EstadoDeApi<VersionDeclaracion[]>;
   busqueda: string;
   destino: string;
 }) {
-  const {
-    datos: historial,
-    cargando,
-    error,
-  } = useApi<VersionDeclaracion[]>(
-    `/api/obras/${encodeURIComponent(obra.id)}/declaracion/historial`,
-  );
+  const { datos: historial, cargando, error } = lecturaDelHistorial;
 
   if (cargando) return <Cargando texto="Cargando la declaración vigente…" />;
 

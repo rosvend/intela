@@ -229,7 +229,7 @@ function respuestaDeSesion(rol: Rol): Response {
 
 const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
 const esElHistorial = (url: string) =>
-  /^\/api\/obras\/[^/]+\/declaracion\/historial$/.test(url);
+  /^\/api\/obras\/[^/]+\/declaracion\/historial(\?.*)?$/.test(url);
 const esLaDeclaracion = (url: string) =>
   /^\/api\/obras\/[^/]+\/declaracion$/.test(url);
 
@@ -1558,6 +1558,27 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
+  it("la obra y su historial se piden en el mismo tick, no uno detras del otro", async () => {
+    simularServidor();
+    // La obra NO resuelve nunca: si el historial saliera despues de ella, no
+    // saldria, y esta prueba lo vería.
+    const responder = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation((entrada, init) =>
+      String(entrada) === "/api/obras/obra-1"
+        ? new Promise<Response>(() => {})
+        : (responder as typeof fetch)(entrada, init),
+    );
+
+    montarApp("/catalogo/obra-1/declaracion");
+
+    await vi.waitFor(() =>
+      expect(consultas().slice(0, 2)).toEqual([
+        "/api/obras/obra-1",
+        "/api/obras/obra-1/declaracion/historial",
+      ]),
+    );
+  });
+
   it("una obra inexistente lo dice, sin montar el editor", async () => {
     simularServidor({
       obra: () => json({ error: "esa obra no esta en el catalogo" }, 404),
@@ -1571,7 +1592,11 @@ describe("editor de reparto (integracion con App)", () => {
     expect(screen.getByText("obra-9")).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(consultas()).toEqual(["/api/obras/obra-9"]);
+    // El historial se pide junto a la obra, en el mismo tick, y no se pinta.
+    expect(consultas()).toEqual([
+      "/api/obras/obra-9",
+      "/api/obras/obra-9/declaracion/historial",
+    ]);
     expect(
       screen
         .getByRole("link", { name: /Volver al catálogo/ })

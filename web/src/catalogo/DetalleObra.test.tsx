@@ -127,7 +127,7 @@ function respuestaDeSesion(rol: Rol): Response {
 
 const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
 const esElHistorial = (url: string) =>
-  /^\/api\/obras\/[^/]+\/declaracion\/historial$/.test(url);
+  /^\/api\/obras\/[^/]+\/declaracion\/historial(\?.*)?$/.test(url);
 
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del test,
@@ -298,7 +298,9 @@ describe("detalle de obra (integracion con App)", () => {
     // obra trae las cifras de cabecera, no el reparto.
     expect(consultas()).toEqual([
       "/api/obras/obra-1",
-      "/api/obras/obra-1/declaracion/historial",
+      // Basta la version abierta: el servidor pagina el historial desde la mas
+      // reciente, y `limite=1` es esa.
+      "/api/obras/obra-1/declaracion/historial?limite=1",
     ]);
 
     // Los metadatos, cada uno con su rotulo.

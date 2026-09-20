@@ -11,7 +11,7 @@ import {
   type Parte,
   type VersionDeclaracion,
 } from "./tipos";
-import { conciliarConElHistorial, useObra } from "./useObra";
+import { conciliarConElHistorial, rutaDelHistorial, useObra } from "./useObra";
 
 /**
  * El detalle de una obra con su Declaracion de Obra vigente (issue #30, paso 6).
@@ -26,10 +26,11 @@ import { conciliarConElHistorial, useObra } from "./useObra";
  *   decimales redondea, y una parte sin IPI deja la declaracion `incompleta`
  *   con la suma en 100-, y esta pantalla es donde un administrador decide si la
  *   obra se puede repartir;
- * - las PARTES vienen de `GET /obras/{id}/declaracion/historial`, que devuelve
- *   TODAS las versiones y marca la vigente con `vigente_hasta: null`. No hay un
- *   `GET .../declaracion` que devuelva solo la vigente: el historial es la unica
- *   lectura donde estan sus partes.
+ * - las PARTES vienen de `GET /obras/{id}/declaracion/historial?limite=1`: el
+ *   servidor pagina el historial desde la version mas reciente, asi que la
+ *   pagina de una version es la abierta, la que marca `vigente_hasta: null`. No
+ *   hay un `GET .../declaracion` que devuelva solo la vigente: el historial es la
+ *   unica lectura donde estan sus partes.
  *
  * `version_vigente` en `null` quiere decir que la obra NO tiene ninguna
  * declaracion, y es el unico dato que distingue eso de "declarada y no suma
@@ -376,13 +377,14 @@ function EnlaceAlEditor({
  * que no puede cambiar nada de lo que se ve.
  */
 function PartesDeLaVersionVigente({ obra }: { obra: Obra }) {
+  // Basta la version abierta, y el servidor pagina el historial desde la mas
+  // reciente: `limite=1` es esa. Traerlas todas para pintar las partes de una
+  // sola costaba lo que midiera el historial.
   const {
     datos: historial,
     cargando,
     error,
-  } = useApi<VersionDeclaracion[]>(
-    `/api/obras/${encodeURIComponent(obra.id)}/declaracion/historial`,
-  );
+  } = useApi<VersionDeclaracion[]>(rutaDelHistorial(obra.id, 1));
 
   if (cargando) return <Cargando texto="Cargando la declaración vigente…" />;
 
