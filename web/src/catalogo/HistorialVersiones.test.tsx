@@ -12,7 +12,7 @@ import { setToken } from "../api";
 import { ProveedorDeSesion, type Rol } from "../sesion";
 import { CLAVE_DE_VUELTA_AL_CATALOGO } from "./Catalogo";
 import { ROTULO_NOMBRE_EN_PADRON_ACTUAL } from "./declaracion";
-import type { Obra, VersionDeclaracion } from "./tipos";
+import type { Obra, Titular, VersionDeclaracion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(cuerpo), {
@@ -93,6 +93,57 @@ const version3: VersionDeclaracion = {
 
 const HISTORIAL: VersionDeclaracion[] = [version1, version2, version3];
 
+/**
+ * El mismo historial con dos versiones mas. La quinta trae ademas un titular que
+ * NO aparece en ninguna otra -`tit-3`-, y no es un adorno: sin el, la union de los
+ * identificadores de todas las versiones coincide con la de la PRIMERA, asi que
+ * una consulta que solo mirara la version 1 pasaria la prueba. Con el, la
+ * asercion sobre la URL distingue "la union de todas" de "las de la primera", que
+ * es la propiedad que el item 9b promete.
+ */
+const HISTORIAL_LARGO: VersionDeclaracion[] = [
+  ...HISTORIAL,
+  {
+    ...version3,
+    version: 4,
+    vigente_desde: "2026-04-01T09:00:00Z",
+    vigente_hasta: "2026-04-02T09:00:00Z",
+  },
+  {
+    ...version3,
+    version: 5,
+    vigente_desde: "2026-05-01T09:00:00Z",
+    vigente_hasta: null,
+    partes: [
+      { titular_id: "tit-1", ipi: "IPI-00000001", porcentaje: 70 },
+      { titular_id: "tit-2", ipi: "IPI-00000002", porcentaje: 25 },
+      { titular_id: "tit-3", ipi: "IPI-00000003", porcentaje: 5 },
+    ],
+  },
+];
+
+/**
+ * El padron por el que esta pantalla resuelve el nombre de las partes (item 9b):
+ * los dos `titular_id` que aparecen en las tres versiones. Los nombres son
+ * sinteticos, como todo lo de este fichero.
+ */
+const PADRON: Titular[] = [
+  {
+    id: "tit-1",
+    nombre: "Ana Escritora",
+    ipi: "IPI-00000001",
+    persona_natural: true,
+    clase: "socio",
+  },
+  {
+    id: "tit-2",
+    nombre: "Luis Guionista",
+    ipi: "IPI-00000002",
+    persona_natural: true,
+    clase: "administrado",
+  },
+];
+
 function respuestaDeSesion(rol: Rol): Response {
   return json({
     id: "usr-1",
@@ -110,19 +161,24 @@ const esElHistorial = (url: string) =>
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del test,
  * la obra con `obra()` y su historial con `historial()`. `catalogo()` responde al
- * listado -lo pide la pantalla del catalogo cuando se vuelve a ella-. Todo lo
- * demas, 404.
+ * listado -lo pide la pantalla del catalogo cuando se vuelve a ella- y `padron()`
+ * al padron de titulares, que es por donde esta pantalla resuelve el nombre de las
+ * partes (item 9b). **Sin `padron()` el padron responde 404**, que es lo que hace
+ * falta en las pruebas que no miran esa columna: las tablas se pintan igual, con
+ * el guion.
  */
 function simularServidor({
   rol = "administrador",
   obra = () => json(obraDeclarada),
   historial = () => json(HISTORIAL),
   catalogo,
+  padron,
 }: {
   rol?: Rol;
   obra?: () => Response;
   historial?: () => Response;
   catalogo?: () => Response;
+  padron?: () => Response;
 } = {}) {
   vi.mocked(fetch).mockImplementation((entrada, init) => {
     const url = String(entrada);
@@ -135,6 +191,9 @@ function simularServidor({
     }
     if (metodo === "GET" && esElHistorial(url)) {
       return Promise.resolve(historial());
+    }
+    if (metodo === "GET" && padron && url.startsWith("/api/titulares")) {
+      return Promise.resolve(padron());
     }
     if (metodo === "GET" && catalogo && url.startsWith("/api/obras?")) {
       return Promise.resolve(catalogo());
@@ -154,6 +213,38 @@ function consultas(): string[] {
     .filter((l) => l.metodo === "GET" && l.url.startsWith("/api/obras"))
     .map((l) => l.url);
 }
+
+/**
+ * TODOS los GET que la pantalla hizo, sin recortar por recurso.
+ *
+ * Hace falta porque `consultas()` filtra a `/api/obras` **a proposito** -varias
+ * aserciones de este fichero cuentan con ese filtro- y con ese filtro una
+ * afirmacion sobre otra ruta no puede ser verdadera: el
+ * `expect(consultas().some((url) => url.includes("/titulares"))).toBe(false)` que
+ * habia aqui era vacuo por eso, y no porque la pantalla no pidiera el padron.
+ */
+function todasLasConsultas(): string[] {
+  return vi
+    .mocked(fetch)
+    .mock.calls.map(([entrada, init]) => ({
+      url: String(entrada),
+      metodo: init?.method ?? "GET",
+    }))
+    .filter((l) => l.metodo === "GET")
+    .map((l) => l.url);
+}
+
+/** Las consultas al padron: lo que el item 9b promete en UNA peticion. */
+function consultasAlPadron(): string[] {
+  return todasLasConsultas().filter((url) => url.startsWith("/api/titulares"));
+}
+
+/**
+ * Un respiro para que una peticion de mas tenga tiempo de salir antes de
+ * contarla: la consulta sale en un efecto, asi que "sigue habiendo una sola" no
+ * se puede afirmar en el mismo tick en que se pintaron los nombres.
+ */
+const respirar = () => new Promise((listo) => setTimeout(listo, 60));
 
 /**
  * Una entrada del historial del router en memoria: la direccion, y el estado que
@@ -214,6 +305,25 @@ function instante(bloque: HTMLElement, rotulo: string): HTMLTimeElement {
 /** La tabla de partes de la version `n`. */
 function tablaDeVersion(n: number): HTMLElement {
   return screen.getByRole("table", { name: `Partes de la versión ${n}` });
+}
+
+/**
+ * Lo que la fila de ese titular dice, en la tabla de la version `n`, en su
+ * columna de NOMBRE -la tercera-.
+ *
+ * Se lee entera -y no con un `getByText`- porque los dos valores que puede tener
+ * son un nombre y el guion de "no se conoce", y una busqueda por texto no
+ * distingue "no pinto nada" de "pinto el guion".
+ */
+function nombreDeLaFilaDeLaVersion(n: number, titularId: string): string {
+  const celda = within(tablaDeVersion(n)).getByText(titularId, {
+    selector: "td",
+  });
+  const fila = celda.closest("tr");
+  if (!fila) throw new Error(`"${titularId}" no esta dentro de una fila`);
+  const deLaColumna = within(fila).getAllByRole("cell")[2];
+  if (!deLaColumna) throw new Error("la fila no tiene columna de nombre");
+  return deLaColumna.textContent ?? "";
 }
 
 /** Los encabezados de una tabla, como texto. */
@@ -391,17 +501,18 @@ describe("historial de versiones (integracion con App)", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("las partes llevan el titular_id junto al rotulo del padron, y el nombre no se inventa", async () => {
-    simularServidor();
+  it("las partes llevan el titular_id y el nombre del padron, con UNA peticion para toda la pantalla", async () => {
+    simularServidor({ padron: () => json(PADRON) });
 
     montarApp("/catalogo/obra-1/historial");
     await screen.findByRole("heading", { name: "Historial de la declaración" });
     await esperarLasVersiones();
+    await within(tablaDeVersion(1)).findByText("Ana Escritora");
 
-    // El rotulo dice de donde saldria el nombre -del padron de HOY, no de la
-    // fecha de la version (D-006)-, y el `titular_id` esta al lado para poder
-    // conciliar la pantalla con la API. Con mas motivo en una version antigua:
-    // el nombre de hoy no es el que el titular tenia entonces.
+    // El rotulo dice de donde sale el nombre -del padron de HOY, no de la fecha
+    // de la version (D-006)-, y el `titular_id` esta al lado para poder conciliar
+    // la pantalla con la API. Con mas motivo en una version antigua: el nombre de
+    // hoy no es el que el titular tenia entonces.
     expect(encabezadosDe(tablaDeVersion(2))).toEqual([
       "Titular",
       "IPI",
@@ -410,17 +521,64 @@ describe("historial de versiones (integracion con App)", () => {
     ]);
     const fila = within(tablaDeVersion(2)).getAllByRole("row")[1];
     if (!fila) throw new Error("la version 2 no pinto ninguna fila");
+    // La tercera celda es el NOMBRE de hoy, resuelto contra el padron: la version
+    // 2 es de marzo y el nombre es el que el titular tiene ahora (D-006).
     expect(
       within(fila)
         .getAllByRole("cell")
         .map((td) => td.textContent),
-    ).toEqual(["tit-1", "IPI-00000001", "—", "74.5000%"]);
+    ).toEqual(["tit-1", "IPI-00000001", "Ana Escritora", "74.5000%"]);
+    expect(nombreDeLaFilaDeLaVersion(3, "tit-2")).toBe("Luis Guionista");
 
-    // Esta pantalla tampoco resuelve el nombre contra el padron: la columna no
-    // puede afirmar ni un nombre ni que el titular falte.
-    expect(consultas().some((url) => url.includes("/titulares"))).toBe(false);
+    // UNA peticion para la pantalla ENTERA, y con los identificadores de todas
+    // sus versiones sin repetir: `tit-1` sale en las tres y se pide una vez. Una
+    // peticion por tabla seria una por version, y su numero creceria con el
+    // historial.
+    expect(consultasAlPadron()).toEqual(["/api/titulares?ids=tit-1&ids=tit-2"]);
+    await respirar();
+    expect(consultasAlPadron()).toHaveLength(1);
+
+    // Y la columna no afirma que un titular falte: el guion es "no se conoce".
     expect(document.body.textContent).not.toMatch(/no existe/i);
     expect(document.body.textContent).not.toMatch(/no est[aá] en el padron/i);
+  });
+
+  it("mas versiones NO son mas peticiones: cinco versiones, una sola consulta al padron", async () => {
+    simularServidor({
+      historial: () => json(HISTORIAL_LARGO),
+      padron: () => json(PADRON),
+    });
+
+    montarApp("/catalogo/obra-1/historial");
+    const deLaQuinta = await screen.findByRole("table", {
+      name: "Partes de la versión 5",
+    });
+    await within(deLaQuinta).findByText("Ana Escritora");
+    await respirar();
+
+    // Es la propiedad que el item 9b promete y la que el defecto habria roto: una
+    // version mas -y un titular NUEVO en ella- no anade otra consulta, anade un
+    // identificador a la que ya se hace. Los tres viajan en la misma URL.
+    expect(consultasAlPadron()).toEqual([
+      "/api/titulares?ids=tit-1&ids=tit-2&ids=tit-3",
+    ]);
+    // Y el titular que el padron no tiene se queda con el guion, en esa misma
+    // respuesta: el guion no significa que falte, significa que no se conoce.
+    expect(nombreDeLaFilaDeLaVersion(5, "tit-3")).toBe("—");
+  });
+
+  it("con ninguna parte que nombrar no se pide el padron", async () => {
+    // Control negativo de `ids`: vacio NO es "ninguno" en el contrato, es el
+    // padron ENTERO, asi que una consulta sin identificadores no puede salir. Por
+    // eso la pantalla monta sin nombres en vez de pedirlos con una lista vacia.
+    simularServidor({ historial: () => json([{ ...version3, partes: [] }]) });
+
+    montarApp("/catalogo/obra-1/historial");
+    await screen.findByText("Esta versión no trae ninguna parte declarada.");
+    await respirar();
+
+    expect(consultasAlPadron()).toEqual([]);
+    expect(todasLasConsultas()).not.toContain("/api/titulares");
   });
 
   it("la tabla de partes dice lo mismo en el detalle y en el historial", async () => {

@@ -172,22 +172,21 @@ export function formatearPorcentaje(valor: number): string {
  * es lo correcto a largo plazo y sigue anotado como pendiente: cambia la forma
  * de respuestas ya entregadas.
  *
- * **Hoy no se resuelve ningun nombre, y el rotulo existe para el dia en que se
- * resuelva.** `TablaDePartes.tsx` pinta un guion en todas las filas de esa
- * columna, y el parrafo de esa misma pantalla dice por que: no busca el nombre.
- * El motivo es del contrato, no de la pantalla: `GET /titulares` no admite
- * filtrar por identificador (`internal/infraestructura/httpapi/titulares.go`),
- * asi que con el `titular_id` de una fila en la mano no hay forma de pedir su
- * nombre sin traer paginas enteras del padron y cruzarlas en el cliente.
+ * **El nombre SI se resuelve, y el rotulo dice de donde sale.** Las tablas de
+ * solo lectura lo piden al padron en UNA consulta acotada por los identificadores
+ * que muestran (`GET /titulares?ids=...`, item 9b), y `TablaDePartes.tsx` pinta
+ * el nombre -o el guion de "no se conoce" cuando no lo tiene-. La limitacion que
+ * este comentario atribuia al contrato no era del contrato: `FiltroTitulares.IDs`
+ * y el SQL del padron soportaban el filtro por identificador desde el principio,
+ * y lo que faltaba era que el handler HTTP leyera el parametro.
  *
- * Esto es una DESVIACION de D-006, y se registra aqui porque el comentario que
- * habia en este sitio afirmaba lo contrario -que el nombre "se resuelve hoy
- * contra el padron de hoy"-. D-006 decidio resolverlo en el cliente contra el
- * padron que el editor ya carga; el paso 6 dejo esa resolucion sin implementar
- * -y lo registro en `progress.md`-, pero el registro de decisiones se quedo sin
- * corregir. La resolucion contra el padron sigue siendo una decision registrada
- * y **NO implementada**. Alinear las dos fuentes es trabajo propio, no un
- * efecto secundario de este arreglo.
+ * D-006 decidio resolver el nombre EN EL CLIENTE y contra el padron de HOY, en
+ * vez de congelarlo con la version, y eso es lo que sigue vigente: el nombre que
+ * se pinta es el de hoy, y por eso el rotulo lo dice en vez de llamarse "Nombre"
+ * a secas. El editor lo resuelve ademas con el `Titular` que ya tiene en la mano
+ * al agregar la fila (item 9a), que es la otra mitad de la misma decision.
+ * Congelar el nombre con la version sigue pendiente y cambiaria la forma de
+ * respuestas ya entregadas.
  */
 export const ROTULO_NOMBRE_EN_PADRON_ACTUAL = "Nombre en el padrón actual";
 

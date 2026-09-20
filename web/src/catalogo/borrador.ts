@@ -154,13 +154,17 @@ export function filasDePartida(
 ): FilaDeReparto[] {
   const abierta = versionAbierta(versiones);
   if (!abierta) return [];
-  // Las filas sembradas aqui nacen SIN nombre, y no es un olvido: la `Parte` trae
-  // `titular_id` e `ipi` y nada mas. Lo que NO hay que hacer es rellenarlo pidiendo
-  // el padron -ni una peticion, ni una por fila-: seria poner el nombre de HOY a un
-  // reparto que es de una version, que es justo lo que la columna rotulada del
-  // detalle declara (D-006), y `GET /titulares` se sirve paginado y no filtra por
-  // identificador, asi que una pagina que no traiga al titular no probaria que no
-  // exista. La fila se queda con su `titular_id`, que es lo que sabe.
+  // Las filas sembradas aqui nacen SIN nombre, y no es un olvido ni una
+  // limitacion del padron: la `Parte` trae `titular_id` e `ipi` y nada mas, y lo
+  // que NO hay que hacer es rellenarlo pidiendole el padron su nombre de HOY. El
+  // padron ya se puede preguntar por identificador -`GET /titulares?ids=...`,
+  // item 9b, que es lo que usan las tablas de solo lectura-, pero aqui eso seria
+  // poner el nombre de hoy a un reparto que es de una VERSION, que es
+  // exactamente lo que la columna rotulada de esas tablas declara (D-006). Las
+  // filas que se agregan a mano en el editor si llevan nombre, y lo toman del
+  // `Titular` que el padron acaba de devolver (item 9a): ahi el nombre acompaña a
+  // una eleccion de hoy, no a un reparto pasado. La fila sembrada se queda con su
+  // `titular_id`, que es lo que sabe.
   return abierta.partes.map((parte) =>
     nuevaFila(parte.titular_id, parte.ipi, textoDePorcentaje(parte.porcentaje)),
   );
