@@ -36,9 +36,12 @@ export const RUTAS: readonly ItemDeNav[] = [
     seccion: "principal",
   },
   {
+    // Solo administrador: el servidor protege /reportes con
+    // requiereRol(administrador) (#25) y #29 fija que la pantalla de ingesta
+    // es solo suya.
     to: "/ingesta",
     label: "Ingesta",
-    roles: ["administrador", "distribucion", "auditor"],
+    roles: ["administrador"],
     seccion: "principal",
   },
   {

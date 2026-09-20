@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 )
@@ -21,6 +23,7 @@ import (
 type Ingesta interface {
 	IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error)
 	Cargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error)
+	RechazosDeCarga(ctx context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error)
 }
 
 // tamanoMaximoEntrega es el tope del ARCHIVO de una subida.
@@ -82,6 +85,24 @@ type rechazoJSON struct {
 	Titulo    string `json:"titulo"`
 	IDsFuente string `json:"ids_fuente"`
 	Motivo    string `json:"motivo"`
+}
+
+// aRechazosJSON es la UNICA traduccion de un rechazo a la respuesta, la que
+// comparten el acuse del POST y el log de GET /reportes/{id}/rechazos. Con dos
+// copias, una medida anadida en un sitio y olvidada en el otro saldria por una
+// de las dos puertas (ADR 0016).
+//
+// Nunca devuelve nil: make y no var, porque una lista sin rechazos tiene que
+// salir como [] y no como null, o cualquier cliente que itere la lista revienta
+// justo en el caso bueno.
+func aRechazosJSON(usos []aplicacion.UsoPersistido) []rechazoJSON {
+	rechazos := make([]rechazoJSON, 0, len(usos))
+	for _, u := range usos {
+		rechazos = append(rechazos, rechazoJSON{
+			ID: u.ID, Titulo: u.Titulo, IDsFuente: u.IDsFuente, Motivo: u.RechazoMotivo,
+		})
+	}
+	return rechazos
 }
 
 // cargaJSON es una entrega en el listado de cargas hechas.
@@ -212,15 +233,6 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// make y no var: una entrega sin rechazos tiene que salir como [] y no como
-	// null, o cualquier cliente que itere la lista revienta justo en el caso
-	// bueno.
-	rechazos := make([]rechazoJSON, 0, len(rec.Rechazados))
-	for _, u := range rec.Rechazados {
-		rechazos = append(rechazos, rechazoJSON{
-			ID: u.ID, Titulo: u.Titulo, IDsFuente: u.IDsFuente, Motivo: u.RechazoMotivo,
-		})
-	}
 	escribirJSON(w, http.StatusCreated, entregaJSON{
 		ID:          rec.Reporte.ID,
 		Fuente:      rec.Reporte.Fuente,
@@ -229,7 +241,7 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		ClaveObjeto: rec.Reporte.ClaveObjeto,
 		NBytes:      rec.Reporte.NBytes,
 		Aceptados:   rec.Aceptados,
-		Rechazados:  rechazos,
+		Rechazados:  aRechazosJSON(rec.Rechazados),
 	})
 }
 
@@ -256,4 +268,38 @@ func (a *API) listarCargas(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	escribirJSON(w, http.StatusOK, cuerpo)
+}
+
+// listarRechazosDeCarga sirve una pagina del log de rechazos de una carga: lo
+// que despliega una fila del listado, que solo trae el recuento.
+//
+// Va paginado con la misma forma que `GET /obras` (limite y desplazamiento,
+// mismo defecto y mismo techo): el log de una entrega grande -un archivo con la
+// cabecera equivocada rechaza todas sus filas- no cabe en una respuesta ni en
+// una tabla. La cifra no se trunca: el total es `Carga.rechazados`, que el
+// listado ya tiene en la fila que se despliega, y es con lo que se dice "N de M".
+//
+// 404 y no una lista vacia cuando la carga no existe: "no llego" y "llego
+// entera" son justo las dos respuestas que esta lectura tiene que separar. Una
+// pagina vacia de una carga que si existe es 200 con la lista vacia.
+func (a *API) listarRechazosDeCarga(w http.ResponseWriter, r *http.Request) {
+	pag, ok := leerPaginacion(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	usos, err := a.ingesta.RechazosDeCarga(r.Context(), chi.URLParam(r, "id"), pag)
+	switch {
+	case err == nil:
+	case errors.Is(err, aplicacion.ErrReporteInvalido):
+		escribirError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, aplicacion.ErrNoEncontrado):
+		escribirError(w, http.StatusNotFound, "esa carga no existe")
+		return
+	default:
+		a.log.ErrorContext(r.Context(), "fallo al consultar los rechazos de una carga", slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "no se pudo consultar los rechazos de la carga")
+		return
+	}
+	escribirJSON(w, http.StatusOK, aRechazosJSON(usos))
 }
