@@ -2,11 +2,35 @@ import { describe, expect, it } from "vitest";
 import {
   ROTULO_NOMBRE_EN_PADRON_ACTUAL,
   TOLERANCIA_SUMA,
+  avisoDeVersion,
   estadoDelBorrador,
   formatearPorcentaje,
   puedeGuardarBorrador,
   totalDeclarado,
+  versionAbierta,
+  type AvisoDeVersion,
+  type MotivoDeDuda,
 } from "./declaracion";
+import type { VersionDeclaracion } from "./tipos";
+
+/**
+ * Una version del historial con las tres cosas que estas pruebas miran: su
+ * numero, si es la que rige y su reparto. Los demas campos van con la forma del
+ * contrato para que `typecheck` siga siendo la guarda de la forma.
+ */
+function version(
+  numero: number,
+  abierta = false,
+  partes: VersionDeclaracion["partes"] = [],
+): VersionDeclaracion {
+  return {
+    version: numero,
+    vigente_desde: "2026-01-01T00:00:00Z",
+    vigente_hasta: abierta ? null : "2026-02-01T00:00:00Z",
+    estado: partes.length > 0 ? "completa" : "incompleta",
+    partes,
+  };
+}
 
 describe("totalDeclarado", () => {
   const partes = (...porcentajes: number[]) =>
@@ -148,5 +172,105 @@ describe("ROTULO_NOMBRE_EN_PADRON_ACTUAL", () => {
     // El rotulo no puede sugerir que ese nombre es el de la declaracion.
     expect(ROTULO_NOMBRE_EN_PADRON_ACTUAL).not.toMatch(/declarac/i);
     expect(ROTULO_NOMBRE_EN_PADRON_ACTUAL).not.toMatch(/versi/i);
+  });
+});
+
+describe("versionAbierta", () => {
+  it("una sola version sin cerrar es la que rige", () => {
+    expect(versionAbierta([version(3), version(4, true)])?.version).toBe(4);
+  });
+
+  it("sin ninguna abierta no hay version vigente, y no vale la ultima", () => {
+    expect(versionAbierta([version(3), version(4)])).toBeNull();
+    expect(versionAbierta([])).toBeNull();
+  });
+
+  it("con dos abiertas no se elige ninguna: el backend cerraria otra cosa", () => {
+    // El numero que sale de aqui es el que el aviso enseña como "se cerrara la
+    // version N". Con dos candidatas, afirmar una seria afirmar de mas.
+    expect(versionAbierta([version(3, true), version(4, true)])).toBeNull();
+  });
+});
+
+/**
+ * El desenlace, en una linea. La tabla de abajo compara esto y no el objeto
+ * entero por una razon de lectura: un caso por renglon se lee de un vistazo y un
+ * objeto de cuatro campos por renglon no. La proyeccion es LOSSLESS -lleva los
+ * tres `tipo`, los cuatro `porque` de `sinNumeros` y los dos booleanos-, asi que
+ * no hay ningun campo del aviso que la tabla deje de comparar.
+ */
+function desenlace(aviso: AvisoDeVersion): string {
+  if (aviso.tipo === "cierraYabre") {
+    return `cierraYabre ${aviso.seCierra}->${aviso.seAbre}`;
+  }
+  if (aviso.tipo === "abreLaPrimera") return "abreLaPrimera";
+  return `sinNumeros/${aviso.porque}/sinBorrador=${aviso.sinBorrador}/rechazo=${aviso.hayRechazoPosterior}`;
+}
+
+/** Las cuatro entradas del aviso, en el orden de su firma. */
+type Entradas = [
+  historial: readonly VersionDeclaracion[] | null,
+  versionGuardada: number | null,
+  dudaPendiente: MotivoDeDuda | null,
+  hayRechazoPosterior: boolean,
+];
+
+describe("avisoDeVersion", () => {
+  // La tabla de verdad, un caso por renglon: [nombre, entradas, desenlace].
+  //
+  // Seis `return` y SIETE desenlaces observables, porque el primero de ellos
+  // -la rama de la duda pendiente- devuelve dos `porque` distintos. Los siete:
+  //   cierraYabre (numeros del `PUT`)      cierraYabre (numeros del historial)
+  //   abreLaPrimera
+  //   sinNumeros/historialNoLeido          sinNumeros/sinVersionAbierta
+  //   sinNumeros/guardadoSinLeer           sinNumeros/guardadoIncierto
+  //
+  // Los cuatro primeros casos son el CONTROL: el camino comun, que tiene que
+  // seguir dando lo mismo. Del 5 al 12 son las PRECEDENCIAS -los casos en que dos
+  // desenlaces compiten y gana uno-, que es la parte que costo tres iteraciones
+  // del PR #30 y la que un test de integracion puede cumplir de casualidad.
+  // Los dos ultimos completan `sinVersionAbierta`, que no aparece antes.
+  //
+  // `prettier-ignore` esta aqui a proposito: esta tabla se mantiene a mano, un
+  // caso por renglon, y el formateador la partiria en nueve renglones por caso.
+  /* prettier-ignore */
+  const TABLA: readonly [string, Entradas, string][] = [
+    ["control: la abierta del historial, sin guardado todavia", [[version(3, true)], null, null, false], "cierraYabre 3->4"],
+    ["control: historial vacio, la obra no tiene declaracion", [[], null, null, false], "abreLaPrimera"],
+    ["control: historial ilegible, no se afirma ningun numero", [null, null, null, false], "sinNumeros/historialNoLeido/sinBorrador=true/rechazo=false"],
+    ["control: el 200 legible manda sobre el historial en memoria", [[version(3, true)], 7, null, false], "cierraYabre 7->8"],
+    ["precedencia: la duda manda sobre la version que devolvio el PUT", [[version(3, true)], 7, "guardadoIncierto", false], "sinNumeros/guardadoIncierto/sinBorrador=false/rechazo=false"],
+    ["precedencia: la duda manda sobre el PUT, tambien la del 2xx ilegible", [[version(3, true)], 7, "guardadoSinLeer", false], "sinNumeros/guardadoSinLeer/sinBorrador=false/rechazo=false"],
+    ["precedencia: sin PUT, la duda manda sobre el historial", [[version(3, true)], null, "guardadoIncierto", false], "sinNumeros/guardadoIncierto/sinBorrador=false/rechazo=false"],
+    ["precedencia: la duda con el historial ilegible deja sinBorrador", [null, null, "guardadoSinLeer", false], "sinNumeros/guardadoSinLeer/sinBorrador=true/rechazo=false"],
+    ["precedencia: el PUT manda sobre un historial vacio", [[], 7, null, false], "cierraYabre 7->8"],
+    ["precedencia: el PUT manda sobre un historial ilegible", [null, 7, null, false], "cierraYabre 7->8"],
+    ["precedencia: el rechazo posterior no se dice fuera de la rama de duda", [[version(3, true)], null, null, true], "cierraYabre 3->4"],
+    ["precedencia: y dentro de la rama de duda si se dice", [[version(3, true)], null, "guardadoIncierto", true], "sinNumeros/guardadoIncierto/sinBorrador=false/rechazo=true"],
+    ["dos versiones abiertas: no se sabe cual se cierra", [[version(3, true), version(4, true)], null, null, false], "sinNumeros/sinVersionAbierta/sinBorrador=true/rechazo=false"],
+    ["ninguna abierta: tampoco, aunque el historial tenga versiones", [[version(3), version(4)], null, null, false], "sinNumeros/sinVersionAbierta/sinBorrador=true/rechazo=false"],
+  ];
+
+  it.each(TABLA)("%s", (_nombre, entradas, esperado) => {
+    expect(desenlace(avisoDeVersion(...entradas))).toBe(esperado);
+  });
+
+  it("la forma completa del aviso, no solo su resumen", () => {
+    // El resumen que compara la tabla es lossless, pero si el tipo ganara un
+    // campo, el resumen y la funcion podrian quedarse quietos los dos y seguir
+    // coincidiendo. Estas dos formas fijan el objeto entero.
+    expect(avisoDeVersion([version(3, true)], null, null, false)).toEqual({
+      tipo: "cierraYabre",
+      seCierra: 3,
+      seAbre: 4,
+    });
+    expect(
+      avisoDeVersion([version(3, true)], 7, "guardadoIncierto", true),
+    ).toEqual({
+      tipo: "sinNumeros",
+      porque: "guardadoIncierto",
+      sinBorrador: false,
+      hayRechazoPosterior: true,
+    });
   });
 });

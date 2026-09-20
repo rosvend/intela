@@ -1,9 +1,11 @@
 /**
  * Logica pura del reparto: sin React y sin red, para poder probarla
  * directamente. De aqui salen el total de un borrador, la tolerancia con que
- * ese total se compara con 100, el formato de los porcentajes y el rotulo con
- * que se presenta el nombre de un titular del padron. Los pasos 6 a 8 (detalle,
- * historial y editor) consumen varias de estas funciones.
+ * ese total se compara con 100, el formato de los porcentajes, el rotulo con
+ * que se presenta el nombre de un titular del padron y, desde el item 12 de
+ * #135, lo que se sabe de la VERSION que un guardado cierra y abre -el aviso
+ * que la pantalla del editor enseña, con su regla de precedencia-. Los pasos 6
+ * a 8 (detalle, historial y editor) consumen varias de estas funciones.
  *
  * La frontera que hay que respetar, y por la que esta escrito todo lo de
  * abajo: NINGUNA funcion de este archivo decide el estado ni la suma de una
@@ -18,6 +20,7 @@
  * no tiene estado de backend, porque no existe para el servidor-, y el formato
  * con que se muestran las cifras que el backend manda.
  */
+import type { VersionDeclaracion } from "./tipos";
 
 /**
  * Tolerancia con que un total se compara con 100.
@@ -187,3 +190,185 @@ export function formatearPorcentaje(valor: number): string {
  * efecto secundario de este arreglo.
  */
 export const ROTULO_NOMBRE_EN_PADRON_ACTUAL = "Nombre en el padrón actual";
+
+/**
+ * La version que rige hoy: la unica que el historial deja sin cerrar.
+ *
+ * Devuelve `null` si no hay exactamente una. No es una guarda de mas: el numero
+ * que se lee de aqui es el que el aviso de la version enseña como "se cerrara
+ * la version N", y con dos abiertas -o con ninguna- el backend cerraria otra
+ * cosa. Antes que afirmar un numero que no se sostiene, no se afirma ninguno.
+ */
+export function versionAbierta(
+  versiones: readonly VersionDeclaracion[],
+): VersionDeclaracion | null {
+  const abiertas = versiones.filter(
+    (version) => version.vigente_hasta === null,
+  );
+  return abiertas.length === 1 ? abiertas[0] : null;
+}
+
+/**
+ * El motivo por el que un guardado dejo PENDIENTE la pregunta de que version
+ * quedo abierta.
+ *
+ * No es el desenlace de un guardado: es un hecho que tiene que SOBREVIVIR al
+ * render en que ocurrio, porque el unico desenlace que lo resuelve -un 200
+ * legible- puede no llegar nunca, y mientras tanto el numero viejo ya no se
+ * sostiene. Por eso vive en el estado del componente y no se deriva del
+ * `resultado` de turno.
+ *
+ * Los dos se distinguen por lo que SI se sabe: `guardadoSinLeer` es un 2xx cuyo
+ * cuerpo no se pudo leer, o sea que una version se abrio y lo que falta es su
+ * numero; `guardadoIncierto` es un 5xx o una respuesta que no llego, donde ni
+ * siquiera se sabe si una version quedo abierta.
+ *
+ * Vive aqui, junto a `avisoDeVersion` y no en `borrador.ts` con el resto de
+ * `ResultadoDelGuardado`, por una razon de direccion y no de tema: es una
+ * ENTRADA del aviso y el aviso lo interpreta, mientras que `borrador.ts` no lo
+ * necesita para nada. Puesto en `borrador.ts`, los dos modulos se importarian
+ * mutuamente -`filasDePartida` necesita `versionAbierta`, que es de este
+ * archivo-, y un ciclo entre dos modulos por un tipo es el tipo de nudo que
+ * despues nadie se atreve a deshacer. La direccion queda en un solo sentido:
+ * `borrador.ts` -> `declaracion.ts`.
+ */
+export type MotivoDeDuda = "guardadoSinLeer" | "guardadoIncierto";
+
+/**
+ * Lo que se sabe de la version que el guardado va a cerrar y de la que va a
+ * abrir. Es el aviso que D-009 existe para arreglar: el mockup ponia "se
+ * cerrara la version 2 y se abrira una version 3" con los dos numeros escritos
+ * a mano, y el numero de version es un dato derivado del historial, asi que esa
+ * frase es falsa para cualquier obra que no este en la version 2 y no se
+ * sostiene para una obra sin declaracion previa.
+ *
+ * Los tres casos, y ninguno afirma un numero que no tenga:
+ *
+ * - `cierraYabre`: hay una version abierta y se conoce, o el servidor acaba de
+ *   contestar cual abrio. Los dos numeros salen de un dato, no de una cuenta
+ *   del cliente que pueda discrepar;
+ * - `abreLaPrimera`: el historial vino vacio -la obra no tiene ninguna
+ *   declaracion- asi que el numero que se abriria seria el 1, y se dice con
+ *   palabras en vez de con una cifra deducida;
+ * - `sinNumeros`: no se sabe que version esta abierta. Cuatro motivos distintos
+ *   caen aqui y cada uno tiene su prosa -el `porque`-, porque nombrar la causa
+ *   equivocada es la misma clase de defecto que este tipo existe para cerrar:
+ *   el historial no se pudo leer, lo que trajo no deja ver una sola version
+ *   abierta, el `PUT` contesto 200 con un cuerpo ilegible, o el guardado quedo
+ *   en duda (un 5xx, una respuesta perdida). Se dice SOLO la consecuencia -la
+ *   version anterior, si la hay, queda en el historial y no se modifica- y
+ *   ningun numero.
+ *
+ * `sinBorrador` no es un quinto motivo: es el hecho independiente de que el
+ * borrador no se pudo sembrar con el reparto vigente, y se sigue diciendo pase
+ * lo que pase con el guardado.
+ *
+ * `hayRechazoPosterior` tampoco es un motivo, sino un hecho de la PANTALLA que
+ * solo importa en dos de los cuatro `porque`: abajo hay un rechazo que NO es el
+ * guardado del que habla este aviso -un 4xx no limpia la duda, ver
+ * `avisoDeVersion`-, asi que los dos textos hablan de guardados distintos y hay
+ * que decirlo. Va en `false` cuando no lo hay, que es lo que hace que la prosa
+ * del aviso no cambie en los casos que ya estaban probados.
+ */
+export type AvisoDeVersion =
+  | { tipo: "cierraYabre"; seCierra: number; seAbre: number }
+  | { tipo: "abreLaPrimera" }
+  | {
+      tipo: "sinNumeros";
+      porque: "historialNoLeido" | "sinVersionAbierta" | MotivoDeDuda;
+      sinBorrador: boolean;
+      hayRechazoPosterior: boolean;
+    };
+
+/**
+ * El aviso, a partir de las TRES fuentes que pueden saberlo: el historial leido
+ * al abrir la pantalla, la version que el servidor contesto que abrio en el
+ * ultimo guardado, y la DUDA que un guardado dejo pendiente.
+ *
+ * `versionGuardada` manda sobre el historial, y no es un atajo: despues de
+ * guardar, el historial que hay en memoria es el de ANTES, y usarlo diria que
+ * se cierra la version que el servidor acaba de cerrar. La respuesta del
+ * `PUT` es el dato mas fresco que existe -el servidor acaba de escribir esa
+ * version-, y el consecutivo es del servidor: `Store.Guardar` abre
+ * `versionAbierta + 1` (`internal/infraestructura/postgres/declaraciones.go`).
+ *
+ * **La duda pendiente manda sobre las dos**, y ese es el arreglo que trajo el
+ * completion fix `iter-1/step-8.3` (hallazgo CRITICAL de la PASADA 2 de la
+ * revision adversarial, sobre el arreglo que a su vez trajo el `iter-1/step-8.1`).
+ * El 8.1 ya mandaba a `sinNumeros` los dos desenlaces que dejan la duda, pero lo
+ * hacia mirando el `resultado` DEL RENDER, y ese `resultado` es transitorio:
+ * `guardar()` lo pone a `null` al empezar. La consecuencia, medida: el guardado
+ * SIGUIENTE devolvia el numero viejo al aviso -con un 200 de cuerpo ilegible, que
+ * cierra la v3 y abre la v4, seguido de un 400, el aviso decia "cerrará la
+ * versión 3 y abrirá la versión 4" mientras el panel de la MISMA pantalla decia
+ * "No se guardó nada"-, y el mismo texto reaparecia mientras el segundo `PUT`
+ * estaba en vuelo. Por eso la duda vive en el estado del componente
+ * (`MotivoDeDuda`) y llega aqui como una fuente mas.
+ *
+ * Un 4xx (`rechazada`) NO deja duda -no abre ninguna version- pero tampoco la
+ * **limpia**, y ahi estaba el error del comentario del 8.1: un 4xx prueba que ESA
+ * peticion no abrio ninguna version, y no dice nada del guardado anterior que
+ * quedo en duda. El historial en memoria vuelve a ser la autoridad solo cuando no
+ * hay ninguna duda pendiente. El 200 legible tampoco entra por aqui: es el unico
+ * camino que limpia la duda, porque es el unico que dice cual se abrio.
+ *
+ * `hayRechazoPosterior` no cambia el motivo, cambia la PROSA: cuando en la misma
+ * pantalla hay ademas un rechazo, los dos textos hablan de guardados distintos
+ * -el aviso, del que dejo la duda; el panel, de otro posterior-, y el aviso tiene
+ * que decirlo o se lee como si describiera el que acaba de rechazarse.
+ */
+export function avisoDeVersion(
+  historial: readonly VersionDeclaracion[] | null,
+  versionGuardada: number | null,
+  dudaPendiente: MotivoDeDuda | null,
+  hayRechazoPosterior: boolean,
+): AvisoDeVersion {
+  // La duda pendiente manda sobre todo lo demas, incluida la version que el
+  // propio `PUT` devolvio: entre un guardado legible y otro posterior que quedo
+  // en duda, la que ya no se sostiene es la del primero.
+  if (dudaPendiente !== null) {
+    return {
+      tipo: "sinNumeros",
+      porque: dudaPendiente,
+      // El borrador se sembro -o no- al leer el historial, y un guardado
+      // posterior no cambia eso: el hecho se dice en los dos casos.
+      sinBorrador: historial === null,
+      hayRechazoPosterior,
+    };
+  }
+  if (versionGuardada !== null) {
+    return {
+      tipo: "cierraYabre",
+      seCierra: versionGuardada,
+      seAbre: versionGuardada + 1,
+    };
+  }
+  if (historial === null) {
+    return {
+      tipo: "sinNumeros",
+      porque: "historialNoLeido",
+      sinBorrador: true,
+      hayRechazoPosterior: false,
+    };
+  }
+  if (historial.length === 0) return { tipo: "abreLaPrimera" };
+  const abierta = versionAbierta(historial);
+  if (!abierta) {
+    return {
+      tipo: "sinNumeros",
+      porque: "sinVersionAbierta",
+      // `true`, y no `false`: esta rama es EXACTAMENTE la condicion con la que
+      // `filasDePartida` devuelve `[]` -las dos preguntan por `versionAbierta`-,
+      // asi que aqui no hay version vigente que sembrar y el borrador arranca
+      // vacio. Decir `false` dejaba la pantalla afirmando que si hay borrador
+      // mientras la rejilla salia sin una sola fila.
+      sinBorrador: true,
+      hayRechazoPosterior: false,
+    };
+  }
+  return {
+    tipo: "cierraYabre",
+    seCierra: abierta.version,
+    seAbre: abierta.version + 1,
+  };
+}
