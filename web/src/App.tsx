@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { Route, Routes } from "react-router-dom";
 import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
@@ -7,7 +8,18 @@ import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import ListadoONI from "./pages/ListadoONI";
 import RutaProtegida from "./RutaProtegida";
+import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
+
+/**
+ * Las pantallas reales de los modulos de `RUTAS`, por ruta. Un modulo que no
+ * esta aqui monta <EnConstruccion>. Esta tabla es lo unico que toca el PR de
+ * cada pantalla para pasar del placeholder al componente de verdad (issue
+ * #19: "so the feature screens are pure additions").
+ */
+const PANTALLAS: Partial<Record<string, ReactElement>> = {
+  "/ingesta": <Ingesta />,
+};
 
 /**
  * Shell del tablero.
@@ -38,7 +50,9 @@ export default function App() {
             <Route
               key={ruta.to}
               path={ruta.to}
-              element={<EnConstruccion titulo={ruta.label} />}
+              element={
+                PANTALLAS[ruta.to] ?? <EnConstruccion titulo={ruta.label} />
+              }
             />
           ))}
         </Route>

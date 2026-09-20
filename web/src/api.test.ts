@@ -8,6 +8,11 @@ import {
   setUnauthorizedHandler,
 } from "./api";
 
+// La pagina de error de nginx: la contestan el 502, el 504 y el 408 de
+// `client_body_timeout` (deploy/nginx.conf). No es un mensaje de la API.
+const PAGINA_DEL_PROXY =
+  "<html><head><title>409 Conflict</title></head><body><h1>nginx</h1></body></html>";
+
 describe("api", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -144,6 +149,71 @@ describe("api", () => {
     );
 
     await expect(api("/api/obras")).rejects.toThrow("Internal Server Error");
+  });
+
+  it("un cuerpo de error que parsea pero no trae `error` no se pinta crudo", async () => {
+    // El contrato promete `{error: "..."}`. Un cuerpo que si parsea como JSON
+    // pero nombra el mensaje de otra manera -`{"detalle": ...}`, la forma de
+    // tantos proxies- no es un mensaje de esta API: devolverlo tal cual pintaba
+    // el JSON entero, con sus llaves y comillas, como explicacion del sistema.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ detalle: "algo del proxy" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    expect((error as ApiError).message).not.toContain("detalle");
+    expect((error as ApiError).message).not.toContain("{");
+  });
+
+  it("un `error` vacio tambien es ilegible: una cadena vacia no es un mensaje", async () => {
+    // `cuerpo.error || texto` caia al `||` con `""` -que es falsy- y acababa
+    // pintando el JSON crudo.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni el JSON crudo: el mensaje propio no lleva llaves ni comillas.
+    expect((error as ApiError).message).not.toContain('"error"');
+  });
+
+  it("un cuerpo de error que no es JSON se sustituye: la pagina del proxy no es un mensaje del backend", async () => {
+    // El contrato promete que un error de la API viene como `{error: "..."}`,
+    // asi que un cuerpo que no parsea como JSON no lo puso la API. Devuelto
+    // crudo, el HTML de nginx acababa pintado como explicacion del sistema
+    // (escapado, pero entero) en cuanto el status no fuera 502/504: el 408 de
+    // `client_body_timeout` es el caso realista.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(PAGINA_DEL_PROXY, {
+        status: 409,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    const error = await api("/api/reportes").catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    expect((error as ApiError).message).toBe(
+      "el servidor respondió un error ilegible",
+    );
+    // Ni una etiqueta ni el titulo de la pagina del proxy.
+    expect((error as ApiError).message).not.toContain("nginx");
+    expect((error as ApiError).message).not.toContain("<");
   });
 
   it("un fetch que rechaza produce ErrorDeRed, no una excepcion sin tipar", async () => {

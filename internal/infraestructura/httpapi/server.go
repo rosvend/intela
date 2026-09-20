@@ -227,12 +227,14 @@ func (a *API) Router() http.Handler {
 		// La ingesta manual de reportes de uso. Pide `administrador` por lo
 		// mismo que el catalogo: una entrega pondera el reparto de un periodo
 		// entero, y el listado de cargas deja ver de que fuentes vive la
-		// sociedad. Cuando entre el panel de operacion (#29), el rol que le
-		// toque lo decide ese issue.
+		// sociedad. La pantalla de ingesta de #29 lo confirmo: es solo de
+		// administrador, y el log de rechazos de una carga va en el mismo
+		// grupo porque es la misma pantalla.
 		protegido.Route("/reportes", func(rep chi.Router) {
 			rep.Use(requiereRol(aplicacion.RolAdministrador))
 			rep.Post("/", a.conIngesta(a.subirReporte))
 			rep.Get("/", a.conIngesta(a.listarCargas))
+			rep.Get("/{id}/rechazos", a.conIngesta(a.listarRechazosDeCarga))
 		})
 	})
 
