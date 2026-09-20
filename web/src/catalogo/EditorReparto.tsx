@@ -59,6 +59,21 @@ type FilaDeReparto = {
   ipi: string;
   /** El porcentaje tal como se teclea, sin interpretar. */
   porcentaje: string;
+  /**
+   * El nombre del titular, o "" cuando la fila no lo conoce.
+   *
+   * Lo conoce la fila que se agrega desde el padron: el `Titular` que llega al
+   * pulsar ya trae el nombre, y guardarlo aqui es lo que deja que la columna lo
+   * diga -nadie mas lo tiene: la rejilla no pide el padron-. NO lo conocen las
+   * filas sembradas desde el historial, y no es un dato que falte: la `Parte` no
+   * lleva nombre (D-006), asi que esa fila se queda con su `titular_id` -que es lo
+   * que la columna pinta- sin inventar hueco ni guion.
+   *
+   * Vacio es "no se conoce", y de ahi salen las dos lecturas: la primera columna
+   * de la rejilla, que pinta el nombre junto al identificador solo cuando lo hay,
+   * y `comoSeNombraLaFila`, que es como la fila se dice en voz alta.
+   */
+  nombre: string;
 };
 
 // Contador de claves. Un `crypto.randomUUID` ataria los tests al entorno, y el
@@ -66,9 +81,37 @@ type FilaDeReparto = {
 // correrian y React reutilizaria el estado de la fila equivocada.
 let contadorDeFilas = 0;
 
-function nuevaFila(titularId = "", ipi = "", porcentaje = ""): FilaDeReparto {
+function nuevaFila(
+  titularId = "",
+  ipi = "",
+  porcentaje = "",
+  nombre = "",
+): FilaDeReparto {
   contadorDeFilas += 1;
-  return { clave: `fila-${contadorDeFilas}`, titularId, ipi, porcentaje };
+  return {
+    clave: `fila-${contadorDeFilas}`,
+    titularId,
+    ipi,
+    porcentaje,
+    nombre,
+  };
+}
+
+/**
+ * El nombre con el que la rejilla se refiere a una fila de viva voz, que en la
+ * practica es el nombre accesible del boton que la quita: el del titular si la
+ * fila lo sabe, y su `titular_id` si no.
+ *
+ * Es una sola regla y no dos condicionales sueltos, porque el respaldo no es un
+ * detalle de redaccion: un `titular_id` es un identificador opaco en un lector de
+ * pantalla -"Quitar a tit-3 del reparto" nombra, pero no dice de quien- y no hay
+ * nombre que inventar cuando la fila no lo tiene. La que nace del padron lo trae
+ * porque `agregarTitular` lo guarda; la que nace del historial no PUEDE tenerlo,
+ * porque la `Parte` no lleva nombre (D-006). Se cae al identificador, que es el
+ * dato que esa fila si tiene, en vez de a un hueco.
+ */
+function comoSeNombraLaFila(fila: FilaDeReparto): string {
+  return fila.nombre === "" ? fila.titularId : fila.nombre;
 }
 
 /**
@@ -133,6 +176,13 @@ function filasDePartida(
 ): FilaDeReparto[] {
   const abierta = versionAbierta(versiones);
   if (!abierta) return [];
+  // Las filas sembradas aqui nacen SIN nombre, y no es un olvido: la `Parte` trae
+  // `titular_id` e `ipi` y nada mas. Lo que NO hay que hacer es rellenarlo pidiendo
+  // el padron -ni una peticion, ni una por fila-: seria poner el nombre de HOY a un
+  // reparto que es de una version, que es justo lo que la columna rotulada del
+  // detalle declara (D-006), y `GET /titulares` se sirve paginado y no filtra por
+  // identificador, asi que una pagina que no traiga al titular no probaria que no
+  // exista. La fila se queda con su `titular_id`, que es lo que sabe.
   return abierta.partes.map((parte) =>
     nuevaFila(parte.titular_id, parte.ipi, textoDePorcentaje(parte.porcentaje)),
   );
@@ -737,8 +787,11 @@ function FormularioDeReparto({
 
   function agregarTitular(titular: Titular) {
     // La fila nace SIN porcentaje: la cifra la escribe quien declara, y un
-    // valor de relleno acabaria guardado como si se hubiera declarado.
-    const fila = nuevaFila(titular.id, titular.ipi, "");
+    // valor de relleno acabaria guardado como si se hubiera declarado. Lo que si
+    // guarda es el NOMBRE, que el `Titular` del padron ya traia y hasta ahora se
+    // tiraba: es el unico momento en que esta pantalla lo tiene, y sin guardarlo
+    // aqui la columna solo puede decir el `titular_id`.
+    const fila = nuevaFila(titular.id, titular.ipi, "", titular.nombre);
     // El foco va a la fila nueva. El boton que se pulso esta en el padron -al
     // final de la pantalla- y ademas desaparece en cuanto el titular entra en el
     // reparto, asi que sin esto el foco se queda en la nada: el `Tab` siguiente
@@ -1158,7 +1211,19 @@ function FilasDelReparto({
                 else refsDeFilas.current.set(fila.clave, nodo);
               }}
             >
-              <td className="detalle-identificador">{fila.titularId}</td>
+              <td>
+                {/* El nombre, cuando la fila lo sabe, con el `titular_id` al
+                    lado. El identificador va SIEMPRE -es la identidad que viaja
+                    en la declaracion y lo que deja conciliar la fila con la API,
+                    y ademas distingue homonimos-, y el nombre solo lo tiene la
+                    fila que se eligio del padron: la sembrada desde el historial
+                    no puede tenerlo, porque la `Parte` no lo lleva (D-006). Ese
+                    caso NO pinta hueco ni guion -no falta un dato, falta un
+                    nombre que esa version nunca guardo- y el espacio que separa
+                    los dos va con el nombre, para que no quede suelto. */}
+                {fila.nombre !== "" && <span>{fila.nombre} </span>}
+                <span className="detalle-identificador">{fila.titularId}</span>
+              </td>
               <td>
                 {/* El IPI se rellena con el que el padron tiene hoy para ese
                     titular, y se puede corregir: la parte que se guarda lleva
@@ -1194,18 +1259,19 @@ function FilasDelReparto({
                 />
               </td>
               <td>
-                {/* El texto visible no cambia: dice la accion y el titular, y
-                    quien ve la pantalla ya sabe de que fila es el boton. Lo que
-                    se arregla es el nombre accesible, que es lo que anuncia un
-                    lector de pantalla y lo que hoy se lee al reves: "Quitar de
-                    tit-3" suena a quitarle algo A tit-3, y no dice a quien se
-                    saca del reparto. El dia que la fila sepa el nombre del
-                    titular -hoy solo guarda su identificador-, esto lo nombrara
-                    a el. */}
+                {/* El texto visible no cambia de significado: dice la accion y el
+                    titular que ya estaban escritos. El nombre accesible es lo que
+                    anuncia un lector de pantalla, y el paso 11 lo dejo con el
+                    `titular_id` porque la fila no tenia el nombre; ahora se nombra
+                    al titular por su nombre cuando la fila lo sabe -la que se
+                    agrego del padron- y se cae al identificador cuando no -la
+                    sembrada desde el historial (D-006)-, con el mismo criterio con
+                    el que la primera columna se lee. Sin nombre, "Quitar a tit-3
+                    del reparto" nombra sin decir de quien. */}
                 <button
                   type="button"
                   className="enlace"
-                  aria-label={`Quitar a ${fila.titularId} del reparto`}
+                  aria-label={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
                   onClick={() => onQuitar(fila.clave)}
                 >
                   Quitar de {fila.titularId}

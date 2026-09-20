@@ -422,11 +422,25 @@ function filaDelBorrador(titularId: string): HTMLElement {
   return fila;
 }
 
-/** Un clic en el boton de quitar de la fila de ese titular. */
-function quitarDelReparto(titularId: string) {
+/**
+ * Un clic en el boton de quitar de la fila de ese titular.
+ *
+ * El nombre accesible del boton nombra la fila como la nombra la rejilla: con el
+ * nombre del titular cuando la fila lo sabe -la que se elige del padron, que es
+ * de donde sale el nombre- y con su `titular_id` cuando no -las filas sembradas
+ * desde el historial, que no lo traen (D-006)-. Por eso la etiqueta se compone
+ * aqui con ese criterio y no con una cadena fija: la cadena con el `titular_id` a
+ * secas dejo de resolver en cuanto el boton empezo a nombrar por el nombre, y un
+ * helper que solo supiera de identificadores ataria estas pruebas a la mitad de
+ * los casos.
+ *
+ * `titularId` es lo que identifica la FILA -el campo del IPI se rotula con el,
+ * siempre-; `nombreDelTitular` es lo que la fila dice de si misma.
+ */
+function quitarDelReparto(titularId: string, nombreDelTitular?: string) {
   fireEvent.click(
     within(filaDelBorrador(titularId)).getByRole("button", {
-      name: `Quitar a ${titularId} del reparto`,
+      name: `Quitar a ${nombreDelTitular ?? titularId} del reparto`,
     }),
   );
 }
@@ -1839,6 +1853,86 @@ describe("editor de reparto (integracion con App)", () => {
     // se pudo cargar y no se pinta ni una fila.
     expect(aviso).toMatch(/tampoco se ha podido cargar con el reparto vigente/);
     expect(screen.queryByLabelText(/Porcentaje de/)).toBeNull();
+  });
+
+  // El item 9a. La rejilla tenia el nombre EN LA MANO -`agregarTitular(titular)`
+  // recibe el `Titular` entero del padron- y lo tiraba: guardaba su `id` y su
+  // `ipi`, y la primera columna pintaba el `titular_id`.
+  it("la fila que se anade del padron dice el nombre del titular, con su identificador al lado", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // Antes de pulsar nada: el titular que se va a pulsar ES el que se va a
+    // buscar despues por su nombre, y el padron de este test le da ese nombre.
+    // Sin esta comprobacion, un padron que no lo trajera -o un clic que no
+    // casara ninguna fila- dejaria lo de abajo midiendo el vacio, y la prueba
+    // pasaria por el motivo equivocado.
+    expect(filaDelPadron("tit-3").textContent).toContain("Caro Guionista");
+
+    agregarAlReparto("tit-3");
+
+    // El nombre se busca DENTRO de la rejilla: el padron de abajo dice el mismo
+    // nombre del mismo titular, asi que buscarlo en toda la pantalla lo
+    // encontraria en la tabla de abajo aunque la fila del borrador no lo dijera.
+    const fila = filaDelBorrador("tit-3");
+    expect(within(fila).getByText("Caro Guionista")).toBeTruthy();
+    // Y la PRIMERA COLUMNA dice el nombre con el identificador al lado, en ese
+    // orden: el identificador es la identidad que viaja en la declaracion y lo
+    // que deja conciliar la fila con la API, y el nombre es como se lee.
+    expect(fila.querySelector("td")?.textContent?.trim()).toMatch(
+      /^Caro Guionista\s+tit-3$/,
+    );
+  });
+
+  // El control negativo, y es el que impide que la prueba de arriba pase por el
+  // padron: la fila sembrada desde el historial NO trae nombre, porque la `Parte`
+  // no lo lleva (D-006). Eso no es un hueco a rellenar ni un dato que falte en el
+  // test: es lo que la fila sabe.
+  it("una fila sembrada desde el historial no inventa un nombre, y se queda con su identificador", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // `tit-1` esta en el reparto vigente -su fila nace de `filasDePartida`- y
+    // esta en el padron: el nombre SI esta disponible en la pantalla, y lo que se
+    // mide es que la fila del borrador no lo tiene.
+    expect(filaDelPadron("tit-1").textContent).toContain("Ana Escritora");
+
+    const fila = filaDelBorrador("tit-1");
+    // La primera columna dice el identificador y nada mas: ni el nombre, ni un
+    // guion que anuncie un dato que falta. Un guion aqui diria que la fila esta
+    // incompleta cuando lo que pasa es que el nombre no viaja en la version.
+    expect(fila.querySelector("td")?.textContent?.trim()).toBe("tit-1");
+    expect(within(fila).queryByText("Ana Escritora")).toBeNull();
+  });
+
+  // El cierre del paso 11: su boton de quitar se nombro con el `titular_id`
+  // porque la fila no tenia el nombre. Ahora la fila que lo sabe lo dice, y la que
+  // no lo sabe sigue nombrando por su identificador.
+  it("el boton de quitar nombra al titular por su nombre, y cae al identificador cuando la fila no lo tiene", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    agregarAlReparto("tit-3");
+
+    // La fila recien elegida del padron: el nombre accesible dice el nombre.
+    expect(
+      within(filaDelBorrador("tit-3")).getByRole("button", {
+        name: "Quitar a Caro Guionista del reparto",
+      }),
+    ).toBeTruthy();
+    // Y la que vino del historial -sin nombre- sigue diciendo su identificador.
+    // Es el respaldo MEDIDO, no una suposicion: si el nombre se usara a secas, o
+    // si se dejara de usar cuando lo hay, una de las dos busquedas no resolveria.
+    expect(
+      within(filaDelBorrador("tit-1")).getByRole("button", {
+        name: "Quitar a tit-1 del reparto",
+      }),
+    ).toBeTruthy();
+
+    // El helper de esta suite compone la etiqueta con ese mismo criterio, y esta
+    // llamada lo ejerce: con una cadena fija por `titular_id` no resolveria.
+    quitarDelReparto("tit-3", "Caro Guionista");
+    expect(within(rejilla()).queryByLabelText("IPI de tit-3")).toBeNull();
   });
 });
 
