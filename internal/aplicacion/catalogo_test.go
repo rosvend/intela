@@ -376,29 +376,56 @@ func TestLasCuatroRespuestasDelCatalogoLlevanElEstado(t *testing.T) {
 	vigentes := map[string]VersionDeclaracion{
 		"obra-1": vigenteDePrueba("obra-1", 3, parteDePrueba(0, 70), parteDePrueba(1, 30)),
 	}
-	casos := map[string]func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error){
-		"RegistrarObra": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
-			return catalogoDePrueba(repo).RegistrarObra(t.Context(), "obra-1", metadatosValidos())
+	tres := 3
+
+	// Las expectativas son POR CASO, y no las mismas para los cuatro, porque el
+	// alta no es el mismo caso: es el unico que corre sobre una fila de `obras`
+	// que acaba de crear el mismo, asi que no puede tener declaracion que leer.
+	// Antes de este paso el alta compartia las expectativas de las tres lecturas
+	// y las cumplia... porque el doble le devolvia una declaracion de un mapa
+	// que en produccion seria imposible: la fila no existia. `consultas: 0` es
+	// justo lo que el alta tiene que dejar de hacer.
+	casos := map[string]struct {
+		llamar    func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error)
+		estado    string
+		suma      decimal.Decimal
+		version   *int
+		consultas int
+	}{
+		"RegistrarObra": {
+			llamar: func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+				return catalogoDePrueba(repo).RegistrarObra(t.Context(), "obra-1", metadatosValidos())
+			},
+			estado: "incompleta", suma: decimal.Zero, version: nil, consultas: 0,
 		},
-		"ActualizarMetadatosObra": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
-			return catalogoDePrueba(repo).ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos())
+		"ActualizarMetadatosObra": {
+			llamar: func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+				return catalogoDePrueba(repo).ActualizarMetadatosObra(t.Context(), "obra-1", metadatosValidos())
+			},
+			estado: "completa", suma: decimal.NewFromInt(100), version: &tres, consultas: 1,
 		},
-		"ObraPorID": func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
-			return catalogoDePrueba(repo).ObraPorID(t.Context(), "obra-1")
+		"ObraPorID": {
+			llamar: func(_ *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+				return catalogoDePrueba(repo).ObraPorID(t.Context(), "obra-1")
+			},
+			estado: "completa", suma: decimal.NewFromInt(100), version: &tres, consultas: 1,
 		},
-		"BuscarObras": func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
-			obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
-			if err != nil {
-				return ObraDelCatalogo{}, err
-			}
-			if len(obras) != 1 {
-				t.Fatalf("se esperaba 1 obra en la pagina, llegaron %d", len(obras))
-			}
-			return obras[0], nil
+		"BuscarObras": {
+			llamar: func(t *testing.T, repo *catalogoFalso) (ObraDelCatalogo, error) {
+				obras, err := catalogoDePrueba(repo).BuscarObras(t.Context(), FiltroObras{})
+				if err != nil {
+					return ObraDelCatalogo{}, err
+				}
+				if len(obras) != 1 {
+					t.Fatalf("se esperaba 1 obra en la pagina, llegaron %d", len(obras))
+				}
+				return obras[0], nil
+			},
+			estado: "completa", suma: decimal.NewFromInt(100), version: &tres, consultas: 1,
 		},
 	}
 
-	for nombre, llamar := range casos {
+	for nombre, caso := range casos {
 		t.Run(nombre, func(t *testing.T) {
 			repo := &catalogoFalso{
 				obraRecibida: obraConID(t, "obra-1"),
@@ -406,23 +433,60 @@ func TestLasCuatroRespuestasDelCatalogoLlevanElEstado(t *testing.T) {
 				vigentes:     vigentes,
 			}
 
-			obra, err := llamar(t, repo)
+			obra, err := caso.llamar(t, repo)
 			if err != nil {
 				t.Fatalf("%s: %v", nombre, err)
 			}
-			if obra.EstadoDecl != "completa" {
-				t.Fatalf("estado = %q, se esperaba completa", obra.EstadoDecl)
+			if obra.EstadoDecl != caso.estado {
+				t.Fatalf("estado = %q, se esperaba %q", obra.EstadoDecl, caso.estado)
 			}
-			if !obra.SumaPorcentajes.Equal(decimal.NewFromInt(100)) {
-				t.Fatalf("suma = %s, se esperaba 100", obra.SumaPorcentajes)
+			if !obra.SumaPorcentajes.Equal(caso.suma) {
+				t.Fatalf("suma = %s, se esperaba %s", obra.SumaPorcentajes, caso.suma)
 			}
-			if obra.VersionVigente == nil || *obra.VersionVigente != 3 {
-				t.Fatalf("version vigente = %v, se esperaba 3", obra.VersionVigente)
+			if caso.version == nil {
+				if obra.VersionVigente != nil {
+					t.Fatalf("version vigente = %v, se esperaba nil en un alta",
+						*obra.VersionVigente)
+				}
+			} else if obra.VersionVigente == nil || *obra.VersionVigente != *caso.version {
+				t.Fatalf("version vigente = %v, se esperaba %d", obra.VersionVigente, *caso.version)
 			}
-			if repo.consultas != 1 {
-				t.Fatalf("consultas = %d, se esperaba 1", repo.consultas)
+			if repo.consultas != caso.consultas {
+				t.Fatalf("consultas = %d, se esperaba %d", repo.consultas, caso.consultas)
 			}
 		})
+	}
+}
+
+// El alta compone el estado localmente en vez de releerlo (item 2), y esa
+// composicion tiene que dar LO MISMO que el camino largo: si divergiera, la
+// respuesta del alta diria del estado de la obra recien creada algo distinto de
+// lo que dice el listado de esa misma obra un instante despues.
+func TestElAltaComponeElMismoEstadoQueLaLectura(t *testing.T) {
+	repo := &catalogoFalso{}
+	cat := catalogoDePrueba(repo)
+
+	alta, err := cat.RegistrarObra(t.Context(), "obra-1", metadatosValidos())
+	if err != nil {
+		t.Fatalf("RegistrarObra: %v", err)
+	}
+
+	// El camino largo sobre esa misma obra en un mundo sin declaraciones: es
+	// exactamente lo que veria `GET /obras`.
+	lectura := proyectarObra(alta.Obra, map[string]VersionDeclaracion{})
+
+	if alta.EstadoDecl != lectura.EstadoDecl {
+		t.Fatalf("estado del alta = %q, el de la lectura = %q", alta.EstadoDecl, lectura.EstadoDecl)
+	}
+	if !alta.SumaPorcentajes.Equal(lectura.SumaPorcentajes) {
+		t.Fatalf("suma del alta = %s, la de la lectura = %s", alta.SumaPorcentajes, lectura.SumaPorcentajes)
+	}
+	if alta.VersionVigente != lectura.VersionVigente {
+		t.Fatalf("version del alta = %v, la de la lectura = %v", alta.VersionVigente, lectura.VersionVigente)
+	}
+	// Y la prueba del item 2: el alta no releyo lo que acababa de escribir.
+	if repo.consultas != 0 {
+		t.Fatalf("consultas = %d: el alta releyo lo que acababa de escribir", repo.consultas)
 	}
 }
 

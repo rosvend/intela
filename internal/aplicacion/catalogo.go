@@ -53,14 +53,21 @@ type Catalogo struct {
 // sin anio o sin un coautor con IPI.
 //
 // Devuelve la obra ya proyectada, con el estado de su declaracion, por el
-// mismo camino que las tres lecturas.
+// MISMO camino que las tres lecturas: [proyectarObra] sobre un mapa sin
+// entradas devuelve exactamente lo de abajo, y por eso no hace falta releerlo.
 //
 // En un alta ese estado es el cero -`incompleta`, suma 0 y `version_vigente`
 // nil-, y no por darlo por supuesto: una declaracion necesita la fila de
 // `obras` -su clave foranea- y esta operacion es justo la que la crea, asi que
-// no puede haber ninguna. Se lee igual porque la respuesta tiene que tener la
-// MISMA forma que las otras tres: un schema que promete tres campos y una
-// respuesta que no los trae es el fallo caro de este cambio.
+// no puede haber ninguna. Se compone aqui en vez de preguntarselo a la base
+// porque preguntarselo es pedir lo que se acaba de escribir, y una lectura que
+// falle despues de un alta que SI ocurrio se contesta como "no se pudo
+// registrar la obra": un error sobre una escritura que ya esta hecha, que es lo
+// que este cambio quita. La forma sigue siendo la de las tres lecturas porque
+// la respuesta tiene que tener el MISMO numero de campos que ellas -un schema
+// que promete tres campos y una respuesta que no los trae es el fallo caro de
+// este cambio-, y `catalogo_test.go` fija que la composicion corta y la larga
+// dan el mismo resultado.
 func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos) (ObraDelCatalogo, error) {
 	obra, err := repertorio.NuevaObra(id, m)
 	if err != nil {
@@ -71,7 +78,10 @@ func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Met
 		// lo distingue con errors.Is, y el adaptador ya le pone su contexto.
 		return ObraDelCatalogo{}, err
 	}
-	return c.conDeclaracionDeUna(ctx, obra)
+	return ObraDelCatalogo{
+		Obra:       obra,
+		EstadoDecl: repertorio.Declaracion{ObraID: obra.ID()}.Estado(),
+	}, nil
 }
 
 // ActualizarMetadatosObra corrige los metadatos de una obra. Nunca su
