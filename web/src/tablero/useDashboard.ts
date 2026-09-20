@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, ErrorDeRed, api } from "../api";
+import { ApiError, ErrorDeCuerpoIlegible, ErrorDeRed, api } from "../api";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
 import {
@@ -85,8 +85,13 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
           setRecurso({ tipo: "ausente" });
           return;
         }
+        // Los mismos tres errores tipados que `useApi`: un 2xx con el cuerpo
+        // ilegible tambien es uno de ellos, y su mensaje dice mas que el
+        // generico de abajo.
         const mensaje =
-          error instanceof ApiError || error instanceof ErrorDeRed
+          error instanceof ApiError ||
+          error instanceof ErrorDeRed ||
+          error instanceof ErrorDeCuerpoIlegible
             ? error.message
             : "no se pudo cargar este indicador";
         setRecurso({ tipo: "error", mensaje });

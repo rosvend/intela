@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, ErrorDeRed, api } from "./api";
+import { ApiError, ErrorDeCuerpoIlegible, ErrorDeRed, api } from "./api";
 
 type EstadoDeApi<T> =
   | { datos: null; cargando: true; error: null }
@@ -52,8 +52,14 @@ export function useApi<T>(path: string): EstadoDeApi<T> {
       })
       .catch((error: unknown) => {
         if (!vigente) return;
+        // Los tres errores que `api()` sabe lanzar llegan con su mensaje. Sin
+        // el tercero, un 2xx con el cuerpo ilegible -`ErrorDeCuerpoIlegible`-
+        // caia aqui como "error desconocido", y se perdia lo unico que ese tipo
+        // explica: el servidor contesto bien y lo que no llego fue el cuerpo.
         const errorTipado =
-          error instanceof ApiError || error instanceof ErrorDeRed
+          error instanceof ApiError ||
+          error instanceof ErrorDeRed ||
+          error instanceof ErrorDeCuerpoIlegible
             ? error
             : new Error("error desconocido");
         setEstado({ datos: null, cargando: false, error: errorTipado });
