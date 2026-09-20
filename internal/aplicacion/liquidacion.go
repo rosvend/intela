@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
 
 // ServicioLiquidacion consulta y exporta la liquidacion del titular que
@@ -98,8 +99,10 @@ func validarPeriodo(periodo string) error {
 	if periodo == "" {
 		return nil
 	}
-	// periodoValido vive en trabajos.go, una sola vez para el paquete.
-	if !periodoValido.MatchString(periodo) {
+	// El periodo lo juzga el dominio, no una copia de aqui: la regla -un ano,
+	// o un ano y un mes que existe- es `recaudo.PeriodoValido`, la misma que
+	// usan `ClaveTrabajo.Valida` y `prepararReporte`.
+	if !recaudo.PeriodoValido(periodo) {
 		return ErrPeriodoInvalido
 	}
 	return nil

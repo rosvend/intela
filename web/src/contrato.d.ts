@@ -166,6 +166,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mis-liquidaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Panel de liquidacion del titular
+         * @description Devuelve bruto, cada deduccion (admin, bienestar social, reserva) y
+         *     neto por obra del titular autenticado. El filtro `periodo` es el
+         *     mismo que usa el export: panel y archivo no pueden divergir.
+         *
+         *     El titular sale de la sesion, no de un parametro. Sin sesion es 401.
+         *     Con otro rol es 403.
+         */
+        get: operations["consultarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Exportar la liquidacion a PDF o Excel
+         * @description Renderiza la misma liquidacion que `GET /mis-liquidaciones` como
+         *     archivo. Las cifras van embebidas: el fichero se puede abrir sin
+         *     conexion al panel (OE-6).
+         *
+         *     `formato=pdf` usa maroto; `formato=xlsx` usa excelize. Cualquier
+         *     otro valor es 400. El filtro `periodo` es el mismo del panel.
+         */
+        get: operations["exportarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/obras": {
         parameters: {
             query?: never;
@@ -1149,6 +1199,46 @@ export interface components {
             error: string;
         };
         /**
+         * @description Importe en COP con dos decimales, sin separador de miles. Es una
+         *     cadena para no perder centavos en JSON number.
+         * @example 3900.00
+         */
+        Monto: string;
+        TotalesLiquidacion: {
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
+        };
+        LineaLiquidacion: {
+            /** @example 2026-01 */
+            periodo: string;
+            /** @example obra-completa */
+            obra_id: string;
+            /** @example La Casa de las Dos Palmas */
+            titulo: string;
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
+        };
+        Liquidacion: {
+            /**
+             * @description Titular de la sesion, no un parametro de la URL.
+             * @example tit-ana
+             */
+            titular_id: string;
+            /**
+             * @description Filtro aplicado. Cadena vacia si no se filtro.
+             * @example 2026-01
+             */
+            periodo: string;
+            lineas: components["schemas"]["LineaLiquidacion"][];
+            totales: components["schemas"]["TotalesLiquidacion"];
+        };
+        /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
          *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
          *     y a las anomalias (OE-5 / #37): `tipo` dice de cual detector salio,
@@ -1181,7 +1271,13 @@ export interface components {
         };
     };
     responses: never;
-    parameters: never;
+    parameters: {
+        /**
+         * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+         * @example 2026-01
+         */
+        Periodo: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -1536,6 +1632,175 @@ export interface operations {
                 };
             };
             /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    consultarLiquidaciones: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Liquidacion del titular. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "titular_id": "tit-ana",
+                     *       "periodo": "2026-01",
+                     *       "lineas": [
+                     *         {
+                     *           "periodo": "2026-01",
+                     *           "obra_id": "obra-completa",
+                     *           "titulo": "La Casa de las Dos Palmas",
+                     *           "bruto": "6000.00",
+                     *           "admin": "1200.00",
+                     *           "social": "600.00",
+                     *           "reserva": "300.00",
+                     *           "neto": "3900.00"
+                     *         }
+                     *       ],
+                     *       "totales": {
+                     *         "bruto": "6000.00",
+                     *         "admin": "1200.00",
+                     *         "social": "600.00",
+                     *         "reserva": "300.00",
+                     *         "neto": "3900.00"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Liquidacion"];
+                };
+            };
+            /** @description El periodo no es YYYY ni YYYY-MM. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "periodo tiene que ser YYYY o YYYY-MM"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportarLiquidaciones: {
+        parameters: {
+            query: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+                /**
+                 * @description pdf o xlsx.
+                 * @example pdf
+                 */
+                formato: "pdf" | "xlsx";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archivo con la liquidacion embebida. */
+            200: {
+                headers: {
+                    /** @description Nombre del fichero, p. ej. liquidacion-2026-01.pdf */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            /** @description Formato o periodo invalidos. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "formato tiene que ser pdf o xlsx"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
             403: {
                 headers: {
                     [name: string]: unknown;
