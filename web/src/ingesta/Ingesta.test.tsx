@@ -861,9 +861,17 @@ describe("pantalla de ingesta (integracion con App)", () => {
     const alerta = await screen.findByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "La entrega no se registró",
+        name: "La entrega choca con lo que ya está guardado",
       }),
     ).toBeTruthy();
+    // El 409 tiene DOS ramas -el duplicado, donde la entrega ya estaba, y la
+    // evidencia corrupta, donde esta peticion tampoco dejo entrega- y el TITULO
+    // solo ve el status, asi que no puede elegir rama. Aqui ademas el cuerpo
+    // que llega es la pagina del proxy, no el mensaje del backend. Por eso el
+    // titulo no puede afirmar ni el registro ni el no-registro, y solo nombra
+    // el conflicto; el mensaje de debajo dice cual de las dos es cuando llega
+    // legible.
+    expect(alerta.textContent).not.toMatch(/no se registró/i);
     expect(alerta.textContent).toContain(MENSAJE_ERROR_ILEGIBLE);
     // Ni el marcado ni el titulo de la pagina del proxy.
     expect(document.body.textContent).not.toContain("409 Conflict");

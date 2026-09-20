@@ -158,10 +158,19 @@ describe("PanelResultado", () => {
   });
 
   // Estos status si cierran la pregunta de si quedo algo escrito -un 4xx prueba
-  // que ESA peticion no registro nada, y el 503 de esta ruta ni entra, porque lo
-  // produce una guarda previa al handler-, asi que su titulo puede afirmar el
-  // no-registro y no hace falta el aviso. El 500 NO entra aqui: tiene su caso
-  // propio debajo, porque es el unico que deja la pregunta abierta.
+  // que ESA peticion no dejo entrega en `reportes`, y el 503 de esta ruta ni
+  // entra, porque lo produce una guarda previa al handler-, y por eso no llevan
+  // el aviso. El 500 NO entra aqui: tiene su caso propio debajo, porque es el
+  // unico que deja la pregunta abierta.
+  //
+  // Ojo con lo que prueba esa regla: prueba que la PETICION no dejo entrega, no
+  // que la entrega no este registrada. Es lo mismo para el 413 -si no cabe, no
+  // hay entrega que registrar-, pero NO para el 400 -que aborta antes de
+  // consultar el UNIQUE, asi que los mismos bytes aceptados en una subida
+  // anterior siguen registrados- ni para el 409, donde el conflicto es justo
+  // con lo que ya hay. Y no dice que no se escribiera NADA: la evidencia se
+  // congela antes de decidir el conflicto y de la boveda no se borra (el
+  // porque, en el docstring de `pudoHaberLlegado`).
   //
   // El 403 entra en la lista por lo mismo, y con titulo propio: `requiereRol` lo
   // responde ANTES de que `subirReporte` corra, asi que no se escribio nada. Con
@@ -169,7 +178,7 @@ describe("PanelResultado", () => {
   // menos, y en la direccion que hace dudar al operador.
   it.each([
     [403, "La sesión no tiene permiso para registrar entregas"],
-    [409, "La entrega no se registró"],
+    [409, "La entrega choca con lo que ya está guardado"],
     [413, "El archivo es demasiado grande"],
     [503, "La ingesta no está disponible en esta instalación"],
   ] as const)(
@@ -275,9 +284,13 @@ describe("PanelResultado", () => {
     const alerta = screen.getByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "La entrega no se registró",
+        name: "La entrega choca con lo que ya está guardado",
       }),
     ).toBeTruthy();
+    // Y no afirma el no-registro, que es lo que decia antes. En este caso
+    // -evidencia corrupta- seria cierto, pero el titulo es UNO solo para las
+    // dos ramas del 409, y en el duplicado -el caso comun- es falso.
+    expect(alerta.textContent).not.toMatch(/no se registró/i);
     // El mensaje de la API llega entero: es lo que dice que hay que avisar a
     // operacion, y no un "ya se habia cargado" inofensivo.
     expect(within(alerta).getByText(MENSAJE_EVIDENCIA_CORRUPTA)).toBeTruthy();

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, ErrorDeRed, api } from "../api";
+import { api, esErrorDeApi } from "../api";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
 import {
@@ -85,10 +85,13 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
           setRecurso({ tipo: "ausente" });
           return;
         }
-        const mensaje =
-          error instanceof ApiError || error instanceof ErrorDeRed
-            ? error.message
-            : "no se pudo cargar este indicador";
+        // Los mismos errores tipados que en `useApi` -incluido el 2xx con el
+        // cuerpo ilegible, cuyo mensaje dice mas que el generico de abajo-, y
+        // decididos por el mismo predicado de `api.ts`: la lista se escribe una
+        // vez, donde estan las clases. Ver D-016.
+        const mensaje = esErrorDeApi(error)
+          ? error.message
+          : "no se pudo cargar este indicador";
         setRecurso({ tipo: "error", mensaje });
       });
 
