@@ -85,6 +85,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/afiliaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Solicitar afiliacion
+         * @description Recibe el alta de un titular nuevo y la deja en estado `pendiente`.
+         *
+         *     Va sin sesion: quien se da de alta todavia no es afiliado.
+         *
+         *     El RUT actualizado y la certificacion bancaria son obligatorios
+         *     (`R-12` / `RD 13.1.6`). El IPI se puede omitir en esta peticion;
+         *     una persona natural no se admite al padron sin el (`RD 3`). Hay
+         *     `PATCH /afiliaciones/{id}/ipi` para completarlo despues.
+         *
+         *     La clave (8 a 72 caracteres) se recoge aqui: al admitir se crea
+         *     la cuenta con la que el titular entra.
+         *
+         *     Este endpoint es publico y esta limitado por IP. Un correo ya
+         *     afiliado no responde 409: enumeraria el padron.
+         *
+         *     Si el aspirante declara pertenecer a otra sociedad de gestion
+         *     colectiva del mismo genero y no adjunta la renuncia, responde 409
+         *     con la explicacion de `R-28`.
+         */
+        post: operations["solicitarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/afiliaciones/{id}/ipi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Completar IPI de una solicitud pendiente
+         * @description Rellena el IPI que el alta permite omitir. Va sin sesion: el
+         *     `{id}` es un token opaco de 256 bits. Una persona natural no se
+         *     admite al padron sin este identificador (`RD 3`).
+         */
+        patch: operations["completarIPI"];
+        trace?: never;
+    };
+    "/afiliaciones/{id}/aprobar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aprobar afiliacion
+         * @description Admite una solicitud pendiente, crea la fila del padron y la
+         *     cuenta en `usuarios` con la clave que el aspirante eligio al
+         *     solicitar.
+         *
+         *     Solo el rol `administrador`, que en este andamiaje representa al
+         *     Consejo Directivo (`RS 5.2`). A partir de la admision el subtipo
+         *     gobierna el derecho a pedir anticipo: solo un Socio lo tiene (`R-30`).
+         */
+        post: operations["aprobarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/afiliaciones/{id}/rechazar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rechazar afiliacion
+         * @description Cierra una solicitud pendiente. Libera el correo y el IPI para
+         *     que el aspirante pueda volver a presentarse. Solo el Consejo
+         *     Directivo (`RS 5.2`).
+         */
+        post: operations["rechazarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/pipeline": {
         parameters: {
             query?: never;
@@ -1148,6 +1255,88 @@ export interface components {
              */
             error: string;
         };
+        SolicitudAfiliacion: {
+            /** @description Nombre del aspirante. */
+            nombre: string;
+            /**
+             * Format: email
+             * @description Correo al que se comunica la decision del Consejo.
+             */
+            email: string;
+            /** @description Cedula o pasaporte (`RS 5.2` / `RS 5.3`). */
+            documento_identidad: string;
+            /**
+             * @description Identificador IPI de la persona. Opcional en el alta; obligatorio
+             *     para admitir a una persona natural. Se puede completar despues
+             *     con `PATCH /afiliaciones/{id}/ipi`.
+             */
+            ipi?: string;
+            /**
+             * Format: password
+             * @description Clave con la que el titular entra una vez admitido. No se
+             *     devuelve. El hash se guarda con la solicitud y pasa a
+             *     `usuarios` al admitir.
+             */
+            clave: string;
+            /**
+             * @description `socio` es vinculo societario (`RS 4.1`). `administrado` es
+             *     vinculo contractual (`RS 4.2`). Solo el socio admitido puede
+             *     pedir anticipo (`R-30`).
+             * @enum {string}
+             */
+            subtipo: "socio" | "administrado";
+            /**
+             * @description `true` si el aspirante pertenece a otra SGC del mismo genero.
+             *     En ese caso `renuncia` es obligatorio (`R-28`).
+             */
+            pertenece_otra_sgc?: string;
+            /**
+             * Format: binary
+             * @description RUT actualizado (`R-12`). PDF o imagen.
+             */
+            rut: string;
+            /**
+             * Format: binary
+             * @description Certificacion bancaria (`R-12`). PDF o imagen.
+             */
+            certificacion_bancaria: string;
+            /**
+             * Format: binary
+             * @description Documento de renuncia a la otra SGC. Obligatorio si
+             *     `pertenece_otra_sgc` es verdadero.
+             */
+            renuncia?: string;
+        };
+        Afiliacion: {
+            /** @description Identificador de la solicitud, opaco. */
+            id: string;
+            nombre: string;
+            /** Format: email */
+            email: string;
+            documento_identidad: string;
+            /** @description Vacio si se omitio en el alta. */
+            ipi: string;
+            /** @enum {string} */
+            subtipo: "socio" | "administrado";
+            /**
+             * @description Maquina de admision. El alta deja `pendiente`.
+             * @enum {string}
+             */
+            estado: "pendiente" | "admitido" | "rechazado";
+            /**
+             * @description `true` solo si el subtipo es socio y el estado es admitido
+             *     (`R-30`).
+             */
+            elegible_anticipo: boolean;
+            tiene_rut: boolean;
+            tiene_certificacion_bancaria: boolean;
+            tiene_renuncia: boolean;
+            /**
+             * @description Fila del padron, rellenada al admitir. Cadena vacia mientras
+             *     la solicitud esta pendiente.
+             */
+            titular_id: string;
+        };
         /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
          *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
@@ -1391,6 +1580,401 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    solicitarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["SolicitudAfiliacion"];
+            };
+        };
+        responses: {
+            /** @description Solicitud creada, pendiente de admision. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "pendiente",
+                     *       "elegible_anticipo": false,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": ""
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /**
+             * @description Faltan datos o documentos, el adjunto no es un PDF o una imagen,
+             *     o no se pudo registrar (incluido un correo ya activo: no se
+             *     distingue a proposito).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "r-12: el rut actualizado y la certificacion bancaria son obligatorios"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflicto de exclusividad (`R-28`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "r-28: no se acepta como afiliado a quien pertenezca a otra sociedad de gestion colectiva del mismo genero sin renuncia previa y expresa"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El cuerpo supera 18 MiB (tres documentos de 5 MiB mas el formulario). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el cuerpo supera el tamano maximo permitido"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Demasiadas solicitudes desde la misma IP. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "demasiadas solicitudes, reintente en un momento"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    completarIPI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "ipi": "IPI-00000001"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description Identificador IPI de la persona. */
+                    ipi: string;
+                };
+            };
+        };
+        responses: {
+            /** @description IPI guardado. La solicitud sigue pendiente. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description IPI vacio, o no se pudo completar. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el ipi es obligatorio para admitir a una persona natural"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya no esta pendiente. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Demasiadas solicitudes desde la misma IP. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "demasiadas solicitudes, reintente en un momento"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    aprobarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Solicitud admitida. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "admitido",
+                     *       "elegible_anticipo": true,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": "tit-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description Falta el IPI para admitir a una persona natural. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el ipi es obligatorio para admitir a una persona natural"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya estaba resuelta, o el padron ya tiene esa fila. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rechazarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Solicitud rechazada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "rechazado",
+                     *       "elegible_anticipo": false,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": ""
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya estaba resuelta. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
