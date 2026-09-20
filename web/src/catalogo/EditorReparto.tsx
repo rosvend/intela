@@ -38,6 +38,7 @@ import {
 } from "./declaracion";
 import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
+import Paginador from "./Paginador";
 import {
   esTitular,
   esVersionDeclaracion,
@@ -47,6 +48,7 @@ import {
   type Titular,
   type VersionDeclaracion,
 } from "./tipos";
+import { useLista } from "./useLista";
 import { conciliarConElHistorial, rutaDelHistorial, useObra } from "./useObra";
 
 /**
@@ -920,11 +922,7 @@ function PadronDelEditor({
   // `useValorDiferido.ts`): sin esa espera cada tecla era una peticion al padron
   // entero. La pagina no se difiere, un clic no es tecleo. El `path` cambia con
   // el nombre y con la pagina, y el hook aborta la que ya no sirve.
-  const {
-    datos: titulares,
-    cargando,
-    error,
-  } = useApi<Titular[]>(`/api/titulares?${params.toString()}`);
+  const lista = useLista(`/api/titulares?${params.toString()}`, esTitular);
 
   /** Cambiar la busqueda vuelve a la primera pagina: la 3 de otra busqueda no existe. */
   function buscar(valor: string) {
@@ -933,27 +931,27 @@ function PadronDelEditor({
   }
 
   let contenido: ReactElement;
-  if (cargando) {
+  if (lista.estado === "cargando") {
     contenido = <Cargando texto="Cargando el padrón…" />;
-  } else if (error) {
+  } else if (lista.estado === "error") {
     // Sin padron no se pueden elegir partes, y la pantalla lo dice: sin este
     // aviso el borrador solo se podria llenar a ciegas. Lo que no se hace es
     // dejar de ofrecer el guardado de lo ya escrito -el padron no es la
     // autoridad de nada, solo la lista de donde elegir-.
     contenido = (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar el padrón de titulares: {error.message} Sin el
+        No se pudo consultar el padrón de titulares: {lista.mensaje} Sin el
         padrón no se pueden elegir partes, pero lo que ya esté en el borrador
         sigue siendo lo que se guarda.
       </p>
     );
-  } else if (!Array.isArray(titulares) || !titulares.every(esTitular)) {
+  } else if (lista.estado === "ilegible") {
     contenido = (
       <p className="catalogo-error" role="alert">
         El padrón no llegó como una lista de titulares legibles.
       </p>
     );
-  } else if (titulares.length === 0) {
+  } else if (lista.elementos.length === 0) {
     contenido = (
       <div className="catalogo-vacio">
         <p>
@@ -964,6 +962,7 @@ function PadronDelEditor({
       </div>
     );
   } else {
+    const titulares = lista.elementos;
     contenido = (
       <>
         <div className="catalogo-caja">
@@ -1022,35 +1021,13 @@ function PadronDelEditor({
               ))}
             </tbody>
           </table>
-          <div className="catalogo-pie">
-            <span>
-              {desplazamiento === 0
-                ? `Titulares 1 a ${titulares.length}`
-                : `Titulares ${desplazamiento + 1} a ${desplazamiento + titulares.length}`}
-            </span>
-            <div className="catalogo-pie-botones">
-              <button
-                type="button"
-                className="catalogo-pagina"
-                disabled={desplazamiento === 0}
-                onClick={() =>
-                  setDesplazamiento(Math.max(0, desplazamiento - LIMITE_PADRON))
-                }
-              >
-                Anterior
-              </button>
-              <button
-                type="button"
-                className="catalogo-pagina"
-                disabled={titulares.length < LIMITE_PADRON}
-                onClick={() =>
-                  setDesplazamiento(desplazamiento + LIMITE_PADRON)
-                }
-              >
-                Siguiente
-              </button>
-            </div>
-          </div>
+          <Paginador
+            etiqueta="Titulares"
+            desplazamiento={desplazamiento}
+            cuantas={titulares.length}
+            limite={LIMITE_PADRON}
+            onIrA={setDesplazamiento}
+          />
         </div>
         <p className="muted detalle-nota">
           El padrón se sirve por páginas, así que una página que no traiga al

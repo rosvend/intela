@@ -1,11 +1,12 @@
 import { useId, useState, type ReactElement } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
-import { useApi } from "../useApi";
 import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
 import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
+import Paginador from "./Paginador";
 import { esObra, type Obra } from "./tipos";
+import { useLista } from "./useLista";
 
 /**
  * Cuantas obras se piden por pagina. El servidor tiene su propio tope por
@@ -161,11 +162,6 @@ function textoDelResumen(obras: number, filtrosActivos: number): string {
   return `${cuantas} · ${activos}`;
 }
 
-/** El tramo de resultados de la pagina, contado desde el desplazamiento pedido. */
-function textoDelRango(desplazamiento: number, cuantas: number): string {
-  return `Obras ${desplazamiento + 1} a ${desplazamiento + cuantas}`;
-}
-
 /**
  * Catalogo de obras con busqueda (issue #30, S1). Solo administrador: el grupo
  * entero `/obras` del servidor esta bajo `requiereRol(RolAdministrador)`
@@ -219,11 +215,7 @@ export default function Catalogo() {
   if (desplazamiento > 0) {
     params.set("desplazamiento", String(desplazamiento));
   }
-  const {
-    datos: obras,
-    cargando,
-    error,
-  } = useApi<Obra[]>(`/api/obras?${params.toString()}`);
+  const lista = useLista(`/api/obras?${params.toString()}`, esObra);
 
   /**
    * El texto del campo del anio y el ultimo valor que la URL tenia de el.
@@ -312,21 +304,22 @@ export default function Catalogo() {
   // mala escondería una obra -y su estado- sin decirlo, y aqui toda cifra se
   // explica hasta su origen.
   let contenido: ReactElement;
-  if (cargando) {
+  if (lista.estado === "cargando") {
     contenido = <Cargando texto="Cargando el catálogo…" />;
-  } else if (error) {
+  } else if (lista.estado === "error") {
     contenido = (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar el catálogo: {error.message}
+        No se pudo consultar el catálogo: {lista.mensaje}
       </p>
     );
-  } else if (!Array.isArray(obras) || !obras.every(esObra)) {
+  } else if (lista.estado === "ilegible") {
     contenido = (
       <p className="catalogo-error" role="alert">
         El catálogo no llegó como una lista de obras legibles.
       </p>
     );
   } else {
+    const obras = lista.elementos;
     contenido = (
       <>
         <p className="catalogo-resumen muted">
@@ -343,34 +336,13 @@ export default function Catalogo() {
             <TablaCatalogo obras={obras} busqueda={searchParams.toString()} />
           )}
           {obras.length > 0 && (
-            <div className="catalogo-pie">
-              <span>{textoDelRango(desplazamiento, obras.length)}</span>
-              <div className="catalogo-pie-botones">
-                <button
-                  type="button"
-                  className="catalogo-pagina"
-                  disabled={desplazamiento === 0}
-                  onClick={() =>
-                    irA(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
-                  }
-                >
-                  Anterior
-                </button>
-                {/* Sin `total` en la respuesta no se puede decir "pagina 2 de
-                    7": el boton se ofrece cuando la pagina vino entera -si el
-                    servidor devolvio menos de `limite`, no hay mas filas- y una
-                    pagina vacia despues lo dice sin afirmar que el catalogo
-                    este vacio. */}
-                <button
-                  type="button"
-                  className="catalogo-pagina"
-                  disabled={obras.length < LIMITE_POR_PAGINA}
-                  onClick={() => irA(desplazamiento + LIMITE_POR_PAGINA)}
-                >
-                  Siguiente
-                </button>
-              </div>
-            </div>
+            <Paginador
+              etiqueta="Obras"
+              desplazamiento={desplazamiento}
+              cuantas={obras.length}
+              limite={LIMITE_POR_PAGINA}
+              onIrA={irA}
+            />
           )}
         </div>
       </>

@@ -1,16 +1,11 @@
 import { Link, useParams } from "react-router-dom";
 import Cargando from "../Cargando";
-import { useApi } from "../useApi";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { formatearPorcentaje } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { TablaDePartes, useNombresDeTitulares } from "./TablaDePartes";
-import {
-  esVersionDeclaracion,
-  type Obra,
-  type Parte,
-  type VersionDeclaracion,
-} from "./tipos";
+import { esVersionDeclaracion, type Obra, type Parte } from "./tipos";
+import { useLista } from "./useLista";
 import { conciliarConElHistorial, rutaDelHistorial, useObra } from "./useObra";
 
 /**
@@ -380,29 +375,28 @@ function PartesDeLaVersionVigente({ obra }: { obra: Obra }) {
   // Basta la version abierta, y el servidor pagina el historial desde la mas
   // reciente: `limite=1` es esa. Traerlas todas para pintar las partes de una
   // sola costaba lo que midiera el historial.
-  const {
-    datos: historial,
-    cargando,
-    error,
-  } = useApi<VersionDeclaracion[]>(rutaDelHistorial(obra.id, 1));
+  const lista = useLista(rutaDelHistorial(obra.id, 1), esVersionDeclaracion);
 
-  if (cargando) return <Cargando texto="Cargando la declaración vigente…" />;
+  if (lista.estado === "cargando")
+    return <Cargando texto="Cargando la declaración vigente…" />;
 
-  if (error) {
+  if (lista.estado === "error") {
     return (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar el historial de la declaración: {error.message}
+        No se pudo consultar el historial de la declaración: {lista.mensaje}
       </p>
     );
   }
 
-  if (!Array.isArray(historial) || !historial.every(esVersionDeclaracion)) {
+  if (lista.estado === "ilegible") {
     return (
       <p className="catalogo-error" role="alert">
         El historial no llegó como una lista de versiones legibles.
       </p>
     );
   }
+
+  const historial = lista.elementos;
 
   // La obra dice cual es su version vigente y el historial dice cual tiene
   // abierta: son dos lecturas del mismo hecho, y si no coinciden -una

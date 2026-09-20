@@ -16,6 +16,7 @@ import {
   type Obra,
   type VersionDeclaracion,
 } from "./tipos";
+import { clasificarLista } from "./useLista";
 import { rutaDelHistorial, useObra } from "./useObra";
 
 /**
@@ -186,14 +187,15 @@ function VersionesDeLaObra({
 }: {
   lectura: EstadoDeApi<VersionDeclaracion[]>;
 }) {
-  const { datos: historial, cargando, error } = lectura;
+  const lista = clasificarLista(lectura, esVersionDeclaracion);
 
-  if (cargando) return <Cargando texto="Cargando las versiones…" />;
+  if (lista.estado === "cargando")
+    return <Cargando texto="Cargando las versiones…" />;
 
-  if (error) {
+  if (lista.estado === "error") {
     return (
       <p className="catalogo-error" role="alert">
-        No se pudo consultar el historial de la declaración: {error.message}
+        No se pudo consultar el historial de la declaración: {lista.mensaje}
       </p>
     );
   }
@@ -205,13 +207,15 @@ function VersionesDeLaObra({
   // Una version mal formada deja el historial entero en error a proposito:
   // saltarse el bloque malo escondería una version -y su reparto, y su estado-
   // sin decirlo.
-  if (!Array.isArray(historial) || !historial.every(esVersionDeclaracion)) {
+  if (lista.estado === "ilegible") {
     return (
       <p className="catalogo-error" role="alert">
         El historial no llegó como una lista de versiones legibles.
       </p>
     );
   }
+
+  const historial = lista.elementos;
 
   // Una obra sin ninguna declaracion devuelve una lista vacia, no un 404, y no
   // es un fallo: se dice el hecho y se dice que no es un error, que es lo que
