@@ -1,7 +1,11 @@
 // Package afiliacion gestiona el padron: quien es Socio, quien es Titular
 // Administrado, y que IPI le corresponde a cada uno.
 //
-// Vacio a proposito: es andamiaje.
+// Lo que hoy vive aqui es [Titular] -una entrada del padron, con su invariante
+// de construccion- y, con el, la mitad del nucleo de R-01: la pregunta de
+// quien puede recibir reparto, [Titular.PuedeRecibirReparto]. La otra mitad es
+// el trigger `exigir_persona_natural` del esquema, que es la ultima barrera y
+// la unica que cubre lo que entre por SQL crudo.
 //
 // # Por que importa la distincion
 //

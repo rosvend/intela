@@ -19,6 +19,21 @@
   --acento-hondo: #5c1226; /* vinotinto mas hondo: hover del boton primario */
   --ok: #2f7d4f;
   --alerta: #b45309;
+  /*
+   * Los fondos de los badges de estado del catalogo (#30).
+   *
+   * No hay un color nuevo por estado: el texto sigue saliendo de `--ok` y
+   * `--alerta`, que el repo ya tenia, y "sin declaracion" se pinta con el gris
+   * de `--texto-suave` sobre `--fondo`. El rojo tampoco es un estado -`invalida`
+   * no se persiste, el backend rechaza la suma mayor a 100-, asi que `--error`
+   * solo lo usa lo que de verdad falla: una respuesta que no se pudo leer. Ya
+   * estaba escrito como literal en `.acceso-error` y `.tarjeta-error`; aqui se
+   * le pone nombre para no acabar con un tercer rojo.
+   */
+  --error: #b91c1c;
+  --error-fondo: #fdeaea;
+  --ok-fondo: #eaf5ee;
+  --alerta-fondo: #fdf3e7;
   --radio: 8px;
   --radio-boton: 99px; /* todos los botones del mockup son pill */
   --sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -498,7 +513,7 @@ a {
 
 .acceso-error {
   margin: 0;
-  color: #b91c1c;
+  color: var(--error);
   font-size: 0.85rem;
 }
 
@@ -712,7 +727,7 @@ td {
 
 .tarjeta-error {
   margin: 0;
-  color: #b91c1c;
+  color: var(--error);
   font-size: 0.9rem;
 }
 
@@ -1005,4 +1020,512 @@ td {
 .ingesta-cargas h2 {
   margin: 0 0 0.75rem;
   font-size: 1.1rem;
+}
+
+/* ---------- catalogo (#30) ---------- */
+
+/* Pantalla (Catalogo.tsx): cabecera, filtros y resultados en columna, con el
+   mismo ancho maximo que el tablero y la ingesta. `gap` y no margenes: los
+   hijos directos son la cabecera, la tarjeta de filtros y el bloque de
+   resultados -que a su vez aporta el resumen y la tabla-, y con margenes el
+   resumen se comia el hueco por especificidad. */
+.catalogo {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.catalogo-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.catalogo-cabecera p {
+  margin: 0;
+  max-width: 62rem;
+}
+
+/* Los mismos controles que el formulario de ingesta, con nombre propio: los
+   campos de una busqueda no son los de una subida, y reutilizar las clases de
+   la otra pantalla dejaria el catalogo dependiendo de que #29 no se renombre. */
+.catalogo-filtros {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.catalogo-campos {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1.4fr 0.9fr;
+  gap: 1rem 1.25rem;
+}
+
+.catalogo-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.catalogo-campo label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.catalogo-campo input {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.catalogo-campo input::placeholder {
+  color: var(--texto-suave);
+}
+
+.catalogo-campo input:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.catalogo-ayuda {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+}
+
+/* Accion secundaria y no `.boton-primario`: limpiar la busqueda no es la accion
+   principal de la pantalla. */
+.catalogo-limpiar {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.catalogo-limpiar:hover {
+  border-color: var(--acento);
+  color: var(--acento);
+}
+
+.catalogo-limpiar:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.catalogo-resumen {
+  margin: 0;
+}
+
+/* La tabla y su pie viven en la misma tarjeta blanca del mockup. */
+.catalogo-caja {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  overflow: hidden;
+}
+
+.tabla-catalogo td {
+  vertical-align: top;
+}
+
+.catalogo-titulo {
+  font-weight: 600;
+}
+
+/* El titulo de cada fila es el enlace al detalle de su obra. Conserva el
+   subrayado y el color de enlace del resto de la aplicacion -un enlace que solo
+   se distinguiera por color no se distinguiria-, y el foco se marca con el
+   mismo contorno que los demas controles del catalogo. */
+.catalogo-titulo a:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.catalogo-identificador {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+/* La etiqueta y la suma, en columna: son dos datos distintos -el estado que da
+   el backend y la cifra que da el backend- y pegados en una linea se leen como
+   uno solo. */
+.catalogo-declaracion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.badge-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radio-boton);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-estado-punto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-estado-completa {
+  background: var(--ok-fondo);
+  color: var(--ok);
+}
+
+/* Ambar, NUNCA rojo: una declaracion que no suma 100 es un estado valido del
+   negocio (R-04) del que se retiene el importe, no un error de quien declaro.
+   El rojo esta reservado para lo que de verdad falla. */
+.badge-estado-incompleta {
+  background: var(--alerta-fondo);
+  color: var(--alerta);
+}
+
+.badge-estado-sin-declaracion {
+  background: var(--fondo);
+  color: var(--texto-suave);
+}
+
+.catalogo-suma {
+  font-size: 0.82rem;
+  color: var(--texto-suave);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Estado vacio: ni es un error ni lleva role="alert" -no hay nada roto-, asi
+   que no se pinta con el color del fallo. */
+.catalogo-vacio {
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.catalogo-vacio p {
+  margin: 0;
+  font-weight: 600;
+}
+
+.catalogo-vacio p + p {
+  margin-top: 0.4rem;
+  font-weight: 400;
+}
+
+.catalogo-pie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--borde);
+  background: var(--fondo);
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.catalogo-pie-botones {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.catalogo-pagina {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--superficie);
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.catalogo-pagina:disabled {
+  background: var(--fondo);
+  color: var(--texto-suave);
+  cursor: default;
+}
+
+.catalogo-pagina:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* El fallo del catalogo: el mismo lenguaje visual que el panel de resultado de
+   #29 -borde izquierdo grueso-, para que "esto no se pudo leer" se reconozca
+   igual en las dos pantallas. */
+.catalogo-error {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  background: var(--error-fondo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--error);
+  border-radius: var(--radio);
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .catalogo-campos {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .catalogo-campos {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- detalle de obra (#30, paso 6) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo: es la misma pantalla un
+   nivel mas abajo. */
+.detalle-obra {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.detalle-obra h1 {
+  margin: 0;
+}
+
+.detalle-volver {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.detalle-cabecera {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* La ficha de datos, con el rotulo encima del valor: cada dato tiene que poder
+   citarse por su nombre desde una auditoria, y en una linea corrida no se puede.
+   Se usa para los metadatos de la obra y para las cifras de la declaracion. */
+.detalle-ficha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.9rem 1.5rem;
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.detalle-ficha > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.detalle-ficha dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.detalle-ficha dd {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.detalle-declaracion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.detalle-declaracion h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Cifras del backend: tabulares para que dos lecturas se comparen de un vistazo
+   y en el mismo ancho. */
+.detalle-cifra {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.detalle-nota {
+  margin: 0;
+  max-width: 62rem;
+  font-size: 0.85rem;
+}
+
+/* Identificadores opacos (`titular_id`, IDA, el id de la obra): en mono y
+   partiendo linea, que es lo que deja copiarlos a la API sin equivocarse. */
+.detalle-identificador {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+/* El porcentaje declarado, a la derecha y en cifras tabulares, igual que los
+   recuentos del listado de cargas. */
+.tabla-partes-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- historial de versiones (#30, paso 7) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo y el detalle: es la misma
+   pantalla un nivel mas abajo. */
+.historial-versiones {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.historial-versiones h1 {
+  margin: 0;
+}
+
+.historial-versiones h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Una version por bloque, separadas por una linea: la ventana, el estado y el
+   reparto de cada una se leen como una unidad, y sin la linea dos versiones
+   seguidas se leen como una sola tabla larga con dos encabezados. */
+.historial-version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--borde);
+}
+
+/* La version que rige hoy, dicha con palabras en el dato de "Vigente hasta".
+   En el color de acento y no en ambar ni en rojo: no es una alerta -no hay
+   nada mal- ni un estado de la declaracion, es la que sigue abierta. */
+.historial-abierta {
+  font-weight: 600;
+  color: var(--acento);
+}
+
+/* ---------- editor de reparto (#30, paso 8) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo, el detalle y el historial:
+   es la misma pantalla un nivel mas abajo. */
+.editor-reparto {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.editor-reparto h1 {
+  margin: 0;
+}
+
+.editor-reparto h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/*
+ * El aviso de que version se cierra y cual se abre.
+ *
+ * En el tinte de acento y no en ambar: no es una advertencia ni un estado del
+ * negocio -no hay nada que corregir-, es lo que va a pasar al guardar, y quien
+ * crea que esta corrigiendo la version vigente tiene que leerlo antes de tocar
+ * nada. El ambar queda para lo que de verdad pide atencion.
+ */
+.editor-aviso-version {
+  margin: 0;
+  padding: 0.9rem 1.15rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--acento);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+  max-width: 62rem;
+}
+
+.editor-formulario,
+.editor-borrador,
+.editor-padron {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* La tabla de filas: los campos ocupan el ancho de su celda, y el numero va a
+   la derecha como en las tablas de partes que no se editan. */
+.editor-filas td {
+  vertical-align: middle;
+}
+
+.editor-campo {
+  font: inherit;
+  font-size: 0.85rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.editor-campo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.editor-campo-numero {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem 1.25rem;
+}
+
+.editor-aviso {
+  margin: 0;
+  max-width: 42rem;
+  font-size: 0.85rem;
+  color: var(--alerta);
+}
+
+/* Un titular que el padron trae y la regla no admite como parte. En ambar, que
+   es el color de "esto necesita una explicacion" y no el del fallo: no hay nada
+   roto, hay una regla -R-01- que se aplica al guardar. */
+.editor-no-elegible {
+  font-size: 0.85rem;
+  color: var(--alerta);
 }

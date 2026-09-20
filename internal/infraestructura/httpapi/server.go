@@ -57,6 +57,7 @@ type API struct {
 	salud         Salud
 	auth          Autenticacion
 	catalogo      Catalogo
+	padron        Padron
 	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
@@ -76,6 +77,7 @@ type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
 	Catalogo      Catalogo
+	Padron        Padron
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
@@ -104,6 +106,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		salud:         casos.Salud,
 		auth:          casos.Auth,
 		catalogo:      casos.Catalogo,
+		padron:        casos.Padron,
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
@@ -179,6 +182,20 @@ func (a *API) Router() http.Handler {
 			cat.Post("/{id}/declaracion", a.declararObra)
 			cat.Put("/{id}/declaracion", a.editarDeclaracion)
 			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
+		})
+
+		// El padron de titulares, que es lo que llena el selector de partes
+		// del editor de splits (#30). Mismo rol que el catalogo -quien edita
+		// una declaracion ve el repertorio entero, y el padron es la otra
+		// mitad de esa superficie-.
+		//
+		// Se sirve SIN recortar las personas juridicas: R-01 (`RD 4.5`) deja
+		// fuera del reparto a todo el que no sea persona natural, y quien
+		// edita tiene que poder ver que el titular que busca existe en el
+		// padron y que no se le ofrece por esa regla.
+		protegido.Route("/titulares", func(pad chi.Router) {
+			pad.Use(requiereRol(aplicacion.RolAdministrador))
+			pad.Get("/", a.buscarTitulares)
 		})
 
 		// El lado del ingreso (#27). Entra dinero, asi que escribe
