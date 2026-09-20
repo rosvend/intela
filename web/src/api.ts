@@ -172,7 +172,7 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   }
 
   if (!res.ok) {
-    throw new ApiError(res.status, await mensajeDeError(res));
+    throw new ApiError(res.status, await mensajeDeError(res, signal));
   }
 
   const ct = res.headers.get("content-type") || "";
@@ -211,7 +211,10 @@ const MENSAJE_ERROR_ILEGIBLE = "el servidor respondió un error ilegible";
 // un mensaje propio: ver `MENSAJE_ERROR_ILEGIBLE`. Y uno que no se puede ni
 // leer -el stream se corta a mitad- usa ese mismo mensaje: que el cuerpo falte
 // no es razon para tirar el status, que ya llego.
-async function mensajeDeError(res: Response): Promise<string> {
+async function mensajeDeError(
+  res: Response,
+  signal?: AbortSignal | null,
+): Promise<string> {
   // La lectura del cuerpo va envuelta ella sola, y solo ella: `res.ok` ya se
   // consulto y es falso, asi que de aqui sale un mensaje para un error, nunca
   // una conclusion sobre si el servidor escribio. Sin este `try`, un cuerpo
@@ -228,7 +231,13 @@ async function mensajeDeError(res: Response): Promise<string> {
   let texto: string;
   try {
     texto = await res.text();
-  } catch {
+  } catch (err) {
+    // Tercera vez que aparece la misma regla -el `fetch` y `res.json()` arriba
+    // son las otras dos-, y las tres son la misma pregunta: ¿dejamos de
+    // escuchar? Si si, el aborto sigue siendo el aborto; un `ApiError` de
+    // "error ilegible" rompe los `instanceof` que distinguen cancelar de
+    // rechazar.
+    if (signal?.aborted) throw err;
     return MENSAJE_ERROR_ILEGIBLE;
   }
   if (!texto) return res.statusText;

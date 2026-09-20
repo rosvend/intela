@@ -352,6 +352,32 @@ describe("api", () => {
     expect((error as Error).name).toBe("AbortError");
   });
 
+  it("un aborto con un error ya recibido no se convierte en un ApiError ilegible", async () => {
+    // Misma regla que el caso de arriba, en el camino de un no-2xx: la lectura
+    // del cuerpo del error tambien puede alcanzarla la cancelacion.
+    const controlador = new AbortController();
+    const cuerpo = new ReadableStream({
+      start(controladorDelCuerpo) {
+        controladorDelCuerpo.error(
+          new DOMException("la peticion se cancelo", "AbortError"),
+        );
+      },
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(cuerpo, {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const promesa = api("/api/obras", { signal: controlador.signal });
+    controlador.abort();
+
+    const error = await promesa.catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
   it("no llama a res.json() en una respuesta 204 sin content-type (DELETE de sesion)", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
 
