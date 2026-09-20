@@ -1298,6 +1298,25 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
+  // El padron SI admite filtrar por identificador: `GET /titulares?ids=` es la
+  // consulta acotada que documenta el contrato y que usa el detalle para pedir
+  // los nombres. Esta nota decia lo contrario -era verdad cuando se escribio- y
+  // era la unica copia del hecho, y la unica que lee quien escribe el reparto,
+  // que nadie actualizo cuando el contrato cambio.
+  it("la nota del padron no afirma que no se pueda filtrar por identificador", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // Se busca la nota por lo que SI dice y que sigue siendo verdad: una pagina
+    // que no trae al titular no prueba que no exista. Si esa frase se quita, la
+    // prueba falla aqui y no pasa en silencio por no tener nada que mirar.
+    const nota = screen.getByText(/una página que no traiga al titular/);
+
+    expect(nota.textContent).not.toMatch(/no admite filtrar/i);
+    expect(nota.textContent).not.toMatch(/no se puede filtrar/i);
+    expect(nota.textContent).not.toMatch(/sin filtro por identificador/i);
+  });
+
   it("anadir un titular del padron crea su fila con el IPI y sin porcentaje inventado", async () => {
     simularServidor();
     await abrirElEditorConPadron();

@@ -1044,9 +1044,9 @@ function PadronDelEditor({
           </div>
         </div>
         <p className="muted detalle-nota">
-          El padrón se sirve por páginas y no admite filtrar por identificador,
-          así que una página que no traiga al titular no prueba que no exista.
-          El nombre y la clase son los que el padrón tiene hoy.
+          El padrón se sirve por páginas, así que una página que no traiga al
+          titular no prueba que no exista. El nombre y la clase son los que el
+          padrón tiene hoy.
         </p>
       </>
     );

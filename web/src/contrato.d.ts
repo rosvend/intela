@@ -904,7 +904,11 @@ export interface components {
         Parte: {
             /** @description Identificador del titular al que corresponde esta parte. */
             titular_id: string;
-            /** @description IPI del titular. Obligatorio, igual que en un coautor del catalogo. */
+            /**
+             * @description IPI del titular. Obligatorio, igual que en un coautor del catalogo,
+             *     y ademas tiene que ser el que el padron tiene para `titular_id`: al
+             *     guardar una declaracion, un IPI que no coincide se rechaza con 400.
+             */
             ipi: string;
             /**
              * Format: decimal
@@ -2095,6 +2099,14 @@ export interface operations {
              *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
              *     inexistente: alli el identificador no resuelve a nadie, y aqui
              *     resuelve a una productora que existe y no puede figurar como parte.
+             *
+             *     Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+             *     para ese `titular_id`: el IPI declarado se concilia con el del padron
+             *     al guardar, porque es el que llega a quien se le paga, y si no
+             *     coincide no se escribe nada (no se abre ninguna version). El mensaje
+             *     es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+             *     sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+             *     que no es persona natural recibe el rechazo de `R-01` y no este.
              */
             400: {
                 headers: {
@@ -2232,6 +2244,14 @@ export interface operations {
              *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
              *     inexistente: alli el identificador no resuelve a nadie, y aqui
              *     resuelve a una productora que existe y no puede figurar como parte.
+             *
+             *     Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+             *     para ese `titular_id`: el IPI declarado se concilia con el del padron
+             *     al guardar, porque es el que llega a quien se le paga, y si no
+             *     coincide no se escribe nada (no se abre ninguna version). El mensaje
+             *     es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+             *     sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+             *     que no es persona natural recibe el rechazo de `R-01` y no este.
              */
             400: {
                 headers: {
