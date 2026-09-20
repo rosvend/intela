@@ -404,6 +404,33 @@ function agregarAlReparto(titularId: string) {
   );
 }
 
+/** La rejilla del borrador: la tabla que se edita, distinta de la del padron. */
+function rejilla(): HTMLElement {
+  return screen.getByRole("table", { name: "Borrador del reparto" });
+}
+
+/**
+ * La fila del borrador de ese titular. Se busca DENTRO de la rejilla y por el
+ * campo del IPI -que lleva su `aria-label`-: el `titular_id` esta tambien en la
+ * tabla del padron como celda suelta, asi que buscarlo por texto en toda la
+ * pantalla encontraria dos.
+ */
+function filaDelBorrador(titularId: string): HTMLElement {
+  const campo = within(rejilla()).getByLabelText(`IPI de ${titularId}`);
+  const fila = campo.closest("tr");
+  if (!fila) throw new Error(`"${titularId}" no esta dentro de una fila`);
+  return fila;
+}
+
+/** Un clic en el boton de quitar de la fila de ese titular. */
+function quitarDelReparto(titularId: string) {
+  fireEvent.click(
+    within(filaDelBorrador(titularId)).getByRole("button", {
+      name: `Quitar a ${titularId} del reparto`,
+    }),
+  );
+}
+
 /** Un clic en Guardar, que dispara el submit del formulario. */
 function guardar() {
   fireEvent.click(botonGuardar());
@@ -475,8 +502,8 @@ describe("editor de reparto (integracion con App)", () => {
     simularServidor();
     await abrirElEditor();
 
-    fireEvent.click(screen.getByRole("button", { name: "Quitar de tit-1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Quitar de tit-2" }));
+    quitarDelReparto("tit-1");
+    quitarDelReparto("tit-2");
 
     expect(dato("Estado del borrador")).toContain("Sin nada declarado");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
@@ -1680,6 +1707,122 @@ describe("editor de reparto (integracion con App)", () => {
     // Y el aviso de la version tambien: es lo que hay que entender ANTES de
     // tocar nada, y aparece sin que nadie haya movido el foco.
     expect(avisoDeVersion().getAttribute("role")).toBe("status");
+  });
+
+  // El item 8b. El foco es lo unico que quien navega con teclado tiene para no
+  // perderse: si al quitar una fila cae a `<body>`, el `Tab` siguiente empieza
+  // otra vez por el principio de la pagina.
+  it("al quitar la fila 2 el foco pasa a la fila que ocupa su lugar, y no a <body>", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // Tres filas: las dos del reparto vigente mas la que se anade del padron.
+    // Asi la fila quitada no es la ultima, que es el caso que el arreglo trata
+    // por separado.
+    agregarAlReparto("tit-3");
+
+    quitarDelReparto("tit-2");
+
+    // Las dos cosas POR SEPARADO, y ninguna vale sola: "no es `<body>`" lo
+    // cumpliria tambien el foco en cualquier otro sitio de la pantalla -que
+    // sigue perdiendo el sitio de la rejilla-, y "esta en la rejilla" no dice
+    // nada contra `<body>` si la rejilla no existiera.
+    const activo = document.activeElement;
+    expect(activo).not.toBe(document.body);
+    expect(activo?.tagName === "INPUT" || activo?.tagName === "BUTTON").toBe(
+      true,
+    );
+    expect(rejilla().contains(activo)).toBe(true);
+    // Y es el control de la fila que se corrio al indice de la quitada: tit-2
+    // estaba en el indice 1 y quien lo ocupa ahora es tit-3.
+    expect(filaDelBorrador("tit-3").contains(activo)).toBe(true);
+  });
+
+  it("al quitar la primera fila el foco va a la que sube a ese indice, no a la ultima", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+    agregarAlReparto("tit-3");
+
+    quitarDelReparto("tit-1");
+
+    // Con tres filas, "la que sube al indice 0" es tit-2 y "la ultima" es tit-3.
+    // Con dos filas serian la misma y esta prueba no diria cual de las dos reglas
+    // se cumple. Lo que se exige es el hueco; saltar a la ultima seria saltarse
+    // una fila, que es perder el sitio de otra manera.
+    const activo = document.activeElement;
+    expect(filaDelBorrador("tit-2").contains(activo)).toBe(true);
+    expect(filaDelBorrador("tit-3").contains(activo)).toBe(false);
+  });
+
+  it("el salto de foco no se repite al teclear: la intencion se consume una sola vez", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    agregarAlReparto("tit-3");
+    quitarDelReparto("tit-2");
+
+    // El efecto corre en CADA cambio del borrador -teclear tambien cambia
+    // `filas`-, y lo que lo limita a un solo salto es consumir la intencion al
+    // usarla. Sin eso, quien escribe no podria terminar una cifra: el foco
+    // volveria a la fila del relevo en cada tecla, aunque el foco estuviera en
+    // otra fila.
+    const campo = campoPorcentaje("tit-1");
+    campo.focus();
+    escribirPorcentaje("tit-1", "70");
+
+    expect(document.activeElement).toBe(campo);
+  });
+
+  it("al anadir un titular del padron el foco esta en la fila nueva", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    agregarAlReparto("tit-3");
+
+    const activo = document.activeElement;
+    expect(activo).not.toBe(document.body);
+    expect(rejilla().contains(activo)).toBe(true);
+    // La fila NUEVA, no la primera de la rejilla ni el padron: se acaba de
+    // elegir un titular y lo que se escribe despues es su porcentaje.
+    expect(filaDelBorrador("tit-3").contains(activo)).toBe(true);
+  });
+
+  it("con la rejilla vacia no hay control al que llevar el foco, y la prueba no lo exige", async () => {
+    // Control positivo, para que el caso de arriba no pase por el motivo
+    // equivocado: la regla "el foco acaba en un control de la rejilla" no se
+    // puede exigir cuando quitar la ultima fila deja el borrador sin ninguna.
+    // Sin filas no hay tabla ni control, asi que no hay destino que prometer: lo
+    // que se exige aqui es lo contrario -que la pantalla diga que el borrador
+    // quedo vacio-, y que el foco se quede donde cae. `<body>` es lo MEDIDO en
+    // este caso, y esta declarado como lo esperado.
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    quitarDelReparto("tit-1");
+    quitarDelReparto("tit-2");
+
+    expect(
+      screen.queryByRole("table", { name: "Borrador del reparto" }),
+    ).toBeNull();
+    expect(
+      screen.getByText("El borrador no tiene ninguna parte."),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("el boton de quitar nombra a quien quita, en vez de leerse al reves", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // El nombre accesible -lo que anuncia un lector de pantalla- decia "Quitar
+    // de tit-1", que se lee como si se quitara algo DE tit-1 y no dice a quien
+    // se saca del reparto.
+    const boton = within(filaDelBorrador("tit-1")).getByRole("button", {
+      name: "Quitar a tit-1 del reparto",
+    });
+    // Y el texto visible no cambia de significado: sigue diciendo la accion y el
+    // titular que ya estaban escritos.
+    expect(boton.textContent?.trim()).toBe("Quitar de tit-1");
   });
 
   it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {

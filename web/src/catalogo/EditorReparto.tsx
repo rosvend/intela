@@ -1,9 +1,11 @@
 import {
+  useEffect,
   useId,
   useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type MutableRefObject,
   type ReactElement,
 } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -68,6 +70,19 @@ function nuevaFila(titularId = "", ipi = "", porcentaje = ""): FilaDeReparto {
   contadorDeFilas += 1;
   return { clave: `fila-${contadorDeFilas}`, titularId, ipi, porcentaje };
 }
+
+/**
+ * La fila que tiene que recibir el foco en cuanto el render la pinte.
+ *
+ * Es la clave de la fila destino, y `FilasDelReparto` la consume UNA sola vez: la
+ * deja en `null` al usarla. Va como ref y no como estado a proposito -el foco no
+ * se pinta-, porque como estado costaria un render de mas, el foco llegaria un
+ * render tarde y volveria a saltar en cada tecla, que tambien cambia `filas`. Y
+ * se usa esto en vez de `autoFocus` porque `autoFocus` dispara al MONTAR: le
+ * quitaria el foco a la pantalla en cuanto se abre, cuando lo que hay que
+ * resolver es no perderlo despues de quitar o anadir una fila.
+ */
+type FocoPendiente = MutableRefObject<string | null>;
 
 /**
  * El porcentaje de una fila leido de su campo de texto.
@@ -672,6 +687,10 @@ function FormularioDeReparto({
   // clic que entre antes. Un segundo `PUT` con el mismo reparto abriria una
   // version de mas.
   const enVuelo = useRef(false);
+  // La fila que tiene que recibir el foco en cuanto el borrador cambie. La
+  // escriben las dos acciones que cambian la rejilla y la consume
+  // `FilasDelReparto`. Ver `FocoPendiente`.
+  const focoPendiente = useRef<string | null>(null);
 
   const total = totalDeclarado(
     filas.map((fila) => ({ porcentaje: porcentajeDeTexto(fila.porcentaje) })),
@@ -719,11 +738,26 @@ function FormularioDeReparto({
   function agregarTitular(titular: Titular) {
     // La fila nace SIN porcentaje: la cifra la escribe quien declara, y un
     // valor de relleno acabaria guardado como si se hubiera declarado.
-    setFilas((previas) => [...previas, nuevaFila(titular.id, titular.ipi, "")]);
+    const fila = nuevaFila(titular.id, titular.ipi, "");
+    // El foco va a la fila nueva. El boton que se pulso esta en el padron -al
+    // final de la pantalla- y ademas desaparece en cuanto el titular entra en el
+    // reparto, asi que sin esto el foco se queda en la nada: el `Tab` siguiente
+    // vuelve al principio de la pagina, que es justo de donde se viene.
+    focoPendiente.current = fila.clave;
+    setFilas((previas) => [...previas, fila]);
   }
 
   function quitarFila(clave: string) {
-    setFilas((previas) => previas.filter((fila) => fila.clave !== clave));
+    const indice = filas.findIndex((fila) => fila.clave === clave);
+    const restantes = filas.filter((fila) => fila.clave !== clave);
+    // Quien ocupa el hueco: la fila que se corre a ese indice y, si la quitada
+    // era la ultima, la que pasa a ser la ultima. Se calcula sobre el array que
+    // se va a guardar -y no sobre `filas`- para que la clave que se pide sea
+    // siempre la de una fila que existe; con la rejilla vacia no queda ningun
+    // control al que llevar el foco y no se promete ninguno.
+    const relevo = restantes[indice] ?? restantes[restantes.length - 1];
+    focoPendiente.current = relevo ? relevo.clave : null;
+    setFilas(restantes);
   }
 
   function cambiarFila(clave: string, cambio: Partial<FilaDeReparto>) {
@@ -870,6 +904,7 @@ function FormularioDeReparto({
 
         <FilasDelReparto
           filas={filas}
+          focoPendiente={focoPendiente}
           onCambiar={cambiarFila}
           onQuitar={quitarFila}
         />
@@ -1052,13 +1087,37 @@ function AvisoDeVersionVisible({
  */
 function FilasDelReparto({
   filas,
+  focoPendiente,
   onCambiar,
   onQuitar,
 }: {
   filas: readonly FilaDeReparto[];
+  focoPendiente: FocoPendiente;
   onCambiar: (clave: string, cambio: Partial<FilaDeReparto>) => void;
   onQuitar: (clave: string) => void;
 }) {
+  // Los nodos de las filas, por su clave. Hacen falta los refs y no un
+  // `querySelector` por texto o por `data-*`: la clave es lo unico que identifica
+  // la fila de forma estable -el `titularId` no sirve, la misma persona puede
+  // estar en dos filas mientras se edita-.
+  const refsDeFilas = useRef(new Map<string, HTMLTableRowElement>());
+
+  // El salto de foco, UNA sola vez por cambio. `filas` cambia tambien al
+  // teclear, asi que este efecto corre muchas veces; lo que lo limita a un solo
+  // salto es vaciar `focoPendiente` en la primera pasada. El destino es el primer
+  // control de la fila -su primer campo-, que es lo que "la fila que ocupa el
+  // hueco" significa para quien llega tabulando. Si no hay fila con esa clave
+  // -la rejilla se quedo vacia- no se enfoca nada: no hay destino que prometer.
+  useEffect(() => {
+    const clave = focoPendiente.current;
+    if (clave === null) return;
+    focoPendiente.current = null;
+    refsDeFilas.current
+      .get(clave)
+      ?.querySelector<HTMLElement>("input, button")
+      ?.focus();
+  }, [filas, focoPendiente]);
+
   if (filas.length === 0) {
     return (
       <div className="catalogo-vacio">
@@ -1089,7 +1148,16 @@ function FilasDelReparto({
         </thead>
         <tbody>
           {filas.map((fila) => (
-            <tr key={fila.clave}>
+            <tr
+              key={fila.clave}
+              ref={(nodo) => {
+                // Al desmontarse la fila React llama con `null`, y esa clave hay
+                // que borrarla: si no, el mapa se queda con el nodo de una fila
+                // que ya no esta y el foco podria irse a un elemento muerto.
+                if (nodo === null) refsDeFilas.current.delete(fila.clave);
+                else refsDeFilas.current.set(fila.clave, nodo);
+              }}
+            >
               <td className="detalle-identificador">{fila.titularId}</td>
               <td>
                 {/* El IPI se rellena con el que el padron tiene hoy para ese
@@ -1126,9 +1194,18 @@ function FilasDelReparto({
                 />
               </td>
               <td>
+                {/* El texto visible no cambia: dice la accion y el titular, y
+                    quien ve la pantalla ya sabe de que fila es el boton. Lo que
+                    se arregla es el nombre accesible, que es lo que anuncia un
+                    lector de pantalla y lo que hoy se lee al reves: "Quitar de
+                    tit-3" suena a quitarle algo A tit-3, y no dice a quien se
+                    saca del reparto. El dia que la fila sepa el nombre del
+                    titular -hoy solo guarda su identificador-, esto lo nombrara
+                    a el. */}
                 <button
                   type="button"
                   className="enlace"
+                  aria-label={`Quitar a ${fila.titularId} del reparto`}
                   onClick={() => onQuitar(fila.clave)}
                 >
                   Quitar de {fila.titularId}
