@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
   type ReactElement,
 } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -600,6 +601,33 @@ function EditorDeLaObra({
 }
 
 /**
+ * Enter en un campo de texto NO guarda.
+ *
+ * Un `<form>` con un boton de envio convierte Enter dentro de un `<input>` en un
+ * envio implicito, y este formulario guarda: pulsar Enter a media edicion cierra
+ * la version abierta y abre otra con lo que hubiera escrito en ese instante. Con
+ * el porcentaje a medio teclear -el "7" de un "70"- la obra pasa a sumar 7 y bajo
+ * R-04 deja de repartir nada. Medido en navegador real, con precondicion y control
+ * negativo: teclear un digito no manda nada, y Enter mandaba un `PUT`.
+ *
+ * Guardar sigue siendo el boton, y por eso el Enter se CANCELA en vez de
+ * confirmarse: convertirlo en una confirmacion anadiria un paso -y un dialogo- al
+ * camino legitimo, que hoy es un clic. La condicion es `INPUT` de tipo `text` y no
+ * "cualquier Enter": pulsar Enter con el foco en el boton tiene que seguir
+ * guardando, que es el comportamiento que espera quien tabula hasta el y pulsa.
+ */
+function alPulsarTecla(evento: KeyboardEvent<HTMLFormElement>) {
+  const destino = evento.target as HTMLElement;
+  if (
+    evento.key === "Enter" &&
+    destino.tagName === "INPUT" &&
+    (destino as HTMLInputElement).type === "text"
+  ) {
+    evento.preventDefault();
+  }
+}
+
+/**
  * El borrador, el padron y el guardado.
  *
  * Se monta cuando el historial ya se resolvio -bien o mal-, y no se vuelve a
@@ -773,7 +801,11 @@ function FormularioDeReparto({
         />
       )}
 
-      <form className="editor-formulario" onSubmit={(e) => void guardar(e)}>
+      <form
+        className="editor-formulario"
+        onSubmit={(e) => void guardar(e)}
+        onKeyDown={alPulsarTecla}
+      >
         <section className="editor-borrador">
           <h2>Borrador del reparto</h2>
           <p className="muted detalle-nota">
@@ -811,6 +843,9 @@ function FormularioDeReparto({
         />
 
         <div className="editor-acciones">
+          {/* La unica via de guardado, y la que espera quien opera. El Enter de
+              un campo de texto lo cancela `alPulsarTecla`; el de este boton no,
+              porque ahi el envio implicito es lo que se quiere. */}
           <button
             type="submit"
             className="boton-primario"

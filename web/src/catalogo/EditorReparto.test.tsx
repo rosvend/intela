@@ -1,5 +1,6 @@
 import {
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -1646,5 +1647,93 @@ describe("el detalle de obra lleva al editor (S4, alcanzable por un enlace real)
     // El editor pide la obra del `id` de la direccion, que es el que llevaba el
     // enlace.
     expect(consultas()).toContain("/api/obras/obra-1");
+  });
+});
+
+/**
+ * El 🟠, y por que este describe NO puede afirmar "0 PUT tras un Enter".
+ *
+ * `jsdom` no implementa el envio implicito del formulario: medido con el jsdom
+ * del repo, un `keydown` sintetico con Enter en un `<input type="text">` no
+ * dispara `submit`, mientras que `requestSubmit()` y `click()` si. Un
+ * `expect(guardados()).toHaveLength(0)` despues de un Enter **pasa en el arbol
+ * roto tambien**, asi que no seria evidencia de nada.
+ *
+ * Lo que si discrimina, y es lo que se afirma aqui, es la caja blanca: el
+ * handler del formulario CANCELA el evento. Sin `onKeyDown` el evento llega al
+ * `form` sin cancelar y el navegador real hace el envio implicito. La otra mitad
+ * de la prueba es el probe de navegador (`Intela-wt/_verify-135/probe-enter.mjs`,
+ * 0 PUT con Enter y 1 PUT con el boton), que jsdom no puede sustituir.
+ */
+describe("el Enter de un campo de texto no guarda (el 🟠)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    setToken("tok");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("Enter en el porcentaje cancela el evento, y la fila sigue sin guardarse", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+    escribirPorcentaje("tit-1", "7");
+
+    const evento = createEvent.keyDown(campoPorcentaje("tit-1"), {
+      key: "Enter",
+    });
+    fireEvent(campoPorcentaje("tit-1"), evento);
+
+    // El handler tiene que haber cancelado el envio implicito. Sin `onKeyDown`
+    // esto es `false`, y en un navegador de verdad ese `false` es una version
+    // nueva abierta con el "7" a medio teclear.
+    expect(evento.defaultPrevented).toBe(true);
+    // Y el camino legitimo no se toco: nada salio por su cuenta.
+    expect(guardados()).toHaveLength(0);
+  });
+
+  it("Enter en el campo del IPI tambien se cancela", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    const evento = createEvent.keyDown(campoIpi("tit-1"), { key: "Enter" });
+    fireEvent(campoIpi("tit-1"), evento);
+
+    expect(evento.defaultPrevented).toBe(true);
+  });
+
+  it("cualquier otra tecla en el campo no se cancela", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // Control negativo: el handler cancela Enter y solo Enter. Un handler que
+    // cancelara todo dejaria el formulario sin teclado.
+    const evento = createEvent.keyDown(campoPorcentaje("tit-1"), {
+      key: "Tab",
+    });
+    fireEvent(campoPorcentaje("tit-1"), evento);
+
+    expect(evento.defaultPrevented).toBe(false);
+  });
+
+  it("Enter con el foco en el boton NO se cancela: ahi se guarda", async () => {
+    simularServidor();
+    await abrirElEditorConPadron();
+
+    // El control que PM-3 exige: el arreglo no puede desactivar el camino
+    // legitimo. El boton no es un `input` de texto, asi que el handler lo deja
+    // pasar -y en un navegador real eso es el envio que se quiere-.
+    const evento = createEvent.keyDown(botonGuardar(), { key: "Enter" });
+    fireEvent(botonGuardar(), evento);
+
+    expect(evento.defaultPrevented).toBe(false);
+    // Y el clic sigue guardando: es el camino que nadie pidio cambiar. El
+    // `fetch` de doble queda registrado de forma sincrona, asi que el `PUT` ya
+    // esta contado aqui -mismo criterio que el resto de esta suite-.
+    guardar();
+    expect(guardados()).toHaveLength(1);
   });
 });
