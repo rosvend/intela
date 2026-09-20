@@ -280,7 +280,12 @@ function avisoDeVersion(
     return {
       tipo: "sinNumeros",
       porque: "sinVersionAbierta",
-      sinBorrador: false,
+      // `true`, y no `false`: esta rama es EXACTAMENTE la condicion con la que
+      // `filasDePartida` devuelve `[]` -las dos preguntan por `versionAbierta`-,
+      // asi que aqui no hay version vigente que sembrar y el borrador arranca
+      // vacio. Decir `false` dejaba la pantalla afirmando que si hay borrador
+      // mientras la rejilla salia sin una sola fila.
+      sinBorrador: true,
       hayRechazoPosterior: false,
     };
   }
@@ -984,6 +989,7 @@ function AvisoDeVersionVisible({
       Con lo que el servidor devolvió en el historial, esta pantalla no puede
       decir qué versión se cerrará ni con qué número se abre la nueva.{" "}
       {consecuencia}
+      {sinBorrador}
     </p>
   );
 }

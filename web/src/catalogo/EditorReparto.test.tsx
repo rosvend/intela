@@ -1568,7 +1568,36 @@ describe("editor de reparto (integracion con App)", () => {
     expect(botonGuardar()).toHaveProperty("disabled", false);
   });
 
-  it("un historial con una version ilegible se lee como no leido, sin numeros inventados", async () => {
+  it("un historial sin ninguna version abierta SI dice que el borrador esta vacio", async () => {
+    // El item 6: `filasDePartida` devuelve `[]` cuando no hay ninguna version
+    // abierta -las dos preguntan por `versionAbierta`-, asi que la rejilla sale
+    // sin filas. El aviso decia `sinBorrador: false` y por tanto no lo decia:
+    // afirmaba que el borrador existe mientras la tabla estaba vacia.
+    simularServidor({ historial: () => json([versionCerrada]) });
+
+    await abrirElEditor();
+
+    // La premisa del caso: ninguna version abierta, y el borrador vacio.
+    expect(screen.queryByLabelText(/^Porcentaje de /)).toBeNull();
+    expect(avisoDeVersion().textContent).toContain(
+      "El borrador tampoco se ha podido cargar con el reparto vigente.",
+    );
+  });
+
+  it("con la version abierta presente NO se dice que el borrador falte", async () => {
+    // Control negativo: la frase es de un hecho del historial, no un texto fijo
+    // que se cuele en todas las pantallas.
+    simularServidor();
+
+    await abrirElEditor();
+
+    expect(campoPorcentaje("tit-1")).toBeTruthy();
+    expect(texto()).not.toContain(
+      "El borrador tampoco se ha podido cargar con el reparto vigente.",
+    );
+  });
+
+  it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {
     simularServidor({
       historial: () => json([{ ...versionVigente, vigente_hasta: undefined }]),
     });
