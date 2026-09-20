@@ -25,6 +25,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/obras/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+| `/reportes/*` | `administrador` |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -45,6 +46,13 @@ el matching, y quien lo lista entero ve el repertorio completo de la
 sociedad. Abrirlo a `auditor` —que tiene lectura de todo— o recortarlo para
 `titular` con `SoloPropiasObras` (`OE-6`) son decisiones de los issues que
 traigan esos paneles.
+
+`/reportes/*` es la ingesta de reportes de uso —subida, listado de cargas y el
+log de rechazos de cada carga— y pide `administrador` por lo mismo que el
+catalogo: una entrega pondera el reparto de un periodo entero, y el listado
+deja ver de que fuentes vive la sociedad. La pantalla de ingesta (#29) es solo
+de administrador, y lo que la cierra de verdad es este grupo del servidor, no
+el menu del cliente.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
