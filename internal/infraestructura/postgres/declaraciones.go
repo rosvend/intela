@@ -180,13 +180,55 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 	return version, ahora, nil
 }
 
+// maxVersionesHistorial es el tope de versiones que [Store.Historial] sirve de
+// una vez.
+//
+// No es una regla de negocio: es la cota que le faltaba a la unica consulta de
+// este cambio que no la tenia. Una version de declaracion es una edicion humana
+// del reparto de una obra, asi que un historial de miles no existe; el tope
+// esta para que un historial patologico no se sirva entero por accidente -el
+// mismo papel que `leerPaginacion` cumple en el catalogo (`obras.go`, "nunca un
+// recorte en silencio de lo que se pidio")-.
+//
+// Al alcanzarlo NO se recorta en silencio: se pide UNA version de mas y, si
+// llega, Historial falla. Decirlo con un error y no con un campo nuevo es
+// deliberado: el caso es inalcanzable en la practica y añadir un campo a la
+// respuesta obligaria a tocar `api/openapi.yaml` y a regenerar `contrato.d.ts`
+// por algo que no va a pasar.
+const maxVersionesHistorial = 500
+
 // Historial devuelve todas las versiones de la declaracion de una obra, en
 // orden. ORDER BY explicito por lo mismo que en repertorio.go: reproducible
 // (ADR 0005).
+//
+// # Una sola consulta, y por que
+//
+// Antes eran 1 + N: el SELECT de las versiones y un `partesDeVersion` por cada
+// una. Medido con `log_statement = 'all'`: 14 sentencias para una obra de 12
+// versiones, con el SELECT de `declaraciones` repetido 12 veces. Ahora es una
+// con el mismo LEFT JOIN que [Store.VigentesDeObras] ya usaba -el historial de
+// la version sin partes del ejemplo es el de una version abierta y sin
+// declaracion, y ahi el join tiene que devolver la version con las columnas de
+// la parte en NULL, no saltarse la fila-.
+//
+// El LIMIT va sobre las VERSIONES, no sobre el resultado: puesto en la consulta
+// de fuera recortaria filas de PARTES, y una version con tres coautores podria
+// llegar con dos. De ahi la CTE.
 func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error) {
 	filas, err := s.pool.Query(ctx,
-		`SELECT version, vigente_desde, vigente_hasta FROM declaracion_versiones
-		  WHERE obra_id = $1 ORDER BY version`, obraID)
+		`WITH versiones AS (
+		     SELECT obra_id, version, vigente_desde, vigente_hasta
+		       FROM declaracion_versiones
+		      WHERE obra_id = $1
+		      ORDER BY version
+		      LIMIT $2
+		 )
+		 SELECT v.version, v.vigente_desde, v.vigente_hasta, d.titular_id, d.ipi, d.porcentaje
+		   FROM versiones v
+		   LEFT JOIN declaraciones d
+		     ON d.obra_id = v.obra_id AND d.version = v.version
+		  ORDER BY v.version, d.titular_id`,
+		obraID, maxVersionesHistorial+1)
 	if err != nil {
 		return nil, traducirError(err, "historial de declaraciones de la obra %q", obraID)
 	}
@@ -194,22 +236,52 @@ func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.Vers
 
 	var versiones []aplicacion.VersionDeclaracion
 	for filas.Next() {
-		var vd aplicacion.VersionDeclaracion
-		if err := filas.Scan(&vd.Version, &vd.VigenteDesde, &vd.VigenteHasta); err != nil {
+		var (
+			version int
+			desde   time.Time
+			hasta   *time.Time
+			titular *string
+			ipi     *string
+			pct     *decimal.Decimal
+		)
+		if err := filas.Scan(&version, &desde, &hasta, &titular, &ipi, &pct); err != nil {
 			return nil, traducirError(err, "escanear version de la obra %q", obraID)
 		}
-		versiones = append(versiones, vd)
+		// El ORDER BY es por version, asi que las filas de una misma version
+		// llegan juntas y en orden: la cabecera que hay que completar es la
+		// ultima, y no hace falta un mapa por version.
+		if len(versiones) == 0 || versiones[len(versiones)-1].Version != version {
+			versiones = append(versiones, aplicacion.VersionDeclaracion{
+				Version:      version,
+				VigenteDesde: desde,
+				VigenteHasta: hasta,
+				Declaracion:  repertorio.Declaracion{ObraID: obraID},
+			})
+		}
+		// Una version sin ninguna parte llega con las tres columnas en NULL: es
+		// el LEFT JOIN, y se salta en vez de inventar una parte vacia.
+		if titular != nil {
+			ultima := &versiones[len(versiones)-1]
+			ultima.Declaracion.Partes = append(ultima.Declaracion.Partes, repertorio.Parte{
+				TitularID: *titular,
+				// ipi y porcentaje son NOT NULL en la misma fila que
+				// titular_id, asi que si la parte existe los tres existen.
+				IPI:        *ipi,
+				Porcentaje: *pct,
+			})
+		}
 	}
+	// No es opcional: un fallo a mitad de stream dejaria un historial TRUNCADO
+	// pasando por completo.
 	if err := filas.Err(); err != nil {
 		return nil, traducirError(err, "historial de declaraciones de la obra %q", obraID)
 	}
 
-	for i := range versiones {
-		partes, err := s.partesDeVersion(ctx, obraID, versiones[i].Version)
-		if err != nil {
-			return nil, err
-		}
-		versiones[i].Declaracion = repertorio.Declaracion{ObraID: obraID, Partes: partes}
+	// Se pidio una de mas a proposito: si llega, hay al menos una que no cabe.
+	if len(versiones) > maxVersionesHistorial {
+		return nil, fmt.Errorf(
+			"el historial de la obra %q pasa de %d versiones: la consulta tiene un tope y no se devuelve un historial recortado sin decirlo",
+			obraID, maxVersionesHistorial)
 	}
 	return versiones, nil
 }

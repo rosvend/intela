@@ -1,18 +1,122 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
+
+// contadorDeConsultas cuenta sentencias contra la base. Es el instrumento con
+// el que se mide el N+1 del item 1 SIN deducirlo del codigo: el defecto se
+// midio asi -`log_statement = 'all'`, 14 sentencias para 12 versiones-, y la
+// prueba tiene que medir lo mismo.
+//
+// Se engancha al pool en su construccion: pgx no deja poner un tracer despues,
+// asi que el test monta su PROPIO pool sobre el mismo contenedor (misma DSN) en
+// vez de tocar `testhelp`, que es ciclo de vida y nada mas.
+type contadorDeConsultas struct {
+	consultas int
+}
+
+var _ pgx.QueryTracer = (*contadorDeConsultas)(nil)
+
+func (c *contadorDeConsultas) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.consultas++
+	return ctx
+}
+
+func (c *contadorDeConsultas) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// storeInstrumentado devuelve un Store sobre un pool que cuenta consultas, en
+// la MISMA base que ya sembro la prueba.
+//
+// El DSN entra como parametro y no se pide aqui: `testhelp.DSN` RESTAURA la
+// plantilla en cada llamada -deja la base recien migrada y vacia-, asi que
+// pedirlo despues de sembrar borraria los datos de la prueba. Medido: la
+// primera version de esta prueba recibia 0 versiones por exactamente eso.
+func storeInstrumentado(t *testing.T, dsn string, c *contadorDeConsultas) *Store {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool instrumentado: %v", err)
+	}
+	cfg.ConnConfig.Tracer = c
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool instrumentado: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return Nuevo(pool)
+}
+
+// El item 1: el historial de una obra cuesta UN numero de consultas
+// INDEPENDIENTE del numero de versiones. Con el bucle de antes eran 1 + N.
+//
+// Se mide con dos tamanos a proposito: un unico caso con N fijo pasaria igual
+// si el numero de consultas resultara ser, por casualidad, el que se espera.
+// Con 2 y con 9, "1" no puede ser un accidente de N.
+func TestHistorialResuelveTodasLasVersionesEnUnaConsulta(t *testing.T) {
+	for _, versiones := range []int{2, 9} {
+		t.Run(fmt.Sprintf("%d versiones", versiones), func(t *testing.T) {
+			// El DSN primero: `testhelp` restaura la plantilla en cada
+			// llamada, y pedirlo despues de `sembrar` borraria lo sembrado.
+			dsn := testhelp.DSN(t)
+			s, _ := sembrar(t)
+			t1 := time.Now().UTC().Truncate(time.Microsecond)
+			for i := 0; i < versiones; i++ {
+				// Cada version con DOS partes: si el LIMIT estuviera mal
+				// puesto -sobre el resultado y no sobre las versiones-, una
+				// version llegaria con una sola parte y la comprobacion de
+				// abajo lo caza.
+				if _, _, err := s.Guardar(t.Context(), partesDePrueba(t, int64(60-i), 40), t1.Add(time.Duration(i)*time.Hour), usuarioAdmin); err != nil {
+					t.Fatalf("Guardar v%d: %v", i+1, err)
+				}
+			}
+
+			c := &contadorDeConsultas{}
+			historial, err := storeInstrumentado(t, dsn, c).Historial(t.Context(), obraSinDeclaracion)
+			if err != nil {
+				t.Fatalf("Historial: %v", err)
+			}
+			if len(historial) != versiones {
+				t.Fatalf("se esperaban %d versiones, llegaron %d", versiones, len(historial))
+			}
+			// El numero no depende de N: es la propiedad, no el valor.
+			if c.consultas != 1 {
+				t.Fatalf("consultas = %d para %d versiones, se esperaba 1", c.consultas, versiones)
+			}
+			// Y las partes de CADA version siguen siendo las suyas, no una
+			// mezcla ni un recorte por el LIMIT.
+			for i, vd := range historial {
+				if vd.Version != i+1 {
+					t.Fatalf("version %d en la posicion %d: el orden tiene que ser por version", vd.Version, i)
+				}
+				if len(vd.Declaracion.Partes) != 2 {
+					t.Fatalf("la version %d llego con %d partes, se esperaban 2",
+						vd.Version, len(vd.Declaracion.Partes))
+				}
+				if vd.Declaracion.Partes[0].Porcentaje.String() != fmt.Sprintf("%d", 60-i) {
+					t.Fatalf("la version %d no lleva su porcentaje: %+v",
+						vd.Version, vd.Declaracion.Partes)
+				}
+			}
+		})
+	}
+}
 
 func partesDePrueba(t *testing.T, split1, split2 int64) repertorio.Declaracion {
 	t.Helper()
