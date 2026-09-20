@@ -939,6 +939,8 @@ td {
   .panel-corridas-cuerpo {
     grid-template-columns: 1fr;
   }
+}
+
 /* ---------- ingesta (#29) ---------- */
 
 /*
