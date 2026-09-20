@@ -95,15 +95,20 @@ func ejecutar(log *slog.Logger) error {
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
 	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
 	//
-	// El padron entra aqui tambien, y es el MISMO valor de arriba: guardar una
-	// declaracion no puede escribir una parte que R-01 prohibe, y la regla se
-	// cablea una sola vez. Declaraciones lo recibe por el puerto
-	// -PadronTitulares, el nucleo no conoce el caso de uso del padron-, y que
-	// sea este valor quien lo satisface es decision de este main. De ahi que
-	// `padron` se construya antes de esta linea.
+	// El guardia de R-01 apunta al STORE, no a `padron`. Es el mismo adaptador
+	// -por eso los dos satisfacen el puerto-, pero no es el mismo camino:
+	// `padron` es el MODELO DE LECTURA, y un modelo de lectura recorta. Hoy
+	// mete un tope por defecto de pagina
+	// ([aplicacion.Titulares.BuscarTitulares] lo aplica con `ConDefecto`), y
+	// cualquier dia puede recortar por algo mas -"el padron es de escritores"-
+	// sin que nadie lo mire. Un guardia que mira otra cosa que la tabla que
+	// guarda lo que se le pide comprueba lo que le dejen, y ese dia R-01
+	// dejaria pasar a una sociedad en silencio, que es el defecto caro de esta
+	// regla. El cableado es decision de este main, asi que la decision se
+	// escribe aqui: el nucleo no conoce ninguno de los dos.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
-		Padron:  padron,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 

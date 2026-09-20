@@ -151,14 +151,15 @@ func construir() (http.Handler, error) {
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
 	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
 	//
-	// El padron va cableado aqui y es el MISMO valor de arriba: guardar una
-	// declaracion exige comprobar R-01 antes de escribir, y eso se cablea una
-	// sola vez. Declaraciones lo recibe por el puerto -PadronTitulares, el
-	// nucleo no conoce el caso de uso del padron-, y que sea este valor quien
-	// lo satisface es decision de este main.
+	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
+	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
+	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
+	// padron debe mostrar-, y un guardia que mira lo recortado deja pasar en
+	// silencio lo que no ve. `padron` sigue construido arriba porque lo usa el
+	// handler HTTP de `GET /titulares`.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
-		Padron:  padron,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 

@@ -6,7 +6,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 // padronFalso registra el filtro que le llego y devuelve lo que le pongan. Es
@@ -129,5 +132,45 @@ func TestBuscarTitularesPropagaElError(t *testing.T) {
 	_, err := (Titulares{Padron: padron}).BuscarTitulares(t.Context(), FiltroTitulares{})
 	if !errors.Is(err, fallo) {
 		t.Fatalf("se esperaba el error del puerto, se obtuvo %v", err)
+	}
+}
+
+// El guardia de R-01 atravesando el MODELO DE LECTURA, que es como estaba
+// cableado antes del item 4 y como seguiria si alguien "unificara" los dos
+// valores de los `main` otra vez.
+//
+// El cableado de un `main` no tiene test unitario (D-007: un
+// `Declaraciones.Padron == store` comprueba la linea que se acaba de escribir,
+// no la propiedad que importa), asi que lo que se prueba aqui es la propiedad:
+// que cablear el caso de uso en vez del store NO esconde a la productora. Hoy
+// pasa por una razon concreta y fragil -el modelo de lectura no recorta por su
+// cuenta, solo aplica la paginacion que le llega, y el guardia le dice cuantas
+// filas pedir-, y ese es justo el hecho que este test deja fijado: el dia que
+// `BuscarTitulares` empiece a recortar por algo mas, cae aqui y no en
+// produccion.
+func TestElGuardiaDeR01VeALaProductoraTambienConElModeloDeLectura(t *testing.T) {
+	ana := titularDePrueba(t, "tit-ana", "Ana Escritora", "IPI-00000001", true, afiliacion.ClaseSocio)
+	// Con IPI: una juridica puede tenerlo en el padron, y sin el la parte ni
+	// siquiera pasaria `repertorio.NuevaDeclaracion`, que es otra puerta.
+	productora := titularDePrueba(t, "tit-prod", "Productora del Caribe S.A.S.", "IPI-00000009", false, afiliacion.ClaseAdministrado)
+	store := &padronFalso{titulares: []afiliacion.Titular{ana, productora}}
+
+	gestion := &gestionFalsa{}
+	d := Declaraciones{
+		Gestion: gestion,
+		Padron:  Titulares{Padron: store},
+		Reloj:   relojFijo{},
+	}
+	partes := []repertorio.Parte{
+		{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.NewFromInt(50)},
+		{TitularID: "tit-prod", IPI: "IPI-00000009", Porcentaje: decimal.NewFromInt(50)},
+	}
+
+	_, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if !errors.Is(err, ErrTitularNoEsPersonaNatural) {
+		t.Fatalf("se esperaba ErrTitularNoEsPersonaNatural, se obtuvo %v", err)
+	}
+	if gestion.guardadas != 0 {
+		t.Fatal("se guardo una declaracion con una sociedad dentro")
 	}
 }
