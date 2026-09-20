@@ -104,6 +104,56 @@ var (
 	// el catalogo", que no es lo que paso.
 	ErrTitularInexistente = errors.New("ese titular no existe")
 
+	// ErrTitularNoEsPersonaNatural: la declaracion nombra un titular que SI
+	// esta en el padron y que no puede recibir reparto, porque no es persona
+	// natural (`R-01`, `RD 4.5`).
+	//
+	// No es ErrTitularInexistente, y la diferencia es la razon de ser de los
+	// dos: alli el titular_id no resuelve a nadie y el defecto esta en el dato
+	// que llego; aqui el dato es correcto -una productora tiene su fila en el
+	// padron, con su nombre y su clase- y lo que la rechaza es la REGLA. Los
+	// dos salen como 400 porque el campo viene en el cuerpo de la peticion,
+	// pero dicen cosas distintas y por eso llevan mensajes distintos: decirle
+	// "no existe" a quien mando el id de una sociedad que si existe lo manda a
+	// buscar un error que no cometio.
+	//
+	// Existe porque hasta ahora la unica barrera de R-01 en el camino de la
+	// declaracion era el trigger `resultados_titular_persona_natural`
+	// (migracion 00001), que dispara en `resultados_titular`, es decir al
+	// PAGAR: la declaracion con una sociedad dentro se guardaba con 200 y el
+	// reparto la rechazaba mucho mas tarde, con una excepcion cruda de
+	// Postgres y con el dinero ya en juego. Este centinela es lo que permite
+	// decirlo en la puerta de entrada, antes de abrir la version.
+	//
+	// El trigger no se toca: sigue siendo la ultima linea, y la unica que
+	// cubre lo que entre por SQL crudo -lo dice el comentario de
+	// `afiliacion.Titular.PuedeRecibirReparto`-. Esto es la mitad del nucleo.
+	ErrTitularNoEsPersonaNatural = errors.New("ese titular no es persona natural")
+
+	// ErrIPIQueNoCuadra: la parte declara un IPI que no es el del titular en el
+	// padron.
+	//
+	// El IPI es el identificador de la sociedad de gestion en el sistema CISAC
+	// (`RD 3`), y es lo que aguas abajo dice A QUIEN se le paga: la columna
+	// `resultados_titular.ipi` guarda el valor que llego en la declaracion, no
+	// el del padron. Dos numeros distintos para el mismo titular significan que
+	// el reparto puede pagarle a una persona con el identificador de otra, y eso
+	// no lo caza ninguna otra comprobacion: `declaraciones.ipi` es TEXT NOT NULL
+	// sin FK ni CHECK (migracion 00001), asi que el esquema acepta cualquier
+	// cadena.
+	//
+	// No es ErrTitularInexistente ni ErrTitularNoEsPersonaNatural, y la
+	// diferencia importa: ahi lo que falla es la ENTIDAD -no resuelve a nadie, o
+	// resuelve a quien la regla no admite-, y aqui la entidad esta bien y lo que
+	// discrepa es un DATO de la parte. Quien edita tiene que corregir un numero,
+	// no cambiar de titular.
+	//
+	// Se compara contra el padron y no se sobrescribe en silencio: poblar el IPI
+	// desde el padron ignorando lo que llego haria que la pantalla y la base
+	// discrepasen sin decirlo, y una discrepancia que nadie ve es la que se
+	// descubre en una auditoria.
+	ErrIPIQueNoCuadra = errors.New("el IPI declarado no es el del padron")
+
 	// ErrBolsaDuplicada: ya hay una bolsa para ese usuario, periodo y circuito.
 	//
 	// No es "no se pudo escribir" y no es un dato invalido: el alta estaba bien
