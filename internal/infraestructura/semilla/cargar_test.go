@@ -12,7 +12,6 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
-	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -174,8 +173,10 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 	}
 
 	// *Store no es CatalogoObras: PorID ya es el de la bitacora (Asiento).
-	// El adaptador catalogo tapa ese metodo con el de la obra.
-	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras()}
+	// El adaptador catalogo tapa ese metodo con el de la obra. Declaraciones
+	// si va al store: el catalogo compone el estado de la declaracion de cada
+	// obra al leerla, y sin ese puerto la lectura revienta.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
 	if err != nil {
@@ -219,7 +220,9 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 	}
 }
 
-func ids(obras []repertorio.Obra) []string {
+// Lo que devuelve el catalogo es la obra con su declaracion ya compuesta
+// (aplicacion.ObraDelCatalogo), no la entidad suelta.
+func ids(obras []aplicacion.ObraDelCatalogo) []string {
 	out := make([]string, len(obras))
 	for i, o := range obras {
 		out[i] = o.ID()

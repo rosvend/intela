@@ -73,6 +73,59 @@ type Obra struct {
 	EstadoDecl string
 }
 
+// ObraDelCatalogo es una entrada del catalogo maestro tal como la sirve el
+// catalogo: sus metadatos y, ademas, lo que el sistema sabe hoy de su
+// Declaracion de Obra.
+//
+// # Por que es una proyeccion y no la entidad
+//
+// [repertorio.Obra] es identidad y metadatos: no tiene donde poner un estado
+// que sale de `declaraciones`, y no debe tenerlo -el porcentaje de reparto
+// nace en la Declaracion de Obra y en ningun otro sitio (`R-02`, `R-03`)-.
+// Los tres campos que van aqui son LEIDOS de la declaracion vigente, no
+// declarables desde el catalogo.
+//
+// # VersionVigente es el ORIGEN del estado, no un tercer estado
+//
+// `EstadoDecl` solo distingue "completa" de "incompleta", y con eso una obra
+// que nunca se declaro y una declarada que no suma 100 son indistinguibles:
+// las dos son `incompleta`, y las dos se retienen (`R-04`). Una pantalla que
+// pintara "incompleta" sobre una obra sin ninguna declaracion afirmaria una
+// declaracion que nadie hizo. `VersionVigente` en nil dice lo que de verdad
+// pasa -no hay ninguna version- y por eso el estado no necesita un tercer
+// valor: `invalida` no es un estado del modelo sino lo que el backend
+// RECHAZA al escribir (una suma por encima de 100), asi que no puede estar
+// persistido ni aparecer en un listado.
+type ObraDelCatalogo struct {
+	// La entidad entera -identidad y metadatos- se embebe para que una obra
+	// proyectada siga respondiendo ID(), Metadatos() y Coautores(): el
+	// catalogo y su estado son la misma obra, no dos cosas que haya que
+	// volver a cruzar por id.
+	repertorio.Obra
+
+	// EstadoDecl es "completa" o "incompleta", y lo calcula el dominio
+	// ([repertorio.Declaracion.Estado]): no hay un tercer valor. Una suma por
+	// debajo de 100 es `incompleta`, un estado VALIDO del negocio -se retiene
+	// el total de esa obra, nunca se reparte a medias-, no un error.
+	EstadoDecl string
+
+	// SumaPorcentajes es la suma de los porcentajes de las partes de la
+	// version vigente; cero si la obra no tiene ninguna.
+	//
+	// No es "cuanto le toca a nadie" ni un reparto: es cuanto esta declarado.
+	// Y no se deduce del estado ni el estado de ella: una parte sin IPI deja
+	// la declaracion `incompleta` con la suma en 100, asi que quien muestre
+	// las dos cosas tiene que mostrar las dos -ver el comentario de arriba
+	// sobre no afirmar mas de lo que el sistema sabe-.
+	SumaPorcentajes decimal.Decimal
+
+	// VersionVigente es la version ABIERTA de la declaracion de la obra, y
+	// nil quiere decir que la obra no tiene ninguna declaracion -distincion
+	// que `EstadoDecl` por si solo no puede hacer: ver el comentario del
+	// tipo-.
+	VersionVigente *int
+}
+
 // VersionDeclaracion es una Declaracion de Obra con su ventana de vigencia.
 //
 // La vigencia vive aqui y no en [repertorio.Declaracion] porque depguard

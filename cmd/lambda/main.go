@@ -135,38 +135,41 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store cubre bitacora, ONI, declaraciones y recaudo.
-	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): el nucleo
-	// sigue viendo puertos separados.
+	// El mismo *Store cubre bitacora, ONI, declaraciones, padron y recaudo.
+	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): PorID ya
+	// es el de la bitacora. Declaraciones se lee aparte para componer el
+	// estado de cada obra. El nucleo sigue viendo puertos separados.
 	//
 	// El asiento de auditoria de declaraciones y recaudo lo escribe el
 	// propio adaptador dentro de la misma transaccion -no un
 	// BitacoraAuditoria aparte-, ver puertos.go. Mismo cableado que
 	// cmd/api: este binario es un adaptador primario mas y comparte el
 	// Router().
-	casos := httpapi.Casos{
-		Salud:      store,
-		Auth:       autenticacion,
-		Catalogo:   aplicacion.Catalogo{Obras: store.CatalogoObras()},
-		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
-		PublicarONI: aplicacion.PublicarListadoONI{
-			ONI:         store,
-			Bitacora:    store,
-			Reloj:       reloj.Sistema{},
-			Tx:          store,
-			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
-			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
-		},
-		Declaraciones: aplicacion.Declaraciones{
-			Gestion: store,
-			Reloj:   reloj.Sistema{},
-		},
-		Recaudo: aplicacion.Recaudo{
-			Bolsas:  store,
-			Gestion: store,
-			Reloj:   reloj.Sistema{},
-		},
-		Cola: aplicacion.Normalizacion{Reportes: store},
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
+
+	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
+	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
+	// al contrario que la boveda de la ingesta de abajo.
+	padron := aplicacion.Titulares{Padron: store}
+
+	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
+	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
+	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
+	// padron debe mostrar-, y un guardia que mira lo recortado deja pasar en
+	// silencio lo que no ve. `padron` sigue construido arriba porque lo usa el
+	// handler HTTP de `GET /titulares`.
+	declaraciones := aplicacion.Declaraciones{
+		Gestion: store,
+		Padron:  store,
+		Reloj:   reloj.Sistema{},
+	}
+
+	// El lado del ingreso (#27). Mismo cableado que cmd/api: este binario es un
+	// adaptador primario mas, hermano suyo, y comparte el Router().
+	recaudo := aplicacion.Recaudo{
+		Bolsas:  store,
+		Gestion: store,
+		Reloj:   reloj.Sistema{},
 	}
 
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
@@ -178,7 +181,24 @@ func construir() (http.Handler, error) {
 	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
 	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
 	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
-	api := httpapi.Nueva(casos, httpapi.Opciones{
+	api := httpapi.Nueva(httpapi.Casos{
+		Salud:      store,
+		Auth:       autenticacion,
+		Catalogo:   catalogo,
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
+		Padron:        padron,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
+	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
 	})

@@ -93,16 +93,35 @@ func ejecutar(log *slog.Logger) error {
 	}
 	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
-	// El mismo *Store cubre bitacora, ONI, declaraciones y recaudo.
-	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): el nucleo
-	// sigue viendo puertos separados.
-	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras()}
+	// El mismo *Store cubre bitacora, ONI, declaraciones, padron y recaudo.
+	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): PorID ya
+	// es el de la bitacora. Declaraciones se lee aparte para componer el
+	// estado de cada obra. El nucleo sigue viendo puertos separados.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
+
+	// El padron de titulares, que es de donde el editor de splits saca las
+	// partes de una declaracion. La satisface el mismo *Store, y con esto es
+	// la primera lectura de `titulares` en produccion.
+	padron := aplicacion.Titulares{Padron: store}
 
 	// El asiento de auditoria de declaraciones y recaudo lo escribe el
 	// propio adaptador dentro de la misma transaccion -no un
 	// BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El guardia de R-01 apunta al STORE, no a `padron`. Es el mismo adaptador
+	// -por eso los dos satisfacen el puerto-, pero no es el mismo camino:
+	// `padron` es el MODELO DE LECTURA, y un modelo de lectura recorta. Hoy
+	// mete un tope por defecto de pagina
+	// ([aplicacion.Titulares.BuscarTitulares] lo aplica con `ConDefecto`), y
+	// cualquier dia puede recortar por algo mas -"el padron es de escritores"-
+	// sin que nadie lo mire. Un guardia que mira otra cosa que la tabla que
+	// guarda lo que se le pide comprueba lo que le dejen, y ese dia R-01
+	// dejaria pasar a una sociedad en silencio, que es el defecto caro de esta
+	// regla. El cableado es decision de este main, asi que la decision se
+	// escribe aqui: el nucleo no conoce ninguno de los dos.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
@@ -132,6 +151,7 @@ func ejecutar(log *slog.Logger) error {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
+		Padron:        padron,
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
