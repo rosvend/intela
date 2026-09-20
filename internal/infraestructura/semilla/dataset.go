@@ -7,6 +7,7 @@ package semilla
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -425,7 +426,14 @@ func (d *Dataset) usuariosDeRecaudo() {
 // El ano es el del periodo menos uno. No se calcula con el reloj: sale del
 // periodo, como en el nucleo (ADR 0005).
 func (d *Dataset) canales() {
-	const anioAudiencia = 2024 // Periodo es 2025-01
+	// Se deriva de Periodo y no de un literal: un literal se desincroniza en
+	// silencio el dia que Periodo cambie, y la guarda de dataset_test.go deja
+	// de proteger nada.
+	anio, err := strconv.Atoi(Periodo[:4])
+	if err != nil {
+		panic("semilla: Periodo no empieza por un ano de 4 digitos: " + err.Error())
+	}
+	anioAudiencia := anio - 1
 
 	d.Canales = []Canal{
 		{
@@ -552,7 +560,7 @@ func usoTV(canal, obraID, titulo, idFuente, tipo, duracion string, emisiones int
 // usoCine, usoOTT y usoTransporte llevan el canal explicito por la misma razon
 // que usoTV: sin el, UsosDeCanal (#119) no encuentra estas filas al filtrar
 // por el pagador de la bolsa, y la bolsa de ese pagador queda sin nada que
-// ponderar (hallazgo de revision sobre el PR #137).
+// ponderar.
 func usoCine(canal, obraID, titulo, idFuente, taquilla, espectadores string) aplicacion.UsoPersistido {
 	u := usoIdentificado(obraID, titulo, idFuente, reparto.Cine, "cinematografica", "0", 1, "0", taquilla, "0", "0", "0")
 	u.Espectadores = decimal.RequireFromString(espectadores)

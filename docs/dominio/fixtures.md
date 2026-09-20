@@ -229,12 +229,21 @@ tanto no afirman nada sobre rating que nadie haya medido.
 
 `usos.canal_id` es **quien pago**, no quien entrego el archivo. Son cosas distintas y la
 confusion sale cara: `fuente` es la entrega (ADR 0018), y una sola entrega de Caracol puede
-cubrir varios canales. Por eso la columna existe aparte y por eso `usoTV` la exige.
+cubrir varios canales. Por eso la columna existe aparte, y por eso los cuatro constructores de
+uso del sembrador (`usoTV`, `usoCine`, `usoOTT`, `usoTransporte`) la reciben como parametro
+explicito.
 
 No tiene clave foranea a `canales` a proposito (migracion 00011): conserva el identificador que
 declaro la fuente aunque el catalogo anual todavia no conozca ese canal. Un canal sin fila en
 `canales_clasificacion` devuelve grupo vacio, que fuera de suscripcion no se usa y dentro de ella
 falla ruidosamente en el motor.
+
+**El sembrador es la unica fuente que puebla `canal_id` hoy.** Ningun adaptador de ingesta real
+(`MapaCaracol`, `MapaNetflix`, `MapaCine`) mapea una columna del archivo del cliente a
+`CampoCanalID`: quien puebla esta columna en produccion es **P-20**, abierta en
+[`preguntas-cliente.md`](preguntas-cliente.md). Mientras no se resuelva, toda fila que entra por
+`IngerirReporte` llega con `canal_id = ''`, y `UsosSinCanal` es como se detecta ese hueco en vez
+de confundirlo con "el canal no emitio".
 
 ### Medidas de `RD 9.2` y `RD 9.4`
 

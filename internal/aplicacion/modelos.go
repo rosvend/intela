@@ -256,6 +256,32 @@ type UsoDeReparto struct {
 	GrupoEfectivo string
 }
 
+// ResumenUsosDeCanal cuenta, dentro de un (periodo, canal), los usos que NO
+// llegan al motor porque no tienen obra identificada (`usos.obra_id IS NULL`).
+//
+// La plata de esas filas no se puede sumar a otra obra ni desaparecer en
+// silencio: la de ONI queda en reserva (`RD 13.8`, R-18/R-19), y ningun
+// tratamiento se puede confundir con otro, porque el reglamento los trata
+// distinto:
+//
+//   - Pendientes: la cascada de identificacion (ADR 0007) todavia no corrio
+//     sobre la fila. No es lo mismo que "no se reconocio nada" -- es "no se
+//     ha intentado".
+//   - ONI: la cascada corrio y no reconocio ninguna obra.
+//   - Excluidos: el canal esta fuera del catalogo de REDES SGC (R-27), asi
+//     que la fila nunca tuvo obra que identificar.
+type ResumenUsosDeCanal struct {
+	Pendientes int
+	ONI        int
+	Excluidos  int
+}
+
+// TotalSinIdentificar es cuantos usos del (periodo, canal) se quedaron fuera
+// de la corrida por cualquiera de los tres motivos.
+func (r ResumenUsosDeCanal) TotalSinIdentificar() int {
+	return r.Pendientes + r.ONI + r.Excluidos
+}
+
 // ItemRevision es una fila de la cola de revision: lo que no se pudo
 // normalizar, y mas adelante las anomalias del #37.
 //

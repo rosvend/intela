@@ -363,9 +363,22 @@ type RepositorioIdentificacion interface {
 // regla de que es el ano INMEDIATAMENTE ANTERIOR al periodo es `RD 9.5.4`, y
 // dejarla en el adaptador la volveria improbable sin una base de datos.
 //
-// Un canal sin filas devuelve la lista vacia, no ErrNoEncontrado.
+// Un canal sin filas devuelve la lista vacia, no ErrNoEncontrado. UsosDeCanal
+// solo devuelve filas con obra identificada (`obra_id IS NOT NULL`): una fila
+// pendiente, ONI o excluida (R-27) nunca llega al motor con un `ObraID`
+// vacio, y ResumenUsosDeCanal cuenta cuantas se quedaron fuera y por que, para
+// que ese dinero no desaparezca en silencio (RD 13.8, R-18/R-19).
 type RepositorioUsosDeReparto interface {
-	UsosDeCanal(ctx context.Context, periodo, canalID string, anioClasificacion int) ([]UsoDeReparto, error)
+	UsosDeCanal(
+		ctx context.Context, periodo, canalID string, anioClasificacion int,
+	) ([]UsoDeReparto, ResumenUsosDeCanal, error)
+
+	// UsosSinCanal cuenta los usos de un periodo -- de cualquier pagador -- que
+	// llegaron con `canal_id` vacio. Mientras ningun adaptador de ingesta
+	// (`internal/infraestructura/ingesta`) mapee la columna real de canal, esto
+	// es lo unico que distingue "el canal no emitio" (cero filas SUYAS) de "la
+	// fuente no dijo de que canal eran" (filas ajenas a todos los canales).
+	UsosSinCanal(ctx context.Context, periodo string) (int, error)
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.

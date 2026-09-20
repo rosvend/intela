@@ -74,6 +74,27 @@ func TestUsoDeRepartoConservaLaAtribucionDeCanalYLasMedidas(t *testing.T) {
 	}
 }
 
+// TestUsoDeRepartoSinObraEsErrorTipado comprueba la segunda linea de defensa:
+// una fila pendiente, ONI o excluida tiene `obra_id` NULL, y
+// COALESCE(obra_id, ”) la convierte en una obra fantasma de id "" si nada la
+// detiene antes del motor. El filtro real vive en el SQL de UsosDeCanal; esto
+// atrapa a un adaptador futuro que lo olvide.
+func TestUsoDeRepartoSinObraEsErrorTipado(t *testing.T) {
+	t.Parallel()
+
+	f := usoDeCanal("rcn", reparto.TV, "")
+	f.Uso.ObraID = ""
+	f.Uso.ID = "u-sin-obra"
+
+	_, err := aUsoDeReparto(f)
+	if !errors.Is(err, ErrUsoSinObra) {
+		t.Fatalf("una fila sin obra_id tiene que ser ErrUsoSinObra, no un Uso con ObraID vacio: %v", err)
+	}
+	if !strings.Contains(err.Error(), "u-sin-obra") {
+		t.Errorf("el error no dice que fila fue: %v", err)
+	}
+}
+
 func TestUsoDeRepartoConModalidadDesconocidaEsErrorTipado(t *testing.T) {
 	t.Parallel()
 
@@ -160,44 +181,68 @@ func TestAnioDeClasificacionEsElInmediatamenteAnterior(t *testing.T) {
 }
 
 type usosDeCanalFalsos struct {
-	porCanal map[string][]UsoDeReparto
-	err      error
-	pedido   []string
+	porCanal    map[string][]UsoDeReparto
+	resumen     ResumenUsosDeCanal
+	sinCanal    int
+	err         error
+	errSinCanal error
+	pedido      []string
 }
 
-func (u *usosDeCanalFalsos) UsosDeCanal(_ context.Context, periodo, canalID string, anio int) ([]UsoDeReparto, error) {
+func (u *usosDeCanalFalsos) UsosDeCanal(_ context.Context, periodo, canalID string, anio int) ([]UsoDeReparto, ResumenUsosDeCanal, error) {
 	u.pedido = append(u.pedido, fmt.Sprintf("%s/%s/%d", periodo, canalID, anio))
-	return u.porCanal[canalID], u.err
+	return u.porCanal[canalID], u.resumen, u.err
 }
 
-func TestUsosDeCanalDevuelveSoloLosDelCanalPedido(t *testing.T) {
+func (u *usosDeCanalFalsos) UsosSinCanal(_ context.Context, _ string) (int, error) {
+	return u.sinCanal, u.errSinCanal
+}
+
+func TestUsosDeCanalPasaLosArgumentosYPropagaElResultado(t *testing.T) {
 	t.Parallel()
 
-	repo := &usosDeCanalFalsos{porCanal: map[string][]UsoDeReparto{
-		"caracol": {usoDeCanal("caracol", reparto.TV, "")},
-		"rcn": {
-			usoDeCanal("rcn", reparto.TV, ""),
-			usoDeCanal("rcn", reparto.TV, ""),
+	repo := &usosDeCanalFalsos{
+		porCanal: map[string][]UsoDeReparto{
+			"rcn": {usoDeCanal("rcn", reparto.TV, ""), usoDeCanal("rcn", reparto.TV, "")},
 		},
-	}}
+		resumen: ResumenUsosDeCanal{Pendientes: 1, ONI: 2},
+	}
 	r := Reparto{Usos: repo}
 
-	usos, err := r.UsosDeCanal(t.Context(), "2025-01", "rcn")
+	usos, resumen, err := r.UsosDeCanal(t.Context(), "2025-01", "rcn")
 	if err != nil {
 		t.Fatalf("reunir los usos de un canal: %v", err)
 	}
 	if len(usos) != 2 {
 		t.Fatalf("usos = %d, se esperaban 2", len(usos))
 	}
-	for _, u := range usos {
-		if u.CanalID != "rcn" {
-			t.Errorf("se colo un uso de %q en la corrida de rcn", u.CanalID)
-		}
+	if resumen != (ResumenUsosDeCanal{Pendientes: 1, ONI: 2}) {
+		t.Errorf("el resumen de exclusiones no se propago: %+v", resumen)
 	}
 	// Una sola consulta, y la clasificacion se pide contra 2024: RD 9.5.4
 	// mira el ano inmediatamente anterior al que se reparte.
 	if len(repo.pedido) != 1 || repo.pedido[0] != "2025-01/rcn/2024" {
 		t.Errorf("consulta = %v, se esperaba una sola por (periodo, canal, ano anterior)", repo.pedido)
+	}
+}
+
+// TestUsosDeCanalRechazaUnCanalVacio: un canal vacio no identifica ninguna
+// bolsa, y dejarlo pasar como filtro devolveria las filas sin atribuir de
+// TODOS los pagadores mezcladas en una sola corrida.
+func TestUsosDeCanalRechazaUnCanalVacio(t *testing.T) {
+	t.Parallel()
+
+	for _, canal := range []string{"", "   "} {
+		repo := &usosDeCanalFalsos{}
+		r := Reparto{Usos: repo}
+
+		_, _, err := r.UsosDeCanal(t.Context(), "2025-01", canal)
+		if !errors.Is(err, ErrCanalVacio) {
+			t.Fatalf("canal %q: se esperaba ErrCanalVacio, se obtuvo %v", canal, err)
+		}
+		if len(repo.pedido) != 0 {
+			t.Errorf("canal %q: se consulto el repositorio con un canal vacio", canal)
+		}
 	}
 }
 
@@ -208,7 +253,7 @@ func TestUsosDeCanalPropagaElErrorDeUnaFilaConSuIdentificador(t *testing.T) {
 	malo.Uso.ID = "u-rota"
 	r := Reparto{Usos: &usosDeCanalFalsos{porCanal: map[string][]UsoDeReparto{"rcn": {malo}}}}
 
-	_, err := r.UsosDeCanal(t.Context(), "2025-01", "rcn")
+	_, _, err := r.UsosDeCanal(t.Context(), "2025-01", "rcn")
 	if !errors.Is(err, reparto.ErrModalidadDesconocida) {
 		t.Fatalf("el error de la fila tiene que llegar tipado arriba: %v", err)
 	}
@@ -223,10 +268,23 @@ func TestUsosDeCanalRechazaUnPeriodoInvalidoSinTocarElRepositorio(t *testing.T) 
 	repo := &usosDeCanalFalsos{}
 	r := Reparto{Usos: repo}
 
-	if _, err := r.UsosDeCanal(t.Context(), "2025-13", "rcn"); err == nil {
+	if _, _, err := r.UsosDeCanal(t.Context(), "2025-13", "rcn"); err == nil {
 		t.Fatal("un periodo fuera de rango tiene que fallar antes de consultar")
 	}
 	if len(repo.pedido) != 0 {
 		t.Errorf("se consulto el repositorio con un periodo invalido: %v", repo.pedido)
+	}
+}
+
+func TestUsosSinCanalPropagaElConteo(t *testing.T) {
+	t.Parallel()
+
+	r := Reparto{Usos: &usosDeCanalFalsos{sinCanal: 59}}
+	n, err := r.UsosSinCanal(t.Context(), "2025-01")
+	if err != nil {
+		t.Fatalf("UsosSinCanal: %v", err)
+	}
+	if n != 59 {
+		t.Fatalf("n = %d, se esperaban 59", n)
 	}
 }

@@ -323,13 +323,17 @@ func TestCadaCanalDeTVTieneSuBolsa(t *testing.T) {
 	for _, b := range d.Bolsas {
 		conBolsa[b.UsuarioID] = true
 	}
+	// El valor exacto y no un "< 2025": un ">=" solo, sin cota inferior, dejaria
+	// pasar 2000 o cualquier otro ano que no fuera Periodo menos uno.
+	const anioEsperado = 2024 // Periodo es "2025-01"
 	for _, c := range d.Canales {
 		if !conBolsa[c.ID] {
 			t.Errorf("el canal %q no tiene bolsa en %s", c.ID, Periodo)
 		}
-		if c.AnioAudiencia >= 2025 {
-			t.Errorf("el canal %q se clasifica con audiencia de %d: RD 9.5.4 usa "+
-				"el ano inmediatamente anterior al periodo %s", c.ID, c.AnioAudiencia, Periodo)
+		if c.AnioAudiencia != anioEsperado {
+			t.Errorf("el canal %q se clasifica con audiencia de %d, se esperaba %d: "+
+				"RD 9.5.4 usa el ano inmediatamente anterior al periodo %s",
+				c.ID, c.AnioAudiencia, anioEsperado, Periodo)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -34,26 +35,52 @@ type Reparto struct {
 //
 // Un canal sin filas devuelve la lista vacia y no un error: que un canal no
 // haya emitido repertorio en el periodo es un hecho del negocio, no un fallo.
-func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]reparto.Uso, error) {
-	anio, err := anioDeClasificacion(periodo)
-	if err != nil {
-		return nil, err
+// Un canal VACIO es otra cosa -- no identifica ninguna bolsa, y tratarlo como
+// un filtro mas devolveria las filas sin atribuir de todos los pagadores
+// mezcladas en una sola corrida -- y por eso es un error tipado.
+//
+// El [ResumenUsosDeCanal] que devuelve es tan parte del contrato como la
+// lista: una fila pendiente, ONI o excluida nunca esta en `usos`, pero
+// tampoco desaparece sin dejar rastro (RD 13.8, R-18/R-19).
+func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]reparto.Uso, ResumenUsosDeCanal, error) {
+	if strings.TrimSpace(canalID) == "" {
+		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos de %q: %w", periodo, ErrCanalVacio)
 	}
 
-	filas, err := r.Usos.UsosDeCanal(ctx, periodo, canalID, anio)
+	anio, err := anioDeClasificacion(periodo)
 	if err != nil {
-		return nil, fmt.Errorf("usos del canal %q en %q: %w", canalID, periodo, err)
+		return nil, ResumenUsosDeCanal{}, err
+	}
+
+	filas, resumen, err := r.Usos.UsosDeCanal(ctx, periodo, canalID, anio)
+	if err != nil {
+		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q en %q: %w", canalID, periodo, err)
 	}
 
 	usos := make([]reparto.Uso, 0, len(filas))
 	for _, f := range filas {
 		u, err := aUsoDeReparto(f)
 		if err != nil {
-			return nil, fmt.Errorf("uso %q del canal %q: %w", f.Uso.ID, canalID, err)
+			return nil, ResumenUsosDeCanal{}, fmt.Errorf("uso %q del canal %q: %w", f.Uso.ID, canalID, err)
 		}
 		usos = append(usos, u)
 	}
-	return usos, nil
+	return usos, resumen, nil
+}
+
+// UsosSinCanal cuenta los usos de un periodo que ningun canal reclama.
+//
+// Existe porque hoy ningun adaptador de ingesta puebla `canal_id` con datos
+// reales (P-20, docs/dominio/preguntas-cliente.md): mientras esa decision no
+// llegue, "cero usos para un canal" no se distingue de "el canal no emitio"
+// sin este conteo aparte. Un numero mayor que cero es una senal de que hay
+// usos que ninguna corrida va a ponderar nunca, no un fallo en si mismo.
+func (r Reparto) UsosSinCanal(ctx context.Context, periodo string) (int, error) {
+	n, err := r.Usos.UsosSinCanal(ctx, periodo)
+	if err != nil {
+		return 0, fmt.Errorf("usos sin canal en %q: %w", periodo, err)
+	}
+	return n, nil
 }
 
 // aUsoDeReparto traduce una fila canonica al uso que consume el motor.
@@ -62,6 +89,10 @@ func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]re
 // el motor no conoce cae por el `default` de su switch y vale CERO PUNTOS, que
 // es una obra sin pagar en silencio. Aqui es un error tipado.
 func aUsoDeReparto(f UsoDeReparto) (reparto.Uso, error) {
+	if f.Uso.ObraID == "" {
+		return reparto.Uso{}, fmt.Errorf("uso %q: %w", f.Uso.ID, ErrUsoSinObra)
+	}
+
 	mod, err := reparto.ParseModalidad(string(f.Uso.Modalidad))
 	if err != nil {
 		return reparto.Uso{}, err

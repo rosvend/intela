@@ -195,10 +195,15 @@ func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, d
 // Con Provider y no con las globales de [migraciones.Aplicar]: esas son estado
 // del proceso y esto corre dentro de un binario de pruebas con -race.
 //
-// Sobre base VACIA a proposito. Un `down` con datos que solo el esquema nuevo
-// admite -- una fila en `teatro`, que el CHECK anterior no acepta -- tiene que
-// fallar, y eso es correcto: lo que se comprueba aqui es que los bloques Down
-// estan bien escritos, no que se pueda revertir sobre cualquier dato.
+// # No empieza en cero
+//
+// testhelp.DSN entrega una base ya migrada a la version mas alta (es su
+// plantilla, para que las pruebas de este paquete no repitan el costo de
+// migrar). El primer Up de aqui abajo es por tanto un no-op de verificacion,
+// no el ejercicio real. Lo que de verdad prueba esta funcion es el ciclo
+// DownTo(0) -> Up: si algun bloque Down deja algo a medio revertir -- una
+// tabla, un indice, un CHECK -- el Up que le sigue choca contra lo que quedo,
+// y sin datos de por medio ese choque solo puede venir de un Down mal escrito.
 func TestUpYDownRecorrenTodasLasMigraciones(t *testing.T) {
 	ctx := t.Context()
 

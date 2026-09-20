@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -27,7 +28,7 @@ func dec(s string) decimal.Decimal { return decimal.RequireFromString(s) }
 func sembrarDosCanales(t *testing.T) *Store {
 	t.Helper()
 
-	s, _ := sembrarReportes(t) // reporteEnero: caracol, 2026-01; reporteFebrero: 2026-02
+	s, pool := sembrarReportes(t) // reporteEnero: caracol, 2026-01; reporteFebrero: 2026-02
 	ctx := t.Context()
 
 	if err := s.GuardarReporte(ctx, reporteRCN, "rcn", periodoDosTV,
@@ -35,13 +36,26 @@ func sembrarDosCanales(t *testing.T) *Store {
 		t.Fatalf("sembrar la entrega de rcn: %v", err)
 	}
 
+	// Identificadas de una vez -- obra_id, escalon alias, oni=false -- porque
+	// UsosDeCanal solo devuelve filas con obra identificada: una fila
+	// pendiente no puede probar nada del valor punto.
 	uso := func(id, reporteID, canal, tipo string, emisiones int64, dur, rating string) aplicacion.UsoPersistido {
+		obraID := "obra-" + id
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO obras (id, titulo, genero, anio, tipo) VALUES ($1, $2, 'Drama', 2020, $3)`,
+			obraID, "Obra "+id, tipo); err != nil {
+			t.Fatalf("sembrar obra de %q: %v", id, err)
+		}
 		u := usoPendiente(id, reporteID, "Obra "+id)
 		u.CanalID = canal
 		u.TipoObra = tipo
 		u.Emisiones = emisiones
 		u.DuracionMin = dec(dur)
 		u.Rating = dec(rating)
+		u.Escalon = "alias"
+		u.ONI = false
+		u.ObraID = obraID
+		u.Evidencia = "alias " + canal + "/id=" + id
 		return u
 	}
 
@@ -71,7 +85,7 @@ func TestLaCorridaSeAgrupaPorCanal(t *testing.T) {
 	r := aplicacion.Reparto{Usos: s}
 	usosDe := func(canal string) []reparto.Uso {
 		t.Helper()
-		usos, err := r.UsosDeCanal(ctx, periodoDosTV, canal)
+		usos, _, err := r.UsosDeCanal(ctx, periodoDosTV, canal)
 		if err != nil {
 			t.Fatalf("usos del canal %q: %v", canal, err)
 		}
@@ -130,7 +144,7 @@ func TestLaCorridaSeAgrupaPorCanal(t *testing.T) {
 	})
 
 	t.Run("un canal sin emisiones devuelve vacio y no un error", func(t *testing.T) {
-		filas, err := s.UsosDeCanal(ctx, periodoDosTV, "telecaribe", 2025)
+		filas, _, err := s.UsosDeCanal(ctx, periodoDosTV, "telecaribe", 2025)
 		if err != nil {
 			t.Fatalf("un canal sin emisiones no es un fallo: %v", err)
 		}
@@ -140,7 +154,7 @@ func TestLaCorridaSeAgrupaPorCanal(t *testing.T) {
 	})
 
 	t.Run("sin clasificacion el grupo llega vacio", func(t *testing.T) {
-		filas, err := s.UsosDeCanal(ctx, periodoDosTV, "rcn", 2025)
+		filas, _, err := s.UsosDeCanal(ctx, periodoDosTV, "rcn", 2025)
 		if err != nil {
 			t.Fatalf("UsosDeCanal: %v", err)
 		}
@@ -167,14 +181,19 @@ func TestElGrupoSeResuelveContraElAnoAnterior(t *testing.T) {
 		 VALUES ('rcn', 'RCN', 'privado_nacional')`); err != nil {
 		t.Fatalf("registrar el canal: %v", err)
 	}
+	// El ano EQUIVOCADO se inserta PRIMERO a proposito. Sin el predicado
+	// `anio_audiencia = $2`, un QueryRow sin ORDER BY devuelve la primera fila
+	// fisica -- que aqui seria 'lideres_rating' de 2026 -- y el aserto de abajo
+	// lo detectaria. Insertarlas en el orden "correcto" (2025 antes que 2026)
+	// dejaba pasar esa mutacion por pura casualidad de insercion.
 	if _, err := s.pool.Exec(ctx,
 		`INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
-		 VALUES ('rcn', 2025, 'privado_nacional'), ('rcn', 2026, 'lideres_rating')`,
+		 VALUES ('rcn', 2026, 'lideres_rating'), ('rcn', 2025, 'privado_nacional')`,
 	); err != nil {
 		t.Fatalf("clasificar el canal: %v", err)
 	}
 
-	filas, err := s.UsosDeCanal(ctx, periodoDosTV, "rcn", 2025)
+	filas, _, err := s.UsosDeCanal(ctx, periodoDosTV, "rcn", 2025)
 	if err != nil {
 		t.Fatalf("UsosDeCanal: %v", err)
 	}
@@ -184,6 +203,117 @@ func TestElGrupoSeResuelveContraElAnoAnterior(t *testing.T) {
 	if filas[0].GrupoEfectivo != "privado_nacional" {
 		t.Fatalf("grupo = %q, se esperaba el de 2025 y no el de 2026 (RD 9.5.4)",
 			filas[0].GrupoEfectivo)
+	}
+
+	// Un ano SIN fila para este canal -- ni 2025 ni 2026 tienen 2023 -- tiene
+	// que dar grupo vacio, no la clasificacion de otro ano por defecto.
+	sinFila, _, err := s.UsosDeCanal(ctx, periodoDosTV, "rcn", 2023)
+	if err != nil {
+		t.Fatalf("UsosDeCanal (2023): %v", err)
+	}
+	if len(sinFila) == 0 {
+		t.Fatal("sin filas no se puede comprobar la clasificacion")
+	}
+	if sinFila[0].GrupoEfectivo != "" {
+		t.Fatalf("grupo para un ano sin clasificar = %q, se esperaba vacio", sinFila[0].GrupoEfectivo)
+	}
+}
+
+// TestUsosDeCanalExcluyeFilasSinObraYLasCuenta comprueba el filtro que evita
+// una obra fantasma. `usos.oni` tiene DEFAULT TRUE y `obra_id` es NULL hasta
+// que la cascada resuelve, asi que toda fila recien ingerida cumple eso; sin
+// filtrar por obra_id, COALESCE(obra_id, ”) las convertiria en una obra
+// fantasma de id "" que suma puntos e importe de verdad. Pendiente y ONI son
+// motivos distintos -- uno es "la cascada no ha corrido", el otro "corrio y no
+// reconocio nada" -- y el reglamento los trata distinto (RD 13.8, R-18/R-19).
+func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO obras (id, titulo, genero, anio, tipo)
+		 VALUES ('obra-1', 'La Casa', 'Telenovela', 1994, 'serie')`); err != nil {
+		t.Fatalf("sembrar obra: %v", err)
+	}
+
+	identificada := usoPendiente("uso-identificada", reporteEnero, "La Casa")
+	identificada.CanalID = "caracol"
+	identificada.Escalon = "alias"
+	identificada.ONI = false
+	identificada.ObraID = "obra-1"
+	identificada.Evidencia = "alias caracol/ID_Ficha=1234"
+
+	oni := usoPendiente("uso-oni", reporteEnero, "Sin Reconocer")
+	oni.CanalID = "caracol"
+	oni.Escalon = "oni"
+	oni.ONI = true
+
+	pendiente := usoPendiente("uso-pendiente", reporteEnero, "Sin Intentar")
+	pendiente.CanalID = "caracol"
+	// Escalon y ONI se quedan en el default de usoPendiente: "pendiente" / true.
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{identificada, oni, pendiente}); err != nil {
+		t.Fatalf("sembrar usos: %v", err)
+	}
+
+	usos, resumen, err := s.UsosDeCanal(ctx, "2026-01", "caracol", 2025)
+	if err != nil {
+		t.Fatalf("UsosDeCanal: %v", err)
+	}
+
+	if len(usos) != 1 || usos[0].Uso.ID != "uso-identificada" {
+		t.Fatalf("se esperaba solo la fila identificada, llego %+v", usos)
+	}
+	for _, u := range usos {
+		if u.Uso.ObraID == "" {
+			t.Fatal("una fila sin obra_id llego al resultado: seria una LineaObra{ObraID:\"\"} en el motor")
+		}
+	}
+
+	if resumen != (aplicacion.ResumenUsosDeCanal{Pendientes: 1, ONI: 1}) {
+		t.Fatalf("resumen = %+v, se esperaba 1 pendiente y 1 ONI (0 excluidos)", resumen)
+	}
+	if resumen.TotalSinIdentificar() != 2 {
+		t.Fatalf("TotalSinIdentificar() = %d, se esperaban 2", resumen.TotalSinIdentificar())
+	}
+}
+
+// TestUsosSinCanalCuentaLoQueNingunPagadorReclama es el B1 de la revision:
+// mientras ningun adaptador de ingesta puebla canal_id (P-20), "cero usos de
+// un canal" no se distingue de "el canal no emitio" sin este conteo aparte.
+func TestUsosSinCanalCuentaLoQueNingunPagadorReclama(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Dos filas del mismo periodo sin canal_id -- el estado real de una
+	// entrega de Caracol hoy -- y una con canal, que no debe contarse.
+	usos := []aplicacion.UsoPersistido{
+		usoPendiente("uso-sin-canal-1", reporteEnero, "Sin canal 1"),
+		usoPendiente("uso-sin-canal-2", reporteEnero, "Sin canal 2"),
+	}
+	conCanal := usoPendiente("uso-con-canal", reporteEnero, "Con canal")
+	conCanal.CanalID = "caracol"
+	usos = append(usos, conCanal)
+
+	if err := s.GuardarUsos(ctx, usos); err != nil {
+		t.Fatalf("sembrar usos: %v", err)
+	}
+
+	n, err := s.UsosSinCanal(ctx, "2026-01")
+	if err != nil {
+		t.Fatalf("UsosSinCanal: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("n = %d, se esperaban 2", n)
+	}
+}
+
+func TestUsosDeCanalRechazaUnCanalVacioAntesDeConsultar(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	r := aplicacion.Reparto{Usos: s}
+
+	if _, _, err := r.UsosDeCanal(t.Context(), "2026-01", ""); !errors.Is(err, aplicacion.ErrCanalVacio) {
+		t.Fatalf("se esperaba ErrCanalVacio, se obtuvo %v", err)
 	}
 }
 

@@ -376,11 +376,11 @@ func TestResetRechazaTitularesAjenos(t *testing.T) {
 	}
 }
 
-// TestResetRechazaCanalAjeno y TestResetRechazaClasificacionAjena son el
-// hallazgo de revision sobre el PR #137: vaciar validaba obras y titulares
-// antes de borrar, pero no canales ni canales_clasificacion (00011), asi que
-// un canal importado o una clasificacion anual real se borraban con
-// SEED_RESET=true igual que las filas sinteticas.
+// TestResetRechazaCanalAjeno y TestResetRechazaClasificacionAjena cubren
+// canales y canales_clasificacion (00011) con la misma guarda que
+// TestResetRechazaObrasAjenas: sin ella, un canal importado o una
+// clasificacion anual real se borrarian con SEED_RESET=true igual que las
+// filas sinteticas.
 func TestResetRechazaCanalAjeno(t *testing.T) {
 	store, pool := abrir(t)
 	ctx := t.Context()
