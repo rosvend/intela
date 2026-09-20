@@ -48,20 +48,32 @@ const (
 	// comprobable la independencia de `RD 9.1`: cada uno tiene su bolsa y por
 	// tanto su propio valor punto (ADR 0019, #119). Con un solo canal la regla
 	// no se puede distinguir de "un valor punto por periodo".
-	FuenteTV         = "caracol"
-	FuenteTVSegundo  = "rcn"
-	FuenteCine       = "procinal"
+	FuenteTV        = "caracol"
+	FuenteTVSegundo = "rcn"
+	// "cine" y no "procinal": la fuente del reporte es lo que estampa el
+	// adaptador (ingesta.FuenteCine) y lo que indexa alias_obra; "procinal"
+	// es el pagador de recaudo (usuariosDeRecaudo) y el canal contra cuya
+	// bolsa ponderan sus usos (#119) -- otro eje, con su propia constante
+	// PagadorCine. Sembrar el reporte como "procinal" dejaba sus alias sin
+	// casar con ninguna fila ingerida de verdad.
+	FuenteCine       = "cine"
 	FuenteOTT        = "netflix"
 	FuenteTransporte = "expreso-bolivariano"
+
+	// PagadorCine es quien PAGA por el uso de cine (RT 3.2), no quien entrego
+	// el reporte. Nunca puede ser igual a FuenteCine: son los dos ejes que la
+	// nota de arriba distingue, y confundirlos fue justamente el defecto que
+	// corrigio FuenteCine.
+	PagadorCine = "procinal"
 
 	// La clave de ids_fuente (ADR 0018) con que viaja el id de obra de cada
 	// fuente, y la segunda mitad de la clave de `alias_obra`. Salen del
 	// contrato y no se escriben a mano: un alias sembrado con otra grafia no lo
-	// encontraria nunca la cascada. La de Procinal es sintetica como el resto de
+	// encontraria nunca la cascada. La de cine es sintetica como el resto de
 	// su reporte, porque el cliente no ha entregado el formato de las salas.
-	TipoIDCaracol  = aplicacion.ClaveIDFicha
-	TipoIDProcinal = aplicacion.ClaveIDPelicula
-	TipoIDNetflix  = aplicacion.ClaveShowID
+	TipoIDCaracol = aplicacion.ClaveIDFicha
+	TipoIDCine    = aplicacion.ClaveIDPelicula
+	TipoIDNetflix = aplicacion.ClaveShowID
 
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
@@ -334,7 +346,7 @@ func (d *Dataset) reportes() {
 	// Snapshot.BaseCineTeatro (P-18). La columna tiene que traer el dato para
 	// que la decision sea un parametro y no una reescritura.
 	cine := []aplicacion.UsoPersistido{
-		usoCine(FuenteCine, ObraCine, "Pelicula X", "PX-1", "10000", "10000"),
+		usoCine(PagadorCine, ObraCine, "Pelicula X", "PX-1", "10000", "10000"),
 	}
 	ott := []aplicacion.UsoPersistido{
 		usoOTT(FuenteOTT, ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
@@ -349,14 +361,14 @@ func (d *Dataset) reportes() {
 	d.Reportes = []Reporte{
 		{Fuente: FuenteTV, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tv},
 		{Fuente: FuenteTVSegundo, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tvSegundo},
-		{Fuente: FuenteCine, TipoID: TipoIDProcinal, Periodo: Periodo, Usos: cine},
+		{Fuente: FuenteCine, TipoID: TipoIDCine, Periodo: Periodo, Usos: cine},
 		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
-		{Fuente: FuenteTransporte, TipoID: TipoIDProcinal, Periodo: Periodo, Usos: transporte},
+		{Fuente: FuenteTransporte, TipoID: TipoIDCine, Periodo: Periodo, Usos: transporte},
 	}
 
 	// La fuente, ids_fuente y la evidencia se estampan aqui y no en los
 	// constructores de arriba porque son propiedades de la ENTREGA, no de la
-	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de Procinal,
+	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de cine,
 	// y lo que la distingue -la clave con que viaja y lo que la resuelve- es de
 	// que fuente viene. Los constructores dejan en IDsFuente el valor solo, y
 	// aqui se reescribe en el formato del contrato.
@@ -410,7 +422,7 @@ func (d *Dataset) usuariosDeRecaudo() {
 	d.UsuariosDeRecaudo = []UsuarioDeRecaudo{
 		{ID: FuenteTV, Nombre: "Caracol Television (sintetico)", Categoria: recaudo.TVAbierta},
 		{ID: FuenteTVSegundo, Nombre: "RCN Television (sintetico)", Categoria: recaudo.TVAbierta},
-		{ID: FuenteCine, Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
+		{ID: PagadorCine, Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
 		{ID: FuenteOTT, Nombre: "Netflix Colombia (sintetico)", Categoria: recaudo.MediosDigitales},
 		{ID: FuenteTransporte, Nombre: "Expreso Bolivariano (sintetico)", Categoria: recaudo.TransporteTerrestre},
 		{ID: "dago-films", Nombre: "Dago Films (sintetico)", Categoria: recaudo.SinClasificar},
@@ -472,7 +484,7 @@ func (d *Dataset) bolsas() {
 	d.Bolsas = []aplicacion.BolsaPersistida{
 		bolsa("bolsa-caracol-"+Periodo+"-nacional", FuenteTV, recaudo.Nacional, "1000000.00"),
 		bolsa("bolsa-rcn-"+Periodo+"-nacional", FuenteTVSegundo, recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-procinal-"+Periodo+"-nacional", FuenteCine, recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-procinal-"+Periodo+"-nacional", PagadorCine, recaudo.Nacional, "1000000.00"),
 		bolsa("bolsa-netflix-"+Periodo+"-nacional", FuenteOTT, recaudo.Nacional, "500000.00"),
 		bolsa("bolsa-transporte-"+Periodo+"-nacional", FuenteTransporte, recaudo.Nacional, "120000.00"),
 		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "200000.00"),

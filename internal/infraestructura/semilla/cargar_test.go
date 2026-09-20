@@ -445,7 +445,7 @@ func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
 
 	// dago-films es el circuito internacional (RD 7.4): no valoriza por
 	// puntos y por tanto no siembra usos atribuidos a canal.
-	for _, pagador := range []string{FuenteTV, FuenteTVSegundo, FuenteCine, FuenteOTT, FuenteTransporte} {
+	for _, pagador := range []string{FuenteTV, FuenteTVSegundo, PagadorCine, FuenteOTT, FuenteTransporte} {
 		var n int
 		if err := pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, pagador).Scan(&n); err != nil {
