@@ -141,6 +141,15 @@ func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoE
 		escribirError(w, http.StatusBadRequest,
 			"uno de los titulares indicados no es persona natural, y solo un escritor persona natural puede recibir reparto (R-01, RD 4.5)")
 		return
+	case errors.Is(err, aplicacion.ErrIPIQueNoCuadra):
+		// 400 por la misma razon que los dos de arriba: el dato discrepante -el
+		// IPI- viene del cuerpo. Mensaje fijo, y NO nombra ni el IPI declarado ni
+		// el del padron: el error del nucleo los trae para el log, y devolverlos
+		// convertiria este endpoint en un oraculo del padron para quien puede
+		// editar una declaracion.
+		escribirError(w, http.StatusBadRequest,
+			"el IPI de uno de los titulares no es el que el padron tiene para ese titular; corrigelo o consulta el padron")
+		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa obra no esta en el catalogo")
 		return

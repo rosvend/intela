@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -174,6 +175,34 @@ func TestGuardarDeclaracionConTitularQueNoEsPersonaNaturalDevuelve400(t *testing
 	}
 	if strings.Contains(cuerpo, "no existe") {
 		t.Fatalf("el rechazo de R-01 se anuncio como un titular inexistente: %s", cuerpo)
+	}
+}
+
+// El tercer 400 de esta ruta, y el del 🔴: una parte declara un IPI que no es el
+// que el padron tiene para ese titular. El mensaje es FIJO -no repite los dos
+// numeros que el error del nucleo trae para el log- porque devolverlos
+// convertiria este endpoint en un oraculo del padron para quien puede editar una
+// declaracion.
+func TestGuardarDeclaracionConIPIQueNoCuadraDevuelve400(t *testing.T) {
+	falso := &declaracionesFalso{err: fmt.Errorf(
+		"la parte del titular %q declara el IPI %q y el padron tiene %q: %w",
+		"tit-ana", "IPI-00000002", "IPI-00000001", aplicacion.ErrIPIQueNoCuadra)}
+	h := servidorConDeclaraciones(t, falso)
+
+	rec := pedir(t, h, http.MethodPut, "/obras/obra-1/declaracion", cuerpoPartes, "tok")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	cuerpo := rec.Body.String()
+	if !strings.Contains(cuerpo, "padron") {
+		t.Fatalf("el mensaje no dice contra que se compara el IPI: %s", cuerpo)
+	}
+	if strings.Contains(cuerpo, "IPI-00000002") || strings.Contains(cuerpo, "IPI-00000001") {
+		t.Fatalf("la respuesta repite los IPI del padron: %s", cuerpo)
+	}
+	// Y no se confunde con los otros dos 400 de la ruta.
+	if strings.Contains(cuerpo, "no existe") || strings.Contains(cuerpo, "persona natural") {
+		t.Fatalf("el rechazo del IPI se anuncio como otro de los 400 de esta ruta: %s", cuerpo)
 	}
 }
 

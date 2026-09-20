@@ -76,6 +76,12 @@ func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes 
 // de una declaracion puede apuntar a un titular del padron que no sea persona
 // natural. Devuelve [ErrTitularNoEsPersonaNatural] si alguna lo apunta.
 //
+// Y ademas concilia el IPI: la parte tiene que declarar el mismo que el padron
+// tiene para ese titular, o sale [ErrIPIQueNoCuadra]. No es una regla distinta
+// sino la misma pregunta con mas de una respuesta posible -el padron es lo que
+// se sabe de un titular, y el IPI es parte de eso-, y por eso viaja en esta
+// misma consulta acotada en vez de en una segunda.
+//
 // # Se pregunta por los titulares que la declaracion NOMBRA
 //
 // La consulta lleva los ids de las partes y ningun otro filtro: el padron
@@ -139,15 +145,41 @@ func (d Declaraciones) exigirPuedenRecibirReparto(ctx context.Context, partes []
 		return fmt.Errorf("comprobar quien puede recibir reparto: %w", err)
 	}
 
+	// El IPI que la parte declara tiene que ser el que el padron tiene para ese
+	// titular. El bucle de abajo ya trae las filas autoritativas -y por eso la
+	// comparacion no cuesta una consulta mas-, pero hasta ahora nadie llamaba a
+	// `t.IPI()`: el valor declarado llegaba intacto a `declaraciones.ipi` y de
+	// ahi a `resultados_titular.ipi`, que es de donde sale a quien se le paga.
+	// Un `tit-ana` con el IPI de otra persona se guardaba con 200.
+	//
+	// `hay` es lo que impide leer la ausencia como discrepancia: un titular_id
+	// que no existe no vuelve del padron, y decir de el "el IPI no cuadra"
+	// mandaria a corregir un numero cuando el error es el identificador. Ese
+	// caso lo sigue delatando la clave foranea, con su propio centinela.
+	porID := make(map[string]string, len(partes))
+	for _, p := range partes {
+		porID[p.TitularID] = p.IPI
+	}
+
 	for _, t := range titulares {
-		if t.PuedeRecibirReparto() {
-			continue
+		if !t.PuedeRecibirReparto() {
+			// El nombre de la fila del padron viaja en el error para que quede
+			// en el log de quien opera. A quien edita le llega un mensaje fijo,
+			// no este: ver el handler en httpapi/declaraciones.go.
+			//
+			// `R-01` va ANTES de la conciliacion del IPI, y no al reves: a un
+			// titular que no puede recibir reparto no se le concilia el IPI
+			// -muchas sociedades ni lo tienen, ver `sociedadDelPadron`-, y
+			// decirle "el IPI no cuadra" a quien puso una productora en su
+			// declaracion lo manda a corregir un numero cuando el problema es
+			// que esa parte no puede cobrar nunca.
+			return fmt.Errorf("la parte del titular %q (%s): %w",
+				t.ID(), t.Nombre(), ErrTitularNoEsPersonaNatural)
 		}
-		// El nombre de la fila del padron viaja en el error para que quede en
-		// el log de quien opera. A quien edita le llega un mensaje fijo, no
-		// este: ver el handler en httpapi/declaraciones.go.
-		return fmt.Errorf("la parte del titular %q (%s): %w",
-			t.ID(), t.Nombre(), ErrTitularNoEsPersonaNatural)
+		if declarado, hay := porID[t.ID()]; hay && declarado != t.IPI() {
+			return fmt.Errorf("la parte del titular %q declara el IPI %q y el padron tiene %q: %w",
+				t.ID(), declarado, t.IPI(), ErrIPIQueNoCuadra)
+		}
 	}
 	return nil
 }

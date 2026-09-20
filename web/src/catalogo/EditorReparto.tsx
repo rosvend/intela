@@ -1010,8 +1010,13 @@ function FilasDelReparto({
               <td>
                 {/* El IPI se rellena con el que el padron tiene hoy para ese
                     titular, y se puede corregir: la parte que se guarda lleva
-                    el IPI declarado, y quien comprueba que cuadre es el
-                    backend, no esta pantalla. */}
+                    el IPI declarado. Quien lo concilia es el backend, en
+                    exigirPuedenRecibirReparto (internal/aplicacion/declaraciones.go),
+                    que ya trae la fila del padron para R-01 y compara su IPI
+                    con este: si no cuadra no se guarda nada y la peticion sale
+                    con 400. Esta pantalla no lo comprueba porque no tiene el
+                    padron; lo que no puede hacer es dar por bueno lo que
+                    escriba. */}
                 <input
                   className="editor-campo"
                   type="text"

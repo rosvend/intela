@@ -228,7 +228,12 @@ func TestGuardarSplitsPropagaNoEncontrado(t *testing.T) {
 // que todo lo que vuelve este excluido.
 func TestGuardarSplitsRechazaUnaParteDeQuienNoPuedeRecibirReparto(t *testing.T) {
 	gestion := &gestionFalsa{}
-	ana := titularDePrueba(t, "t1", "Ana Escritora", "IPI-00000001", true, afiliacion.ClaseSocio)
+	// El IPI de ana es el que `partesValidas()` declara para t1. No es un
+	// detalle del Fixture: desde que el caso de uso concilia el IPI contra el
+	// padron, una fila del padron con OTRO numero haria fallar la comprobacion
+	// nueva y esta prueba dejaria de medir el veredicto de `R-01`, que es lo
+	// unico que dice medir. El caso "el IPI no cuadra" tiene su propia prueba.
+	ana := titularDePrueba(t, "t1", "Ana Escritora", "IPI-1", true, afiliacion.ClaseSocio)
 	padron := &padronFalso{titulares: []afiliacion.Titular{ana, sociedadDelPadron(t)}}
 	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
 
@@ -244,6 +249,81 @@ func TestGuardarSplitsRechazaUnaParteDeQuienNoPuedeRecibirReparto(t *testing.T) 
 	}
 	if gestion.guardadas != 0 {
 		t.Fatal("se guardo una declaracion con un titular que no puede recibir reparto")
+	}
+}
+
+// El defecto del 🔴: el IPI declarado no se conciliaba con el del padron y la
+// declaracion se guardaba con 200. Reproducido contra la pila real con
+// `tit-ana + IPI-00000002` sobre un padron que dice `IPI-00000001`.
+func TestGuardarSplitsRechazaUnIPIQueNoEsElDelPadron(t *testing.T) {
+	gestion := &gestionFalsa{}
+	ana := titularDePrueba(t, "t1", "Ana Escritora", "IPI-00000001", true, afiliacion.ClaseSocio)
+	padron := &padronFalso{titulares: []afiliacion.Titular{ana}}
+	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: "t1", IPI: "IPI-00000002", Porcentaje: decimal.NewFromInt(100)},
+	}
+	_, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if !errors.Is(err, ErrIPIQueNoCuadra) {
+		t.Fatalf("se esperaba ErrIPIQueNoCuadra, se obtuvo %v", err)
+	}
+	// Los dos numeros viajan en el error del nucleo para el log de quien opera.
+	// El mensaje que ve quien edita es fijo y NO los repite: ver el handler.
+	if !strings.Contains(err.Error(), "IPI-00000002") || !strings.Contains(err.Error(), "IPI-00000001") {
+		t.Fatalf("el error no trae los dos IPI para el log: %v", err)
+	}
+	if gestion.guardadas != 0 {
+		t.Fatal("se guardo una version con un IPI que no es el del padron")
+	}
+}
+
+// Control positivo del arreglo del 🔴: conciliar no puede volverse rechazar. Si
+// la comparacion se pasara de estricta, esta prueba cae -y cae junto con ella la
+// razon por la que el arreglo es una puerta y no un cambio de negocio.
+func TestGuardarSplitsGuardaSiElIPICuadra(t *testing.T) {
+	gestion := &gestionFalsa{versionADevolver: 1}
+	ana := titularDePrueba(t, "t1", "Ana Escritora", "IPI-00000001", true, afiliacion.ClaseSocio)
+	padron := &padronFalso{titulares: []afiliacion.Titular{ana}}
+	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: "t1", IPI: "IPI-00000001", Porcentaje: decimal.NewFromInt(100)},
+	}
+	vd, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if err != nil {
+		t.Fatalf("GuardarSplits con el IPI del padron: %v", err)
+	}
+	if vd.Version != 1 {
+		t.Fatalf("version = %d, se esperaba 1", vd.Version)
+	}
+	if gestion.guardadas != 1 {
+		t.Fatalf("guardadas = %d, se esperaba 1", gestion.guardadas)
+	}
+}
+
+// El orden de las dos comprobaciones, que es una decision y no un descuido: a un
+// titular que no puede recibir reparto NO se le concilia el IPI. La sociedad del
+// padron no tiene IPI y la parte declara uno, asi que con el orden invertido el
+// rechazo diria "el IPI no cuadra" y mandaria a corregir un numero cuando lo que
+// pasa es que esa parte no puede cobrar nunca.
+func TestGuardarSplitsAnteUnIPIAjenoDeUnaSociedadGanaR01(t *testing.T) {
+	gestion := &gestionFalsa{}
+	padron := &padronFalso{titulares: []afiliacion.Titular{sociedadDelPadron(t)}}
+	d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+	partes := []repertorio.Parte{
+		{TitularID: "t2", IPI: "IPI-2", Porcentaje: decimal.NewFromInt(100)},
+	}
+	_, err := d.GuardarSplits(t.Context(), "obra-1", partes, "usr-admin")
+	if !errors.Is(err, ErrTitularNoEsPersonaNatural) {
+		t.Fatalf("se esperaba ErrTitularNoEsPersonaNatural, se obtuvo %v", err)
+	}
+	if errors.Is(err, ErrIPIQueNoCuadra) {
+		t.Fatal("el IPI de una sociedad se concilio: R-01 tiene que ganar")
+	}
+	if gestion.guardadas != 0 {
+		t.Fatal("se guardo una declaracion con una sociedad dentro")
 	}
 }
 
@@ -327,7 +407,8 @@ func TestGuardarSplitsNoEscribeSiElPadronNoResponde(t *testing.T) {
 	if !errors.Is(err, fallo) {
 		t.Fatalf("se esperaba el fallo del padron, se obtuvo %v", err)
 	}
-	if errors.Is(err, ErrTitularNoEsPersonaNatural) || errors.Is(err, ErrTitularInexistente) {
+	if errors.Is(err, ErrTitularNoEsPersonaNatural) || errors.Is(err, ErrTitularInexistente) ||
+		errors.Is(err, ErrIPIQueNoCuadra) {
 		t.Fatalf("un fallo de infraestructura salio como rechazo de la regla: %v", err)
 	}
 	if gestion.guardadas != 0 {
@@ -357,8 +438,8 @@ func TestGuardarSplitsDejaElTitularInexistenteAlEscribir(t *testing.T) {
 	if !errors.Is(err, ErrTitularInexistente) {
 		t.Fatalf("se esperaba ErrTitularInexistente, se obtuvo %v", err)
 	}
-	if errors.Is(err, ErrTitularNoEsPersonaNatural) {
-		t.Fatalf("un titular inexistente salio como si no fuera persona natural: %v", err)
+	if errors.Is(err, ErrTitularNoEsPersonaNatural) || errors.Is(err, ErrIPIQueNoCuadra) {
+		t.Fatalf("un titular inexistente salio como si el padron lo hubiera rechazado: %v", err)
 	}
 	// Se pregunto por el id que la declaracion nombra, y por ninguno mas: un
 	// padron que no tiene esa fila responde con la lista vacia que se acaba de

@@ -130,6 +130,30 @@ var (
 	// `afiliacion.Titular.PuedeRecibirReparto`-. Esto es la mitad del nucleo.
 	ErrTitularNoEsPersonaNatural = errors.New("ese titular no es persona natural")
 
+	// ErrIPIQueNoCuadra: la parte declara un IPI que no es el del titular en el
+	// padron.
+	//
+	// El IPI es el identificador de la sociedad de gestion en el sistema CISAC
+	// (`RD 3`), y es lo que aguas abajo dice A QUIEN se le paga: la columna
+	// `resultados_titular.ipi` guarda el valor que llego en la declaracion, no
+	// el del padron. Dos numeros distintos para el mismo titular significan que
+	// el reparto puede pagarle a una persona con el identificador de otra, y eso
+	// no lo caza ninguna otra comprobacion: `declaraciones.ipi` es TEXT NOT NULL
+	// sin FK ni CHECK (migracion 00001), asi que el esquema acepta cualquier
+	// cadena.
+	//
+	// No es ErrTitularInexistente ni ErrTitularNoEsPersonaNatural, y la
+	// diferencia importa: ahi lo que falla es la ENTIDAD -no resuelve a nadie, o
+	// resuelve a quien la regla no admite-, y aqui la entidad esta bien y lo que
+	// discrepa es un DATO de la parte. Quien edita tiene que corregir un numero,
+	// no cambiar de titular.
+	//
+	// Se compara contra el padron y no se sobrescribe en silencio: poblar el IPI
+	// desde el padron ignorando lo que llego haria que la pantalla y la base
+	// discrepasen sin decirlo, y una discrepancia que nadie ve es la que se
+	// descubre en una auditoria.
+	ErrIPIQueNoCuadra = errors.New("el IPI declarado no es el del padron")
+
 	// ErrBolsaDuplicada: ya hay una bolsa para ese usuario, periodo y circuito.
 	//
 	// No es "no se pudo escribir" y no es un dato invalido: el alta estaba bien
