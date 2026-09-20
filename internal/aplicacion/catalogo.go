@@ -9,6 +9,20 @@ import (
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
+// LectorDeDeclaraciones es lo unico que [Catalogo] necesita de la gestion de
+// declaraciones: la version vigente de un punado de obras.
+//
+// Se declara aqui, junto a quien la consume, y con UN solo metodo, por la misma
+// razon que [PadronTitulares]: un puerto tiene que decir lo que su consumidor
+// necesita y nada mas. Antes este campo era [GestionDeclaraciones] -cuatro
+// metodos, uno de ellos de escritura-, y el catalogo podia llamar a `Guardar`:
+// no lo hacia, pero eso solo lo sostenia un comentario, y quitarle el metodo al
+// puerto convierte "no deberia escribir" en "no puede". Un `Guardar` que se
+// cuele aqui deja de compilar, en vez de depender de que nadie lo escriba.
+type LectorDeDeclaraciones interface {
+	VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]VersionDeclaracion, error)
+}
+
 // Catalogo son los casos de uso del catalogo maestro de obras: el cubo contra
 // el que resuelve todo matching (docs/dominio/identificadores.md).
 //
@@ -27,7 +41,7 @@ import (
 // pago que `R-02` cierra.
 //
 // Lo que si hace es LEER la declaracion vigente de las obras que sirve -por
-// [GestionDeclaraciones], sin versiones de por medio-, porque el catalogo es
+// [LectorDeDeclaraciones], sin versiones de por medio-, porque el catalogo es
 // donde un administrador ve que obras estan completas y que obras quedan
 // retenidas. Los tres campos que salen de ahi son derivados y de solo lectura:
 // el estado de una obra no se declara desde el catalogo.
@@ -38,7 +52,7 @@ type Catalogo struct {
 	// lo mismo que los dos puertos estan separados (ver [CatalogoObras]): la
 	// obra y su declaracion son dos cosas distintas, y este servicio solo mira
 	// la segunda para poder decir en que estado esta la primera.
-	Declaraciones GestionDeclaraciones
+	Declaraciones LectorDeDeclaraciones
 }
 
 // RegistrarObra da de alta una obra en el catalogo.

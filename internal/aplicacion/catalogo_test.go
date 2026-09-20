@@ -14,14 +14,12 @@ import (
 // catalogoFalso cuenta cuantas veces le tocaron la base. Es lo que hace
 // comprobable que la validacion corre ANTES y no despues.
 //
-// Satisface los dos puertos que el caso de uso inyecta. Los tres metodos de
-// [GestionDeclaraciones] que el catalogo NO usa -Guardar, Historial y
-// VigenteEn- entran por la interfaz embebida sin valor: si el catalogo llegara
-// a llamarlos, revienta aqui en vez de pasar la prueba con un doble que miente
-// sobre lo que el catalogo hace.
+// Satisface los dos puertos que el caso de uso inyecta. Antes llevaba
+// [GestionDeclaraciones] embebida en nil -cuatro metodos, y los tres que el
+// catalogo no usa reventaban en cuanto se llamaran-, y eso ya no hace falta: el
+// puerto del catalogo es `VigentesDeObras` y nada mas (item 5), asi que el
+// doble no puede implementar de mas ni aunque quiera.
 type catalogoFalso struct {
-	GestionDeclaraciones
-
 	registros      int
 	actualizadas   int
 	obraRecibida   repertorio.Obra
@@ -67,11 +65,18 @@ func (c *catalogoFalso) VigentesDeObras(_ context.Context, ids []string) (map[st
 	return c.vigentes, c.errVigentes
 }
 
-// catalogoDePrueba cablea los dos puertos en el mismo doble: el tipo satisface
-// los dos, y el nucleo sigue viendo dos interfaces distintas.
+// catalogoDePrueba cablea los dos puertos en el mismo doble -como hace cada
+// `main` con el *Store-, y el nucleo sigue viendo dos interfaces distintas: la
+// de las obras y [LectorDeDeclaraciones], que no sabe escribir.
 func catalogoDePrueba(repo *catalogoFalso) Catalogo {
 	return Catalogo{Obras: repo, Declaraciones: repo}
 }
+
+// La ganancia del item 5, como asercion de compilacion: lo que el catalogo ve
+// del padron de declaraciones es un lector, y no tiene `Guardar`. Si alguien le
+// devuelve un metodo de escritura al campo `Declaraciones`, esto deja de
+// compilar -que es justo lo que un comentario no consigue-.
+var _ LectorDeDeclaraciones = (*catalogoFalso)(nil)
 
 func metadatosValidos() repertorio.Metadatos {
 	return repertorio.Metadatos{
