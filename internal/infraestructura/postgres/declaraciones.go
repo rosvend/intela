@@ -30,6 +30,12 @@ const columnasParteEscritura = `titular_id, ipi, porcentaje`
 // 00008 es la ultima linea de defensa contra un solape; esta funcion nunca
 // deja dos versiones abiertas por su cuenta.
 //
+// El numero de la version nueva es el consecutivo del HISTORIAL -MAX(version)
+// mas uno de esa obra, o 1 si no hay ninguna-, y no el de la version abierta
+// mas uno: una obra puede tener versiones y NINGUNA abierta, y ese caso no es
+// "la primera declaracion" aunque el SELECT de la version abierta no devuelva
+// filas.
+//
 // El SELECT ... FOR UPDATE sobre `obras` bloquea la fila antes de mirar cual
 // es la version abierta. Sin el, dos PUT concurrentes sobre la misma obra
 // pueden leer la misma version abierta, calcular version+1 los dos, e
@@ -88,9 +94,24 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 				return traducirError(err, "cerrar la version %d de la obra %q", versionAnterior, d.ObraID)
 			}
 		case errors.Is(err, pgx.ErrNoRows):
-			// No habia ninguna version abierta: esta es la primera declaracion
-			// de la obra.
-			version = 1
+			// No habia ninguna version abierta. Eso NO es lo mismo que "esta
+			// es la primera declaracion de la obra", que es lo que decia el
+			// `version = 1` de antes: puede haber versiones anteriores y
+			// todas cerradas -una edicion que cerro la ultima y no llego a
+			// abrir la siguiente, un historial importado-, y entonces el 1
+			// choca con la clave primaria (obra_id, version) y la edicion
+			// muere con una violacion de unicidad que no dice nada de lo que
+			// pasa. El consecutivo sale del HISTORIAL, no del numero de
+			// versiones abiertas, que es 0 o 1.
+			//
+			// Va dentro del FOR UPDATE de `obras` que ya se tiene arriba: dos
+			// guardados de la misma obra no pueden leer el mismo MAX, que es
+			// lo que hace que este consecutivo no colisione.
+			if err := tx.QueryRow(ctx,
+				`SELECT COALESCE(MAX(version), 0) + 1 FROM declaracion_versiones WHERE obra_id = $1`,
+				d.ObraID).Scan(&version); err != nil {
+				return traducirError(err, "buscar la ultima version de la obra %q", d.ObraID)
+			}
 		default:
 			return traducirError(err, "buscar la version abierta de la obra %q", d.ObraID)
 		}

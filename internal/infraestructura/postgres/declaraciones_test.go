@@ -109,6 +109,65 @@ func TestEditarAbreNuevaVersionYConservaLaAnterior(t *testing.T) {
 	}
 }
 
+// El caso del item 3: una obra con versiones y NINGUNA abierta.
+//
+// No es hipotetico: una edicion cierra la ultima version y la siguiente no
+// llega a abrirse -o el historial se importa asi-, y el `SELECT ... WHERE
+// vigente_hasta IS NULL` no devuelve filas. Con el `version = 1` de antes, la
+// edicion intentaba abrir la version 1 otra vez y moria con una violacion de
+// la clave primaria (obra_id, version): un 500 que no dice nada de lo que
+// pasa. El consecutivo sale del historial, no de las versiones abiertas.
+func TestGuardarConTodasLasVersionesCerradasAbreLaSiguiente(t *testing.T) {
+	s, pool := sembrar(t)
+	t1 := time.Now().UTC().Truncate(time.Microsecond)
+	t2 := t1.Add(time.Hour)
+
+	if _, _, err := s.Guardar(t.Context(), partesDePrueba(t, 60, 40), t1, usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v1: %v", err)
+	}
+	if _, _, err := s.Guardar(t.Context(), partesDePrueba(t, 70, 30), t2, usuarioAdmin); err != nil {
+		t.Fatalf("Guardar v2: %v", err)
+	}
+
+	// Se cierra la v2 a mano y no se abre la 3: es el estado del defecto. No
+	// hay forma de llegar a el por la API, y por eso hay que fabricarlo.
+	if _, err := pool.Exec(t.Context(),
+		`UPDATE declaracion_versiones SET vigente_hasta = $2 WHERE obra_id = $1 AND version = 2`,
+		obraSinDeclaracion, t2.Add(time.Hour)); err != nil {
+		t.Fatalf("cerrar la version 2: %v", err)
+	}
+
+	v3, _, err := s.Guardar(t.Context(), partesDePrueba(t, 50, 50), t2.Add(2*time.Hour), usuarioAdmin)
+	if err != nil {
+		t.Fatalf("Guardar con todas las versiones cerradas: %v", err)
+	}
+	if v3 != 3 {
+		t.Fatalf("version = %d, se esperaba 3 (MAX(version) + 1), no 1", v3)
+	}
+
+	historial, err := s.Historial(t.Context(), obraSinDeclaracion)
+	if err != nil {
+		t.Fatalf("Historial: %v", err)
+	}
+	if len(historial) != 3 {
+		t.Fatalf("se esperaban 3 versiones, llegaron %d", len(historial))
+	}
+	// La 3 es la unica abierta, y las dos anteriores siguen cerradas: el
+	// historial es append-only y esta edicion no lo reescribio.
+	for _, vd := range historial {
+		if vd.Version == 3 && vd.VigenteHasta != nil {
+			t.Fatalf("la version 3 tiene que quedar abierta: %+v", vd)
+		}
+		if vd.Version != 3 && vd.VigenteHasta == nil {
+			t.Fatalf("la version %d tendria que seguir cerrada: %+v", vd.Version, vd)
+		}
+	}
+	// Y sin huecos: el consecutivo que se abre es el que sigue al mayor.
+	if historial[2].Declaracion.Partes[0].Porcentaje.String() != "50" {
+		t.Fatalf("la version 3 no lleva la declaracion nueva: %+v", historial[2].Declaracion.Partes)
+	}
+}
+
 // La pregunta que un reproceso necesita responder: que version regia ANTES
 // del corte y cual DESPUES. Objetivo 5: un reparto de un periodo pasado usa
 // el split vigente entonces, no el de hoy.
