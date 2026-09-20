@@ -3,6 +3,13 @@ import { RUTAS, itemsDeNav, puedeVer } from "./navegacion";
 import { Rol } from "./sesion";
 
 const TODAS_LAS_RUTAS = RUTAS.map((r) => r.to);
+const TODOS_LOS_ROLES: readonly Rol[] = [
+  "administrador",
+  "distribucion",
+  "contabilidad",
+  "auditor",
+  "titular",
+];
 
 describe("itemsDeNav", () => {
   it("el titular ve exactamente un item: Inicio, sin ruta propia mas alla (M-5)", () => {
@@ -15,8 +22,11 @@ describe("itemsDeNav", () => {
     );
   });
 
-  it("el auditor ve exactamente lo mismo que el administrador (solo lectura, ve todo)", () => {
-    expect(itemsDeNav("auditor").map((r) => r.to)).toEqual(TODAS_LAS_RUTAS);
+  it("el auditor ve todo lo del administrador salvo /ingesta (solo lectura: subir no es leer)", () => {
+    const delAdministrador = itemsDeNav("administrador").map((r) => r.to);
+    expect(itemsDeNav("auditor").map((r) => r.to)).toEqual(
+      delAdministrador.filter((to) => to !== "/ingesta"),
+    );
   });
 
   it("distribucion no ve /reportes (es de contabilidad)", () => {
@@ -33,14 +43,7 @@ describe("itemsDeNav", () => {
 
   it("solo administrador y auditor llegan a la seccion Configuracion", () => {
     const configuracion = RUTAS.filter((r) => r.seccion === "configuracion");
-    const rolesConAcceso: Rol[] = [
-      "administrador",
-      "distribucion",
-      "contabilidad",
-      "auditor",
-      "titular",
-    ];
-    for (const rol of rolesConAcceso) {
+    for (const rol of TODOS_LOS_ROLES) {
       const ve = itemsDeNav(rol).some((r) => r.seccion === "configuracion");
       expect(ve).toBe(rol === "administrador" || rol === "auditor");
     }
@@ -81,5 +84,11 @@ describe("puedeVer", () => {
 
   it("dice que no para una ruta que no existe en la tabla", () => {
     expect(puedeVer("administrador", "/mis-obras")).toBe(false);
+  });
+
+  it("/ingesta es solo del administrador, como /reportes en el servidor", () => {
+    for (const rol of TODOS_LOS_ROLES) {
+      expect(puedeVer(rol, "/ingesta"), rol).toBe(rol === "administrador");
+    }
   });
 });

@@ -71,20 +71,21 @@ var brutoMaximo = decimal.RequireFromString("9999999999999999.99")
 // mes REAL.
 //
 // Mas estricto que el CHECK de las tablas `reportes`, `bolsas`, `procesos` y
-// `cola_trabajos`, y que aplicacion.periodoValido, que usan `[0-9]{2}` para el
-// mes y por tanto admiten `2025-00` y `2025-13`. Que el dominio sea mas
-// estricto que el esquema es la direccion segura: el constructor es la puerta,
-// y guardar dinero bajo un mes que no existe produce un periodo que no cuadra
-// con ningun corte del reglamento (`R-34`) y que ningun reparto sabe cerrar.
+// `cola_trabajos`, que usan `[0-9]{2}` para el mes y por tanto admiten
+// `2025-00` y `2025-13`. Que el nucleo sea mas estricto que el esquema es la
+// direccion segura: guardar dinero bajo un mes que no existe produce un periodo
+// que no cuadra con ningun corte del reglamento (`R-34`) y que ningun reparto
+// sabe cerrar.
 //
-// Los otros dos validadores tienen el mismo hueco y no se tocan aqui:
-// estrecharlos pide una migracion sobre cuatro tablas y un repaso de la cola de
-// trabajos, que no es el alcance de este PR.
+// El CHECK del esquema sigue con ese hueco y no se toca aqui: estrecharlo pide
+// una migracion sobre cuatro tablas, que no es el alcance de este PR. Lo que si
+// se cerro es la copia que tenia la capa de aplicacion, que era la que dejaba
+// entrar un mes imposible por el camino que escribe: ver [PeriodoValido].
 //
-// Duplicado a proposito, por lo que ya explica aplicacion.periodoValido: la
-// base lo comprueba porque una fila mal formada no se puede permitir aunque
-// la escriba otro cliente, y el nucleo porque rechazar un periodo invalido
-// antes de la insercion es mas barato que leerlo en una violacion de CHECK.
+// Duplicado a proposito respecto del CHECK: la base lo comprueba porque una
+// fila mal formada no se puede permitir aunque la escriba otro cliente, y el
+// nucleo porque rechazar un periodo invalido antes de la insercion es mas
+// barato que leerlo en una violacion de CHECK.
 var periodoValido = regexp.MustCompile(`^[0-9]{4}(-(0[1-9]|1[0-2]))?$`)
 
 // ValidarPeriodo recorta un periodo y devuelve el normalizado, o
@@ -106,6 +107,26 @@ func ValidarPeriodo(periodo string) (string, error) {
 			ErrBolsaInvalida, periodo)
 	}
 	return periodo, nil
+}
+
+// PeriodoValido dice si un periodo tiene la forma que este modulo acepta: un
+// ano, o un ano y un mes que existe.
+//
+// Exportada por la misma razon que [ValidarPeriodo]: el patron es UNA regla, y
+// con copias acaba derivando. La capa de aplicacion la usa en los dos sitios
+// donde comprueba un periodo antes de escribir -`ClaveTrabajo.Valida` y
+// `prepararReporte`- en vez de mantener su propio `[0-9]{2}`, que admitia
+// `2026-00` y `2026-13` justo en el camino que escribe la boveda. Ahi no hay
+// vuelta atras que lo arregle: la unicidad de una entrega es (sha256, fuente),
+// la huella no incluye el periodo y no hay ruta de borrado, asi que un archivo
+// subido a un mes que no existe queda quemado para siempre.
+//
+// No recorta espacios, a diferencia de [ValidarPeriodo]: aqui se responde si el
+// TEXTO que llego es un periodo, y recortarlo es una decision de quien lo
+// guarda -el constructor de la bolsa es quien la toma-. Quien la use esperando
+// el mismo trato se quedaria con un periodo con espacios.
+func PeriodoValido(periodo string) bool {
+	return periodoValido.MatchString(periodo)
 }
 
 // Bolsa a repartir en un periodo. Es lo unico que Recaudo pasa aguas abajo:
