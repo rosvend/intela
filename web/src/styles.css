@@ -785,3 +785,273 @@ table button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- ingesta (#29) ---------- */
+
+/*
+ * Panel con el resultado de una subida. El borde izquierdo dice como fue:
+ * verde si entro todo; ambar si hubo rechazos (quedaron en el log, no se
+ * perdieron); vinotinto si el backend rechazo la entrega entera.
+ */
+.panel-resultado {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-left-width: 4px;
+  border-radius: var(--radio);
+}
+
+.panel-resultado h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.panel-resultado p {
+  margin: 0;
+}
+
+.panel-ok {
+  border-left-color: var(--ok);
+}
+
+.panel-ok h2 {
+  color: var(--ok);
+}
+
+.panel-parcial {
+  border-left-color: var(--alerta);
+}
+
+.panel-parcial h2 {
+  color: var(--alerta);
+}
+
+.panel-fallo {
+  border-left-color: var(--acento);
+}
+
+.panel-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.panel-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.panel-datos dd {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+}
+
+.panel-aviso {
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+/* El mensaje del backend se muestra tal cual, saltos de linea incluidos. */
+.panel-mensaje {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.huella {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.tabla-rechazos td {
+  vertical-align: top;
+}
+
+/* El id del rechazo (`rep-<huella>-<n>`) pasa de 70 caracteres y la columna se
+   titula "Id", no "Fila": parte linea en vez de estirar la tabla. */
+.tabla-rechazos-id {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+/* ids_fuente trae una linea `clave=valor` por identificador (ADR 0018). */
+.tabla-rechazos-ids {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: pre-line;
+}
+
+/* Listado de cargas: recuentos a la derecha y en cifras tabulares, para
+   comparar filas de un vistazo. */
+.tabla-cargas-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accion de fila con aspecto de enlace: un boton pill por fila pesaria mas
+   que los datos. */
+.tabla-cargas-boton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--acento);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tabla-cargas-boton:hover {
+  text-decoration: underline;
+}
+
+.tabla-cargas-boton:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* El log abierto se lee como parte de su carga: fondo tenue y un spinner mas
+   compacto que el de pantalla completa. */
+.tabla-cargas-log > td {
+  padding: 0.75rem 1rem 1rem;
+  background: var(--fondo);
+}
+
+.tabla-cargas-log .cargando {
+  padding: 1rem;
+}
+
+.ingesta-error {
+  margin: 0;
+  color: var(--acento);
+  overflow-wrap: anywhere;
+}
+
+/* Pantalla (Ingesta.tsx): cabecera, formulario, resultado y listado en
+   columna, con el mismo ancho maximo que el tablero. Margenes y no `gap`: la
+   region del resultado esta siempre montada y, vacia, no debe sumar hueco. */
+.ingesta {
+  display: flex;
+  flex-direction: column;
+  max-width: 1120px;
+}
+
+.ingesta > * + * {
+  margin-top: 1.5rem;
+}
+
+.ingesta > .ingesta-resultado:empty {
+  margin-top: 0;
+}
+
+.ingesta-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.ingesta-cabecera p {
+  margin: 0;
+}
+
+.ingesta-formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.ingesta-campos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+}
+
+.ingesta-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1 1 14rem;
+  max-width: 22rem;
+}
+
+.ingesta-formulario label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.ingesta-campo input,
+.ingesta-campo select {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.ingesta-campo input::placeholder {
+  color: var(--texto-suave);
+}
+
+.ingesta-formulario input:focus-visible,
+.ingesta-formulario select:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.ingesta-ayuda {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+
+/* Zona de soltar: borde discontinuo en reposo; con un archivo encima toma el
+   color de marca para decir que ahi se puede soltar. */
+.ingesta-soltar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 1.1rem;
+  border: 2px dashed var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+}
+
+.ingesta-soltar-activa {
+  border-color: var(--acento);
+  background: var(--acento-activo);
+}
+
+.ingesta-soltar input {
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.ingesta-archivo {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.ingesta-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.ingesta-cargas h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
