@@ -19,7 +19,7 @@ import (
 // editor de splits de la #30, declarado aqui igual que [Catalogo].
 type Declaraciones interface {
 	GuardarSplits(ctx context.Context, obraID string, partes []repertorio.Parte, actorID string) (aplicacion.VersionDeclaracion, error)
-	Historial(ctx context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error)
+	Historial(ctx context.Context, obraID string, pag aplicacion.Paginacion) ([]aplicacion.VersionDeclaracion, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -170,12 +170,17 @@ func (a *API) editarDeclaracion(w http.ResponseWriter, r *http.Request) {
 	a.guardarDeclaracion(w, r, http.StatusOK)
 }
 
-// historialDeclaracion sirve todas las versiones de la declaracion de una
-// obra. Una obra sin ninguna declaracion aun devuelve una lista vacia, no un
+// historialDeclaracion sirve una pagina de versiones de la declaracion de una
+// obra, desde la mas reciente hacia atras y en orden ascendente dentro de la
+// pagina. Una obra sin ninguna declaracion aun devuelve una lista vacia, no un
 // 404: mismo criterio que buscarObras.
 func (a *API) historialDeclaracion(w http.ResponseWriter, r *http.Request) {
 	obraID := chi.URLParam(r, "id")
-	historial, err := a.declaraciones.Historial(r.Context(), obraID)
+	pag, ok := leerPaginacion(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	historial, err := a.declaraciones.Historial(r.Context(), obraID, pag)
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "fallo al leer el historial de una declaracion", slog.Any("error", err))
 		escribirError(w, http.StatusInternalServerError, "no se pudo consultar el historial")

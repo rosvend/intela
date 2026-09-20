@@ -1048,9 +1048,14 @@ paths:
       tags: [repertorio]
       summary: Ver todas las versiones de la Declaracion de Obra
       description: |
-        Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
-        una con su ventana de vigencia. Es de solo lectura: no hay forma de
-        editar una version pasada, unicamente de abrir una nueva -eso es
+        Devuelve una pagina de versiones, cada una con su ventana de
+        vigencia. La pagina se toma desde la version MAS RECIENTE hacia atras
+        -la version abierta es la ultima, y es la que quien lee el historial
+        necesita aunque la obra tenga mas versiones que el limite-, y dentro de
+        la pagina el orden sigue siendo de mas antigua a mas reciente.
+        `desplazamiento` cuenta versiones desde la mas reciente: con el se
+        alcanzan las anteriores. Es de solo lectura: no hay forma de editar una
+        version pasada, unicamente de abrir una nueva -eso es
         `PUT .../declaracion`-.
 
         Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
@@ -1067,9 +1072,35 @@ paths:
           schema:
             type: string
           example: obra-1
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Cuantas versiones trae la pagina. Si se omite, el servidor aplica
+            100. Tiene que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 100
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas versiones saltarse contando desde la mas reciente. Cero o
+            ausente es la pagina que incluye la version abierta.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
-          description: Las versiones de la declaracion, en orden.
+          description: |
+            La pagina pedida de versiones, en orden ascendente dentro de ella.
+            Lista vacia si la obra no tiene declaracion o si el desplazamiento
+            cae mas alla de la primera version.
           content:
             application/json:
               schema:
@@ -1099,6 +1130,14 @@ paths:
                     - titular_id: tit-2
                       ipi: IPI-00000002
                       porcentaje: 30
+        "400":
+          description: Un parametro de paginacion esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: limite tiene que ser un entero positivo
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:

@@ -220,7 +220,9 @@ type GestionDeclaraciones interface {
 	// es lo que evita que el llamador informe una ventana de vigencia que la
 	// base nunca tuvo.
 	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
-	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	// Historial sirve una pagina de versiones, tomada desde la MAS RECIENTE
+	// hacia atras y devuelta en orden ascendente. Ver [Store.Historial].
+	Historial(ctx context.Context, obraID string, pag Paginacion) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
 
 	// VigentesDeObras devuelve la version ABIERTA de cada una de las obras

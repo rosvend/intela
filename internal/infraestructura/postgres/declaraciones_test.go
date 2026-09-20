@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func TestHistorialResuelveTodasLasVersionesEnUnaConsulta(t *testing.T) {
 			}
 
 			c := &contadorDeConsultas{}
-			historial, err := storeInstrumentado(t, dsn, c).Historial(t.Context(), obraSinDeclaracion)
+			historial, err := storeInstrumentado(t, dsn, c).Historial(t.Context(), obraSinDeclaracion, aplicacion.Paginacion{})
 			if err != nil {
 				t.Fatalf("Historial: %v", err)
 			}
@@ -186,7 +187,7 @@ func TestEditarAbreNuevaVersionYConservaLaAnterior(t *testing.T) {
 		t.Fatalf("versiones = %d, %d; se esperaba 1, 2", v1, v2)
 	}
 
-	historial, err := s.Historial(t.Context(), obraSinDeclaracion)
+	historial, err := s.Historial(t.Context(), obraSinDeclaracion, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("Historial: %v", err)
 	}
@@ -249,7 +250,7 @@ func TestGuardarConTodasLasVersionesCerradasAbreLaSiguiente(t *testing.T) {
 		t.Fatalf("version = %d, se esperaba 3 (MAX(version) + 1), no 1", v3)
 	}
 
-	historial, err := s.Historial(t.Context(), obraSinDeclaracion)
+	historial, err := s.Historial(t.Context(), obraSinDeclaracion, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("Historial: %v", err)
 	}
@@ -499,7 +500,7 @@ func TestGuardarTitularInexistenteEsErrTitularInexistente(t *testing.T) {
 	// La FK revienta DENTRO de la misma transaccion que abrio la version: no
 	// puede quedar una version huerfana ni un asiento sin las partes que
 	// describe (mismo patron que TestGuardarRevierteLaVersionSiElAsientoFalla).
-	historial, err := s.Historial(t.Context(), obraSinDeclaracion)
+	historial, err := s.Historial(t.Context(), obraSinDeclaracion, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("Historial: %v", err)
 	}
@@ -588,7 +589,7 @@ func TestGuardarRevierteLaVersionSiElAsientoFalla(t *testing.T) {
 		t.Fatal("se esperaba que el asiento fallara por el actor inexistente")
 	}
 
-	historial, err := s.Historial(ctx, obraSinDeclaracion)
+	historial, err := s.Historial(ctx, obraSinDeclaracion, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("Historial: %v", err)
 	}
@@ -643,7 +644,7 @@ func TestGuardarEmpujaVigenteDesdeSiCoincideConLaAnterior(t *testing.T) {
 				t.Fatalf("Guardar v2 con delta %s sobre v1: %v", c.delta, err)
 			}
 
-			historial, err := s.Historial(ctx, obraSinDeclaracion)
+			historial, err := s.Historial(ctx, obraSinDeclaracion, aplicacion.Paginacion{})
 			if err != nil {
 				t.Fatalf("Historial: %v", err)
 			}
@@ -718,7 +719,7 @@ func TestGuardarSplitsRechazaR01SinCerrarLaVersionAbierta(t *testing.T) {
 			// y no del valor que devuelve la llamada.
 			historialDeLaObra := func() []aplicacion.VersionDeclaracion {
 				t.Helper()
-				historial, err := s.Historial(ctx, obraSinDeclaracion)
+				historial, err := s.Historial(ctx, obraSinDeclaracion, aplicacion.Paginacion{})
 				if err != nil {
 					t.Fatalf("Historial: %v", err)
 				}
@@ -826,6 +827,57 @@ func TestGuardarSplitsRechazaR01SinCerrarLaVersionAbierta(t *testing.T) {
 			if asientos[0].Hecho != "declaracion.guardada" {
 				t.Fatalf("el asiento que queda es de %q, se esperaba el de la v1 (`declaracion.guardada`)",
 					asientos[0].Hecho)
+			}
+		})
+	}
+}
+
+// El historial ya no se corta con un error a partir de N versiones: se pagina, y
+// la pagina va de la version MAS RECIENTE hacia atras -la abierta es la ultima y
+// es la que las pantallas necesitan-, en orden ascendente dentro de la pagina.
+// Con limite 2 sobre 5 versiones, ninguna queda inalcanzable.
+func TestHistorialPaginaDesdeLaVersionMasReciente(t *testing.T) {
+	s, _ := sembrar(t)
+	t1 := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 5; i++ {
+		// Dos partes por version: el LIMIT va sobre las versiones, no sobre las
+		// partes, y una version recortada a una parte lo delataria.
+		if _, _, err := s.Guardar(t.Context(), partesDePrueba(t, int64(60-i), 40), t1.Add(time.Duration(i)*time.Hour), usuarioAdmin); err != nil {
+			t.Fatalf("Guardar v%d: %v", i+1, err)
+		}
+	}
+
+	versionesDe := func(pag aplicacion.Paginacion) []int {
+		t.Helper()
+		historial, err := s.Historial(t.Context(), obraSinDeclaracion, pag)
+		if err != nil {
+			t.Fatalf("Historial(%+v): %v", pag, err)
+		}
+		var vs []int
+		for _, v := range historial {
+			if len(v.Declaracion.Partes) != 2 {
+				t.Fatalf("la version %d trae %d partes, se esperaban 2", v.Version, len(v.Declaracion.Partes))
+			}
+			vs = append(vs, v.Version)
+		}
+		return vs
+	}
+
+	casos := []struct {
+		nombre string
+		pag    aplicacion.Paginacion
+		quiero []int
+	}{
+		{"primera pagina: las mas recientes", aplicacion.Paginacion{Limite: 2}, []int{4, 5}},
+		{"segunda pagina", aplicacion.Paginacion{Limite: 2, Desplazamiento: 2}, []int{2, 3}},
+		{"ultima pagina: la mas vieja", aplicacion.Paginacion{Limite: 2, Desplazamiento: 4}, []int{1}},
+		{"mas alla del final", aplicacion.Paginacion{Limite: 2, Desplazamiento: 10}, nil},
+		{"sin tope", aplicacion.Paginacion{Limite: aplicacion.LimiteSinTope}, []int{1, 2, 3, 4, 5}},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if got := versionesDe(c.pag); !slices.Equal(got, c.quiero) {
+				t.Fatalf("versiones = %v, se esperaba %v", got, c.quiero)
 			}
 		})
 	}

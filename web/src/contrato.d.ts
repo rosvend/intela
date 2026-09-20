@@ -332,9 +332,14 @@ export interface paths {
         };
         /**
          * Ver todas las versiones de la Declaracion de Obra
-         * @description Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
-         *     una con su ventana de vigencia. Es de solo lectura: no hay forma de
-         *     editar una version pasada, unicamente de abrir una nueva -eso es
+         * @description Devuelve una pagina de versiones, cada una con su ventana de
+         *     vigencia. La pagina se toma desde la version MAS RECIENTE hacia atras
+         *     -la version abierta es la ultima, y es la que quien lee el historial
+         *     necesita aunque la obra tenga mas versiones que el limite-, y dentro de
+         *     la pagina el orden sigue siendo de mas antigua a mas reciente.
+         *     `desplazamiento` cuenta versiones desde la mas reciente: con el se
+         *     alcanzan las anteriores. Es de solo lectura: no hay forma de editar una
+         *     version pasada, unicamente de abrir una nueva -eso es
          *     `PUT .../declaracion`-.
          *
          *     Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
@@ -2316,7 +2321,20 @@ export interface operations {
     };
     historialDeclaracion: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Cuantas versiones trae la pagina. Si se omite, el servidor aplica
+                 *     100. Tiene que ser un entero positivo y no mayor que 500.
+                 * @example 100
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas versiones saltarse contando desde la mas reciente. Cero o
+                 *     ausente es la pagina que incluye la version abierta.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
             header?: never;
             path: {
                 /**
@@ -2329,7 +2347,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Las versiones de la declaracion, en orden. */
+            /**
+             * @description La pagina pedida de versiones, en orden ascendente dentro de ella.
+             *     Lista vacia si la obra no tiene declaracion o si el desplazamiento
+             *     cae mas alla de la primera version.
+             */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2376,6 +2398,20 @@ export interface operations {
                      *     ]
                      */
                     "application/json": components["schemas"]["VersionDeclaracion"][];
+                };
+            };
+            /** @description Un parametro de paginacion esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "limite tiene que ser un entero positivo"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description Falta el token, o esta caducado o revocado. */

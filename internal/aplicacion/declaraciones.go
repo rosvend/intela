@@ -190,11 +190,14 @@ func (d Declaraciones) exigirPuedenRecibirReparto(ctx context.Context, partes []
 	return nil
 }
 
-// Historial devuelve todas las versiones de la declaracion de una obra,
-// ordenadas por version. Una obra sin ninguna declaracion aun devuelve una
-// lista vacia, no un error: es el mismo criterio que [Catalogo.BuscarObras].
-func (d Declaraciones) Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error) {
-	historial, err := d.Gestion.Historial(ctx, obraID)
+// Historial devuelve una pagina de versiones de la declaracion de una obra,
+// ordenadas por version. La pagina se toma desde la version mas reciente hacia
+// atras: la version abierta es la ultima, y es la que quien lee el historial
+// necesita aunque la obra tenga mas versiones que el limite. Una obra sin
+// ninguna declaracion aun devuelve una lista vacia, no un error: es el mismo
+// criterio que [Catalogo.BuscarObras].
+func (d Declaraciones) Historial(ctx context.Context, obraID string, pag Paginacion) ([]VersionDeclaracion, error) {
+	historial, err := d.Gestion.Historial(ctx, obraID, pag.ConDefecto())
 	if err != nil {
 		return nil, fmt.Errorf("historial de declaraciones de la obra %q: %w", obraID, err)
 	}

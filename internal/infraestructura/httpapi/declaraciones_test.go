@@ -23,6 +23,7 @@ type declaracionesFalso struct {
 	historial []aplicacion.VersionDeclaracion
 	err       error
 
+	pagRecibida     aplicacion.Paginacion
 	obraIDRecibida  string
 	partesRecibidas []repertorio.Parte
 	actorRecibido   string
@@ -33,8 +34,9 @@ func (d *declaracionesFalso) GuardarSplits(_ context.Context, obraID string, par
 	return d.version, d.err
 }
 
-func (d *declaracionesFalso) Historial(_ context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error) {
+func (d *declaracionesFalso) Historial(_ context.Context, obraID string, pag aplicacion.Paginacion) ([]aplicacion.VersionDeclaracion, error) {
 	d.obraIDRecibida = obraID
+	d.pagRecibida = pag
 	return d.historial, d.err
 }
 
@@ -385,5 +387,44 @@ func TestElPorcentajeConDecimalesSerializaTalCual(t *testing.T) {
 	quiero := `{"titular_id":"t1","ipi":"IPI-1","porcentaje":33.3333}`
 	if string(bruto) != quiero {
 		t.Fatalf("json = %s, se esperaba %s", bruto, quiero)
+	}
+}
+
+func TestHistorialPasaLimiteYDesplazamiento(t *testing.T) {
+	falso := &declaracionesFalso{}
+	h := servidorConDeclaraciones(t, falso)
+
+	rec := pedir(t, h, http.MethodGet, "/obras/obra-1/declaracion/historial?limite=10&desplazamiento=20", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if falso.pagRecibida.Limite != 10 || falso.pagRecibida.Desplazamiento != 20 {
+		t.Fatalf("paginacion = %+v, se esperaba {10,20}", falso.pagRecibida)
+	}
+}
+
+func TestHistorialSinParametrosUsaElDefecto(t *testing.T) {
+	falso := &declaracionesFalso{}
+	h := servidorConDeclaraciones(t, falso)
+
+	rec := pedir(t, h, http.MethodGet, "/obras/obra-1/declaracion/historial", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if falso.pagRecibida.Limite != aplicacion.LimiteObrasPorDefecto || falso.pagRecibida.Desplazamiento != 0 {
+		t.Fatalf("paginacion = %+v, se esperaba el defecto", falso.pagRecibida)
+	}
+}
+
+func TestHistorialRechazaPaginacionInvalida(t *testing.T) {
+	h := servidorConDeclaraciones(t, &declaracionesFalso{})
+
+	for _, c := range []string{"limite=0", "limite=-1", "limite=abc", "limite=501", "desplazamiento=-1", "desplazamiento=x"} {
+		t.Run(c, func(t *testing.T) {
+			rec := pedir(t, h, http.MethodGet, "/obras/obra-1/declaracion/historial?"+c, "", "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }

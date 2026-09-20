@@ -180,26 +180,23 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 	return version, ahora, nil
 }
 
-// maxVersionesHistorial es el tope de versiones que [Store.Historial] sirve de
-// una vez.
+// Historial devuelve una pagina de versiones de la declaracion de una obra,
+// en orden ascendente. ORDER BY explicito por lo mismo que en repertorio.go:
+// reproducible (ADR 0005).
 //
-// No es una regla de negocio: es la cota que le faltaba a la unica consulta de
-// este cambio que no la tenia. Una version de declaracion es una edicion humana
-// del reparto de una obra, asi que un historial de miles no existe; el tope
-// esta para que un historial patologico no se sirva entero por accidente -el
-// mismo papel que `leerPaginacion` cumple en el catalogo (`obras.go`, "nunca un
-// recorte en silencio de lo que se pidio")-.
+// # La pagina va de la version mas RECIENTE hacia atras
 //
-// Al alcanzarlo NO se recorta en silencio: se pide UNA version de mas y, si
-// llega, Historial falla. Decirlo con un error y no con un campo nuevo es
-// deliberado: el caso es inalcanzable en la practica y añadir un campo a la
-// respuesta obligaria a tocar `api/openapi.yaml` y a regenerar `contrato.d.ts`
-// por algo que no va a pasar.
-const maxVersionesHistorial = 500
-
-// Historial devuelve todas las versiones de la declaracion de una obra, en
-// orden. ORDER BY explicito por lo mismo que en repertorio.go: reproducible
-// (ADR 0005).
+// La version abierta es la de MAX(version), y quien lee el historial la
+// necesita: `conciliarConElHistorial` (web) compara contra ella lo que dice el
+// catalogo. Si la pagina por defecto empezara por la version 1, una obra con
+// mas versiones que el limite dejaria a las dos pantallas sin version abierta
+// y dirian "descuadrado" sin que haya descuadre. Con el desplazamiento se
+// alcanzan las viejas: ninguna version queda inalcanzable, que es lo que hacia
+// el error duro que esto reemplaza (a partir de la 501 no se servia NINGUNA).
+// Dentro de la pagina el orden sigue siendo de mas antigua a mas reciente.
+//
+// [aplicacion.LimiteSinTope] pide el historial entero; solo tiene sentido en
+// lecturas internas, la ruta HTTP lo rechaza.
 //
 // # Una sola consulta, y por que
 //
@@ -214,21 +211,27 @@ const maxVersionesHistorial = 500
 // El LIMIT va sobre las VERSIONES, no sobre el resultado: puesto en la consulta
 // de fuera recortaria filas de PARTES, y una version con tres coautores podria
 // llegar con dos. De ahi la CTE.
-func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error) {
+func (s *Store) Historial(ctx context.Context, obraID string, pag aplicacion.Paginacion) ([]aplicacion.VersionDeclaracion, error) {
+	pag = pag.ConDefecto()
+	// LIMIT NULL es "sin limite" en PostgreSQL.
+	var limite *int
+	if pag.Limite != aplicacion.LimiteSinTope {
+		limite = &pag.Limite
+	}
 	filas, err := s.pool.Query(ctx,
 		`WITH versiones AS (
 		     SELECT obra_id, version, vigente_desde, vigente_hasta
 		       FROM declaracion_versiones
 		      WHERE obra_id = $1
-		      ORDER BY version
-		      LIMIT $2
+		      ORDER BY version DESC
+		      LIMIT $2 OFFSET $3
 		 )
 		 SELECT v.version, v.vigente_desde, v.vigente_hasta, d.titular_id, d.ipi, d.porcentaje
 		   FROM versiones v
 		   LEFT JOIN declaraciones d
 		     ON d.obra_id = v.obra_id AND d.version = v.version
 		  ORDER BY v.version, d.titular_id`,
-		obraID, maxVersionesHistorial+1)
+		obraID, limite, pag.Desplazamiento)
 	if err != nil {
 		return nil, traducirError(err, "historial de declaraciones de la obra %q", obraID)
 	}
@@ -275,13 +278,6 @@ func (s *Store) Historial(ctx context.Context, obraID string) ([]aplicacion.Vers
 	// pasando por completo.
 	if err := filas.Err(); err != nil {
 		return nil, traducirError(err, "historial de declaraciones de la obra %q", obraID)
-	}
-
-	// Se pidio una de mas a proposito: si llega, hay al menos una que no cabe.
-	if len(versiones) > maxVersionesHistorial {
-		return nil, fmt.Errorf(
-			"el historial de la obra %q pasa de %d versiones: la consulta tiene un tope y no se devuelve un historial recortado sin decirlo",
-			obraID, maxVersionesHistorial)
 	}
 	return versiones, nil
 }

@@ -25,6 +25,7 @@ type gestionFalsa struct {
 	versionADevolver      int
 	vigenteDesdeADevolver time.Time
 	historial             []VersionDeclaracion
+	pagRecibida           Paginacion
 	vigente               VersionDeclaracion
 	err                   error
 }
@@ -51,7 +52,8 @@ func (g *gestionFalsa) Guardar(_ context.Context, d repertorio.Declaracion, ahor
 	return version, vigenteDesde, nil
 }
 
-func (g *gestionFalsa) Historial(_ context.Context, _ string) ([]VersionDeclaracion, error) {
+func (g *gestionFalsa) Historial(_ context.Context, _ string, pag Paginacion) ([]VersionDeclaracion, error) {
+	g.pagRecibida = pag
 	return g.historial, g.err
 }
 
@@ -457,7 +459,7 @@ func TestHistorialPasaAlPuerto(t *testing.T) {
 	gestion := &gestionFalsa{historial: quiero}
 	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
 
-	got, err := d.Historial(t.Context(), "obra-1")
+	got, err := d.Historial(t.Context(), "obra-1", Paginacion{})
 	if err != nil {
 		t.Fatalf("Historial: %v", err)
 	}
@@ -519,5 +521,17 @@ func TestGuardarSplitsAplicaR01AUnTitularIDConEspacios(t *testing.T) {
 	}
 	if gestion.guardadas != 0 {
 		t.Fatal("se guardo una declaracion con una sociedad dentro")
+	}
+}
+
+func TestHistorialAplicaElDefectoDeLaPaginacion(t *testing.T) {
+	gestion := &gestionFalsa{}
+	d := Declaraciones{Gestion: gestion, Reloj: relojFijo{}}
+
+	if _, err := d.Historial(t.Context(), "obra-1", Paginacion{}); err != nil {
+		t.Fatalf("Historial: %v", err)
+	}
+	if gestion.pagRecibida.Limite != LimiteObrasPorDefecto {
+		t.Fatalf("limite = %d, se esperaba el defecto %d", gestion.pagRecibida.Limite, LimiteObrasPorDefecto)
 	}
 }
