@@ -333,16 +333,16 @@ func (d *Dataset) reportes() {
 	// Snapshot.BaseCineTeatro (P-18). La columna tiene que traer el dato para
 	// que la decision sea un parametro y no una reescritura.
 	cine := []aplicacion.UsoPersistido{
-		usoCine(ObraCine, "Pelicula X", "PX-1", "10000", "10000"),
+		usoCine(FuenteCine, ObraCine, "Pelicula X", "PX-1", "10000", "10000"),
 	}
 	ott := []aplicacion.UsoPersistido{
-		usoOTT(ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
+		usoOTT(FuenteOTT, ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
 	}
 	// `RD 9.4` reparte el dinero del transporte publico por el numero de
 	// exhibiciones de cada obra, que es una medida distinta de las emisiones.
 	transporte := []aplicacion.UsoPersistido{
-		usoTransporte(ObraCine, "Pelicula X", "PX-7", 12),
-		usoTransporte(ObraUnitario, "El Tercer Acto", "ETA-7", 3),
+		usoTransporte(FuenteTransporte, ObraCine, "Pelicula X", "PX-7", 12),
+		usoTransporte(FuenteTransporte, ObraUnitario, "El Tercer Acto", "ETA-7", 3),
 	}
 
 	d.Reportes = []Reporte{
@@ -549,19 +549,27 @@ func usoTV(canal, obraID, titulo, idFuente, tipo, duracion string, emisiones int
 	return u
 }
 
-func usoCine(obraID, titulo, idFuente, taquilla, espectadores string) aplicacion.UsoPersistido {
+// usoCine, usoOTT y usoTransporte llevan el canal explicito por la misma razon
+// que usoTV: sin el, UsosDeCanal (#119) no encuentra estas filas al filtrar
+// por el pagador de la bolsa, y la bolsa de ese pagador queda sin nada que
+// ponderar (hallazgo de revision sobre el PR #137).
+func usoCine(canal, obraID, titulo, idFuente, taquilla, espectadores string) aplicacion.UsoPersistido {
 	u := usoIdentificado(obraID, titulo, idFuente, reparto.Cine, "cinematografica", "0", 1, "0", taquilla, "0", "0", "0")
 	u.Espectadores = decimal.RequireFromString(espectadores)
+	u.CanalID = canal
 	return u
 }
 
-func usoOTT(obraID, titulo, idFuente, vistas, minutos, pb string) aplicacion.UsoPersistido {
-	return usoIdentificado(obraID, titulo, idFuente, reparto.OTT, "serie", "0", 1, "0", "0", vistas, minutos, pb)
+func usoOTT(canal, obraID, titulo, idFuente, vistas, minutos, pb string) aplicacion.UsoPersistido {
+	u := usoIdentificado(obraID, titulo, idFuente, reparto.OTT, "serie", "0", 1, "0", "0", vistas, minutos, pb)
+	u.CanalID = canal
+	return u
 }
 
-func usoTransporte(obraID, titulo, idFuente string, exhibiciones int64) aplicacion.UsoPersistido {
+func usoTransporte(canal, obraID, titulo, idFuente string, exhibiciones int64) aplicacion.UsoPersistido {
 	u := usoIdentificado(obraID, titulo, idFuente, reparto.Transporte, "cinematografica", "0", 1, "0", "0", "0", "0", "0")
 	u.Exhibiciones = exhibiciones
+	u.CanalID = canal
 	return u
 }
 

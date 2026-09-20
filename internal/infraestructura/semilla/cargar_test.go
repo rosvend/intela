@@ -372,6 +372,88 @@ func TestResetRechazaTitularesAjenos(t *testing.T) {
 	}
 }
 
+// TestResetRechazaCanalAjeno y TestResetRechazaClasificacionAjena son el
+// hallazgo de revision sobre el PR #137: vaciar validaba obras y titulares
+// antes de borrar, pero no canales ni canales_clasificacion (00011), asi que
+// un canal importado o una clasificacion anual real se borraban con
+// SEED_RESET=true igual que las filas sinteticas.
+func TestResetRechazaCanalAjeno(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del catalogo real, que el dataset no conoce.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales (id, nombre, grupo_estructural)
+		VALUES ('telecaribe', 'Telecaribe', 'regional_publico')`,
+	); err != nil {
+		t.Fatalf("insertar canal real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+
+	var quedan int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM canales WHERE id = 'telecaribe'`).Scan(&quedan); err != nil {
+		t.Fatalf("contar el canal real: %v", err)
+	}
+	if quedan != 1 {
+		t.Fatal("el reset borro el canal que no era del dataset")
+	}
+}
+
+func TestResetRechazaClasificacionAjena(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del dataset (caracol) pero con una clasificacion de un ano que
+	// el dataset no siembra: la clave compuesta tiene que distinguirla de las
+	// suyas propias.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+		VALUES ('caracol', 1999, 'privado_nacional')`,
+	); err != nil {
+		t.Fatalf("insertar clasificacion real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestCadaBolsaNacionalTieneUsosAtribuidos es el segundo hallazgo de esa
+// revision: solo usoTV fijaba CanalID, asi que UsosDeCanal devolvia vacio
+// para las bolsas de cine, OTT y transporte aunque el reporte trajera filas
+// para ese pagador.
+func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	// dago-films es el circuito internacional (RD 7.4): no valoriza por
+	// puntos y por tanto no siembra usos atribuidos a canal.
+	for _, pagador := range []string{FuenteTV, FuenteTVSegundo, FuenteCine, FuenteOTT, FuenteTransporte} {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, pagador).Scan(&n); err != nil {
+			t.Fatalf("contar usos de %q: %v", pagador, err)
+		}
+		if n == 0 {
+			t.Errorf("el pagador %q no tiene ningun uso atribuido: su bolsa quedaria "+
+				"sin nada que ponderar (UsosDeCanal devolveria vacio)", pagador)
+		}
+	}
+}
+
 // TestCargarDetectaLaIdentificacionAMedias: 4 de 6 usos identificados es el
 // residuo exacto que deja una caida dentro de identificar. La recarga decia
 // "dataset ya sembrado" y salia con 0.
