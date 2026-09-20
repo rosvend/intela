@@ -243,6 +243,13 @@ export interface paths {
          *     `limite` y `desplazamiento` son la misma forma que usa `ListarObras`
          *     en el repositorio de reparto (issue #90). Sin `limite` el servidor
          *     aplica 100; por encima de 500 responde 400.
+         *
+         *     Cada obra llega con el estado de su Declaracion de Obra vigente
+         *     (`estado_declaracion`, `suma_porcentajes` y `version_vigente`), que es
+         *     lo que el catalogo tiene que poder mostrar sin que el cliente tenga que
+         *     adivinar nada ni pedir la declaracion aparte. `version_vigente: null`
+         *     distingue una obra sin declaracion de una declarada que no suma 100:
+         *     las dos son `incompleta`, y solo la segunda tiene version.
          */
         get: operations["buscarObras"];
         put?: never;
@@ -255,6 +262,14 @@ export interface paths {
          *
          *     Una vez creada, el identificador es inmutable: no hay operacion que lo
          *     cambie. Es lo que referencian las declaraciones, los alias y los usos.
+         *
+         *     La respuesta trae ademas el estado de la Declaracion de Obra, porque es
+         *     el mismo schema `Obra` y sus tres campos derivados son obligatorios en
+         *     las cuatro respuestas que devuelven una obra. En un alta recien hecha
+         *     ese estado es el cero -`incompleta`, `suma_porcentajes: 0` y
+         *     `version_vigente: null`-, y no por darlo por supuesto: una declaracion
+         *     necesita la fila de la obra, que es justo lo que este alta crea, asi
+         *     que no puede existir ninguna todavia.
          */
         post: operations["registrarObra"];
         delete?: never;
@@ -278,7 +293,9 @@ export interface paths {
         };
         /**
          * Leer una obra del catalogo
-         * @description Devuelve la obra con sus metadatos y sus coautores.
+         * @description Devuelve la obra con sus metadatos, sus coautores y el estado de su
+         *     Declaracion de Obra vigente -incluido que no tenga ninguna, que es
+         *     `version_vigente: null`-.
          */
         get: operations["obraPorID"];
         put?: never;
@@ -300,6 +317,10 @@ export interface paths {
          *     No crea la obra si no existe: responde 404. Un PATCH que inserta
          *     convierte un identificador mal escrito en una obra fantasma del
          *     catalogo contra el que resuelve todo el matching.
+         *
+         *     Solo se corrigen los metadatos: el estado de la Declaracion de Obra no
+         *     se toca -sus porcentajes no estan en el catalogo (`R-03`)- y viaja en la
+         *     respuesta, como en cualquier lectura de la obra.
          */
         patch: operations["actualizarMetadatosObra"];
         trace?: never;
@@ -363,15 +384,56 @@ export interface paths {
         };
         /**
          * Ver todas las versiones de la Declaracion de Obra
-         * @description Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
-         *     una con su ventana de vigencia. Es de solo lectura: no hay forma de
-         *     editar una version pasada, unicamente de abrir una nueva -eso es
+         * @description Devuelve una pagina de versiones, cada una con su ventana de
+         *     vigencia. La pagina se toma desde la version MAS RECIENTE hacia atras
+         *     -la version abierta es la ultima, y es la que quien lee el historial
+         *     necesita aunque la obra tenga mas versiones que el limite-, y dentro de
+         *     la pagina el orden sigue siendo de mas antigua a mas reciente.
+         *     `desplazamiento` cuenta versiones desde la mas reciente: con el se
+         *     alcanzan las anteriores. Es de solo lectura: no hay forma de editar una
+         *     version pasada, unicamente de abrir una nueva -eso es
          *     `PUT .../declaracion`-.
          *
          *     Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
          *     un 404: mismo criterio que `GET /obras`.
          */
         get: operations["historialDeclaracion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/titulares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Buscar en el padron de titulares
+         * @description Devuelve las entradas del padron. Sin filtros devuelve la primera
+         *     pagina: la paginacion es el tope que evita servir el padron real de
+         *     REDES SGC de un golpe, igual que en el catalogo de obras.
+         *
+         *     **Devuelve el padron entero, personas juridicas incluidas.** No es un
+         *     listado de "quien puede cobrar": `R-01` (`RD 4.5`) solo admite orden de
+         *     pago a un escritor persona natural, y esa regla se aplica al armar una
+         *     declaracion, no al leer el padron. Recortar aqui a las personas
+         *     naturales dejaria a quien edita sin poder explicar por que el titular
+         *     del padron que no le ofrecen como parte existe y no se le ofrece.
+         *
+         *     Los filtros se combinan con Y. `nombre` es PARCIAL y no distingue
+         *     mayusculas; `ipi` es exacto. `ids` pide esos titulares y ninguno mas: es
+         *     la consulta ACOTADA por identificador.
+         *
+         *     `limite` y `desplazamiento` son la misma forma que en `/obras`. Sin
+         *     `limite` el servidor aplica 100; por encima de 500 responde 400.
+         */
+        get: operations["buscarTitulares"];
         put?: never;
         post?: never;
         delete?: never;
@@ -801,27 +863,113 @@ export interface components {
              */
             coautores: components["schemas"]["Coautor"][];
         };
+        /** @description El identificador de una obra, y nada mas. */
+        IdentidadObra: {
+            /**
+             * @description Identificador de la obra. Opaco, unico e inmutable. Es el numero de
+             *     obra de REDES-SYS, que se asigna FUERA de este sistema: lo trae
+             *     quien da de alta la obra, y ninguna operacion posterior lo cambia.
+             */
+            id: string;
+        };
         /**
-         * @description Una entrada del catalogo maestro: su identificador mas sus metadatos.
+         * @description El cuerpo de un alta de obra: el identificador y sus metadatos.
+         *
+         *     **No es `Obra`, y la diferencia importa.** `Obra` lleva ademas
+         *     `estado_declaracion`, `suma_porcentajes` y `version_vigente`, que el
+         *     servidor calcula a partir de la Declaracion de Obra vigente. Mandarlos
+         *     no cambia nada -el alta no los mira-, asi que un cuerpo que los exigiera
+         *     estaria afirmando una facultad que quien llama no tiene.
+         *
+         *     Es allOf y no un objeto plano por la misma razon que `Obra`: los
+         *     metadatos son los mismos en las dos, y duplicarlos aqui seria una
+         *     segunda copia que se desvia.
+         */
+        NuevaObra: components["schemas"]["IdentidadObra"] & components["schemas"]["MetadatosObra"];
+        /**
+         * @description Una entrada del catalogo maestro: su identificador, sus metadatos, y lo
+         *     que el sistema sabe hoy de su Declaracion de Obra.
          *
          *     El identificador es inmutable. Se asigna al crear la obra -lo trae
          *     quien la registra, es el numero de obra de REDES-SYS- y ninguna
          *     operacion lo cambia: es lo que referencian las declaraciones, los
          *     alias de fuente y los usos.
+         *
+         *     Los tres ultimos campos son DERIVADOS y de solo lectura: los calcula el
+         *     servidor a partir de la version vigente de la declaracion. No entran por
+         *     ningun cuerpo -para mandar una obra esta `NuevaObra`, y para corregir
+         *     sus metadatos, `MetadatosObra`-, y por eso no viven en `MetadatosObra`,
+         *     que es lo que un cliente puede enviar. Estan en las cuatro respuestas
+         *     que devuelven una obra porque el catalogo es donde un administrador ve
+         *     que obras se pueden repartir y cuales quedan retenidas.
          */
-        Obra: {
-            /** @description Identificador de la obra. Opaco, unico e inmutable. */
-            id: string;
-        } & WithRequired<components["schemas"]["MetadatosObra"], "titulo" | "genero" | "anio" | "tipo" | "coautores">;
+        Obra: WithRequired<components["schemas"]["IdentidadObra"], "id"> & WithRequired<components["schemas"]["MetadatosObra"], "titulo" | "genero" | "anio" | "tipo" | "coautores"> & {
+            /**
+             * @description Estado de la Declaracion de Obra vigente. `completa` si las
+             *     partes suman exactamente 100; `incompleta` en cualquier otro
+             *     caso, incluida una obra que no tiene ninguna declaracion.
+             *
+             *     **`incompleta` no es un error ni un rechazo.** Es un estado
+             *     valido del negocio: bajo `R-04` (`RD 13.1.3`) no se reparte nada
+             *     de esa obra y se retiene el total en reserva, nunca se reparte a
+             *     medias. Por eso el conjunto tiene DOS valores y no tres: no hay
+             *     ningun estado `invalida` guardado -lo que el sistema rechaza es
+             *     DECLARAR una suma por encima de 100, y eso es un 400 de la
+             *     escritura, no un estado que aparezca en un listado-.
+             * @enum {string}
+             */
+            estado_declaracion: "completa" | "incompleta";
+            /**
+             * Format: decimal
+             * @description Suma de los porcentajes de las partes de la version vigente.
+             *     Cero si la obra no tiene ninguna declaracion.
+             *
+             *     Es lo DECLARADO, no lo repartido. Viaja como numero, sin
+             *     comillas, igual que el `porcentaje` de una parte: un porcentaje
+             *     tiene hasta 4 decimales acotados por `NUMERIC(8,4)` y se muestra
+             *     tal cual -aqui no se redondea nada, los decimales los decide
+             *     quien lo pinta-. El dinero de las bolsas va al reves, como
+             *     cadena, porque una cifra de terceros no puede pasar por un
+             *     `double` (ADR 0005); un porcentaje de reparto no es esa cifra.
+             *
+             *     **No se deduce de `estado_declaracion`, ni al reves.** Una parte
+             *     sin IPI deja la declaracion `incompleta` con la suma en 100, asi
+             *     que las dos cosas viajan y las dos se muestran: deducir una de
+             *     la otra mentiria en un sentido o en el otro.
+             */
+            suma_porcentajes: number;
+            /**
+             * @description Version de la Declaracion de Obra que rige ahora mismo, o `null`
+             *     si la obra no tiene ninguna declaracion.
+             *
+             *     **Existe porque `estado_declaracion` no basta para decirlo
+             *     todo.** Una obra que nunca se declaro y una declarada que no
+             *     suma 100 dan el MISMO estado -`incompleta`, y las dos quedan
+             *     retenidas bajo `R-04`-, asi que sin este campo una pantalla
+             *     tendria que pintar "incompleta" sobre obras que nadie declaro,
+             *     que es afirmar una declaracion inexistente. Es el ORIGEN del
+             *     estado, no un tercer estado: `null` es "no hay declaracion", y
+             *     un numero es la version que lo sostiene.
+             */
+            version_vigente: number | null;
+        };
         /**
          * @description Lo que un titular declaro sobre una obra. El unico origen valido de un
          *     porcentaje de reparto es este (`R-03`) -nunca un reporte de uso ni un
          *     contrato de escritura-.
          */
         Parte: {
-            /** @description Identificador del titular al que corresponde esta parte. */
+            /**
+             * @description Identificador del titular al que corresponde esta parte. Se ignoran
+             *     los espacios al inicio y al final.
+             */
             titular_id: string;
-            /** @description IPI del titular. Obligatorio, igual que en un coautor del catalogo. */
+            /**
+             * @description IPI del titular. Obligatorio, igual que en un coautor del catalogo,
+             *     y ademas tiene que ser el que el padron tiene para `titular_id`: al
+             *     guardar una declaracion, un IPI que no coincide se rechaza con 400.
+             *     Se ignoran los espacios al inicio y al final.
+             */
             ipi: string;
             /**
              * Format: decimal
@@ -864,6 +1012,51 @@ export interface components {
              */
             estado: "completa" | "incompleta";
             partes: components["schemas"]["Parte"][];
+        };
+        /**
+         * @description Una entrada del padron: quien figura ante la sociedad.
+         *
+         *     **Estar en el padron no es poder cobrar.** `R-01` (`RD 4.5`) solo
+         *     admite orden de pago a un escritor persona natural, asi que una
+         *     productora aparece aqui y no puede recibir reparto. Por eso
+         *     `persona_natural` viaja en la respuesta -es lo que permite explicar la
+         *     regla- y por eso no se devuelven solo las personas naturales.
+         *
+         *     Figurar en el padron NO basta para ser `Parte` de una Declaracion de
+         *     Obra: solo una persona natural puede figurar como `Parte` (`R-01`,
+         *     `RD 4.5`), y nombrar a una que no lo sea se rechaza con 400. Eso NO le
+         *     da derecho a cobrar por si solo: el porcentaje sale de la declaracion
+         *     (`R-02`, `R-03`).
+         *
+         *     No lleva `email`, y no es un olvido: el padron se sirve para armar un
+         *     reparto, y la direccion de contacto de cada titular no es dato de
+         *     ninguna regla de reparto. Entra el dia que haya una pantalla que la
+         *     muestre.
+         */
+        Titular: {
+            /** @description Identificador del titular en el padron. Opaco y estable. */
+            id: string;
+            /** @description Nombre de la persona o de la empresa, para mostrar. */
+            nombre: string;
+            /**
+             * @description IPI del titular, el identificador de autores de la CISAC (`RD 3`).
+             *     Vacio en una persona juridica que no lo tenga: el padron solo exige
+             *     IPI a las personas naturales.
+             */
+            ipi: string;
+            /**
+             * @description Si el titular es una persona fisica. `false` es una persona
+             *     juridica, y una persona juridica NO puede recibir reparto
+             *     (`R-01`, `RD 4.5`).
+             */
+            persona_natural: boolean;
+            /**
+             * @description Tipo de afiliado, que decide quien vota (capitulo 4 del reglamento
+             *     de socios). No decide quien cobra: un administrado persona natural
+             *     cobra igual que un socio.
+             * @enum {string}
+             */
+            clase: "socio" | "administrado";
         };
         /**
          * @description Quien explota el repertorio y PAGA por ello: un canal, una sala de cine,
@@ -1630,7 +1823,10 @@ export interface operations {
                      *             "ipi": "IPI-00000001",
                      *             "rol": "guionista"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "estado_declaracion": "completa",
+                     *         "suma_porcentajes": 100,
+                     *         "version_vigente": 3
                      *       }
                      *     ]
                      */
@@ -1714,7 +1910,7 @@ export interface operations {
                  *       ]
                  *     }
                  */
-                "application/json": components["schemas"]["Obra"];
+                "application/json": components["schemas"]["NuevaObra"];
             };
         };
         responses: {
@@ -1750,7 +1946,10 @@ export interface operations {
                      *           "ipi": "IPI-00000002",
                      *           "rol": "libretista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "incompleta",
+                     *       "suma_porcentajes": 0,
+                     *       "version_vigente": null
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];
@@ -1855,7 +2054,10 @@ export interface operations {
                      *           "ipi": "IPI-00000001",
                      *           "rol": "guionista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "completa",
+                     *       "suma_porcentajes": 100,
+                     *       "version_vigente": 3
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];
@@ -1964,7 +2166,10 @@ export interface operations {
                      *           "ipi": "IPI-00000001",
                      *           "rol": "guionista"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "estado_declaracion": "completa",
+                     *       "suma_porcentajes": 100,
+                     *       "version_vigente": 3
                      *     }
                      */
                     "application/json": components["schemas"]["Obra"];
@@ -2095,6 +2300,22 @@ export interface operations {
              *     que no es positivo o que trae mas de 4 decimales, un titular
              *     repetido, la suma se pasa de 100, o nombra un titular_id que no
              *     esta en el padron.
+             *
+             *     Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+             *     no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+             *     persona natural como titular de una Declaracion de Obra, y esa
+             *     regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+             *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
+             *     inexistente: alli el identificador no resuelve a nadie, y aqui
+             *     resuelve a una productora que existe y no puede figurar como parte.
+             *
+             *     Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+             *     para ese `titular_id`: el IPI declarado se concilia con el del padron
+             *     al guardar, porque es el que llega a quien se le paga, y si no
+             *     coincide no se escribe nada (no se abre ninguna version). El mensaje
+             *     es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+             *     sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+             *     que no es persona natural recibe el rechazo de `R-01` y no este.
              */
             400: {
                 headers: {
@@ -2224,6 +2445,22 @@ export interface operations {
              *     que no es positivo o que trae mas de 4 decimales, un titular
              *     repetido, la suma se pasa de 100, o nombra un titular_id que no
              *     esta en el padron.
+             *
+             *     Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+             *     no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+             *     persona natural como titular de una Declaracion de Obra, y esa
+             *     regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+             *     rechazo lleva su propio mensaje, distinto del de un `titular_id`
+             *     inexistente: alli el identificador no resuelve a nadie, y aqui
+             *     resuelve a una productora que existe y no puede figurar como parte.
+             *
+             *     Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+             *     para ese `titular_id`: el IPI declarado se concilia con el del padron
+             *     al guardar, porque es el que llega a quien se le paga, y si no
+             *     coincide no se escribe nada (no se abre ninguna version). El mensaje
+             *     es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+             *     sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+             *     que no es persona natural recibe el rechazo de `R-01` y no este.
              */
             400: {
                 headers: {
@@ -2284,7 +2521,20 @@ export interface operations {
     };
     historialDeclaracion: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Cuantas versiones trae la pagina. Si se omite, el servidor aplica
+                 *     100. Tiene que ser un entero positivo y no mayor que 500.
+                 * @example 100
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas versiones saltarse contando desde la mas reciente. Cero o
+                 *     ausente es la pagina que incluye la version abierta.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
             header?: never;
             path: {
                 /**
@@ -2297,7 +2547,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Las versiones de la declaracion, en orden. */
+            /**
+             * @description La pagina pedida de versiones, en orden ascendente dentro de ella.
+             *     Lista vacia si la obra no tiene declaracion o si el desplazamiento
+             *     cae mas alla de la primera version.
+             */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2344,6 +2598,166 @@ export interface operations {
                      *     ]
                      */
                     "application/json": components["schemas"]["VersionDeclaracion"][];
+                };
+            };
+            /** @description Un parametro de paginacion esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "limite tiene que ser un entero positivo"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    buscarTitulares: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Trozo del nombre. Coincidencia parcial, sin distinguir mayusculas.
+                 * @example escritora
+                 */
+                nombre?: string;
+                /**
+                 * @description IPI exacto del titular. Un trozo de IPI no encuentra nada.
+                 * @example IPI-00000001
+                 */
+                ipi?: string;
+                /**
+                 * @description Solo `true` o `false`; cualquier otro valor se rechaza con 400 en
+                 *     vez de ignorarse. Ignorado, quien pregunta por las personas
+                 *     juridicas -que son las que NO pueden recibir reparto- recibiria el
+                 *     padron entero y leeria a las personas naturales como si fueran lo
+                 *     que pidio.
+                 *
+                 *     Ausente NO filtra: devuelve las dos clases de titular.
+                 * @example false
+                 */
+                persona_natural?: boolean;
+                /**
+                 * @description Los identificadores del padron que se quieren, y ninguno mas. Es la
+                 *     consulta ACOTADA que ya usa en produccion la comprobacion de `R-01`
+                 *     (`RD 4.5`) al armar una declaracion: el reparto nombra unos pocos
+                 *     titulares, y sin este filtro comprobar la regla obliga a leer el
+                 *     padron entero -que no tiene tope- para responder por un punado de
+                 *     ids. Es la misma pregunta que `FiltroTitulares.IDs` del puerto.
+                 *
+                 *     Se serializa de la forma estandar -la clave repetida,
+                 *     `?ids=tit-ana&ids=tit-luis`-, que es lo que produce un cliente
+                 *     generado a partir de este contrato. Una lista separada por comas
+                 *     (`?ids=tit-ana,tit-luis`) se acepta tambien, porque es lo que
+                 *     escribe una mano y es la misma pregunta. Los elementos vacios que
+                 *     deje una coma de mas se ignoran: no son identificadores.
+                 *
+                 *     **Un identificador que no existe NO es un error**, ni del cliente ni
+                 *     del servidor: `ids` es un filtro, no una promesa de existencia. La
+                 *     respuesta es una lista vacia con 200 y quien pinta decide que hacer
+                 *     con el hueco.
+                 *
+                 *     **Un `ids` vacio tampoco filtra**: `?ids=` -o solo comas- es la
+                 *     misma pregunta que no mandar el parametro, o sea el padron entero.
+                 * @example [
+                 *       "tit-ana",
+                 *       "tit-luis"
+                 *     ]
+                 */
+                ids?: string[];
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos titulares saltarse desde el inicio del resultado ordenado
+                 *     por identificador. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Los titulares que cuadran, ordenados por identificador, recortados
+             *     a la pagina pedida. Sin coincidencias devuelve una lista vacia, no
+             *     un 404.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "tit-ana",
+                     *         "nombre": "Ana Escritora",
+                     *         "ipi": "IPI-00000001",
+                     *         "persona_natural": true,
+                     *         "clase": "socio"
+                     *       },
+                     *       {
+                     *         "id": "tit-productora",
+                     *         "nombre": "Productora del Caribe S.A.S.",
+                     *         "ipi": "IPI-00000077",
+                     *         "persona_natural": false,
+                     *         "clase": "administrado"
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Titular"][];
+                };
+            };
+            /** @description Un filtro o un parametro de paginacion esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "persona_natural tiene que ser true o false"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description Falta el token, o esta caducado o revocado. */
