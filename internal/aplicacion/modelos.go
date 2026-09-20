@@ -190,6 +190,19 @@ type UsoPersistido struct {
 	RechazoCodigo string
 }
 
+// UsoDeReparto es una fila canonica lista para el motor: el uso mas la
+// clasificacion anual del canal que lo emitio (`RD 9.5.4`).
+//
+// El grupo no es columna de `usos` porque no es un hecho del reporte: se
+// resuelve por ano contra `canales_clasificacion`, y una reejecucion de un
+// periodo pasado tiene que leer la fila de aquel ano (ADR 0005). Llega vacio
+// cuando el catalogo no clasifico el canal, que solo es legal fuera de
+// suscripcion.
+type UsoDeReparto struct {
+	Uso           UsoPersistido
+	GrupoEfectivo string
+}
+
 // ItemRevision es una fila de la cola de revision: lo que no se pudo
 // normalizar, y mas adelante las anomalias del #37.
 //
