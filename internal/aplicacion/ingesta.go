@@ -13,6 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/normalizacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -181,17 +182,54 @@ func (i Ingesta) lectoresDisponibles() string {
 // El periodo se valida aunque solo se use como filtro. No es defensa contra
 // inyeccion -- va como parametro --, es que "2026-1" no casa con ninguna fila
 // y devolveria una lista vacia indistinguible de "ese periodo no tuvo cargas".
+// Lo mismo vale para un mes que no existe: `2026-13` se rechaza con 400 en vez
+// de contestar una lista vacia que se lee como "ese mes no tuvo recaudo". La
+// regla es la del dominio, `recaudo.PeriodoValido`, sin copia en este paquete.
 func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
 	periodo = strings.TrimSpace(periodo)
-	if periodo != "" && !periodoValido.MatchString(periodo) {
+	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, fmt.Errorf(
-			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
+			ErrReporteInvalido, periodo)
 	}
 	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
 	if err != nil {
 		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
 	}
 	return cargas, nil
+}
+
+// RechazosDeCarga devuelve una pagina del log de rechazos de una entrega, en
+// orden de fila del archivo.
+//
+// Es lo que despliega una fila del listado de cargas: [Ingesta.Cargas] solo trae
+// el RECUENTO de rechazos, y la cola de revision -que si trae las filas- esta
+// acotada a 1000 en toda la base, asi que filtrarla por entrega truncaria en
+// silencio justo la carga grande.
+//
+// Va paginada por lo mismo que el listado del catalogo: un archivo con la
+// cabecera equivocada rechaza todas sus filas, y sin cota este log se leia
+// entero y se pintaba entero. La pagina NO trunca la cifra: el total sigue
+// siendo `Carga.rechazados`, que es lo que el listado ya tiene en la fila que se
+// despliega, y quien la pinta dice "N de M" con el.
+//
+// Una entrega que no existe es [ErrNoEncontrado], y no una lista vacia: "no
+// llego" y "llego entera" son las dos respuestas que esta lectura existe para
+// distinguir. Una pagina vacia de una entrega que si existe es una lista vacia.
+func (i Ingesta) RechazosDeCarga(ctx context.Context, id string, pag Paginacion) ([]UsoPersistido, error) {
+	// TrimSpace por lo mismo que la fuente en prepararReporte: su blanco incluye
+	// el NBSP. Un id en blanco no es "una carga que no existe", es una peticion
+	// mal hecha, y se dice como tal.
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: falta el id de la carga", ErrReporteInvalido)
+	}
+	pag = pag.ConDefecto()
+	rechazos, err := i.Reportes.RechazosDeReporte(ctx, id, pag)
+	if err != nil {
+		return nil, fmt.Errorf("leer los rechazos de la carga %q: %w", id, err)
+	}
+	return rechazos, nil
 }
 
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
@@ -330,12 +368,16 @@ func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
 	switch {
 	case fuente == "":
 		return Reporte{}, fmt.Errorf("%w: falta la fuente", ErrReporteInvalido)
-	// periodoValido vive en trabajos.go, una sola vez para el paquete. Se
-	// comprueba aqui y no solo en la base porque GuardarReporte escribe la
-	// boveda ANTES que la fila, y de la boveda no se puede borrar nada.
-	case !periodoValido.MatchString(periodo):
+	// La regla del periodo es la del dominio (`recaudo.PeriodoValido`) y no una
+	// copia de este paquete: la que habia aqui usaba `[0-9]{2}` para el mes y
+	// dejaba entrar `2026-00` y `2026-13`. Se comprueba en el nucleo y no solo
+	// en la base porque GuardarReporte escribe la boveda ANTES que la fila, y de
+	// la boveda no se puede borrar nada: un archivo subido a un mes que no
+	// existe queda quemado para siempre.
+	case !recaudo.PeriodoValido(periodo):
 		return Reporte{}, fmt.Errorf(
-			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
+			ErrReporteInvalido, periodo)
 	case len(datos) == 0:
 		return Reporte{}, fmt.Errorf("%w: la entrega no trae bytes", ErrReporteInvalido)
 	}
