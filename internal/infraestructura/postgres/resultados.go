@@ -94,10 +94,10 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 	if err != nil {
 		return reparto.Resultado{}, traducirError(err, "leer resultados_obra de %q", procesoID)
 	}
+	defer obraFilas.Close()
 	for obraFilas.Next() {
 		var o reparto.LineaObra
 		if err := obraFilas.Scan(&o.ObraID, &o.Puntos, &o.Importe, &o.Retenida, &o.Motivo); err != nil {
-			obraFilas.Close()
 			return reparto.Resultado{}, traducirError(err, "escanear resultados_obra de %q", procesoID)
 		}
 		r.Obras = append(r.Obras, o)
@@ -112,10 +112,10 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 	if err != nil {
 		return reparto.Resultado{}, traducirError(err, "leer resultados_titular de %q", procesoID)
 	}
+	defer titularFilas.Close()
 	for titularFilas.Next() {
 		var t reparto.LineaTitular
 		if err := titularFilas.Scan(&t.ObraID, &t.TitularID, &t.IPI, &t.Porcentaje, &t.Importe); err != nil {
-			titularFilas.Close()
 			return reparto.Resultado{}, traducirError(err, "escanear resultados_titular de %q", procesoID)
 		}
 		r.Titulares = append(r.Titulares, t)
