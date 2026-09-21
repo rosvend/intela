@@ -64,7 +64,7 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 // eso basta con mirar el codigo de unicidad y no hace falta distinguir que
 // restriccion salto.
 func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
-	_, err := s.pool.Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
+	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
 	return traducirErrorDeReporte(err, fuente, periodo)
 }
 
@@ -110,7 +110,7 @@ func traducirErrorDeReporte(err error, fuente, periodo string) error {
 // dos; la transaccion la abre el adaptador porque el nucleo no puede tocar pgx.
 // Es la misma forma que [Store.Registrar] con la obra y sus coautores.
 func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, sqlInsertarReporte,
 			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
 		if err != nil {
@@ -141,7 +141,7 @@ func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos
 // dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
 // produccion -- salen en orden arbitrario y el listado cambia entre lecturas.
 func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
-	filas, err := s.pool.Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
 		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
 		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
@@ -198,7 +198,7 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 		return nil
 	}
 
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		return escribirLote(ctx, tx, usos)
 	})
 }
@@ -317,7 +317,7 @@ func (s *Store) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion
 // correcto: esa fila no es un uso. Que no se pueda leer por aqui es la misma
 // propiedad que la hace invisible para el reparto.
 func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersistido, error) {
-	fila := s.pool.QueryRow(ctx, `SELECT `+columnasUso+` FROM usos WHERE id = $1`, id)
+	fila := s.ejecutorDe(ctx).QueryRow(ctx, `SELECT `+columnasUso+` FROM usos WHERE id = $1`, id)
 
 	u, err := escanearUso(fila)
 	if err != nil {
@@ -333,7 +333,7 @@ func (s *Store) UsoPorID(ctx context.Context, id string) (aplicacion.UsoPersisti
 //
 // LIMIT 1000: sin cota, /admin/cola-revision devolveria el log entero (S5).
 func (s *Store) ListarRechazos(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo, tipo, codigo
 		   FROM usos_rechazados
 		  ORDER BY id
@@ -410,7 +410,7 @@ func (s *Store) RechazosDeReporte(ctx context.Context, reporteID string, pag apl
 	// HTTP con 400 antes de llegar aqui.
 	pag = pag.ConDefecto()
 
-	filas, err := s.pool.Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		WITH carga AS (
 			SELECT id FROM reportes WHERE id = $1
 		), pagina AS (
@@ -478,7 +478,7 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 	if len(ids) == 0 {
 		return out, nil
 	}
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasUso+` FROM usos WHERE id = ANY($1)`, ids)
 	if err != nil {
 		return nil, traducirError(err, "usos por ids")
@@ -505,7 +505,7 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 // pesos. La lista de monedas NO vive en Go: solo se convierten las que
 // tengan fila cambio.<ISO>.
 func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, error) {
-	filas, err := s.pool.Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT clave, valor FROM parametros
 		 WHERE vigente_hasta IS NULL
 		    OR vigente_hasta > CURRENT_DATE
@@ -554,7 +554,7 @@ func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, er
 // Si algun dia hicieran falta dos parametros distintos, se parten; hoy
 // unificarlos evita repetir el bucle y su filas.Err().
 func (s *Store) consultarUsos(ctx context.Context, sql, contexto string, args ...any) ([]aplicacion.UsoPersistido, error) {
-	filas, err := s.pool.Query(ctx, sql, args...)
+	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, contexto, args...)
 	}

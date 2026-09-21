@@ -46,10 +46,10 @@ func (s *Store) ListarObras(ctx context.Context, p aplicacion.Paginacion) ([]apl
 		err   error
 	)
 	if p.Limite == aplicacion.LimiteSinTope {
-		filas, err = s.pool.Query(ctx,
+		filas, err = s.ejecutorDe(ctx).Query(ctx,
 			`SELECT `+columnasObra+` FROM obras ORDER BY id`)
 	} else {
-		filas, err = s.pool.Query(ctx,
+		filas, err = s.ejecutorDe(ctx).Query(ctx,
 			`SELECT `+columnasObra+` FROM obras ORDER BY id LIMIT $1 OFFSET $2`,
 			p.Limite, p.Desplazamiento)
 	}
@@ -96,7 +96,7 @@ func (s *Store) ListarObras(ctx context.Context, p aplicacion.Paginacion) ([]apl
 
 func (s *Store) ObraPorID(ctx context.Context, id string) (aplicacion.Obra, error) {
 	var o aplicacion.Obra
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasObra+` FROM obras WHERE id = $1`, id).
 		Scan(&o.ID, &o.Titulo, &o.IDA, &o.EIDR, &o.IMDB, &o.Tipo)
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *Store) Declaraciones(ctx context.Context) (map[string]repertorio.Declar
 // estado normal del negocio en un 404.
 func (s *Store) DeclaracionDeObra(ctx context.Context, obraID string) (repertorio.Declaracion, error) {
 	var existe string
-	if err := s.pool.QueryRow(ctx,
+	if err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id FROM obras WHERE id = $1`, obraID).Scan(&existe); err != nil {
 		return repertorio.Declaracion{}, traducirError(err, "declaracion de obra %q", obraID)
 	}
@@ -155,7 +155,7 @@ func (s *Store) DeclaracionDeObra(ctx context.Context, obraID string) (repertori
 // partesDeObra lee las partes de una obra. ORDER BY por la misma razon que
 // ListarObras: reproducibilidad (ADR 0005).
 func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.Parte, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
 		  WHERE d.obra_id = $1 ORDER BY d.titular_id`,
 		obraID)
@@ -185,7 +185,7 @@ func (s *Store) partesDeObra(ctx context.Context, obraID string) ([]repertorio.P
 // obra. Es la mitad que evita el N+1 de Declaraciones. SQL propio: no comparte
 // interruptor nil con partesDeObras.
 func (s *Store) todasLasPartes(ctx context.Context) (map[string][]repertorio.Parte, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
 		  ORDER BY d.obra_id, d.titular_id`)
 	if err != nil {
@@ -202,7 +202,7 @@ func (s *Store) partesDeObras(ctx context.Context, ids []string) (map[string][]r
 	if len(ids) == 0 {
 		return map[string][]repertorio.Parte{}, nil
 	}
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT d.obra_id, `+columnasParte+` FROM declaraciones d`+clausulaVigente+`
 		  WHERE d.obra_id = ANY($1)
 		  ORDER BY d.obra_id, d.titular_id`, ids)
