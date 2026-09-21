@@ -28,7 +28,7 @@ func loteMixto() []normalizacion.Fila {
 			Titulo: "Serie Y", Fecha: "20241231", Duracion: "60", Emisiones: "10",
 		},
 		{
-			ID: "cine-ok", Fuente: "procinal", Modalidad: "cine",
+			ID: "cine-ok", Fuente: "cine", Modalidad: "cine",
 			Titulo: "Pelicula X", Fecha: "2024-06-01", Taquilla: "100", Moneda: "COP",
 		},
 		{
@@ -40,7 +40,7 @@ func loteMixto() []normalizacion.Fila {
 			Titulo: "Inparseable", Fecha: "ayer", Duracion: "60",
 		},
 		{
-			ID: "cine-moneda", Fuente: "procinal", Modalidad: "cine",
+			ID: "cine-moneda", Fuente: "cine", Modalidad: "cine",
 			Titulo: "Yen", Taquilla: "500", Moneda: "JPY",
 		},
 	}

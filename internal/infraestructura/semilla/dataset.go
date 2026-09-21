@@ -7,6 +7,7 @@ package semilla
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -43,18 +44,36 @@ const (
 
 	Periodo = "2025-01"
 
-	FuenteTV   = "caracol"
-	FuenteCine = "procinal"
-	FuenteOTT  = "netflix"
+	// Dos canales de TV abierta en el MISMO periodo, que es lo que hace
+	// comprobable la independencia de `RD 9.1`: cada uno tiene su bolsa y por
+	// tanto su propio valor punto (ADR 0019, #119). Con un solo canal la regla
+	// no se puede distinguir de "un valor punto por periodo".
+	FuenteTV        = "caracol"
+	FuenteTVSegundo = "rcn"
+	// "cine" y no "procinal": la fuente del reporte es lo que estampa el
+	// adaptador (ingesta.FuenteCine) y lo que indexa alias_obra; "procinal"
+	// es el pagador de recaudo (usuariosDeRecaudo) y el canal contra cuya
+	// bolsa ponderan sus usos (#119) -- otro eje, con su propia constante
+	// PagadorCine. Sembrar el reporte como "procinal" dejaba sus alias sin
+	// casar con ninguna fila ingerida de verdad.
+	FuenteCine       = "cine"
+	FuenteOTT        = "netflix"
+	FuenteTransporte = "expreso-bolivariano"
+
+	// PagadorCine es quien PAGA por el uso de cine (RT 3.2), no quien entrego
+	// el reporte. Nunca puede ser igual a FuenteCine: son los dos ejes que la
+	// nota de arriba distingue, y confundirlos fue justamente el defecto que
+	// corrigio FuenteCine.
+	PagadorCine = "procinal"
 
 	// La clave de ids_fuente (ADR 0018) con que viaja el id de obra de cada
 	// fuente, y la segunda mitad de la clave de `alias_obra`. Salen del
 	// contrato y no se escriben a mano: un alias sembrado con otra grafia no lo
-	// encontraria nunca la cascada. La de Procinal es sintetica como el resto de
+	// encontraria nunca la cascada. La de cine es sintetica como el resto de
 	// su reporte, porque el cliente no ha entregado el formato de las salas.
-	TipoIDCaracol  = aplicacion.ClaveIDFicha
-	TipoIDProcinal = aplicacion.ClaveIDPelicula
-	TipoIDNetflix  = aplicacion.ClaveShowID
+	TipoIDCaracol = aplicacion.ClaveIDFicha
+	TipoIDCine    = aplicacion.ClaveIDPelicula
+	TipoIDNetflix = aplicacion.ClaveShowID
 
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
@@ -77,7 +96,22 @@ type Dataset struct {
 	Declaraciones     []repertorio.Declaracion
 	Reportes          []Reporte
 	Bolsas            []aplicacion.BolsaPersistida
+	Canales           []Canal
 	Parametros        []Parametro
+}
+
+// Canal es una entrada del registro de canales con su clasificacion anual.
+//
+// La clasificacion va por ano y no como columna del canal porque `RD 9.5.4`
+// la recalcula cada ano contra el quintil de audiencia del anterior: una
+// reejecucion de un periodo pasado tiene que leer la de entonces (ADR 0005).
+// GrupoEstructural es lo que no cambia (`RD 9.5.1`-`9.5.3`).
+type Canal struct {
+	ID               string
+	Nombre           string
+	GrupoEstructural string
+	AnioAudiencia    int
+	GrupoEfectivo    string
 }
 
 // UsuarioDeRecaudo es el pagador que siembra el seed.
@@ -167,6 +201,7 @@ func Construir() Dataset {
 	d.obrasYDeclaraciones()
 	d.reportes()
 	d.usuariosDeRecaudo()
+	d.canales()
 	d.bolsas()
 	d.parametros()
 	return d
@@ -294,27 +329,46 @@ func (d *Dataset) reportes() {
 	// (Pelicula X, Serie Y) y anaden unitario y sketch para ejercitar la
 	// tabla de ponderacion completa (5.0 / 2.8 / 1.3 / 0.8).
 	tv := []aplicacion.UsoPersistido{
-		usoTV(ObraCine, "Pelicula X", "PX-1", "cinematografica", "70", 1, "4.5"),
-		usoTV(ObraSerie, "Serie Y", "SY-1", "serie", "48", 10, "9.0"),
-		usoTV(ObraUnitario, "El Tercer Acto", "ETA-1", "unitario", "48", 1, "3.0"),
-		usoTV(ObraSketch, "Minuto Comico", "MC-1", "sketches", "10", 2, "2.0"),
+		usoTV(FuenteTV, ObraCine, "Pelicula X", "PX-1", "cinematografica", "70", 1, "4.5"),
+		usoTV(FuenteTV, ObraSerie, "Serie Y", "SY-1", "serie", "48", 10, "9.0"),
+		usoTV(FuenteTV, ObraUnitario, "El Tercer Acto", "ETA-1", "unitario", "48", 1, "3.0"),
+		usoTV(FuenteTV, ObraSketch, "Minuto Comico", "MC-1", "sketches", "10", 2, "2.0"),
 	}
+	// El segundo canal emite MENOS repertorio con una bolsa igual de grande:
+	// asi su valor punto sale distinto del de Caracol y la prueba de #119 no
+	// puede pasar por casualidad.
+	tvSegundo := []aplicacion.UsoPersistido{
+		usoTV(FuenteTVSegundo, ObraSerie, "Serie Y", "SY-9", "serie", "48", 4, "6.0"),
+		usoTV(FuenteTVSegundo, ObraUnitario, "El Tercer Acto", "ETA-9", "unitario", "48", 1, "2.0"),
+	}
+	// Espectadores ademas de taquilla: el ejemplo de `RD 9.2` reparte por
+	// espectadores mientras su prosa dice taquilla, y el motor elige con
+	// Snapshot.BaseCineTeatro (P-18). La columna tiene que traer el dato para
+	// que la decision sea un parametro y no una reescritura.
 	cine := []aplicacion.UsoPersistido{
-		usoCine(ObraCine, "Pelicula X", "PX-1", "10000"),
+		usoCine(PagadorCine, ObraCine, "Pelicula X", "PX-1", "10000", "10000"),
 	}
 	ott := []aplicacion.UsoPersistido{
-		usoOTT(ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
+		usoOTT(FuenteOTT, ObraSerie, "Serie Y", "n-1", "1000", "40000", "1.3"),
+	}
+	// `RD 9.4` reparte el dinero del transporte publico por el numero de
+	// exhibiciones de cada obra, que es una medida distinta de las emisiones.
+	transporte := []aplicacion.UsoPersistido{
+		usoTransporte(FuenteTransporte, ObraCine, "Pelicula X", "PX-7", 12),
+		usoTransporte(FuenteTransporte, ObraUnitario, "El Tercer Acto", "ETA-7", 3),
 	}
 
 	d.Reportes = []Reporte{
 		{Fuente: FuenteTV, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tv},
-		{Fuente: FuenteCine, TipoID: TipoIDProcinal, Periodo: Periodo, Usos: cine},
+		{Fuente: FuenteTVSegundo, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tvSegundo},
+		{Fuente: FuenteCine, TipoID: TipoIDCine, Periodo: Periodo, Usos: cine},
 		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
+		{Fuente: FuenteTransporte, TipoID: TipoIDCine, Periodo: Periodo, Usos: transporte},
 	}
 
 	// La fuente, ids_fuente y la evidencia se estampan aqui y no en los
 	// constructores de arriba porque son propiedades de la ENTREGA, no de la
-	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de Procinal,
+	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de cine,
 	// y lo que la distingue -la clave con que viaja y lo que la resuelve- es de
 	// que fuente viene. Los constructores dejan en IDsFuente el valor solo, y
 	// aqui se reescribe en el formato del contrato.
@@ -366,10 +420,44 @@ func evidenciaAlias(fuente, tipoID, valor string) string {
 // van vacios en vez de con un numero de aspecto real que alguien pudiera creer.
 func (d *Dataset) usuariosDeRecaudo() {
 	d.UsuariosDeRecaudo = []UsuarioDeRecaudo{
-		{ID: "caracol", Nombre: "Caracol Television (sintetico)", Categoria: recaudo.TVAbierta},
-		{ID: "procinal", Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
-		{ID: "netflix", Nombre: "Netflix Colombia (sintetico)", Categoria: recaudo.MediosDigitales},
+		{ID: FuenteTV, Nombre: "Caracol Television (sintetico)", Categoria: recaudo.TVAbierta},
+		{ID: FuenteTVSegundo, Nombre: "RCN Television (sintetico)", Categoria: recaudo.TVAbierta},
+		{ID: PagadorCine, Nombre: "Procinal Salas de Cine (sintetico)", Categoria: recaudo.Cine},
+		{ID: FuenteOTT, Nombre: "Netflix Colombia (sintetico)", Categoria: recaudo.MediosDigitales},
+		{ID: FuenteTransporte, Nombre: "Expreso Bolivariano (sintetico)", Categoria: recaudo.TransporteTerrestre},
 		{ID: "dago-films", Nombre: "Dago Films (sintetico)", Categoria: recaudo.SinClasificar},
+	}
+}
+
+// canales es el registro de `RD 9.5` con su clasificacion por ano.
+//
+// Los dos canales de TV abierta se registran aunque `RD 9.1` no use grupos:
+// sin fila aqui no hay forma de comprobar que la resolucion del grupo mira el
+// ano ANTERIOR al periodo, que es lo que exige `RD 9.5.4`.
+//
+// El ano es el del periodo menos uno. No se calcula con el reloj: sale del
+// periodo, como en el nucleo (ADR 0005).
+func (d *Dataset) canales() {
+	// Se deriva de Periodo y no de un literal: un literal se desincroniza en
+	// silencio el dia que Periodo cambie, y la guarda de dataset_test.go deja
+	// de proteger nada.
+	anio, err := strconv.Atoi(Periodo[:4])
+	if err != nil {
+		panic("semilla: Periodo no empieza por un ano de 4 digitos: " + err.Error())
+	}
+	anioAudiencia := anio - 1
+
+	d.Canales = []Canal{
+		{
+			ID: FuenteTV, Nombre: "Caracol Television (sintetico)",
+			GrupoEstructural: "privado_nacional",
+			AnioAudiencia:    anioAudiencia, GrupoEfectivo: "privado_nacional",
+		},
+		{
+			ID: FuenteTVSegundo, Nombre: "RCN Television (sintetico)",
+			GrupoEstructural: "privado_nacional",
+			AnioAudiencia:    anioAudiencia, GrupoEfectivo: "privado_nacional",
+		},
 	}
 }
 
@@ -390,10 +478,15 @@ func (d *Dataset) bolsas() {
 			Convenio: conv, Tarifa: tar, Factura: fac,
 		}
 	}
+	// Una bolsa por pagador y periodo (ADR 0019). Los dos canales de TV tienen
+	// bolsas DISTINTAS aunque el periodo sea el mismo: `RD 9.1` reparte el
+	// dinero de cada canal de manera independiente.
 	d.Bolsas = []aplicacion.BolsaPersistida{
-		bolsa("bolsa-caracol-"+Periodo+"-nacional", "caracol", recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-procinal-"+Periodo+"-nacional", "procinal", recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-netflix-"+Periodo+"-nacional", "netflix", recaudo.Nacional, "500000.00"),
+		bolsa("bolsa-caracol-"+Periodo+"-nacional", FuenteTV, recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-rcn-"+Periodo+"-nacional", FuenteTVSegundo, recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-procinal-"+Periodo+"-nacional", PagadorCine, recaudo.Nacional, "1000000.00"),
+		bolsa("bolsa-netflix-"+Periodo+"-nacional", FuenteOTT, recaudo.Nacional, "500000.00"),
+		bolsa("bolsa-transporte-"+Periodo+"-nacional", FuenteTransporte, recaudo.Nacional, "120000.00"),
 		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "200000.00"),
 	}
 }
@@ -467,16 +560,37 @@ func (d *Dataset) parametros() {
 	}
 }
 
-func usoTV(obraID, titulo, idFuente, tipo, duracion string, emisiones int64, rating string) aplicacion.UsoPersistido {
-	return usoIdentificado(obraID, titulo, idFuente, reparto.TV, tipo, duracion, emisiones, rating, "0", "0", "0", "0")
+// usoTV lleva el canal explicito: es contra la bolsa de ESE canal contra la
+// que pondera la fila (`RD 9.1`), y `fuente` no sirve de sustituto porque dice
+// quien entrego el archivo, no quien pago (ADR 0018).
+func usoTV(canal, obraID, titulo, idFuente, tipo, duracion string, emisiones int64, rating string) aplicacion.UsoPersistido {
+	u := usoIdentificado(obraID, titulo, idFuente, reparto.TV, tipo, duracion, emisiones, rating, "0", "0", "0", "0")
+	u.CanalID = canal
+	return u
 }
 
-func usoCine(obraID, titulo, idFuente, taquilla string) aplicacion.UsoPersistido {
-	return usoIdentificado(obraID, titulo, idFuente, reparto.Cine, "cinematografica", "0", 1, "0", taquilla, "0", "0", "0")
+// usoCine, usoOTT y usoTransporte llevan el canal explicito por la misma razon
+// que usoTV: sin el, UsosDeCanal (#119) no encuentra estas filas al filtrar
+// por el pagador de la bolsa, y la bolsa de ese pagador queda sin nada que
+// ponderar.
+func usoCine(canal, obraID, titulo, idFuente, taquilla, espectadores string) aplicacion.UsoPersistido {
+	u := usoIdentificado(obraID, titulo, idFuente, reparto.Cine, "cinematografica", "0", 1, "0", taquilla, "0", "0", "0")
+	u.Espectadores = decimal.RequireFromString(espectadores)
+	u.CanalID = canal
+	return u
 }
 
-func usoOTT(obraID, titulo, idFuente, vistas, minutos, pb string) aplicacion.UsoPersistido {
-	return usoIdentificado(obraID, titulo, idFuente, reparto.OTT, "serie", "0", 1, "0", "0", vistas, minutos, pb)
+func usoOTT(canal, obraID, titulo, idFuente, vistas, minutos, pb string) aplicacion.UsoPersistido {
+	u := usoIdentificado(obraID, titulo, idFuente, reparto.OTT, "serie", "0", 1, "0", "0", vistas, minutos, pb)
+	u.CanalID = canal
+	return u
+}
+
+func usoTransporte(canal, obraID, titulo, idFuente string, exhibiciones int64) aplicacion.UsoPersistido {
+	u := usoIdentificado(obraID, titulo, idFuente, reparto.Transporte, "cinematografica", "0", 1, "0", "0", "0", "0", "0")
+	u.Exhibiciones = exhibiciones
+	u.CanalID = canal
+	return u
 }
 
 func usoIdentificado(obraID, titulo, idFuente string, modalidad reparto.Modalidad, tipo, duracion string, emisiones int64, rating, taquilla, vistas, minutos, pb string) aplicacion.UsoPersistido {
@@ -503,11 +617,13 @@ func usoIdentificado(obraID, titulo, idFuente string, modalidad reparto.Modalida
 
 func csvDe(usos []aplicacion.UsoPersistido) []byte {
 	var b strings.Builder
-	b.WriteString("titulo,ids_fuente,modalidad,tipo_obra,duracion_min,emisiones,rating,taquilla,vistas,minutos_vistos,pb\n")
+	b.WriteString("titulo,ids_fuente,modalidad,tipo_obra,canal_id,duracion_min,emisiones," +
+		"rating,taquilla,espectadores,exhibiciones,vistas,minutos_vistos,pb\n")
 	for _, u := range usos {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%d,%s,%s,%s,%s,%s\n",
-			u.Titulo, u.IDsFuente, u.Modalidad, u.TipoObra,
-			u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Vistas, u.MinutosVistos, u.PB)
+		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%d,%s,%s,%s,%d,%s,%s,%s\n",
+			u.Titulo, u.IDsFuente, u.Modalidad, u.TipoObra, u.CanalID,
+			u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores,
+			u.Exhibiciones, u.Vistas, u.MinutosVistos, u.PB)
 	}
 	return []byte(b.String())
 }
