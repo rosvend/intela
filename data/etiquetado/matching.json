@@ -1,0 +1,27 @@
+{
+  "nota": "Conjunto SINTETICO sobre el dataset de cmd/seed. NO sirve para calibrar el umbral (ADR 0007, docs/dominio/identificadores.md): los titulos del seed son cortos y genericos, y con titulos de 7 caracteres los trigramas no separan 'Serie Y' de 'Serie Z'. El caso esta incluido a proposito para que el informe lo ensene.",
+  "casos": [
+    { "titulo": "El Tercer Acto",        "obra_esperada": "obra-unitario", "nota": "identico" },
+    { "titulo": "EL TERCER ACTO",        "obra_esperada": "obra-unitario", "nota": "mayusculas" },
+    { "titulo": "Tercer Acto, El",       "obra_esperada": "obra-unitario", "nota": "orden alterado" },
+    { "titulo": "¡El Tercer Acto!",      "obra_esperada": "obra-unitario", "nota": "puntuacion" },
+    { "titulo": "El Tercer Ato",         "obra_esperada": "obra-unitario", "nota": "errata de tecleo" },
+    { "titulo": "Tercer Acto",           "obra_esperada": "obra-unitario", "nota": "sin articulo" },
+
+    { "titulo": "Minuto Cómico",         "obra_esperada": "obra-sketch",   "nota": "tildes" },
+    { "titulo": "MINUTO CÓMICO",         "obra_esperada": "obra-sketch",   "nota": "tildes y mayusculas" },
+    { "titulo": "Minutos Comicos",       "obra_esperada": "obra-sketch",   "nota": "plural" },
+
+    { "titulo": "Película X",            "obra_esperada": "obra-cine",     "nota": "tildes" },
+    { "titulo": "La Pelicula X",         "obra_esperada": "obra-cine",     "nota": "articulo de mas" },
+
+    { "titulo": "Minuto Comedia",        "obra_esperada": "",              "nota": "banda: parecido insuficiente, va a revision" },
+    { "titulo": "Comico",                "obra_esperada": "",              "nota": "banda: una palabra suelta" },
+
+    { "titulo": "El Cuarto Acto",        "obra_esperada": "",              "nota": "otro titulo: el umbral lo tiene que rechazar" },
+    { "titulo": "Noticiero de la Noche", "obra_esperada": "",              "nota": "fuera de catalogo" },
+    { "titulo": "Zzzz Qqqq Wwww",        "obra_esperada": "",              "nota": "no se parece a nada" },
+
+    { "titulo": "Serie Z",               "obra_esperada": "",              "nota": "FALSO POSITIVO CONOCIDO: titulo de 7 caracteres, los trigramas no lo separan de 'Serie Y'" }
+  ]
+}
