@@ -71,6 +71,14 @@ func TestReclamacionesGuardarPersisteLosAvalesYElEstadoPagable(t *testing.T) {
 	s := sembrarTitularYActores(t)
 	ctx := t.Context()
 
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
 	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-a", "proceso-1", "detalle",
 		dec("30.00"), true, false)
 	if err != nil {
@@ -115,6 +123,16 @@ func TestReclamacionesGuardarPersisteLosAvalesYElEstadoPagable(t *testing.T) {
 func TestGuardarReclamacionRecalculaEstadoBajoAvalesConcurrentes(t *testing.T) {
 	s := sembrarTitularYActores(t)
 	ctx := t.Context()
+
+	// Saldo grande a proposito: cada ronda compromete 30.00 al resolverse
+	// (B3), y las 12 rondas comparten la reserva de "proceso-1".
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("10000.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
 
 	const rondas = 12
 	for ronda := 0; ronda < rondas; ronda++ {
@@ -162,6 +180,145 @@ func TestGuardarReclamacionRecalculaEstadoBajoAvalesConcurrentes(t *testing.T) {
 		if estado := estadoPersistido(t, s, id); estado != "resuelta" {
 			t.Fatalf("ronda %d: estado persistido = %q con los 2 avales ya en la base, se esperaba 'resuelta'", ronda, estado)
 		}
+	}
+}
+
+// TestGuardarReclamacionDebitaLaReservaAlResolverse es B3: al pasar a
+// 'resuelta' el monto solicitado se descuenta de la reserva, para que
+// LiberarReservaPrescrita no reparta despues ese mismo dinero otra vez.
+func TestGuardarReclamacionDebitaLaReservaAlResolverse(t *testing.T) {
+	s := sembrarTitularYActores(t)
+	ctx := t.Context()
+
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-a", "proceso-1", "detalle", dec("30.00"), true, false)
+	if err != nil {
+		t.Fatalf("construir reclamacion: %v", err)
+	}
+	if err := s.GuardarReclamacion(ctx, r); err != nil {
+		t.Fatalf("abrir reclamacion: %v", err)
+	}
+
+	r, err = r.Avalar(reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-revisoria")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	if err := s.GuardarReclamacion(ctx, r); err != nil {
+		t.Fatalf("guardar primer aval: %v", err)
+	}
+	leido, err := s.ReservaPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer reserva: %v", err)
+	}
+	if !leido.Saldo.Equal(dec("50.00")) {
+		t.Fatalf("saldo tras un solo aval = %s, se esperaba 50.00 (todavia no es pagable)", leido.Saldo)
+	}
+
+	r, err = r.Avalar(reparto.RolDistribucionYContabilidad, "actor-contabilidad")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	if err := s.GuardarReclamacion(ctx, r); err != nil {
+		t.Fatalf("guardar segundo aval: %v", err)
+	}
+
+	leido, err = s.ReservaPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer reserva: %v", err)
+	}
+	if !leido.Saldo.Equal(dec("20.00")) {
+		t.Fatalf("saldo tras resolverse = %s, se esperaba 20.00 (50.00 - 30.00)", leido.Saldo)
+	}
+}
+
+// TestGuardarReclamacionNoDebitaDosVeces prueba que volver a guardar una
+// reclamacion ya resuelta (p.ej. un reintento) no descuenta la reserva otra
+// vez.
+func TestGuardarReclamacionNoDebitaDosVeces(t *testing.T) {
+	s := sembrarTitularYActores(t)
+	ctx := t.Context()
+
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-a", "proceso-1", "detalle", dec("30.00"), true, false)
+	if err != nil {
+		t.Fatalf("construir reclamacion: %v", err)
+	}
+	r, err = r.Avalar(reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-revisoria")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	r, err = r.Avalar(reparto.RolDistribucionYContabilidad, "actor-contabilidad")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	if err := s.GuardarReclamacion(ctx, r); err != nil {
+		t.Fatalf("guardar resuelta: %v", err)
+	}
+	// Reintento: la misma reclamacion, ya resuelta, se guarda de nuevo.
+	if err := s.GuardarReclamacion(ctx, r); err != nil {
+		t.Fatalf("reintento: %v", err)
+	}
+
+	leido, err := s.ReservaPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer reserva: %v", err)
+	}
+	if !leido.Saldo.Equal(dec("20.00")) {
+		t.Fatalf("saldo tras el reintento = %s, se esperaba 20.00 (un solo debito, no dos)", leido.Saldo)
+	}
+}
+
+// TestGuardarReclamacionRechazaComprometerMasDeLoQueQuedaEnLaReserva prueba
+// que resolver una reclamacion cuyo monto excede el saldo disponible falla,
+// y no deja la reserva a medias.
+func TestGuardarReclamacionRechazaComprometerMasDeLoQueQuedaEnLaReserva(t *testing.T) {
+	s := sembrarTitularYActores(t)
+	ctx := t.Context()
+
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("10.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-a", "proceso-1", "detalle", dec("30.00"), true, false)
+	if err != nil {
+		t.Fatalf("construir reclamacion: %v", err)
+	}
+	r, err = r.Avalar(reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-revisoria")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	r, err = r.Avalar(reparto.RolDistribucionYContabilidad, "actor-contabilidad")
+	if err != nil {
+		t.Fatalf("avalar: %v", err)
+	}
+	if err := s.GuardarReclamacion(ctx, r); err == nil {
+		t.Fatal("se esperaba error: 30.00 excede el saldo de 10.00")
+	}
+
+	leido, err := s.ReservaPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer reserva: %v", err)
+	}
+	if !leido.Saldo.Equal(dec("10.00")) {
+		t.Fatalf("saldo = %s, el intento rechazado no debio tocar la reserva", leido.Saldo)
 	}
 }
 

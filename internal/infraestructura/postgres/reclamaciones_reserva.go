@@ -22,6 +22,12 @@ var _ aplicacion.RepositorioReclamacionesReserva = (*Store)(nil)
 // (B4). 'resuelta' es "lista para el siguiente proceso de Distribucion"
 // (RD 14.5.9); el dominio no modela un estado de rechazo todavia, asi que
 // no hay 'rechazada' que escribir desde aqui.
+//
+// Al transicionar a 'resuelta' -y solo entonces, una vez- descuenta
+// monto_solicitado de reservas.saldo: sin esto, LiberarReservaPrescrita
+// repartiria mas tarde el saldo completo como si el reclamo resuelto no
+// comprometiera nada, pagando el mismo dinero dos veces (B3). El CHECK
+// saldo >= 0 rechaza comprometer mas de lo que queda.
 func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
@@ -33,7 +39,9 @@ func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionRes
 			return traducirError(err, "crear reclamacion %q", r.ID)
 		}
 
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM reclamaciones WHERE id = $1 FOR UPDATE`, r.ID); err != nil {
+		var estadoAnterior string
+		if err := tx.QueryRow(ctx, `SELECT estado FROM reclamaciones WHERE id = $1 FOR UPDATE`, r.ID).
+			Scan(&estadoAnterior); err != nil {
 			return traducirError(err, "bloquear reclamacion %q", r.ID)
 		}
 
@@ -55,9 +63,23 @@ func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionRes
 		if err != nil {
 			return err
 		}
+		nuevoEstado := estadoDeAvales(avales)
 		if _, err := tx.Exec(ctx, `UPDATE reclamaciones SET estado = $2 WHERE id = $1`,
-			r.ID, estadoDeAvales(avales)); err != nil {
+			r.ID, nuevoEstado); err != nil {
 			return traducirError(err, "actualizar estado de %q", r.ID)
+		}
+
+		if estadoAnterior != "resuelta" && nuevoEstado == "resuelta" {
+			ct, err := tx.Exec(ctx,
+				`UPDATE reservas SET saldo = saldo - $2 WHERE proceso_id = $1`,
+				r.ProcesoOrigenID, r.MontoSolicitado)
+			if err != nil {
+				return traducirError(err, "comprometer reclamacion %q contra la reserva de %q", r.ID, r.ProcesoOrigenID)
+			}
+			if ct.RowsAffected() == 0 {
+				return fmt.Errorf("comprometer reclamacion %q: no hay reserva registrada para %q: %w",
+					r.ID, r.ProcesoOrigenID, aplicacion.ErrNoEncontrado)
+			}
 		}
 		return nil
 	})
