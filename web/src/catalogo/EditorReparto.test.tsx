@@ -364,14 +364,14 @@ function nodoVivo(rotulo: string): HTMLElement {
   return vivo;
 }
 
-/** El aviso de la version, que es un parrafo con su propia clase. */
+/** El aviso de version que hay en pantalla: primera version, historial ilegible o guardado incierto. */
 function avisoDeVersion(): HTMLElement {
   const aviso = document.querySelector(".editor-aviso-version");
   if (!aviso) throw new Error("no hay ningun aviso de version en pantalla");
   return aviso as HTMLElement;
 }
 
-/** Si hay un aviso de version en pantalla. El de "cierra la N y abre la N+1" ya no existe. */
+/** Si hay algun aviso de version en pantalla. Con una version abierta conocida no hay ninguno. */
 const hayAvisoDeVersion = () =>
   document.querySelector(".editor-aviso-version") !== null;
 
@@ -467,7 +467,7 @@ describe("editor de reparto (integracion con App)", () => {
     localStorage.clear();
   });
 
-  it("el borrador arranca con el reparto vigente y con el aviso de que version se cierra", async () => {
+  it("el borrador arranca con el reparto vigente y sin aviso de version", async () => {
     simularServidor();
 
     await abrirElEditorConPadron();
@@ -489,8 +489,7 @@ describe("editor de reparto (integracion con App)", () => {
     ).toBeTruthy();
     expect(screen.getByText(/La Casa de las Dos Palmas/)).toBeTruthy();
 
-    // El aviso nombra las dos versiones, y las saca del historial: la que esta
-    // abierta es la que se cierra.
+    // Con una version abierta conocida no hay aviso de version.
     expect(hayAvisoDeVersion()).toBe(false);
 
     // El borrador viene con el reparto de la version ABIERTA (75/25), no con el
@@ -796,8 +795,7 @@ describe("editor de reparto (integracion con App)", () => {
     simularServidor({ guardado: () => json({ version: "cuatro" }) });
     await abrirElEditor();
 
-    // Antes de guardar el aviso si nombra la version que rige, y la saca del
-    // historial: eso no cambia.
+    // Antes de guardar no hay aviso de version: eso no cambia.
     expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
@@ -1013,9 +1011,7 @@ describe("editor de reparto (integracion con App)", () => {
     });
     await abrirElEditor();
 
-    // La guarda contra el verde por vacio: antes de guardar el aviso SI numera,
-    // y los numeros los saca del historial. Sin esto, un aviso que no numerara
-    // nunca haria pasar sola la negativa de abajo.
+    // Antes de guardar no hay aviso de version.
     expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
@@ -1400,9 +1396,7 @@ describe("editor de reparto (integracion con App)", () => {
       within(caja).getByText(/La versión anterior no se borra ni se modifica/),
     ).toBeTruthy();
 
-    // El aviso queda al dia SIN releer el historial: la version que el servidor
-    // acaba de abrir es la que se cerrara la proxima vez. Con el historial
-    // viejo diria que se cierra la 3, que ya no rige.
+    // Tras un guardado legible sigue sin haber aviso de version.
     expect(hayAvisoDeVersion()).toBe(false);
 
     // Y el enlace al historial lleva a la version anterior, que sigue ahi.
@@ -1467,8 +1461,7 @@ describe("editor de reparto (integracion con App)", () => {
     expect(caja.textContent).not.toMatch(
       /sigue en el historial con los porcentajes que regían hasta ahora/,
     );
-    // El aviso de arriba si queda al dia con la version que el servidor abrio:
-    // la que se cerrara la proxima vez es esta.
+    // Tras la primera version guardada tampoco aparece aviso de version.
     expect(hayAvisoDeVersion()).toBe(false);
   });
 
