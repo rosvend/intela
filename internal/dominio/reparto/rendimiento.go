@@ -3,10 +3,14 @@ package reparto
 import (
 	"errors"
 	"fmt"
-	"strings"
+	"regexp"
 
 	"github.com/shopspring/decimal"
 )
+
+// vigenciaValida es el ano de la comunicacion publica (RD 10.1): cuatro
+// digitos, nada mas.
+var vigenciaValida = regexp.MustCompile(`^[0-9]{4}$`)
 
 // ErrRendimientoCircuitoMezclado: RD 10.3 exige inversiones nacionales e
 // internacionales segregadas -- "esto permitira identificar con facilidad
@@ -26,8 +30,8 @@ type PoolRendimiento struct {
 
 // NuevoPoolRendimiento abre el ledger de un circuito y una vigencia.
 func NuevoPoolRendimiento(circuito Circuito, vigencia string, monto decimal.Decimal) (PoolRendimiento, error) {
-	if strings.TrimSpace(vigencia) == "" {
-		return PoolRendimiento{}, fmt.Errorf("%w: vigencia vacia", ErrRepartoInvalido)
+	if !vigenciaValida.MatchString(vigencia) {
+		return PoolRendimiento{}, fmt.Errorf("%w: vigencia %q, se esperan cuatro digitos (RD 10.1)", ErrRepartoInvalido, vigencia)
 	}
 	if err := exigirNoNegativo("rendimiento_monto", monto); err != nil {
 		return PoolRendimiento{}, err

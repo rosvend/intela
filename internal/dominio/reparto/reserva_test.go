@@ -30,6 +30,13 @@ func TestNuevaPoolReservaRechazaCircuitoInternacional(t *testing.T) {
 	}
 }
 
+func TestNuevaPoolReservaRechazaCircuitoDesconocido(t *testing.T) {
+	_, err := reparto.NuevaPoolReserva("proceso-1", reparto.Circuito(""), d("100.00"), d("5"))
+	if !errors.Is(err, reparto.ErrReservaInternacional) {
+		t.Fatalf("error = %v, se esperaba ErrReservaInternacional: solo nacional puede tener reserva", err)
+	}
+}
+
 func TestNuevaPoolReservaRechazaTasaSobreElTecho(t *testing.T) {
 	_, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, d("100.00"), d("5.01"))
 	if !errors.Is(err, reparto.ErrRepartoInvalido) {

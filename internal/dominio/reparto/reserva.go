@@ -36,7 +36,7 @@ type PoolReserva struct {
 // internacional y tasa por fuera del techo del 14.1 son errores tipados, no
 // un valor recortado en silencio.
 func NuevaPoolReserva(procesoID string, circuito Circuito, montoInicial, tasaPct decimal.Decimal) (PoolReserva, error) {
-	if circuito == Internacional {
+	if circuito != Nacional {
 		return PoolReserva{}, fmt.Errorf("%w: proceso %q", ErrReservaInternacional, procesoID)
 	}
 	if err := exigirNoNegativo("monto_inicial", montoInicial); err != nil {

@@ -24,6 +24,14 @@ func TestNuevoPoolRendimientoVigenciaVaciaEsError(t *testing.T) {
 	}
 }
 
+func TestNuevoPoolRendimientoVigenciaConFormatoInvalidoEsError(t *testing.T) {
+	for _, vigencia := range []string{"2026-01", "26", "202a", "20266"} {
+		if _, err := reparto.NuevoPoolRendimiento(reparto.Nacional, vigencia, d("100.00")); err == nil {
+			t.Fatalf("vigencia %q: se esperaba error, vigencia es un ano de 4 digitos (RD 10.1)", vigencia)
+		}
+	}
+}
+
 func TestAcrecerRendimientoRechazaMezclarCircuitos(t *testing.T) {
 	pool, err := reparto.NuevoPoolRendimiento(reparto.Nacional, "2026", d("1000.00"))
 	if err != nil {
