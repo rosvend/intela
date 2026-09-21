@@ -619,6 +619,29 @@ type RepositorioLiquidacion interface {
 	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
 }
 
+// RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14).
+// Una por corrida: la proveniencia es la clave (ADR sobre corrida-por-bolsa,
+// 0019).
+type RepositorioReservas interface {
+	Guardar(ctx context.Context, r reparto.PoolReserva) error
+	PorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
+}
+
+// RepositorioRendimientos guarda y lee los pools de rendimientos financieros
+// (RD 10), uno por (circuito, vigencia) -- RD 10.3 exige los ledgers
+// segregados, y la clave los mantiene separados por construccion.
+type RepositorioRendimientos interface {
+	Guardar(ctx context.Context, p reparto.PoolRendimiento) error
+	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
+}
+
+// RepositorioReclamacionesReserva guarda y lee los reclamos contra la
+// reserva (RD 14.5).
+type RepositorioReclamacionesReserva interface {
+	Guardar(ctx context.Context, r reparto.ReclamacionReserva) error
+	PorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error)
+}
+
 // BitacoraAuditoria es el libro append-only del ADR 0006.
 //
 // No hay Actualizar ni Borrar, y no los va a haber. Asentar devuelve error y
