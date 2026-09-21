@@ -82,6 +82,9 @@ func NuevaReclamacionReserva(
 // firma en el proceso): un actor no puede cubrir los dos roles, y un rol no
 // avala dos veces.
 func (r ReclamacionReserva) Avalar(rol RolAvalReclamacion, actorID string) (ReclamacionReserva, error) {
+	if rol != RolRevisoriaFiscalOAuditoriaInterna && rol != RolDistribucionYContabilidad {
+		return r, fmt.Errorf("%w: rol de aval desconocido %q (RD 14.5.10-12)", ErrRepartoInvalido, rol)
+	}
 	for _, a := range r.Avales {
 		if a.Rol == rol {
 			return r, fmt.Errorf("%w: el rol %q ya avalo esta reclamacion", ErrRepartoInvalido, rol)

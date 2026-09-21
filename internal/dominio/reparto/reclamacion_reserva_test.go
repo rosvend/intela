@@ -80,6 +80,14 @@ func TestReclamacionReservaUnActorNoCubreLosDosRoles(t *testing.T) {
 	}
 }
 
+func TestReclamacionReservaRechazaRolDesconocido(t *testing.T) {
+	r := nuevaReclamacionValida(t)
+	_, err := r.Avalar(reparto.RolAvalReclamacion("contabilidad"), "actor-a")
+	if err == nil {
+		t.Fatal("se esperaba error: RD 14.5.10-12 solo define dos avales")
+	}
+}
+
 func TestReclamacionReservaElMismoRolNoAvalaDosVeces(t *testing.T) {
 	r := nuevaReclamacionValida(t)
 	r, err := r.Avalar(reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-a")
