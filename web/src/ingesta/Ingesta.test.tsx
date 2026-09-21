@@ -162,6 +162,20 @@ describe("ListaCargas", () => {
     );
   });
 
+  it("en la primera pagina el boton Atras esta deshabilitado", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json([{ ...cargaConRechazos, rechazados: 0 }]),
+    );
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 1");
+
+    expect(screen.getByRole("button", { name: "Atrás" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
   it("pide las cargas del periodo en la query", async () => {
     vi.mocked(fetch).mockResolvedValue(json([]));
 

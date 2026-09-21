@@ -474,11 +474,10 @@ const (
 //
 // Vive en el nucleo y no en el adaptador HTTP ni en el de ingesta aunque
 // hable de extensiones: es la mitad de la [ClaveLector] con la que el caso de
-// uso elige adaptador, y tanto el handler (que solo tiene un nombre de
-// fichero) como los adaptadores (que se registran por formato) la necesitan
-// sin importarse entre si. El caso de uso la expone como [Ingesta.DeducirFormato]
-// para que la interfaz del consumidor describa todo lo que el handler
-// necesita.
+// uso elige adaptador, y el handler (que solo tiene un nombre de fichero) la
+// necesita sin importar un paquete hermano de infraestructura. El caso de uso
+// la expone como [Ingesta.DeducirFormato] para que la interfaz del consumidor
+// describa todo lo que el handler necesita.
 //
 // Devuelve "" para lo que no reconoce, y el caso de uso lo convierte en un
 // mensaje que lista los formatos que si sabe leer. NO adivina por el contenido:

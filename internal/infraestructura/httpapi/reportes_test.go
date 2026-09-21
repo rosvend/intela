@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -364,6 +367,130 @@ func TestSubirReporteConCuerpoQueNoEsMultipartEs400(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/reportes", `{"fuente":"caracol"}`, "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// servidorConLog construye la API con un log capturable. Es lo que permite
+// afirmar que un 5xx dejo rastro en el servidor y no solo un codigo hacia el
+// cliente.
+func servidorConLog(t *testing.T, ing Ingesta, buf *bytes.Buffer) http.Handler {
+	t.Helper()
+	auth := &autenticacionFalsa{
+		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
+	}
+	log := slog.New(slog.NewTextHandler(buf, nil))
+	return Nueva(Casos{Auth: auth, Ingesta: ing}, Opciones{Log: log}).Router()
+}
+
+// Un fallo de disco del servidor al derramar el multipart no es una peticion
+// mal formada: con 1 MiB en memoria, todo archivo mayor crea un temporal via
+// os.CreateTemp, y un TMPDIR inutilizable falla ahi. Antes del arreglo esa
+// rama contestaba 400 sin log; ahora es 5xx con log a Error y un mensaje que
+// no culpa al cliente. El control de 300 KiB demuestra que lo pequeno sigue
+// en memoria y entra con 201 aunque el temporal este roto.
+func TestSubirReporteConTemporalRotoDa5xxConLogYLoPequenoSigueEn201(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+
+	grande := bytes.Repeat([]byte("x"), 3<<20)
+	pequeno := bytes.Repeat([]byte("x"), 300<<10)
+
+	// Archivo mayor que la memoria: se derrama, el temporal falla.
+	var bufGrande bytes.Buffer
+	hGrande := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &bufGrande)
+	recGrande := subir(t, hGrande,
+		map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"grande.csv", grande)
+	if recGrande.Code != http.StatusInternalServerError {
+		t.Fatalf("archivo grande: codigo = %d, se esperaba 500. Cuerpo: %s",
+			recGrande.Code, recGrande.Body)
+	}
+	if strings.Contains(recGrande.Body.String(), "multipart/form-data") {
+		t.Errorf("archivo grande: el 500 culpa al cliente: %s", recGrande.Body)
+	}
+	if !strings.Contains(recGrande.Body.String(), "no se pudo recibir") {
+		t.Errorf("archivo grande: el cuerpo no dice que fue un fallo del servidor: %s",
+			recGrande.Body)
+	}
+	// La linea de log a Error con la causa: sin ella ninguna alerta basada en
+	// 5xx se dispararia con el 400 anterior.
+	logGrande := bufGrande.String()
+	if !strings.Contains(logGrande, "fallo al recibir la entrega multipart") {
+		t.Errorf("archivo grande: el log no trae la causa: %q", logGrande)
+	}
+	if !strings.Contains(strings.ToUpper(logGrande), "ERROR") {
+		t.Errorf("archivo grande: el log no es a nivel Error: %q", logGrande)
+	}
+
+	// Control: lo que cabe en memoria no toca disco y entra igual.
+	var bufPequeno bytes.Buffer
+	hPequeno := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &bufPequeno)
+	recPequeno := subir(t, hPequeno,
+		map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"pequeno.csv", pequeno)
+	if recPequeno.Code != http.StatusCreated {
+		t.Fatalf("archivo pequeno: codigo = %d, se esperaba 201. Cuerpo: %s",
+			recPequeno.Code, recPequeno.Body)
+	}
+}
+
+// Un cuerpo truncado sigue siendo culpa del cliente aunque TMPDIR este roto:
+// no es *os.PathError y tiene que dar 400, no 500.
+func TestSubirReporteTruncadoConTemporalRotoSigueEn400(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+
+	var cuerpo bytes.Buffer
+	escritor := multipart.NewWriter(&cuerpo)
+	if err := escritor.WriteField("fuente", "caracol"); err != nil {
+		t.Fatal(err)
+	}
+	parte, err := escritor.CreateFormFile("archivo", "corte.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parte.Write(bytes.Repeat([]byte("x"), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := escritor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cortado := cuerpo.Bytes()[:cuerpo.Len()/2]
+
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	req := httptest.NewRequest(http.MethodPost, "/reportes", bytes.NewReader(cortado))
+	req.Header.Set("Content-Type", escritor.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// A esta altura los bytes ya estan en RAM o en un temporal del servidor, asi
+// que un fallo de lectura es E/S del servidor y no peticion malformada: 500
+// con log, no 400. La costura leerCuerpoArchivo permite simularlo sin romper
+// el disco.
+func TestSubirReporteConFalloDeLecturaDa500ConLog(t *testing.T) {
+	anterior := leerCuerpoArchivo
+	leerCuerpoArchivo = func(io.Reader) ([]byte, error) {
+		return nil, errors.New("disco roto")
+	}
+	defer func() { leerCuerpoArchivo = anterior }()
+
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	rec := subir(t, h, map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"parrilla.csv", []byte("titulo\n"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "no se pudo leer el archivo subido") {
+		t.Errorf("cuerpo = %s", rec.Body)
+	}
+	if !strings.Contains(buf.String(), "fallo al leer la subida") {
+		t.Errorf("el log no trae la causa: %q", buf.String())
 	}
 }
 

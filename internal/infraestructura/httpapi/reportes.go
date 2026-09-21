@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -69,6 +71,42 @@ const memoriaMaximaMultipart = 1 << 20
 // unos cientos de bytes, y aqui lo que importa es que el maximo este ACOTADO, no
 // que sea exacto.
 const tamanoMaximoCuerpo = tamanoMaximoEntrega + 1<<20
+
+// leerCuerpoArchivo lee el archivo ya recibido. Es una variable y no una
+// llamada directa a [io.ReadAll] para que las pruebas puedan simular el fallo
+// de lectura del temporal del servidor sin romper el disco: en produccion es
+// io.ReadAll tal cual.
+//
+// El fallo de lectura a esta altura es E/S del servidor -los bytes ya estan
+// en RAM o en un temporal- y se responde 500. Sin esta costura, la unica forma
+// de cubrir esa rama seria romper el temporal entre el parseo y la lectura,
+// que no tiene gancho determinista.
+var leerCuerpoArchivo = io.ReadAll
+
+// esFalloTemporal dice si el error de ParseMultipartForm viene del disco del
+// servidor y no del cliente.
+//
+// Con memoriaMaximaMultipart en 1 MiB, todo archivo mayor se derrama a un
+// temporal via os.CreateTemp: un TMPDIR roto, sin permiso o lleno (ENOENT,
+// EACCES, ENOSPC) vuelve como *os.PathError o *os.SyscallError envuelto en el
+// error del parseo. Eso es E/S del servidor, no peticion malformada, y se
+// responde 500 con log a Error.
+//
+// Un cuerpo que no es multipart, sin boundary o truncado (ErrNotMultipart,
+// ErrMissingBoundary, io.ErrUnexpectedEOF) NO es os.PathError y sigue dando
+// 400. El tope se distingue antes, por *http.MaxBytesError, y da 413.
+func esFalloTemporal(err error) bool {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return true
+	}
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno)
+}
 
 // entregaJSON es el acuse que devuelve una subida.
 //
@@ -168,6 +206,19 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("la entrega pasa de %d MiB", tamanoMaximoEntrega>>20))
 			return
 		}
+		// El derrame a disco tambien es E/S del servidor, no peticion
+		// malformada: con 1 MiB en memoria, todo archivo mayor crea un temporal
+		// via os.CreateTemp, y un TMPDIR roto, sin permiso o lleno (ENOENT,
+		// EACCES, ENOSPC) falla aqui. Es el punto 5 de #114 aplicado a esta
+		// rama, igual que ya se hace para el ReadAll de abajo: 5xx con log a
+		// Error, y un mensaje que no culpa al cliente. Un cuerpo que no es
+		// multipart, sin boundary o truncado no es *os.PathError y sigue
+		// dando 400.
+		if esFalloTemporal(err) {
+			a.log.ErrorContext(r.Context(), "fallo al recibir la entrega multipart", slog.Any("error", err))
+			escribirError(w, http.StatusInternalServerError, "no se pudo recibir la entrega por un fallo del servidor")
+			return
+		}
 		escribirError(w, http.StatusBadRequest,
 			"la entrega tiene que llegar como multipart/form-data con los campos fuente, periodo y archivo")
 		return
@@ -208,7 +259,7 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 	//
 	// El +1 es para poder distinguir "justo el tope" de "se paso": LimitReader no
 	// avisa, se queda callado en el limite.
-	datos, err := io.ReadAll(io.LimitReader(archivo, tamanoMaximoEntrega+1))
+	datos, err := leerCuerpoArchivo(io.LimitReader(archivo, tamanoMaximoEntrega+1))
 	if err != nil {
 		// 500 y no 400: a esta altura los bytes ya estan en RAM o en un
 		// temporal del servidor, asi que es E/S del servidor, no peticion

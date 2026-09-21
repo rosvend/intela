@@ -566,8 +566,8 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 	for n, u := range usos {
 		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
 		// no es el espacio: es que el campo se lee TRES veces en DOS capas
-		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el
-		// NULLIF($6, '') del INSERT- y cada lectura decide "vacio" por su cuenta.
+		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el nil de
+		// valoresUso para obra_id- y cada lectura decide "vacio" por su cuenta.
 		// Mientras el criterio se escriba tres veces, puede discrepar tres veces.
 		//
 		// Discrepaba ya. Un obra_id de solo blancos -un espacio, un tabulador, un
@@ -580,16 +580,16 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		//
 		// Y arreglarlo solo en Go lo empeora, que es la razon de que la
 		// normalizacion sea UNA y este ANTES de todo. Con TrimSpace en las dos
-		// comparaciones de arriba pero no en el SQL, la fila pasa como vacia,
-		// llega al INSERT con el espacio intacto, NULLIF no la anula -no es
+		// comparaciones de arriba pero no sobre el campo, la fila pasa como vacia,
+		// llega al COPY con el espacio intacto, valoresUso no lo anula -no es
 		// literalmente ''- y el CHECK uso_resuelto_tiene_obra la rechaza: 23514
 		// dentro de la transaccion del lote, que se lleva por delante TODAS las
 		// filas buenas que la acompanan. Un rechazo con el motivo equivocado se
 		// convertiria asi en una entrega entera perdida.
 		//
 		// Normalizando aqui el valor viaja ya limpio a las tres lecturas, incluido
-		// el que se manda al INSERT, y "vacio" pasa a significar lo mismo en Go y
-		// en SQL por construccion, no por acuerdo.
+		// el que se manda al COPY, y "vacio" pasa a significar lo mismo en Go y
+		// en el adaptador por construccion, no por acuerdo.
 		//
 		// TrimSpace y no un recorte propio: su definicion de blanco es
 		// unicode.IsSpace, que incluye el NBSP (U+00A0) con el que los exports de
@@ -604,7 +604,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		// el razonamiento de arriba, que vale igual para todos: mientras el
 		// criterio de "vacio" se escriba en mas de un sitio puede discrepar en
 		// mas de un sitio, y cada discrepancia acaba en el mismo lugar, que es
-		// una restriccion de la base abortando el INSERT del lote ENTERO. UNA
+		// una restriccion de la base abortando la escritura del lote ENTERO. UNA
 		// normalizacion por campo, aqui arriba, ANTES de que nada los lea.
 		//
 		// Lo que se pierde por cada uno si el blanco no se recorta AQUI:
@@ -814,8 +814,8 @@ func validarUso(u UsoPersistido) string {
 	// Contra "" a secas: GuardarUsos ya recorto los blancos antes de llamar, y
 	// esa es la UNICA normalizacion del campo en todo el camino. Un TrimSpace
 	// tambien aqui no seria redundante sino peligroso: sugeriria que esta funcion
-	// se puede llamar con un valor sin normalizar, y el INSERT -que compara con
-	// NULLIF($6, '')- no puede hacer esa misma concesion.
+	// se puede llamar con un valor sin normalizar, y valoresUso -que compara
+	// contra '' literal para mandar nil- no puede hacer esa misma concesion.
 	if u.ObraID != "" {
 		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
 	}

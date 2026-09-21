@@ -1742,7 +1742,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/Carga"
         "400":
-          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe.
+          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe,
+            o el limite y el desplazamiento no son enteros validos.
           content:
             application/json:
               schema:

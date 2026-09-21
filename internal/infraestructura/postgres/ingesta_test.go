@@ -806,8 +806,8 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 //     ingesta"- acusando de traer una obra a una fila que no traia ninguna.
 //     Eso se ve con un doble en memoria.
 //  2. En cuanto se arregla SOLO en Go, la fila pasa como vacia y llega al
-//     INSERT con el blanco intacto. El NULLIF del INSERT compara con la cadena
-//     vacia LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
+//     COPY con el blanco intacto. valoresUso compara contra la cadena vacia
+//     LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
 //     la rechaza con un 23514 DENTRO de la transaccion del lote. No se pierde
 //     esa fila: se pierden TODAS. Ese sintoma no existe contra un doble -no
 //     hay CHECK que violar- y es el mas caro de los dos: el reporte ya quedo
@@ -1403,8 +1403,8 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	}
 
 	// El filtro va como parametro y el vacio significa "todas". Cada caso
-	// tiene su sentencia y su plan: el `OR` no es sargable y anulaba el
-	// indice `reportes_periodo`.
+	// tiene su sentencia y su plan: el `OR` evitaba el indice `reportes_periodo`
+	// en plan generico.
 	todas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(): %v", err)
@@ -1473,6 +1473,49 @@ func TestListarCargasPagina(t *testing.T) {
 	}
 	if len(vacia) != 0 {
 		t.Fatalf("cargas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// La rama filtrada por periodo tambien pagina: es la que usa la pantalla tras
+// cada subida (GET /reportes?periodo=...&limite=...&desplazamiento=...). Sin el
+// LIMIT/OFFSET en esa rama, el listado filtrado volvia entero y la suite
+// seguia en verde porque TestListarCargasPagina solo ejerce la rama sin
+// filtro.
+func TestListarCargasFiltradaPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Una segunda carga en el mismo periodo de enero: con dos en 2026-01 y una
+	// en 2026-02, la pagina filtrada tiene que recortar y avanzar.
+	const (
+		reporteEnero2 = "rep-caracol-enero-2"
+		shaEnero2     = "3333333333333333333333333333333333333333333333333333333333333333"
+	)
+	if err := s.GuardarReporte(ctx, reporteEnero2, "caracol", "2026-01",
+		shaEnero2, "reportes/"+shaEnero2, 64); err != nil {
+		t.Fatalf("sembrar segunda carga de enero: %v", err)
+	}
+
+	primera, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas filtradas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina filtrada no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas filtradas = %+v, se esperaba pagina vacia", vacia)
 	}
 }
 

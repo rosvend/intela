@@ -866,11 +866,11 @@ var blancos = map[string]string{
 //
 // Que no se rechace lo cumple cualquier TrimSpace puesto en la comprobacion de
 // turno. Lo que hace falta es que el valor que sale hacia el repositorio sea la
-// cadena vacia EXACTA, porque el INSERT lo pasa por un NULLIF contra la cadena
-// vacia literal y esa comparacion no se puede aflojar desde Go.
+// cadena vacia EXACTA, porque valoresUso la compara contra la cadena vacia
+// literal para mandarla como nil y esa comparacion no se puede aflojar desde Go.
 //
 // Un TrimSpace escrito en las comprobaciones en vez de sobre el campo deja pasar
-// la fila y manda el blanco intacto al SQL, donde el NULLIF no lo anula y el
+// la fila y manda el blanco intacto al adaptador, donde valoresUso no lo anula y el
 // CHECK uso_resuelto_tiene_obra aborta el lote ENTERO. Por eso se comprueba
 // `guardado.ObraID == ""`: es lo unico que distingue la normalizacion de verdad
 // del parche que la aparenta.
@@ -907,12 +907,12 @@ func TestGuardarUsosTrataElObraIDEnBlancoComoSinObra(t *testing.T) {
 			if guardado.ObraID != "" {
 				t.Errorf(
 					"ObraID = %q, se esperaba la cadena vacia EXACTA: "+
-						"el INSERT compara con NULLIF($6, ''), que no recorta nada",
+						"valoresUso compara contra '', que no recorta nada",
 					guardado.ObraID)
 			}
 			if !guardado.ONI {
 				t.Error("sin obra es ONI: la guarda que estampa ONI tiene que ver " +
-					"el blanco como vacio, o la fila llega al INSERT con oni = false " +
+					"el blanco como vacio, o la fila llega al adaptador con oni = false " +
 					"y obra_id NULL, que es justo lo que el CHECK prohibe")
 			}
 			if guardado.Escalon != "pendiente" {
@@ -971,7 +971,7 @@ func TestGuardarUsosNoAflojaH5AlRecortarLosBlancos(t *testing.T) {
 // Un blanco en UNA fila no puede costar el lote entero.
 //
 // Es la mitad cara del defecto y la que no se ve en la capa de aplicacion sin
-// buscarla: con el criterio de "vacio" repartido entre Go y el NULLIF del SQL,
+// buscarla: con el criterio de "vacio" repartido entre Go y valoresUso,
 // la fila del blanco esquiva las dos comprobaciones de Go, viola el CHECK
 // uso_resuelto_tiene_obra en el INSERT y se lleva por delante a las buenas que
 // la acompanan -la escritura del lote es UNA transaccion a proposito-. Aqui se
@@ -997,11 +997,11 @@ func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 	if len(repo.canonicos()) != 3 {
 		t.Fatalf("se esperaban 3 usos canonicos, hay %d: %+v", len(repo.canonicos()), repo.canonicos())
 	}
-	// Y las tres salen con obra_id vacio EXACTO, que es lo que el INSERT sabe
-	// convertir en NULL.
+	// Y las tres salen con obra_id vacio EXACTO, que es lo que valoresUso sabe
+	// convertir en nil.
 	for _, u := range repo.usos {
 		if u.ObraID != "" {
-			t.Errorf("%q sale con ObraID = %q: el NULLIF del INSERT no lo va a anular",
+			t.Errorf("%q sale con ObraID = %q: valoresUso no lo va a anular",
 				u.Titulo, u.ObraID)
 		}
 	}

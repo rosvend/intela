@@ -133,9 +133,10 @@ func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos
 // hay forma de que se contaminen; las dos van por `usos_reporte` y
 // `usos_rechazados_reporte`, que son indices que ya existen.
 //
-// El periodo se filtra con un parametro que puede ser vacio, no concatenando
-// otro WHERE: una sola sentencia, un solo plan, y ningun camino en el que el
-// texto del SQL dependa de la entrada.
+// El periodo se filtra por rama y no concatenando otro WHERE: dos sentencias
+// constantes -una sin filtro y otra con `WHERE r.periodo = $1`- y ningun
+// camino en el que el texto del SQL dependa de la entrada. La eleccion es solo
+// vacio/no-vacio, y el filtro viaja como parametro en su rama.
 //
 // El orden es por `creado` descendente y desempata por id. Sin el desempate,
 // dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
@@ -153,8 +154,8 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
 		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
 		  FROM reportes r`
-	// Dos ramas y no `WHERE $1 = '' OR r.periodo = $1`: el OR no es sargable
-	// y anula el indice `reportes_periodo`. El filtro va como parametro y el
+	// Dos ramas y no `WHERE $1 = '' OR r.periodo = $1`: el OR evita el indice
+	// `reportes_periodo` en plan generico. El filtro va como parametro y el
 	// vacio significa "todas", pero cada caso tiene su sentencia y su plan.
 	var filas pgx.Rows
 	var err error
@@ -287,11 +288,11 @@ var columnasRechazoCopia = []string{
 //
 // obra_id viaja como nil cuando es "": la cadena vacia de UsoPersistido
 // significa "sin obra todavia", y el CHECK uso_resuelto_tiene_obra la quiere
-// como NULL. Sin el COPY no hay expresion SQL donde poner el NULLIF, asi que
-// la conversion se hace aqui, con la MISMA comparacion literal que tenia el
-// INSERT - envolverla en un recorte haria que la base decidiera por su cuenta
-// que cuenta como "sin obra" (ver el comentario que tenia insertarUso: el
-// valor llega ya recortado del caso de uso).
+// como NULL. Con COPY no hay expresion SQL donde anularla, asi que la
+// conversion se hace aqui, con comparacion literal contra "": envolverla en un
+// recorte haria que el adaptador decidiera por su cuenta que cuenta como
+// "sin obra". El valor llega ya recortado del caso de uso: prepararLote hace
+// el TrimSpace una sola vez, arriba del todo.
 func valoresUso(u aplicacion.UsoPersistido) []any {
 	var obraID any = u.ObraID
 	if u.ObraID == "" {
