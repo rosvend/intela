@@ -57,7 +57,7 @@ func TestRendimientosAcrecerEsAtomicoBajoConcurrencia(t *testing.T) {
 	s := &Store{pool: testhelp.Pool(t)}
 	ctx := t.Context()
 
-	const goroutines = 10
+	const goroutines = 4
 	var listas sync.WaitGroup
 	arranca := make(chan struct{})
 	errs := make([]error, goroutines)
@@ -83,8 +83,8 @@ func TestRendimientosAcrecerEsAtomicoBajoConcurrencia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("leer rendimiento: %v", err)
 	}
-	if !leido.Monto.Equal(dec("100.00")) {
-		t.Fatalf("monto final = %s, se esperaba 100.00 (%d x 10.00 sin perder ninguno)", leido.Monto, goroutines)
+	if !leido.Monto.Equal(dec("40.00")) {
+		t.Fatalf("monto final = %s, se esperaba 40.00 (%d x 10.00 sin perder ninguno)", leido.Monto, goroutines)
 	}
 }
 

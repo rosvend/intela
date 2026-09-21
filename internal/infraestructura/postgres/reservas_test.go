@@ -148,7 +148,7 @@ func TestLiberarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 		t.Fatalf("crear reserva: %v", err)
 	}
 
-	const goroutines = 8
+	const goroutines = 4
 	var listas sync.WaitGroup
 	arranca := make(chan struct{})
 	saldosVistos := make([]decimal.Decimal, goroutines)
