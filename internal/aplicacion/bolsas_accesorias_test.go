@@ -30,20 +30,31 @@ func (r *resultadosFalso) ResultadoPorProceso(_ context.Context, procesoID strin
 	return res, nil
 }
 
+// reservasFalso no simula el bloqueo de fila que hace race-safe a
+// ActualizarSaldoReserva de verdad -- eso lo prueban las pruebas de
+// concurrencia contra Postgres en internal/infraestructura/postgres. Aqui
+// solo se comprueba el contrato: fn recibe el saldo actual y lo que
+// devuelve queda persistido.
 type reservasFalso struct {
-	guardadas []reparto.PoolReserva
-	porProc   map[string]reparto.PoolReserva
-	err       error
+	creadas map[string]bool
+	porProc map[string]reparto.PoolReserva
+	err     error
 }
 
-func (r *reservasFalso) GuardarReserva(_ context.Context, p reparto.PoolReserva) error {
+func (r *reservasFalso) CrearReserva(_ context.Context, p reparto.PoolReserva) error {
 	if r.err != nil {
 		return r.err
 	}
-	r.guardadas = append(r.guardadas, p)
 	if r.porProc == nil {
 		r.porProc = map[string]reparto.PoolReserva{}
 	}
+	if r.creadas == nil {
+		r.creadas = map[string]bool{}
+	}
+	if r.creadas[p.ProcesoID] {
+		return ErrReservaYaRegistrada
+	}
+	r.creadas[p.ProcesoID] = true
 	r.porProc[p.ProcesoID] = p
 	return nil
 }
@@ -59,25 +70,45 @@ func (r *reservasFalso) ReservaPorProceso(_ context.Context, procesoID string) (
 	return p, nil
 }
 
+func (r *reservasFalso) ActualizarSaldoReserva(_ context.Context, procesoID string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+	if r.err != nil {
+		return r.err
+	}
+	p, ok := r.porProc[procesoID]
+	if !ok {
+		return ErrNoEncontrado
+	}
+	nuevoSaldo, err := fn(p.Saldo)
+	if err != nil {
+		return err
+	}
+	p.Saldo = nuevoSaldo
+	r.porProc[procesoID] = p
+	return nil
+}
+
+// rendimientosFalso: misma advertencia que reservasFalso sobre concurrencia.
 type rendimientosFalso struct {
-	guardados []reparto.PoolRendimiento
-	porClave  map[string]reparto.PoolRendimiento
-	err       error
+	porClave map[string]reparto.PoolRendimiento
+	err      error
 }
 
 func claveRendimiento(circuito reparto.Circuito, vigencia string) string {
 	return string(circuito) + "|" + vigencia
 }
 
-func (r *rendimientosFalso) GuardarRendimiento(_ context.Context, p reparto.PoolRendimiento) error {
+func (r *rendimientosFalso) AcrecerRendimiento(_ context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error {
 	if r.err != nil {
 		return r.err
 	}
-	r.guardados = append(r.guardados, p)
 	if r.porClave == nil {
 		r.porClave = map[string]reparto.PoolRendimiento{}
 	}
-	r.porClave[claveRendimiento(p.Circuito, p.Vigencia)] = p
+	clave := claveRendimiento(circuito, vigencia)
+	p := r.porClave[clave]
+	p.Circuito, p.Vigencia = circuito, vigencia
+	p.Monto = p.Monto.Add(incremento)
+	r.porClave[clave] = p
 	return nil
 }
 
@@ -90,6 +121,24 @@ func (r *rendimientosFalso) PorCircuitoYVigencia(_ context.Context, circuito rep
 		return reparto.PoolRendimiento{}, ErrNoEncontrado
 	}
 	return p, nil
+}
+
+func (r *rendimientosFalso) ActualizarMontoRendimiento(_ context.Context, circuito reparto.Circuito, vigencia string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+	if r.err != nil {
+		return r.err
+	}
+	clave := claveRendimiento(circuito, vigencia)
+	p, ok := r.porClave[clave]
+	if !ok {
+		return ErrNoEncontrado
+	}
+	nuevoMonto, err := fn(p.Monto)
+	if err != nil {
+		return err
+	}
+	p.Monto = nuevoMonto
+	r.porClave[clave] = p
+	return nil
 }
 
 type reclamacionesFalso struct {
@@ -141,7 +190,7 @@ func TestRegistrarReservaRechazaCircuitoInternacional(t *testing.T) {
 	if !errors.Is(err, reparto.ErrReservaInternacional) {
 		t.Fatalf("error = %v, se esperaba ErrReservaInternacional", err)
 	}
-	if len(reservas.guardadas) != 0 {
+	if len(reservas.porProc) != 0 {
 		t.Fatal("no debio persistir nada cuando el dominio rechaza")
 	}
 }
@@ -159,8 +208,27 @@ func TestRegistrarReservaPersisteElMontoDeLaCorrida(t *testing.T) {
 	if !p.MontoInicial.Equal(decimal.RequireFromString("50.00")) {
 		t.Fatalf("monto inicial = %s, se esperaba el Reserva de la corrida (50.00)", p.MontoInicial)
 	}
-	if len(reservas.guardadas) != 1 {
-		t.Fatalf("se esperaba 1 reserva persistida, hubo %d", len(reservas.guardadas))
+	if len(reservas.porProc) != 1 {
+		t.Fatalf("se esperaba 1 reserva persistida, hubo %d", len(reservas.porProc))
+	}
+}
+
+func TestRegistrarReservaNoPuedeRegistrarseDosVeces(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	reservas := &reservasFalso{}
+	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+	ctx := context.Background()
+
+	if _, err := b.RegistrarReserva(ctx, "p1", reparto.Nacional, decimal.RequireFromString("5")); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	_, err := b.RegistrarReserva(ctx, "p1", reparto.Nacional, decimal.RequireFromString("4"))
+	if !errors.Is(err, ErrReservaYaRegistrada) {
+		t.Fatalf("error = %v, se esperaba ErrReservaYaRegistrada: un segundo alta no puede pisar tasa ni monto en silencio (N2)", err)
+	}
+	if !reservas.porProc["p1"].TasaPct.Equal(decimal.RequireFromString("5")) {
+		t.Fatalf("tasa_pct = %s, el segundo alta no debio cambiarla", reservas.porProc["p1"].TasaPct)
 	}
 }
 
@@ -206,12 +274,59 @@ func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
 	}
 }
 
+func TestLiberarReservaPrescritaRechazaRendimientoNegativo(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
+	}}
+	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+
+	_, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.RequireFromString("-20.00"))
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: el mismo PR ya rechaza un rendimiento negativo en RegistrarRendimiento", err)
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("saldo = %s, el rechazo no debio tocar la reserva", reservas.porProc["p1"].Saldo)
+	}
+}
+
+func TestLiberarReservaPrescritaDejaElSaldoIgualAlResiduoSinTitulares(t *testing.T) {
+	t.Parallel()
+	// Corrida con la reserva retenida pero sin ninguna linea de titular --
+	// todas las obras quedaron con declaracion_incompleta. No hay a quien
+	// repartir, y el importe no puede evaporarse (B5).
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": {Reserva: decimal.RequireFromString("50.00")}}}
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
+	}}
+	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+
+	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.Zero)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if len(nuevas) != 0 {
+		t.Fatalf("se esperaban 0 lineas, hubo %d", len(nuevas))
+	}
+	if !residuo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("residuo = %s, se esperaba 50.00 (nada que repartir)", residuo)
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("saldo = %s, se esperaba que se quedara en 50.00 -- no se evapora lo que no se pudo repartir", reservas.porProc["p1"].Saldo)
+	}
+}
+
 func TestRegistrarRendimientoAbreElPoolLaPrimeraVez(t *testing.T) {
 	t.Parallel()
 	rendimientos := &rendimientosFalso{}
 	b := BolsasAccesorias{Rendimientos: rendimientos}
+	ctx := context.Background()
 
-	p, err := b.RegistrarRendimiento(context.Background(), reparto.Nacional, "2026", decimal.RequireFromString("100.00"))
+	if err := b.RegistrarRendimiento(ctx, reparto.Nacional, "2026", decimal.RequireFromString("100.00")); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p, err := rendimientos.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -226,13 +341,31 @@ func TestRegistrarRendimientoAcreceElPoolExistente(t *testing.T) {
 		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
 	}}
 	b := BolsasAccesorias{Rendimientos: rendimientos}
+	ctx := context.Background()
 
-	p, err := b.RegistrarRendimiento(context.Background(), reparto.Nacional, "2026", decimal.RequireFromString("50.00"))
+	if err := b.RegistrarRendimiento(ctx, reparto.Nacional, "2026", decimal.RequireFromString("50.00")); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p, err := rendimientos.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	if !p.Monto.Equal(decimal.RequireFromString("150.00")) {
 		t.Fatalf("monto = %s, se esperaba 150.00 (acrecido)", p.Monto)
+	}
+}
+
+func TestRegistrarRendimientoRechazaVigenciaInvalida(t *testing.T) {
+	t.Parallel()
+	rendimientos := &rendimientosFalso{}
+	b := BolsasAccesorias{Rendimientos: rendimientos}
+
+	err := b.RegistrarRendimiento(context.Background(), reparto.Nacional, "2026-01", decimal.RequireFromString("100.00"))
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido (vigencia de 4 digitos)", err)
+	}
+	if len(rendimientos.porClave) != 0 {
+		t.Fatal("no debio llegar al repositorio con una vigencia invalida")
 	}
 }
 
@@ -250,6 +383,32 @@ func TestDistribuirRendimientoNoRevalorizaLaCorrida(t *testing.T) {
 	}
 	if !nuevas[0].Importe.Equal(decimal.RequireFromString("40.00")) || !nuevas[1].Importe.Equal(decimal.RequireFromString("60.00")) {
 		t.Fatalf("importes = %s, %s; se esperaba 40/60 de 100.00", nuevas[0].Importe, nuevas[1].Importe)
+	}
+	if !residuo.IsZero() {
+		t.Fatalf("residuo = %s, se esperaba cero", residuo)
+	}
+}
+
+func TestDistribuirRendimientoDosVecesNoRepartDosVeces(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
+		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
+	}}
+	b := BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}
+	ctx := context.Background()
+
+	if _, _, err := b.DistribuirRendimiento(ctx, "p1", reparto.Nacional, "2026"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	nuevas, residuo, err := b.DistribuirRendimiento(ctx, "p1", reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	for _, n := range nuevas {
+		if !n.Importe.IsZero() {
+			t.Fatalf("segunda distribucion repartio %s a %s: el pool ya se habia consumido (B3)", n.Importe, n.TitularID)
+		}
 	}
 	if !residuo.IsZero() {
 		t.Fatalf("residuo = %s, se esperaba cero", residuo)

@@ -1,7 +1,6 @@
 package reparto_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -29,32 +28,5 @@ func TestNuevoPoolRendimientoVigenciaConFormatoInvalidoEsError(t *testing.T) {
 		if _, err := reparto.NuevoPoolRendimiento(reparto.Nacional, vigencia, d("100.00")); err == nil {
 			t.Fatalf("vigencia %q: se esperaba error, vigencia es un ano de 4 digitos (RD 10.1)", vigencia)
 		}
-	}
-}
-
-func TestAcrecerRendimientoRechazaMezclarCircuitos(t *testing.T) {
-	pool, err := reparto.NuevoPoolRendimiento(reparto.Nacional, "2026", d("1000.00"))
-	if err != nil {
-		t.Fatalf("error inesperado: %v", err)
-	}
-
-	_, err = reparto.AcrecerRendimiento(pool, reparto.Internacional, d("50.00"))
-	if !errors.Is(err, reparto.ErrRendimientoCircuitoMezclado) {
-		t.Fatalf("error = %v, se esperaba ErrRendimientoCircuitoMezclado (RD 10.3)", err)
-	}
-}
-
-func TestAcrecerRendimientoSumaMismoCircuito(t *testing.T) {
-	pool, err := reparto.NuevoPoolRendimiento(reparto.Nacional, "2026", d("1000.00"))
-	if err != nil {
-		t.Fatalf("error inesperado: %v", err)
-	}
-
-	pool, err = reparto.AcrecerRendimiento(pool, reparto.Nacional, d("50.00"))
-	if err != nil {
-		t.Fatalf("error inesperado: %v", err)
-	}
-	if !pool.Monto.Equal(d("1050.00")) {
-		t.Fatalf("monto = %s, se esperaba 1050.00", pool.Monto)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
@@ -627,17 +629,29 @@ type RepositorioLiquidacion interface {
 // RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14).
 // Una por corrida: la proveniencia es la clave (ADR sobre corrida-por-bolsa,
 // 0019).
+//
+// ActualizarSaldoReserva es la unica forma de tocar el saldo: bloquea la
+// fila, entrega el saldo actual a fn, y persiste lo que fn devuelva, todo en
+// una transaccion. Sin esto, dos liberaciones concurrentes leen el mismo
+// saldo y las dos reparten sobre el.
 type RepositorioReservas interface {
-	GuardarReserva(ctx context.Context, r reparto.PoolReserva) error
+	CrearReserva(ctx context.Context, r reparto.PoolReserva) error
 	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
+	ActualizarSaldoReserva(ctx context.Context, procesoID string, fn func(saldoActual decimal.Decimal) (decimal.Decimal, error)) error
 }
 
 // RepositorioRendimientos guarda y lee los pools de rendimientos financieros
 // (RD 10), uno por (circuito, vigencia) -- RD 10.3 exige los ledgers
 // segregados, y la clave los mantiene separados por construccion.
+//
+// AcrecerRendimiento suma en una sola sentencia: dos acrecimientos
+// concurrentes se suman, ninguno pisa al otro. ActualizarMontoRendimiento
+// es la misma forma que ActualizarSaldoReserva, para consumir el monto al
+// distribuirlo sin que una segunda llamada reparta lo mismo otra vez.
 type RepositorioRendimientos interface {
-	GuardarRendimiento(ctx context.Context, p reparto.PoolRendimiento) error
+	AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error
 	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
+	ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, fn func(montoActual decimal.Decimal) (decimal.Decimal, error)) error
 }
 
 // RepositorioReclamacionesReserva guarda y lee los reclamos contra la

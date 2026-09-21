@@ -2,7 +2,6 @@ package aplicacion
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/shopspring/decimal"
@@ -31,6 +30,9 @@ type BolsasAccesorias struct {
 // monto que [reparto.deducciones] ya calculo en Resultado.Reserva (R-07).
 // tasaPct es la tasa vigente al momento de esa corrida (RD 14.5.1); quien
 // orquesta la corrida ya la tiene del mismo snapshot que uso para calcularla.
+//
+// Es de una sola vez: CrearReserva falla si el proceso ya tiene una (N2). Un
+// segundo alta no puede pisar tasa ni monto en silencio.
 func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string, circuito reparto.Circuito, tasaPct decimal.Decimal) (reparto.PoolReserva, error) {
 	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
@@ -40,8 +42,8 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 	if err != nil {
 		return reparto.PoolReserva{}, err
 	}
-	if err := b.Reservas.GuardarReserva(ctx, pool); err != nil {
-		return reparto.PoolReserva{}, fmt.Errorf("guardar reserva de %q: %w", procesoID, err)
+	if err := b.Reservas.CrearReserva(ctx, pool); err != nil {
+		return reparto.PoolReserva{}, fmt.Errorf("crear reserva de %q: %w", procesoID, err)
 	}
 	return pool, nil
 }
@@ -53,68 +55,80 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 // reserva invertida acumulo mientras estuvo retenida (RD 10.4); cero si no
 // aplica.
 //
+// El consumo del saldo pasa por ActualizarSaldoReserva: el adaptador
+// bloquea la fila, entrega el saldo actual, y persiste lo que este metodo
+// devuelva -- todo en una transaccion. Sin eso, dos liberaciones
+// concurrentes leerian el mismo saldo y repartirian las dos.
+//
+// El saldo nuevo es el residuo, no cero: si no hay lineas de titular sobre
+// las que repartir (una corrida con toda la declaracion incompleta), el
+// importe se queda en la reserva en vez de evaporarse.
+//
 // Que la corrida sea prescrita o no lo decide quien llama (#34/prescripcion,
 // fuera de este alcance): este caso de uso solo ejecuta la liberacion.
 func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID string, rendimientoAcumulado decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
-	pool, err := b.Reservas.ReservaPorProceso(ctx, procesoID)
-	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
+	if rendimientoAcumulado.IsNegative() {
+		return nil, decimal.Zero, fmt.Errorf("%w: rendimiento acumulado negativo", reparto.ErrRepartoInvalido)
 	}
 	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
 	}
 
-	monto := pool.Saldo.Add(rendimientoAcumulado)
-	nuevas, residuo, err := reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
+	var nuevas []reparto.LineaTitular
+	var residuo decimal.Decimal
+	err = b.Reservas.ActualizarSaldoReserva(ctx, procesoID, func(saldoActual decimal.Decimal) (decimal.Decimal, error) {
+		monto := saldoActual.Add(rendimientoAcumulado)
+		var errDist error
+		nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
+		if errDist != nil {
+			return decimal.Decimal{}, errDist
+		}
+		return residuo, nil
+	})
 	if err != nil {
-		return nil, decimal.Zero, err
-	}
-
-	pool.Saldo = decimal.Zero
-	if err := b.Reservas.GuardarReserva(ctx, pool); err != nil {
-		return nil, decimal.Zero, fmt.Errorf("guardar reserva liberada de %q: %w", procesoID, err)
+		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
 	}
 	return nuevas, residuo, nil
 }
 
-// RegistrarRendimiento abre el ledger de (circuito, vigencia) si es la
-// primera vez, o lo acrece si ya existia. RD 10.3 impide que un monto del
-// circuito equivocado entre por aqui (lo aplica [reparto.AcrecerRendimiento]).
-func (b BolsasAccesorias) RegistrarRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, monto decimal.Decimal) (reparto.PoolRendimiento, error) {
-	pool, err := b.Rendimientos.PorCircuitoYVigencia(ctx, circuito, vigencia)
-	switch {
-	case errors.Is(err, ErrNoEncontrado):
-		pool, err = reparto.NuevoPoolRendimiento(circuito, vigencia, monto)
-		if err != nil {
-			return reparto.PoolRendimiento{}, err
-		}
-	case err != nil:
-		return reparto.PoolRendimiento{}, fmt.Errorf("registrar rendimiento %s/%s: %w", circuito, vigencia, err)
-	default:
-		pool, err = reparto.AcrecerRendimiento(pool, circuito, monto)
-		if err != nil {
-			return reparto.PoolRendimiento{}, err
-		}
+// RegistrarRendimiento acrece el ledger de (circuito, vigencia) en una sola
+// sentencia atomica: dos acrecimientos concurrentes se suman, ninguno pisa
+// al otro (B2). Crea la fila si es la primera vez.
+func (b BolsasAccesorias) RegistrarRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, monto decimal.Decimal) error {
+	if _, err := reparto.NuevoPoolRendimiento(circuito, vigencia, monto); err != nil {
+		return err
 	}
-	if err := b.Rendimientos.GuardarRendimiento(ctx, pool); err != nil {
-		return reparto.PoolRendimiento{}, fmt.Errorf("guardar rendimiento %s/%s: %w", circuito, vigencia, err)
+	if err := b.Rendimientos.AcrecerRendimiento(ctx, circuito, vigencia, monto); err != nil {
+		return fmt.Errorf("registrar rendimiento %s/%s: %w", circuito, vigencia, err)
 	}
-	return pool, nil
+	return nil
 }
 
 // DistribuirRendimiento reparte el pool de rendimiento sobre las
-// proporciones de una corrida, sin revalorizar nada (RD 10.1).
+// proporciones de una corrida, sin revalorizar nada (RD 10.1). Consume el
+// monto: el nuevo valor del pool es el residuo, asi que una segunda llamada
+// no vuelve a repartir lo mismo (B3), igual que LiberarReservaPrescrita.
 func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID string, circuito reparto.Circuito, vigencia string) ([]reparto.LineaTitular, decimal.Decimal, error) {
-	pool, err := b.Rendimientos.PorCircuitoYVigencia(ctx, circuito, vigencia)
-	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, err)
-	}
 	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento sobre %q: %w", procesoID, err)
 	}
-	return reparto.DistribuirSobreProporciones(pool.Monto, resultado.Titulares)
+
+	var nuevas []reparto.LineaTitular
+	var residuo decimal.Decimal
+	err = b.Rendimientos.ActualizarMontoRendimiento(ctx, circuito, vigencia, func(montoActual decimal.Decimal) (decimal.Decimal, error) {
+		var errDist error
+		nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(montoActual, resultado.Titulares)
+		if errDist != nil {
+			return decimal.Decimal{}, errDist
+		}
+		return residuo, nil
+	})
+	if err != nil {
+		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, err)
+	}
+	return nuevas, residuo, nil
 }
 
 // AbrirReclamacion valida elegibilidad (RD 14.5.5, RD 14.5.6) y persiste el
@@ -140,6 +154,11 @@ func (b BolsasAccesorias) AbrirReclamacion(
 // FirmarReclamacion agrega uno de los dos avales de RD 14.5.10-12. El
 // dominio rechaza un actor cubriendo los dos roles o un rol firmando dos
 // veces; este caso de uso no repite esa validacion, la propaga.
+//
+// El estado persistido ('resuelta' con los dos avales) lo recalcula el
+// adaptador a partir de lo que de verdad quedo en la base, no de lo que este
+// metodo cree que hay: dos avales firmados a la vez no pueden dejar el
+// estado desincronizado (B4).
 func (b BolsasAccesorias) FirmarReclamacion(ctx context.Context, id string, rol reparto.RolAvalReclamacion, actorID string) (reparto.ReclamacionReserva, error) {
 	r, err := b.Reclamaciones.ReclamacionPorID(ctx, id)
 	if err != nil {
