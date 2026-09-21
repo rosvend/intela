@@ -50,7 +50,7 @@ func (s *Store) Encolar(ctx context.Context, clave aplicacion.ClaveTrabajo, payl
 		payload = []byte(`{}`)
 	}
 
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO cola_trabajos (tipo, periodo, corrida, payload)
 		      VALUES ($1, $2, $3, $4)
 		 ON CONFLICT ON CONSTRAINT cola_clave_natural DO NOTHING`,
@@ -78,6 +78,13 @@ func (s *Store) Encolar(ctx context.Context, clave aplicacion.ClaveTrabajo, payl
 // cuando el cerrojo se suelta, la fila ya no es `pendiente` y ningun otro
 // worker la ve. Envolverlo en Store.EnTransaccion no anadiria garantia y si
 // mantendria el cerrojo abierto mientras corre el manejador.
+//
+// Por lo mismo va contra s.pool y no contra [Store.ejecutorDe]: si esto
+// alguna vez corriera DENTRO de una unidad de otro puerto, el SKIP LOCKED
+// heredaria la duracion de esa unidad entera y dejaria de ser "primero lo que
+// lleva mas tiempo esperando" para pasar a "lo que un worker retuvo mas
+// tiempo". Es la unica lectura/escritura de este fichero que se queda fuera
+// a proposito; Encolar y Cerrar si la piden porque no tienen ese problema.
 //
 // # El orden
 //
@@ -150,7 +157,7 @@ func (s *Store) Cerrar(ctx context.Context, id int64, c aplicacion.Cierre) error
 		estado = "fallido"
 	}
 
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE cola_trabajos
 		    SET estado = $2,
 		        error = $3,
