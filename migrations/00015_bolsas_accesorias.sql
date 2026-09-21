@@ -1,5 +1,5 @@
 -- Bolsas accesorias: reserva de errores tecnicos (RD 14) y rendimientos financieros (RD 10) (#121).
--- Numero 00013: 00012 lo tomo #118 (snapshots de parametros) al mergear antes.
+-- Numero 00015: 00012 lo tomo #118, 00013/00014 los tomo #32, todos mergeados antes.
 -- reclamaciones_avales es tabla propia, no extension del CHECK de firmas: RD 14.5.11/12 usa otros roles.
 -- reclamaciones.proceso_id (00001) ya cubre ProcesoOrigenID; solo hace falta monto_solicitado.
 -- reservas_liberaciones/rendimientos_distribuciones: lo repartido queda escrito en la misma
