@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 )
@@ -45,11 +49,31 @@ var parCanonicoPorFuente = map[string]string{
 type ResolverUsos struct {
 	Usos           RepositorioIngesta
 	Identificacion RepositorioIdentificacion
+	// Similitud y Parametros son obligatorios: sin ellos la cascada mandaria a
+	// ONI filas que nadie intento identificar.
+	Similitud  Similitud
+	Parametros ParametroEnFecha
+	// Unidad ata la bandeja de candidatos al match de la MISMA fila (S3): son un
+	// solo hecho, y una sin la otra es una ONI con la bandeja de otra decision.
+	// Obligatoria por lo mismo que las dos de arriba.
+	Unidad UnidadDeTrabajo
 	// FueraDeRepertorio son las fuentes excluidas por R-27. Vacio en
 	// produccion hasta que exista el dato de politica (D4 del diseno de #28):
 	// nada se excluye por defecto.
 	FueraDeRepertorio identificacion.FuentesExcluidas
 }
+
+// errFilaCambiada revierte la unidad de una fila que otro proceso cambio entre
+// la lectura y la escritura (una resolucion manual, otra corrida): la bandeja
+// que se iba a escribir ya no le corresponde. Nunca sale de ResolverUsos, la
+// fila se salta.
+var errFilaCambiada = errors.New("la fila cambio entre la lectura y la escritura")
+
+// Las dos claves del escalon 3 en `parametros`: nombres de filas, no reglas.
+const (
+	ClaveUmbralMatch = "matching.umbral"
+	ClaveUmbralBanda = "matching.umbral_banda"
+)
 
 // ResolverUsos resuelve las filas pendientes del periodo y devuelve cuantas
 // resolvio. Las que no resuelvan quedan escalon='pendiente': es el insumo
@@ -63,6 +87,15 @@ type ResolverUsos struct {
 // Idempotente (D9): una fila resuelta o clasificada a mano no se vuelve a
 // tocar, ni aunque cambie entre la lectura y la escritura (ver guardarMatch).
 func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, error) {
+	if r.Similitud == nil || r.Parametros == nil || r.Unidad == nil {
+		return 0, errors.New("resolver usos: la cascada necesita motor de similitud, parametros y unidad de trabajo")
+	}
+
+	umbrales, err := r.umbrales(ctx, periodo)
+	if err != nil {
+		return 0, err
+	}
+
 	usos, err := r.Usos.UsosDePeriodo(ctx, periodo)
 	if err != nil {
 		return 0, fmt.Errorf("leer los usos del periodo %q: %w", periodo, err)
@@ -70,12 +103,16 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 
 	resueltas := 0
 	for _, u := range usos {
-		if u.Escalon != identificacion.EscalonPendiente && u.Escalon != identificacion.EscalonExcluido {
+		reprocesar, err := reprocesable(u.Escalon)
+		if err != nil {
+			return resueltas, fmt.Errorf("uso %q: %w", u.ID, err)
+		}
+		if !reprocesar {
 			continue
 		}
 
 		e := entradaDesdeUso(u)
-		res, err := r.resolverFila(ctx, u, e)
+		res, err := r.resolverFila(ctx, u, e, umbrales)
 		if err != nil {
 			return resueltas, err
 		}
@@ -92,15 +129,33 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 			}
 			continue
 		case res.ObraID == "":
-			if u.Escalon == identificacion.EscalonPendiente {
-				continue // no resuelta (insumo de #32): no se escribe nada
+			// Sale a ONI: "la cascada corrio y no la reconocio" es un estado
+			// del modelo (RD 13.8), distinto de "todavia sin mirar".
+			//
+			// La bandeja y el match son UN hecho (S3): en una unidad, la
+			// bandeja va antes (D5, al reves quedaria una ONI con la bandeja
+			// vacia) y si el match no se escribe porque la fila ya es de otro
+			// -una resolucion manual concurrente- la bandeja se revierte con
+			// el. Sin la unidad, la bandeja de la decision perdida quedaba
+			// puesta sobre una fila que esa decision ya no considera ONI.
+			err := r.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+				if err := r.guardarCandidatos(ctx, u, res); err != nil {
+					return err
+				}
+				escrita, err := r.guardarMatch(ctx, u, res)
+				if err != nil {
+					return fmt.Errorf("guardar ONI de %q: %w", u.ID, err)
+				}
+				if !escrita {
+					return errFilaCambiada
+				}
+				return nil
+			})
+			if errors.Is(err, errFilaCambiada) {
+				continue
 			}
-			// Estaba excluida y su fuente ya no lo esta, pero la cascada no la
-			// resuelve: vuelve a pendiente (y a ONI) para que la vean el difuso
-			// y la cola manual.
-			pendiente := identificacion.Resultado{Escalon: identificacion.EscalonPendiente}
-			if _, err := r.guardarMatch(ctx, u, pendiente); err != nil {
-				return resueltas, fmt.Errorf("devolver a pendiente %q: %w", u.ID, err)
+			if err != nil {
+				return resueltas, err
 			}
 			continue
 		}
@@ -121,7 +176,10 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		// Comparar contra "" basta, sin volver a recortar: LeerIDsFuente
 		// recorta clave y valor al parsear, asi que un id de solo espacios
 		// llega aqui ya vacio.
-		if res.Escalon == identificacion.EscalonIDGlobal && e.TipoID != "" && e.ValorID != "" {
+		//
+		// El difuso aprende igual que el id global: es lo que hace que la cola
+		// encoja con el uso (D4).
+		if aprende(res.Escalon) && e.TipoID != "" && e.ValorID != "" {
 			if err := r.Identificacion.GuardarAlias(ctx, e.Fuente, e.TipoID, e.ValorID, res.ObraID, quienCascada); err != nil {
 				return resueltas, fmt.Errorf("aprender alias de %q: %w", u.ID, err)
 			}
@@ -135,6 +193,81 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		}
 	}
 	return resueltas, nil
+}
+
+// reprocesable dice si una fila entra en esta corrida. Las ONI si entran: el
+// catalogo crece. 'manual' nunca: una decision humana no se pisa.
+//
+// Un escalon que no esta en la tabla es un ERROR y no un "no": saltarlo en
+// silencio dejaria una fila sin decidir sin que nada lo cuente, y el dia que el
+// esquema admita un escalon nuevo la cascada lo ignoraria en vez de avisar (D8,
+// fallar cerrado). Tabla completa en D6 de docs/planes/32-difuso/diseno.md.
+func reprocesable(escalon string) (bool, error) {
+	switch escalon {
+	case identificacion.EscalonPendiente, identificacion.EscalonExcluido, identificacion.EscalonONI:
+		return true, nil
+	case identificacion.EscalonAlias, identificacion.EscalonIDGlobal,
+		identificacion.EscalonDifuso, identificacion.EscalonManual:
+		return false, nil
+	default:
+		return false, fmt.Errorf("escalon desconocido %q", escalon)
+	}
+}
+
+// aprende dice si un escalon deja alias. El 1 no: el alias es lo que resolvio.
+// Que el difuso aprenda propaga un match malo a todas las filas siguientes; el
+// puntaje guardado es como se encuentra y se borra (D4).
+func aprende(escalon string) bool {
+	return escalon == identificacion.EscalonIDGlobal || escalon == identificacion.EscalonDifuso
+}
+
+// umbrales resuelve los dos cortes UNA vez por corrida, contra la fecha del
+// periodo y no contra el reloj (D3).
+func (r ResolverUsos) umbrales(ctx context.Context, periodo string) (identificacion.Umbrales, error) {
+	fecha, err := fechaDePeriodo(periodo)
+	if err != nil {
+		return identificacion.Umbrales{}, err
+	}
+
+	match, err := r.Parametros.ParametroVigente(ctx, ClaveUmbralMatch, fecha)
+	if err != nil {
+		return identificacion.Umbrales{}, fmt.Errorf("umbral del escalon difuso: %w", err)
+	}
+	banda, err := r.Parametros.ParametroVigente(ctx, ClaveUmbralBanda, fecha)
+	if err != nil {
+		return identificacion.Umbrales{}, fmt.Errorf("piso de la banda ambigua: %w", err)
+	}
+	u := identificacion.Umbrales{Match: match, Banda: banda}
+	if err := u.Validar(); err != nil {
+		return identificacion.Umbrales{}, fmt.Errorf(
+			"parametros incoherentes (%s, %s): %w", ClaveUmbralBanda, ClaveUmbralMatch, err)
+	}
+	return u, nil
+}
+
+// fechaDePeriodo devuelve el primer dia del periodo. UTC: la vigencia es una
+// fecha de calendario, no puede depender del huso donde corra el proceso.
+func fechaDePeriodo(periodo string) (time.Time, error) {
+	for _, formato := range []string{"2006-01", "2006"} {
+		if t, err := time.Parse(formato, periodo); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("periodo %q no tiene forma AAAA ni AAAA-MM", periodo)
+}
+
+// guardarCandidatos persiste la banda ANTES del match (D5): al reves quedaria
+// una ONI con la bandeja vacia.
+//
+// Sin candidatos SI llama al puerto: la bandeja se REEMPLAZA (D9), y una fila
+// que en una corrida anterior quedo en banda y ahora cae por debajo del piso
+// tiene que quedarse con la bandeja vacia, no con los candidatos viejos. El
+// adaptador borra y luego inserta, asi que con una lista vacia solo borra.
+func (r ResolverUsos) guardarCandidatos(ctx context.Context, u UsoPersistido, res identificacion.Resultado) error {
+	if err := r.Identificacion.GuardarCandidatos(ctx, u.ID, res.Candidatos); err != nil {
+		return fmt.Errorf("guardar candidatos de %q: %w", u.ID, err)
+	}
+	return nil
 }
 
 // guardarMatch escribe res sobre u solo si la fila sigue en el escalon con
@@ -158,14 +291,14 @@ func (r ResolverUsos) guardarMatch(ctx context.Context, u UsoPersistido, res ide
 // "sigue con el siguiente escalon"; cualquier otro error aborta la corrida
 // (D8): tragarse un fallo de red como "no hay match" reclasificaria una fila
 // en silencio.
-func (r ResolverUsos) resolverFila(ctx context.Context, u UsoPersistido, e identificacion.Entrada) (identificacion.Resultado, error) {
+func (r ResolverUsos) resolverFila(ctx context.Context, u UsoPersistido, e identificacion.Entrada, umbrales identificacion.Umbrales) (identificacion.Resultado, error) {
 	// El filtro de repertorio corre antes que cualquier sondeo (D4: "escalon
 	// 0, antes del alias"): una fila fuera de repertorio no consume un
 	// sondeo de alias ni de id global, y [identificacion.Resolver] excluiria
 	// igual con Consulta vacia -adelantarlo aqui solo evita la E/S que su
 	// resultado va a descartar.
 	if r.FueraDeRepertorio.Excluye(e.Fuente) {
-		return identificacion.Resolver(e, identificacion.Consulta{}, r.FueraDeRepertorio), nil
+		return identificacion.Resolver(e, identificacion.Consulta{}, r.FueraDeRepertorio, umbrales), nil
 	}
 
 	c := identificacion.Consulta{}
@@ -205,7 +338,65 @@ func (r ResolverUsos) resolverFila(ctx context.Context, u UsoPersistido, e ident
 		}
 	}
 
-	return identificacion.Resolver(e, c, r.FueraDeRepertorio), nil
+	// Escalon 3, solo si los exactos fallaron: es la parte cara de la cascada.
+	if c.AliasObraID == "" && c.IDGlobalObraID == "" {
+		candidatos, err := r.candidatosDifusos(ctx, u, e, umbrales.Banda)
+		if err != nil {
+			return identificacion.Resultado{}, err
+		}
+		c.Candidatos = candidatos
+	}
+
+	return identificacion.Resolver(e, c, r.FueraDeRepertorio, umbrales), nil
+}
+
+// candidatosDifusos puntua cada titulo distinto de la fila y los une (D11). El
+// original se prueba solo si difiere del emitido, sin distinguir mayusculas ni
+// espacios: el mismo titulo dos veces es una consulta de mas en el bucle caro.
+//
+// Sin ningun titulo no se sondea: seria comparar la cadena vacia con el
+// catalogo. Un fallo del motor NO es "no hay match" (D8): aborta la corrida y
+// nombra el titulo que fallo.
+func (r ResolverUsos) candidatosDifusos(ctx context.Context, u UsoPersistido, e identificacion.Entrada, piso decimal.Decimal) ([]identificacion.Candidato, error) {
+	titulos := titulosParaDifuso(e)
+	listas := make([][]identificacion.Candidato, 0, len(titulos))
+
+	for _, titulo := range titulos {
+		candidatos, err := r.Similitud.Candidatos(ctx, titulo, piso)
+		if err != nil {
+			return nil, fmt.Errorf("escalon 3 de %q (%q): %w", u.ID, titulo, err)
+		}
+		// Copia y no marca in situ: la lista es del motor, y de un doble de
+		// prueba puede ser la misma en dos llamadas.
+		marcados := make([]identificacion.Candidato, len(candidatos))
+		for i, c := range candidatos {
+			c.TituloConsultado = titulo
+			marcados[i] = c
+		}
+		listas = append(listas, marcados)
+	}
+	return identificacion.UnirCandidatos(listas...), nil
+}
+
+// titulosParaDifuso son los titulos que se puntuan, en el orden en que se
+// prueban: el emitido primero, porque en un empate gana la primera lista.
+func titulosParaDifuso(e identificacion.Entrada) []string {
+	emitido := strings.TrimSpace(e.Titulo)
+	original := strings.TrimSpace(e.TituloOrig)
+
+	var titulos []string
+	if emitido != "" {
+		titulos = append(titulos, emitido)
+	}
+	if original != "" && !mismoTitulo(emitido, original) {
+		titulos = append(titulos, original)
+	}
+	return titulos
+}
+
+// mismoTitulo compara sin distinguir mayusculas ni espacios de mas.
+func mismoTitulo(a, b string) bool {
+	return strings.EqualFold(strings.Join(strings.Fields(a), " "), strings.Join(strings.Fields(b), " "))
 }
 
 // valorGlobal devuelve el identificador de e que corresponde a g.
@@ -243,8 +434,9 @@ func idaEidrImdb(e identificacion.Entrada, g identificacion.IDGlobal) (ida, eidr
 // elige el par local canonico (D2).
 func entradaDesdeUso(u UsoPersistido) identificacion.Entrada {
 	e := identificacion.Entrada{
-		Fuente: u.Fuente,
-		Titulo: u.Titulo,
+		Fuente:     u.Fuente,
+		Titulo:     u.Titulo,
+		TituloOrig: u.TituloOrig,
 	}
 
 	locales := map[string]string{}

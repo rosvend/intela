@@ -8,6 +8,12 @@
  *
  * `etiqueta` es lo que se pagina en plural ("Obras", "Titulares"): el texto del
  * rango es el unico que cambia entre las dos pantallas que lo usan.
+ *
+ * Con un titulo en el filtro el catalogo se ordena por PARECIDO y el paginado es
+ * por desplazamiento: si el catalogo cambia mientras se navega, una obra nueva
+ * mas parecida empuja a las demas hacia abajo y una fila puede repetirse o
+ * saltarse entre paginas. No se promete estabilidad, igual que no se prometen
+ * totales: es lo que el servidor puede dar sin `total` ni cursor.
  */
 function Chevron({ haciaLaDerecha }: { haciaLaDerecha: boolean }) {
   return (

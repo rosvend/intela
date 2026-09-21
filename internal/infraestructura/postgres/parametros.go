@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -747,3 +748,58 @@ func enDia(t time.Time) time.Time {
 // texto es la forma en que una fecha viaja a la base y vuelve: `YYYY-MM-DD`,
 // sin zona. Una DATE no tiene hora que convertir.
 func texto(t time.Time) string { return t.UTC().Format(time.DateOnly) }
+
+// ---------------------------------------------------------------------------
+// Un parametro suelto en una fecha (#32)
+
+var _ aplicacion.ParametroEnFecha = (*Store)(nil)
+
+// ErrParametroSinVigencia: ninguna fila de la clave cubre la fecha. Propio y no
+// ErrNoEncontrado porque lo util es QUE clave falta y para cuando.
+var ErrParametroSinVigencia = errors.New("parametro sin vigencia en la fecha")
+
+// ParametroVigente resuelve el valor de una clave en una fecha.
+//
+// La restriccion EXCLUDE de `parametros` (`parametro_sin_solape`, 00001_init.sql)
+// garantiza que dos filas de la misma clave no se solapen en el tiempo, asi que
+// esta consulta devuelve como mucho una fila. Sin esa garantia habria que decidir
+// aqui cual de dos gana, y la decision dependeria del orden de lectura -- es
+// decir, la misma corrida repetida podria repartir distinto.
+//
+// El rango es [vigente_desde, vigente_hasta): medio abierto, igual que el
+// daterange '[)' de la restriccion. Cerrarlo por arriba haria que el ultimo dia
+// de una vigencia tuviera dos valores validos, que es exactamente lo que el
+// EXCLUDE impide crear.
+//
+// Un parametro ausente NO cae a cero. ADR 0004 modela lo ausente como ausente,
+// y en este caso concreto un umbral de matching en cero asignaria la primera
+// obra que se pareciera en algo a cualquier titulo.
+//
+// La comparacion es de FECHA y no de instante, con el mismo criterio que
+// [Store.SnapshotEnFecha]: comparar un timestamptz con una DATE dejaria que la
+// zona de la sesion decidiera la vigencia.
+//
+// No congela nada, a diferencia de SnapshotEnFecha: identificar no mueve dinero
+// (ADR 0003). `matching.umbral` TAMBIEN entra en el snapshot del reparto; los
+// dos leen la misma fila porque los dos resuelven contra la fecha del periodo y
+// la EXCLUDE deja una sola respuesta. `matching.umbral_banda` no entra en el
+// snapshot: no asigna obras, solo decide que se muestra en la bandeja (#39).
+func (s *Store) ParametroVigente(ctx context.Context, clave string, fecha time.Time) (decimal.Decimal, error) {
+	dia := texto(enDia(fecha))
+
+	var valor decimal.Decimal
+	err := s.ejecutorDe(ctx).QueryRow(ctx, `
+		SELECT valor FROM parametros
+		 WHERE clave = $1
+		   AND vigente_desde <= $2::date
+		   AND (vigente_hasta IS NULL OR vigente_hasta > $2::date)`,
+		clave, dia).Scan(&valor)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return decimal.Zero, fmt.Errorf("%q en %s: %w", clave, dia, ErrParametroSinVigencia)
+	}
+	if err != nil {
+		return decimal.Zero, traducirError(err, "leer el parametro %q", clave)
+	}
+	return valor, nil
+}
