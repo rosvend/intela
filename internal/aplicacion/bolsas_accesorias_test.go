@@ -15,7 +15,9 @@ type resultadosFalso struct {
 	err        error
 }
 
-func (r *resultadosFalso) GuardarResultado(context.Context, string, reparto.Resultado) error { return r.err }
+func (r *resultadosFalso) GuardarResultado(context.Context, string, reparto.Resultado) error {
+	return r.err
+}
 
 func (r *resultadosFalso) ResultadoPorProceso(_ context.Context, procesoID string) (reparto.Resultado, error) {
 	if r.err != nil {
