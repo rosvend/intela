@@ -1180,8 +1180,8 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(ubicacion()).toBe("/ingesta?periodo=2026");
     await screen.findByText("No hay cargas registradas para el periodo 2026.");
     expect(getsDelListado()).toEqual([
-      "/api/reportes",
-      "/api/reportes?periodo=2026",
+      "/api/reportes?limite=100&desplazamiento=0",
+      "/api/reportes?periodo=2026&limite=100&desplazamiento=0",
     ]);
     expect(botonSubir().textContent).toBe("Subir a 2026");
     expect(botonSubir()).toHaveProperty("disabled", false);
