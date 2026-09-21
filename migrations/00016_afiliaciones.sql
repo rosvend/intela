@@ -9,9 +9,10 @@
 -- como CHECK: si declara pertenecer a otra SGC, tiene que haber evidencia
 -- de renuncia, no solo el booleano.
 --
--- COORDINACION DE NUMERO: esta migracion se llamaba 00003, luego 00014.
--- Esos numeros ya no se pueden usar: `main` aplico hasta 00014
--- (`usos_titulo_original`, duplicate version 14). goose corre con
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00003, luego 00014,
+-- luego 00015. Esos numeros ya no se pueden usar: `main` aplico hasta 00015
+-- (`00015_bolsas_accesorias.sql`, #121) y dos ficheros en la misma version
+-- hacen que goose entre en panic (duplicate version 15). goose corre con
 -- `allowMissing = false`, asi que un numero LIBRE por debajo de la
 -- version ya aplicada aborta con
 --
@@ -19,7 +20,7 @@
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00015: primer libre por encima de 00014. Un ADR admite huecos;
+-- Se toma el 00016: primer libre por encima de 00015. Un ADR admite huecos;
 -- una migracion no.
 
 -- +goose Up
