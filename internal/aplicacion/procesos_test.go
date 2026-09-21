@@ -116,7 +116,7 @@ func nuevoRepositorioProcesosFalso() *repositorioProcesosFalso {
 	return &repositorioProcesosFalso{procesos: map[string]ProcesoVista{}}
 }
 
-func (r *repositorioProcesosFalso) Guardar(_ context.Context, p ProcesoVista) error {
+func (r *repositorioProcesosFalso) GuardarProceso(_ context.Context, p ProcesoVista) error {
 	if r.errGuardar != nil {
 		return r.errGuardar
 	}
@@ -125,7 +125,7 @@ func (r *repositorioProcesosFalso) Guardar(_ context.Context, p ProcesoVista) er
 	return nil
 }
 
-func (r *repositorioProcesosFalso) PorID(_ context.Context, id string) (ProcesoVista, error) {
+func (r *repositorioProcesosFalso) ProcesoPorID(_ context.Context, id string) (ProcesoVista, error) {
 	if r.errPorID != nil {
 		return ProcesoVista{}, r.errPorID
 	}
@@ -136,7 +136,7 @@ func (r *repositorioProcesosFalso) PorID(_ context.Context, id string) (ProcesoV
 	return p, nil
 }
 
-func (r *repositorioProcesosFalso) Listar(_ context.Context) ([]ProcesoVista, error) {
+func (r *repositorioProcesosFalso) ListarProcesos(_ context.Context) ([]ProcesoVista, error) {
 	var todos []ProcesoVista
 	for _, p := range r.procesos {
 		todos = append(todos, p)
@@ -242,7 +242,7 @@ func procesoNacionalEnVerificacionGuardado(t *testing.T, repo *repositorioProces
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaVerificacion
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 }
@@ -274,7 +274,7 @@ func TestFirmarPropagaElRechazoDelDominio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	uc := Procesos{Repo: repo}
@@ -315,7 +315,7 @@ func TestAvanzarEtapaFueraDeValorizacionSoloPersisteLaEtapa(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
@@ -342,7 +342,7 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	uc := Procesos{Repo: repo} // sin Unidad
@@ -412,7 +412,7 @@ func TestAvanzarEtapaInternacionalNuncaValoriza(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}

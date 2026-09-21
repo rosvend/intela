@@ -85,7 +85,7 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	if err := uc.Repo.Guardar(ctx, aProcesoVista(p)); err != nil {
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
 	return aProcesoVista(p), nil
@@ -95,7 +95,7 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 // entrar a EtapaImporteObra del circuito nacional invoca el motor puro de
 // #33 -- el internacional nunca la alcanza (RD 7.4), asi que nunca valoriza.
 func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoVista, error) {
-	v, err := uc.Repo.PorID(ctx, procesoID)
+	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
@@ -116,7 +116,7 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 			if err := uc.valorizar(ctx, p); err != nil {
 				return err
 			}
-			return uc.Repo.Guardar(ctx, aProcesoVista(p))
+			return uc.Repo.GuardarProceso(ctx, aProcesoVista(p))
 		})
 		if err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -124,7 +124,7 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 		return aProcesoVista(p), nil
 	}
 
-	if err := uc.Repo.Guardar(ctx, aProcesoVista(p)); err != nil {
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
@@ -191,7 +191,7 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) er
 
 // Firmar agrega una firma a la compuerta actual del proceso y la persiste.
 func (uc Procesos) Firmar(ctx context.Context, procesoID string, rol reparto.RolAcompuerta, actorID string) (ProcesoVista, error) {
-	v, err := uc.Repo.PorID(ctx, procesoID)
+	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("firmar %q: %w", procesoID, err)
 	}
@@ -211,7 +211,7 @@ func (uc Procesos) Firmar(ctx context.Context, procesoID string, rol reparto.Rol
 
 // RechazarGate retrocede el proceso una etapa y persiste el rechazo.
 func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (ProcesoVista, error) {
-	v, err := uc.Repo.PorID(ctx, procesoID)
+	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("rechazar compuerta de %q: %w", procesoID, err)
 	}
@@ -219,7 +219,7 @@ func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-	if err := uc.Repo.Guardar(ctx, aProcesoVista(p)); err != nil {
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
 		return ProcesoVista{}, fmt.Errorf("rechazar compuerta de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
@@ -228,7 +228,7 @@ func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (
 // ConsultarEstadoProceso es la lectura de solo-consulta que #69 necesita
 // para preguntar en que etapa esta una corrida sin escribir en ella.
 func (uc Procesos) ConsultarEstadoProceso(ctx context.Context, procesoID string) (ProcesoVista, error) {
-	v, err := uc.Repo.PorID(ctx, procesoID)
+	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("consultar proceso %q: %w", procesoID, err)
 	}
@@ -238,7 +238,7 @@ func (uc Procesos) ConsultarEstadoProceso(ctx context.Context, procesoID string)
 // ListarProcesos es el mismo tipo de lectura que [Procesos.ConsultarEstadoProceso],
 // para el panel de corridas.
 func (uc Procesos) ListarProcesos(ctx context.Context) ([]ProcesoVista, error) {
-	lista, err := uc.Repo.Listar(ctx)
+	lista, err := uc.Repo.ListarProcesos(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listar procesos: %w", err)
 	}

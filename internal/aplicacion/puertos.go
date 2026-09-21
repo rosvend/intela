@@ -637,10 +637,16 @@ type FilaParametro struct {
 }
 
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
+//
+// Nombres largos y no Guardar/PorID a secas, por la misma razon que
+// [RepositorioResultados]: el mismo *Store satisface [GestionDeclaraciones]
+// (que ya tiene su propio Guardar) y [CatalogoObras] (que ya tiene su propio
+// PorID), y dos metodos con el mismo nombre y distinta firma no caben en un
+// solo tipo.
 type RepositorioProcesos interface {
-	Guardar(ctx context.Context, p ProcesoVista) error
-	PorID(ctx context.Context, id string) (ProcesoVista, error)
-	Listar(ctx context.Context) ([]ProcesoVista, error)
+	GuardarProceso(ctx context.Context, p ProcesoVista) error
+	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
+	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
 
