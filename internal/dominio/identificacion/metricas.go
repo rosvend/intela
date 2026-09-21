@@ -19,6 +19,7 @@ type Reporte struct {
 	ABanda      int // ONI con candidatos: hay algo que un humano puede mirar
 	AONI        int // ONI sin candidatos: no se parecio a nada
 	Excluidas   int // fuera de repertorio (R-27): ni se intento identificar
+	Manuales    int // decision de una persona (#39): no es de la cascada, no cuenta como automatica
 }
 
 // Metricas cuenta un conjunto ya resuelto: pura, probable sin base de datos.
@@ -30,6 +31,10 @@ func Metricas(evs []Evaluacion) Reporte {
 		switch {
 		case ev.Resultado.Escalon == EscalonExcluido:
 			r.Excluidas++
+		// Antes de mirar la obra: una resolucion manual TAMBIEN trae ObraID, y
+		// contarla como automatica inflaria KR-2 con trabajo humano.
+		case ev.Resultado.Escalon == EscalonManual:
+			r.Manuales++
 		case ev.Resultado.ObraID != "":
 			r.Automaticas++
 			if ev.Resultado.ObraID == ev.ObraEsperada {
@@ -48,8 +53,13 @@ func Metricas(evs []Evaluacion) Reporte {
 
 // TasaAutoAsociacionPct es KR-2 (">= 90%"), en unidad 0-100. La unidad va en
 // el nombre: confundirla con una fraccion es un error de factor 100.
+//
+// El denominador es Total - Excluidas: las filas fuera de repertorio (R-27) no
+// se intentan identificar, y contarlas como "no auto-asociadas" castigaria a la
+// cascada por algo que no le toca. Las manuales SI estan en el denominador: la
+// cascada no las resolvio, y no suben el numerador.
 func (r Reporte) TasaAutoAsociacionPct() decimal.Decimal {
-	return porcentaje(r.Automaticas, r.Total)
+	return porcentaje(r.Automaticas, r.Total-r.Excluidas)
 }
 
 // PrecisionPct es KR-2 (">= 95%"), medido SOLO sobre lo que se asigno solo:

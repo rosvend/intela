@@ -5,7 +5,7 @@
     { "titulo": "EL TERCER ACTO",        "obra_esperada": "obra-unitario", "nota": "mayusculas" },
     { "titulo": "Tercer Acto, El",       "obra_esperada": "obra-unitario", "nota": "orden alterado" },
     { "titulo": "¡El Tercer Acto!",      "obra_esperada": "obra-unitario", "nota": "puntuacion" },
-    { "titulo": "El Tercer Ato",         "obra_esperada": "obra-unitario", "nota": "erratа de tecleo" },
+    { "titulo": "El Tercer Ato",         "obra_esperada": "obra-unitario", "nota": "errata de tecleo" },
     { "titulo": "Tercer Acto",           "obra_esperada": "obra-unitario", "nota": "sin articulo" },
 
     { "titulo": "Minuto Cómico",         "obra_esperada": "obra-sketch",   "nota": "tildes" },
