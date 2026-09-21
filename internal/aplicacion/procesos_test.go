@@ -179,7 +179,7 @@ func TestIniciarProcesoResuelveElSnapshotYAbreElProceso(t *testing.T) {
 	t.Parallel()
 
 	repo := nuevoRepositorioProcesosFalso()
-	params := &parametrosNormativosFalso{id: "snap-1", snap: reparto.Snapshot{}}
+	params := &parametrosNormativosFalso{id: "snap-1", snap: reparto.Snapshot{Reglamento: "IX"}}
 	uc := Procesos{Repo: repo, Parametros: params}
 
 	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
@@ -191,6 +191,9 @@ func TestIniciarProcesoResuelveElSnapshotYAbreElProceso(t *testing.T) {
 	}
 	if v.SnapshotID != "snap-1" {
 		t.Fatalf("snapshotID = %q, se esperaba %q", v.SnapshotID, "snap-1")
+	}
+	if v.Reglamento != "IX" {
+		t.Fatalf("reglamento = %q, se esperaba el del snapshot congelado (%q)", v.Reglamento, "IX")
 	}
 	if len(repo.guardados) != 1 || repo.guardados[0].ID != "proc-1" {
 		t.Fatalf("guardados = %v, se esperaba una sola escritura de proc-1", repo.guardados)

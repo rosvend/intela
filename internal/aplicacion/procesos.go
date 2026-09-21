@@ -46,6 +46,7 @@ func aProcesoVista(p reparto.ProcesoDeReparto) ProcesoVista {
 		Periodo:       p.Periodo,
 		BolsaID:       p.BolsaID,
 		SnapshotID:    p.SnapshotID,
+		Reglamento:    p.Reglamento,
 		Revision:      p.Revision,
 		Firmas:        p.Firmas,
 		RechazoMotivo: p.RechazoMotivo,
@@ -60,6 +61,7 @@ func unProceso(v ProcesoVista) reparto.ProcesoDeReparto {
 		Circuito:      v.Circuito,
 		BolsaID:       v.BolsaID,
 		SnapshotID:    v.SnapshotID,
+		Reglamento:    v.Reglamento,
 		Etapa:         v.Etapa,
 		Revision:      v.Revision,
 		Firmas:        v.Firmas,
@@ -75,11 +77,11 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	snapshotID, _, err := uc.Parametros.SnapshotEnFecha(ctx, fecha)
+	snapshotID, snap, err := uc.Parametros.SnapshotEnFecha(ctx, fecha)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	p, err := reparto.AbrirProceso(id, periodo, circuito, bolsaID, snapshotID, "")
+	p, err := reparto.AbrirProceso(id, periodo, circuito, bolsaID, snapshotID, snap.Reglamento)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}

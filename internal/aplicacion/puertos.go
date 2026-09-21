@@ -650,12 +650,15 @@ type RepositorioProcesos interface {
 // distintas, una por circuito, y hasta que ese PR fije los tipos esta vista
 // guarda los campos planos.
 type ProcesoVista struct {
-	ID            string
-	Circuito      reparto.Circuito
-	Etapa         reparto.Etapa
-	Periodo       string
-	BolsaID       string
-	SnapshotID    string
+	ID         string
+	Circuito   reparto.Circuito
+	Etapa      reparto.Etapa
+	Periodo    string
+	BolsaID    string
+	SnapshotID string
+	// Reglamento es la version vigente al abrir la corrida (ADR 0004), copiada
+	// del snapshot congelado -- no se resuelve de nuevo en un reproceso.
+	Reglamento    string
 	Revision      int
 	Firmas        []reparto.Firma
 	RechazoMotivo string
