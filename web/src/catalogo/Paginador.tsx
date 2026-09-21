@@ -1,5 +1,5 @@
 /**
- * El pie de una pagina de resultados: el tramo que se ve, y Anterior / Siguiente.
+ * El pie de una pagina de resultados: el tramo que se ve, y los botones redondos de pagina anterior y siguiente.
  *
  * Sin `total` en la respuesta no se puede decir "pagina 2 de 7": "Siguiente" se
  * ofrece cuando la pagina vino entera -si el servidor devolvio menos de `limite`,
@@ -9,6 +9,25 @@
  * `etiqueta` es lo que se pagina en plural ("Obras", "Titulares"): el texto del
  * rango es el unico que cambia entre las dos pantallas que lo usan.
  */
+function Chevron({ haciaLaDerecha }: { haciaLaDerecha: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={haciaLaDerecha ? "M6 3l5 5-5 5" : "M10 3L5 8l5 5"} />
+    </svg>
+  );
+}
+
 export default function Paginador({
   etiqueta,
   desplazamiento,
@@ -29,18 +48,22 @@ export default function Paginador({
         <button
           type="button"
           className="catalogo-pagina"
+          aria-label="Página anterior"
+          title="Página anterior"
           disabled={desplazamiento === 0}
           onClick={() => onIrA(Math.max(0, desplazamiento - limite))}
         >
-          Anterior
+          <Chevron haciaLaDerecha={false} />
         </button>
         <button
           type="button"
           className="catalogo-pagina"
+          aria-label="Página siguiente"
+          title="Página siguiente"
           disabled={cuantas < limite}
           onClick={() => onIrA(desplazamiento + limite)}
         >
-          Siguiente
+          <Chevron haciaLaDerecha />
         </button>
       </div>
     </div>
