@@ -89,7 +89,7 @@ func TestUsosCubrenTVCineOTTYPonderacion(t *testing.T) {
 		}
 	}
 
-	for _, m := range []reparto.Modalidad{reparto.TV, reparto.Cine, reparto.OTT} {
+	for _, m := range []reparto.Modalidad{reparto.TV, reparto.Cine, reparto.OTT, reparto.Transporte} {
 		if modalidad[m] == 0 {
 			t.Fatalf("no hay filas de uso para %s", m)
 		}
@@ -287,5 +287,65 @@ func TestObrasDelDatasetSonObrasValidas(t *testing.T) {
 					o.ID, c.Nombre, c.IPI)
 			}
 		}
+	}
+}
+
+// TestLosUsosDeTVLlevanCanal fija lo que #119 anade al esquema canonico: sin
+// canal en la fila no hay forma de saber contra que bolsa pondera, y `fuente`
+// no sirve de sustituto porque dice quien ENTREGO el archivo (ADR 0018).
+func TestLosUsosDeTVLlevanCanal(t *testing.T) {
+	d := Construir()
+
+	canales := map[string]bool{}
+	for _, r := range d.Reportes {
+		for _, u := range r.Usos {
+			if u.Modalidad != reparto.TV {
+				continue
+			}
+			if u.CanalID == "" {
+				t.Fatalf("uso de TV %q sin canal", u.Titulo)
+			}
+			canales[u.CanalID] = true
+		}
+	}
+	if len(canales) < 2 {
+		t.Fatalf("canales de TV = %v, hacen falta dos para que el valor punto "+
+			"por canal de RD 9.1.1 sea observable", canales)
+	}
+}
+
+// Cada canal del registro necesita bolsa propia: una corrida es una bolsa
+// (ADR 0019), y sin ella el canal no se puede repartir.
+func TestCadaCanalDeTVTieneSuBolsa(t *testing.T) {
+	d := Construir()
+
+	conBolsa := map[string]bool{}
+	for _, b := range d.Bolsas {
+		conBolsa[b.UsuarioID] = true
+	}
+	// El valor exacto y no un "< 2025": un ">=" solo, sin cota inferior, dejaria
+	// pasar 2000 o cualquier otro ano que no fuera Periodo menos uno.
+	const anioEsperado = 2024 // Periodo es "2025-01"
+	for _, c := range d.Canales {
+		if !conBolsa[c.ID] {
+			t.Errorf("el canal %q no tiene bolsa en %s", c.ID, Periodo)
+		}
+		if c.AnioAudiencia != anioEsperado {
+			t.Errorf("el canal %q se clasifica con audiencia de %d, se esperaba %d: "+
+				"RD 9.5.4 usa el ano inmediatamente anterior al periodo %s",
+				c.ID, c.AnioAudiencia, anioEsperado, Periodo)
+		}
+	}
+}
+
+// TestPagadorCineNuncaEsIgualAFuenteCine fija el invariante que su propio
+// comentario afirma. `FuenteCine` es lo que estampa el adaptador de ingesta y
+// lo que indexa `alias_obra` (ADR 0018); `PagadorCine` es quien paga y contra
+// cuya bolsa ponderan sus usos (#119). Confundirlos fue exactamente el
+// defecto que el PR #142 corrigio para `FuenteCine`.
+func TestPagadorCineNuncaEsIgualAFuenteCine(t *testing.T) {
+	if PagadorCine == FuenteCine {
+		t.Fatalf("PagadorCine (%q) y FuenteCine (%q) son el mismo valor: "+
+			"un reporte de cine y su pagador son dos ejes distintos", PagadorCine, FuenteCine)
 	}
 }
