@@ -5,6 +5,7 @@ import {
   avisoDeVersion,
   estadoDelBorrador,
   formatearPorcentaje,
+  formatearTipo,
   puedeGuardarBorrador,
   totalDeclarado,
   versionAbierta,
@@ -137,26 +138,40 @@ describe("puedeGuardarBorrador", () => {
 });
 
 describe("formatearPorcentaje", () => {
-  it("pinta siempre 4 decimales, la precision que guarda la columna", () => {
-    expect(formatearPorcentaje(100)).toBe("100.0000%");
-    expect(formatearPorcentaje(74.5)).toBe("74.5000%");
-    expect(formatearPorcentaje(0)).toBe("0.0000%");
-    expect(formatearPorcentaje(33.3333)).toBe("33.3333%");
+  it.each([
+    [100, "100%"],
+    [0, "0%"],
+    [20, "20%"],
+    [74.5, "74.5%"],
+    [33.3333, "33.3333%"],
+  ])("recorta los ceros sobrantes: %s -> %s", (entrada, salida) => {
+    expect(formatearPorcentaje(entrada)).toBe(salida);
   });
 
   it("no redondea hacia arriba un total por debajo de 100: 99.9999 no se pinta como 100", () => {
-    // Si lo hiciera, la celda diria 100.0000% junto a un estado "incompleta"
+    // Si lo hiciera, la celda diria 100% junto a un estado "incompleta"
     // que acaba de mandar el backend.
     expect(formatearPorcentaje(99.9999)).toBe("99.9999%");
-    expect(formatearPorcentaje(99.99996)).toBe("100.0000%");
   });
 
-  it("escribe el mismo numero igual que el mensaje del backend", () => {
-    // `NuevaDeclaracion` contesta con `suma.StringFixed(4)` -"100.0001%"- y las
-    // dos cifras pueden acabar en la misma pantalla: punto decimal, cuatro
-    // decimales, sin espacio antes del signo.
+  it("99.99996 pasa a 100%: es el comportamiento de toFixed(4), documentado", () => {
+    expect(formatearPorcentaje(99.99996)).toBe("100%");
+  });
+
+  it("usa punto decimal, sin coma, y hasta 4 decimales", () => {
     expect(formatearPorcentaje(100.0001)).toBe("100.0001%");
     expect(formatearPorcentaje(100.0001)).not.toContain(",");
+  });
+});
+
+describe("formatearTipo", () => {
+  it("pone mayuscula inicial y no toca el resto", () => {
+    expect(formatearTipo("serie")).toBe("Serie");
+    expect(formatearTipo("cinematografica")).toBe("Cinematografica");
+  });
+
+  it("una cadena vacia queda vacia", () => {
+    expect(formatearTipo("")).toBe("");
   });
 });
 

@@ -364,6 +364,10 @@ describe("historial de versiones (integracion con App)", () => {
     await screen.findByRole("heading", { name: "Historial de la declaración" });
     await esperarLasVersiones();
 
+    // Sin prosa: ni la explicacion de la cabecera ni el conteo de versiones.
+    expect(document.body.textContent).not.toMatch(/El historial trae/);
+    expect(document.body.textContent).not.toMatch(/solo lectura/);
+
     // La obra, para saber de que historial es y para distinguir "sin versiones"
     // de "esa obra no esta"; y despues el historial, que es donde estan las
     // versiones. En ese orden: el historial no se pide hasta que la obra se lee.
@@ -410,10 +414,10 @@ describe("historial de versiones (integracion con App)", () => {
             .map((td) => td.textContent),
         ),
     ).toEqual([
-      ["tit-1", "IPI-00000001", "—", "60.0000%"],
-      ["tit-2", "IPI-00000002", "—", "40.0000%"],
+      ["tit-1", "IPI-00000001", "—", "60%"],
+      ["tit-2", "IPI-00000002", "—", "40%"],
     ]);
-    expect(within(tablaDeVersion(2)).getByText("74.5000%")).toBeTruthy();
+    expect(within(tablaDeVersion(2)).getByText("74.5%")).toBeTruthy();
     expect(within(tablaDeVersion(3)).getAllByRole("row")).toHaveLength(3);
   });
 
@@ -471,9 +475,9 @@ describe("historial de versiones (integracion con App)", () => {
 
     await screen.findByText("Esta obra no tiene ninguna versión declarada.");
 
-    // Se dijo el hecho -y de que obra-, y se dijo que no es un error.
+    // Se dijo el hecho -y de que obra-, y sin la segunda linea explicativa.
     expect(screen.getByText(/Sin Declarar Todavia/)).toBeTruthy();
-    expect(document.body.textContent).toMatch(
+    expect(document.body.textContent).not.toMatch(
       /no es un fallo de esta pantalla/i,
     );
     // Sin alerta -no hay nada roto-, sin estado de carga, sin tabla de partes y
@@ -527,7 +531,7 @@ describe("historial de versiones (integracion con App)", () => {
       within(fila)
         .getAllByRole("cell")
         .map((td) => td.textContent),
-    ).toEqual(["tit-1", "IPI-00000001", "Ana Escritora", "74.5000%"]);
+    ).toEqual(["tit-1", "IPI-00000001", "Ana Escritora", "74.5%"]);
     expect(nombreDeLaFilaDeLaVersion(3, "tit-2")).toBe("Luis Guionista");
 
     // UNA peticion para la pantalla ENTERA, y con los identificadores de todas
