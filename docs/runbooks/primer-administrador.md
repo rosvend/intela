@@ -116,3 +116,6 @@ ya podia aplicar migraciones.
 Crear los otros cuatro roles del reglamento, y dar credenciales a un titular aprobado por la
 afiliacion (#50). Ninguna de las dos tiene hoy un camino en el producto; ver las consecuencias del
 [ADR 0017](../decisiones/0017-provision-del-primer-administrador.md).
+
+Para cargar el padron demo (Ana/Beto/Carla) sin correr seed:
+[`sembrar-titulares-demo.md`](sembrar-titulares-demo.md).

@@ -224,3 +224,58 @@ func TestProvisionRechazaUnHashTruncado(t *testing.T) {
 		t.Fatalf("estado = %q, se esperaba \"creado\"", r.Estado)
 	}
 }
+
+// El padron demo llega a la base y un reintento no duplica. Es el cableado que
+// se invoca en produccion para poder declarar splits sin correr cmd/seed.
+func TestSembrarTitularesDemoDeExtremoAExtremo(t *testing.T) {
+	cadena := testhelp.DSN(t)
+	t.Setenv("DATABASE_URL", cadena)
+
+	r, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarTitularesDemo})
+	if err != nil {
+		t.Fatalf("primera invocacion: %v", err)
+	}
+	if r.Estado != "creados" {
+		t.Fatalf("estado = %q, se esperaba \"creados\"", r.Estado)
+	}
+
+	pool, err := pgxpool.New(t.Context(), cadena)
+	if err != nil {
+		t.Fatalf("abrir pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	var total int
+	if err := pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM titulares WHERE id IN ('tit-ana','tit-beto','tit-carla')`).
+		Scan(&total); err != nil {
+		t.Fatalf("contar: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("titulares demo = %d, se esperaban 3", total)
+	}
+
+	var ipi string
+	if err := pool.QueryRow(t.Context(),
+		`SELECT ipi FROM titulares WHERE id = 'tit-ana'`).Scan(&ipi); err != nil {
+		t.Fatalf("leer Ana: %v", err)
+	}
+	if ipi != "IPI-00000001" {
+		t.Errorf("ipi de Ana = %q, se esperaba IPI-00000001", ipi)
+	}
+
+	r2, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarTitularesDemo})
+	if err != nil {
+		t.Fatalf("segunda invocacion: %v", err)
+	}
+	if r2.Estado != "ya sembrados" {
+		t.Errorf("estado = %q, se esperaba \"ya sembrados\"", r2.Estado)
+	}
+
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM titulares`).Scan(&total); err != nil {
+		t.Fatalf("recontar: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("tras reintento titulares = %d, se esperaban 3", total)
+	}
+}

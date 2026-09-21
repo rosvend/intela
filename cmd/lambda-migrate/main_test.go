@@ -123,6 +123,15 @@ func TestPrimerAdministradorNoEsUnaOrdenDeGoose(t *testing.T) {
 	}
 }
 
+// Misma guarda que primer-administrador: sembrar-titulares-demo no es goose.
+func TestSembrarTitularesDemoNoEsUnaOrdenDeGoose(t *testing.T) {
+	for _, orden := range ordenesPermitidas {
+		if orden == ordenSembrarTitularesDemo {
+			t.Fatalf("%q no debe estar en ordenesPermitidas", ordenSembrarTitularesDemo)
+		}
+	}
+}
+
 // hashDePrueba es un hash DE VERDAD, no una cadena con pinta de hash.
 //
 // La version anterior era un literal de 59 caracteres, que es exactamente el

@@ -9,14 +9,16 @@
 // La mecanica es la misma: internal/infraestructura/migraciones. Este fichero
 // traduce un evento de invocacion en una orden de goose.
 //
-// Y una que NO es de goose: `primer-administrador`. Esta aqui porque el
-// problema que resuelve es el mismo -- hay que ejecutar algo DENTRO de la VPC
-// contra una base sin endpoint publico -- y esta es la unica funcion que ya
-// vive ahi con DATABASE_URL. Levantar una Lambda propia para una operacion que
-// se corre una vez en la vida de una instalacion es infraestructura que hay
-// que mantener para siempre. La deuda que si se asume: este binario ya no es
-// solo goose, y si aparece una segunda operacion de este tipo conviene sacarlas
-// las dos a su propia funcion.
+// Y dos que NO son de goose: `primer-administrador` y `sembrar-titulares-demo`.
+// Estan aqui porque el problema que resuelven es el mismo -- hay que ejecutar
+// algo DENTRO de la VPC contra una base sin endpoint publico -- y esta es la
+// unica funcion que ya vive ahi con DATABASE_URL. Levantar una Lambda propia
+// para cada operacion de un solo uso es infraestructura que hay que mantener
+// para siempre.
+//
+// Deuda (ADR 0017): con la segunda orden ajena a goose, este binario ya no es
+// solo migraciones. La siguiente de este tipo tiene que sacar las tres a su
+// propia funcion; no anadir una cuarta aqui.
 //
 // Lo invoca Terraform (aws_lambda_invocation en modules/migrations), no el
 // workflow, para que el orden migrar-antes-de-servir quede en el grafo de
@@ -40,6 +42,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
+	"github.com/rosvend/intela/internal/infraestructura/semilla"
 )
 
 // ordenesPermitidas es lo que esta funcion acepta hacer. Todo lo demas se
@@ -61,6 +64,15 @@ var ordenesPermitidas = []string{"up", "up-by-one", "status", "version"}
 // ordenPrimerAdministrador provisiona la cuenta inicial. Deliberadamente FUERA
 // de ordenesPermitidas: no es una orden de goose y no debe llegar a Aplicar.
 const ordenPrimerAdministrador = "primer-administrador"
+
+// ordenSembrarTitularesDemo carga el padron sintetico de demo (Ana, Beto,
+// Carla) para poder declarar splits en una instalacion que no corre seed.
+// Misma razon que primer-administrador: la base no tiene endpoint publico.
+//
+// NO es el dataset completo: no toca obras, declaraciones, usuarios ni bolsas.
+// Es solo el padron que el editor de splits necesita para que
+// POST /obras/{id}/declaracion deje de responder 400.
+const ordenSembrarTitularesDemo = "sembrar-titulares-demo"
 
 // peticion es lo que manda Terraform: {"orden":"up"}.
 //
@@ -99,6 +111,9 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 
 		if orden == ordenPrimerAdministrador {
 			return provisionar(ctx, p, log)
+		}
+		if orden == ordenSembrarTitularesDemo {
+			return sembrarTitularesDemo(ctx, log)
 		}
 
 		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
@@ -176,4 +191,47 @@ func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, 
 	// Sin el email ni el hash en el registro: basta con QUE cuenta quedo.
 	log.Info("primer administrador creado", slog.String("id", u.ID), slog.String("rol", string(u.Rol)))
 	return respuesta{Orden: ordenPrimerAdministrador, Estado: "creado"}, nil
+}
+
+// sembrarTitularesDemo inserta el padron sintetico de demo.
+//
+// Idempotente: ON CONFLICT DO NOTHING. Un reintento inocuo responde
+// "ya sembrados" sin error, igual que primer-administrador con
+// "ya provisionada". No toca obras ni declaraciones: eso lo hace la API.
+func sembrarTitularesDemo(ctx context.Context, log *slog.Logger) (respuesta, error) {
+	ctx, cancelar := context.WithTimeout(ctx,
+		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
+	defer cancelar()
+
+	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	if err != nil {
+		log.Error("abrir la base", slog.Any("error", err))
+		return respuesta{}, err
+	}
+	defer store.CerrarPool()
+
+	titulares := semilla.Construir().Titulares
+	insertados := 0
+	for _, tit := range titulares {
+		tag, err := store.Pool().Exec(ctx, `
+			INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
+			tit.ID, tit.Nombre, tit.IPI, tit.PersonaNatural, tit.Clase, tit.Email)
+		if err != nil {
+			log.Error("insertar titular demo", slog.String("id", tit.ID), slog.Any("error", err))
+			return respuesta{}, fmt.Errorf("insertar titular %s: %w", tit.ID, err)
+		}
+		insertados += int(tag.RowsAffected())
+	}
+
+	estado := "creados"
+	if insertados == 0 {
+		estado = "ya sembrados"
+	}
+	log.Info("padron demo",
+		slog.String("estado", estado),
+		slog.Int("insertados", insertados),
+		slog.Int("total", len(titulares)))
+	return respuesta{Orden: ordenSembrarTitularesDemo, Estado: estado}, nil
 }
