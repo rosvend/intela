@@ -660,7 +660,8 @@ const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
 const ERROR_SIN_PERIODO =
   "Falta el periodo: elige un mes o un año para subir el reporte.";
 const ERROR_SIN_FUENTE = "Falta la fuente: elige de dónde viene el reporte.";
-const ERROR_SIN_ARCHIVO = "Falta el archivo: suelta o elige el reporte a subir.";
+const ERROR_SIN_ARCHIVO =
+  "Falta el archivo: suelta o elige el reporte a subir.";
 
 // El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
 // `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
