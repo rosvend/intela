@@ -635,8 +635,15 @@ function elegirArchivo(archivo: File) {
   });
 }
 
-function escribirPeriodo(valor: string) {
-  fireEvent.change(screen.getByLabelText("Periodo de recaudo"), {
+function elegirMes(valor: string) {
+  fireEvent.change(screen.getByLabelText("Mes"), {
+    target: { value: valor },
+  });
+}
+
+function elegirAnno(valor: string) {
+  fireEvent.click(screen.getByLabelText("Anual"));
+  fireEvent.change(screen.getByLabelText("Año"), {
     target: { value: valor },
   });
 }
@@ -648,10 +655,9 @@ function escribirPeriodo(valor: string) {
 const botonSubir = () => screen.getByRole("button", { name: /^Subir/ });
 
 const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
-// El aviso del cliente dice lo unico que el cliente decide: que el periodo este
-// completo. Que el mes exista lo contesta el servidor con su 400.
+// El aviso pide elegir el periodo; el mes imposible lo contesta el servidor.
 const FALTA_PERIODO =
-  "Escribe el periodo completo para poder subir el reporte: AAAA, o AAAA-MM.";
+  "Elige el periodo para poder subir el reporte: un mes o un año.";
 
 // El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
 // `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
@@ -753,10 +759,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(
       screen.queryByText("Esta pantalla llega en un PR posterior."),
     ).toBeNull();
-    expect(screen.getByLabelText("Periodo de recaudo")).toHaveProperty(
-      "value",
-      "2026-01",
-    );
+    expect(screen.getByLabelText("Mes")).toHaveProperty("value", "2026-01");
     await screen.findByText(VACIO_2026_01);
     expect(getsDelListado()).toEqual(["/api/reportes?periodo=2026-01"]);
 
@@ -764,10 +767,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     // campo la sigue en vez de ensenar un periodo que ya no se aplica.
     fireEvent.click(screen.getByRole("link", { name: "Ingesta" }));
     expect(ubicacion()).toBe("/ingesta");
-    expect(screen.getByLabelText("Periodo de recaudo")).toHaveProperty(
-      "value",
-      "",
-    );
+    expect(screen.getByLabelText("Mes")).toHaveProperty("value", "");
     await screen.findByText("Aún no hay cargas registradas.");
   });
 
@@ -1043,7 +1043,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(botonSubir()).toHaveProperty("disabled", true);
   });
 
-  it("el periodo solo se aplica completo: entonces pasa a la URL, filtra el listado y habilita la subida", async () => {
+  it("el periodo se elige con el selector: pasa a la URL, filtra el listado y habilita la subida", async () => {
     simularServidor({ rol: "administrador" });
 
     montarApp("/ingesta");
@@ -1055,12 +1055,8 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(botonSubir()).toHaveProperty("disabled", true);
     expect(screen.getByText(FALTA_PERIODO)).toBeTruthy();
 
-    // A medias no toca la URL ni consulta nada.
-    escribirPeriodo("2026-0");
-    expect(ubicacion()).toBe("/ingesta");
-    expect(botonSubir()).toHaveProperty("disabled", true);
-
-    escribirPeriodo("2026-01");
+    // El calendario no deja estados a medias: elegir aplica de una vez.
+    elegirMes("2026-01");
     expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
     await screen.findByText(VACIO_2026_01);
     expect(getsDelListado()).toEqual([
@@ -1070,17 +1066,32 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(botonSubir()).toHaveProperty("disabled", false);
     expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
 
-    // Volver a dejarlo a medias bloquea la subida: el campo ya no dice el
-    // periodo que se mandaria.
-    escribirPeriodo("2026-0");
-    expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
-    expect(botonSubir()).toHaveProperty("disabled", true);
-
     // Vaciarlo lo quita de la URL y el listado vuelve a traer todo.
-    escribirPeriodo("");
+    elegirMes("");
     expect(ubicacion()).toBe("/ingesta");
     await screen.findByText("Aún no hay cargas registradas.");
     expect(getsDelListado()).toHaveLength(3);
+  });
+
+  it("en modo anual el periodo es un año: pasa a la URL y habilita la subida", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta");
+    await screen.findByText("Aún no hay cargas registradas.");
+
+    elegirFuente("caracol");
+    elegirArchivo(archivoCaracol());
+    elegirAnno("2026");
+
+    expect(ubicacion()).toBe("/ingesta?periodo=2026");
+    await screen.findByText("No hay cargas registradas para el periodo 2026.");
+    expect(getsDelListado()).toEqual([
+      "/api/reportes",
+      "/api/reportes?periodo=2026",
+    ]);
+    expect(botonSubir().textContent).toBe("Subir a 2026");
+    expect(botonSubir()).toHaveProperty("disabled", false);
+    expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
   });
 
   it("el boton nombra el periodo destino cuando hay uno utilizable, y no cuando no lo hay", async () => {
@@ -1096,7 +1107,7 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(botonSubir()).toHaveProperty("disabled", false);
 
     // Sin periodo utilizable vuelve al texto neutro.
-    escribirPeriodo("");
+    elegirMes("");
     await screen.findByText("Aún no hay cargas registradas.");
     expect(botonSubir().textContent).toBe("Subir reporte");
     expect(botonSubir()).toHaveProperty("disabled", true);
@@ -1105,11 +1116,13 @@ describe("pantalla de ingesta (integracion con App)", () => {
   it.each(["2026-13", "2026-00"])(
     "con el periodo %s el rechazo lo da el servidor, que es quien conoce la regla",
     async (periodo) => {
-      // El cliente NO lleva una copia del patron del dominio: lo unico que
-      // decide es que el periodo este completo. Que el mes exista lo contesta el
-      // backend, y su 400 es el que se ve. Con la copia en el navegador, un mes
-      // imposible entraba por `curl`, por el scheduler o por cualquier pantalla
-      // futura, y la unicidad (sha256, fuente) lo dejaba quemado para siempre.
+      // El calendario no deja elegir un mes imposible, asi que el caso solo
+      // llega por la URL. El cliente NO lleva una copia del patron del
+      // dominio: lo unico que decide es que haya periodo. Que el mes exista lo
+      // contesta el backend, y su 400 es el que se ve. Con la copia en el
+      // navegador, un mes imposible entraba por `curl`, por el scheduler o por
+      // cualquier pantalla futura, y la unicidad (sha256, fuente) lo dejaba
+      // quemado para siempre.
       const mensaje = `reporte invalido: periodo "${periodo}", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12`;
       simularServidor({
         rol: "administrador",
@@ -1124,14 +1137,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
         subida: () => Promise.resolve(json({ error: mensaje }, 400)),
       });
 
-      montarApp("/ingesta");
-      await screen.findByText("Aún no hay cargas registradas.");
+      montarApp(`/ingesta?periodo=${periodo}`);
 
-      elegirFuente("caracol");
-      elegirArchivo(archivoCaracol());
-      escribirPeriodo(periodo);
-
-      // El periodo completo pasa a la URL y el listado se consulta con el.
+      // El periodo de la URL se consulta y el listado trae el 400.
       expect(ubicacion()).toBe(`/ingesta?periodo=${periodo}`);
       await vi.waitFor(() =>
         expect(getsDelListado()).toContain(`/api/reportes?periodo=${periodo}`),
@@ -1139,8 +1147,11 @@ describe("pantalla de ingesta (integracion con App)", () => {
       const alertas = await screen.findAllByRole("alert");
       expect(alertas.some((a) => a.textContent?.includes(mensaje))).toBe(true);
 
-      // La subida no queda bloqueada en el navegador: el periodo esta completo,
-      // y quien decide sobre el mes es el servidor.
+      elegirFuente("caracol");
+      elegirArchivo(archivoCaracol());
+
+      // La subida no queda bloqueada en el navegador: hay periodo elegido, y
+      // quien decide sobre el mes es el servidor.
       expect(botonSubir()).toHaveProperty("disabled", false);
       expect(botonSubir().textContent).toBe(`Subir a ${periodo}`);
       expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
@@ -1185,13 +1196,13 @@ describe("pantalla de ingesta (integracion con App)", () => {
     ).toBe("true");
 
     // Otro periodo: el listado se remonta y con el se va el estado de las filas.
-    escribirPeriodo("2026-02");
+    elegirMes("2026-02");
     await screen.findByText(
       "No hay cargas registradas para el periodo 2026-02.",
     );
 
     // Y al volver, la fila esta cerrada de nuevo y su log no se pide sin clic.
-    escribirPeriodo("2026-01");
+    elegirMes("2026-01");
     await screen.findByRole("table", { name: "Cargas hechas" });
     expect(
       screen

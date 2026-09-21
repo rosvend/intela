@@ -1,6 +1,7 @@
 import { DragEvent, FormEvent, useId, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import FichaArchivo from "./FichaArchivo";
 import ListaCargas from "./ListaCargas";
 import PanelResultado, {
   type Entrega,
@@ -8,6 +9,7 @@ import PanelResultado, {
   pudoHaberLlegado,
   resultadoDeError,
 } from "./PanelResultado";
+import ZonaSubida from "./ZonaSubida";
 import { esRechazo } from "./TablaRechazos";
 
 // Las fuentes con adaptador dado de alta en
@@ -36,6 +38,15 @@ const FUENTES = [
 // dominio (internal/dominio/recaudo/bolsa.go), y su mensaje nombra el mes entre
 // 01 y 12; la copia de aqui se borro con ella.
 const FORMA_PERIODO = /^\d{4}(-\d{2})?$/;
+
+// Anos del selector anual: la decada en curso mas el siguiente.
+const ANNO_ACTUAL = new Date().getFullYear();
+const ANNOS = Array.from({ length: 11 }, (_, i) => ANNO_ACTUAL - 9 + i);
+
+// El modo nace del periodo de la URL: un AAAA es anual, lo demas mensual.
+function modoDe(periodo: string): "mes" | "anno" {
+  return /^\d{4}$/.test(periodo) ? "anno" : "mes";
+}
 
 /** Un texto con algo dentro, que es lo que son los campos de texto `Entrega`. */
 function esTextoNoVacio(valor: unknown): valor is string {
@@ -103,10 +114,10 @@ function esEntrega(cuerpo: unknown): cuerpo is Entrega {
 export default function Ingesta() {
   const [searchParams, setSearchParams] = useSearchParams();
   // El periodo que manda es el de la URL: filtra el listado y es el que viaja
-  // en la subida. El campo de texto solo lo escribe ahi cuando lo que dice ya
-  // tiene la forma completa.
+  // en la subida. El selector lo escribe ahi con cada eleccion.
   const periodoAplicado = searchParams.get("periodo") ?? "";
   const [textoPeriodo, setTextoPeriodo] = useState(periodoAplicado);
+  const [modo, setModo] = useState<"mes" | "anno">(modoDe(periodoAplicado));
   // Si la URL cambia por fuera del campo (el enlace de la nav, atras), el
   // campo la sigue. Es el ajuste de estado durante el render que recomienda
   // React, en vez de un efecto que pintaria primero el valor viejo.
@@ -114,6 +125,7 @@ export default function Ingesta() {
   if (periodoAplicado !== periodoVisto) {
     setPeriodoVisto(periodoAplicado);
     setTextoPeriodo(periodoAplicado);
+    setModo(modoDe(periodoAplicado));
   }
 
   const [fuente, setFuente] = useState("");
@@ -133,21 +145,25 @@ export default function Ingesta() {
   // clic que entre antes.
   const enVuelo = useRef(false);
 
-  const idPeriodo = useId();
   const idAyudaPeriodo = useId();
+  const idGrupoPeriodo = useId();
+  const idMes = useId();
+  const idAnno = useId();
   const idFuente = useId();
   const idArchivo = useId();
   const idAvisoPeriodo = useId();
 
-  // Con el campo a medias el periodo de la URL no es el que se ve: no se sube
-  // con uno distinto del que muestra la pantalla.
-  //
-  // Lo unico que se decide aqui es que el periodo este COMPLETO. Que el mes
-  // exista lo decide el servidor, y su 400 se pinta tal cual: es la misma
-  // autoridad que juzga el archivo, y duplicar su regla en el cliente era una
-  // tercera copia del patron del dominio, la que menos cubria.
+  // El selector no deja estados a medias: cada eleccion aplica de una vez y el
+  // borrador siempre dice lo mismo que la URL, salvo que esta cambie por fuera.
+  // Lo unico que se decide aqui es que haya periodo. Que el mes exista lo
+  // decide el servidor, y su 400 se pinta tal cual: es la misma autoridad que
+  // juzga el archivo, y duplicar su regla en el cliente era una tercera copia
+  // del patron del dominio, la que menos cubria.
   const periodoListo =
     periodoAplicado !== "" && textoPeriodo === periodoAplicado;
+  // Cada control muestra su rebanada del borrador; lo demas se ve vacio.
+  const mesElegido = /^\d{4}-\d{2}$/.test(textoPeriodo) ? textoPeriodo : "";
+  const annoElegido = /^\d{4}$/.test(textoPeriodo) ? textoPeriodo : "";
   const puedeSubir =
     !enviando && periodoListo && fuente !== "" && archivo !== null;
 
@@ -177,6 +193,11 @@ export default function Ingesta() {
     setArrastrando(false);
     const soltado = evento.dataTransfer.files[0];
     if (soltado) setArchivo(soltado);
+  }
+
+  // Solo vacia la seleccion local; no toca nada del servidor.
+  function quitarArchivo() {
+    setArchivo(null);
   }
 
   async function subir(evento: FormEvent) {
@@ -225,28 +246,76 @@ export default function Ingesta() {
       <header className="ingesta-cabecera">
         <h1>Ingesta de reportes</h1>
         <p className="muted">
-          Los reportes de uso no traen importes: solo ponderan el reparto de la
-          bolsa recaudada en el periodo. La validación del archivo la hace el
-          servidor.
+          Sube los reportes de uso que ponderan el reparto de la bolsa
+          recaudada.
         </p>
       </header>
 
       <form className="ingesta-formulario" onSubmit={(e) => void subir(e)}>
+        <div className="ingesta-tarjeta-cabecera">
+          <div>
+            <h2>Importar reporte</h2>
+            <p className="muted">
+              Elige el periodo y la fuente, suelta el archivo y súbelo.
+            </p>
+          </div>
+        </div>
+
         <div className="ingesta-campos">
           <div className="ingesta-campo">
-            <label htmlFor={idPeriodo}>Periodo de recaudo</label>
-            <input
-              id={idPeriodo}
-              type="text"
-              placeholder="AAAA-MM"
-              autoComplete="off"
-              value={textoPeriodo}
-              onChange={(e) => cambiarPeriodo(e.target.value)}
-              aria-describedby={idAyudaPeriodo}
-            />
+            <fieldset className="ingesta-periodo">
+              <legend>Periodo de recaudo</legend>
+              {/* Una sola fila: modo y valor lado a lado, como la fuente. */}
+              <div className="ingesta-periodo-fila">
+                <div className="ingesta-modo">
+                  <label className="ingesta-modo-opcion">
+                    <input
+                      type="radio"
+                      name={idGrupoPeriodo}
+                      checked={modo === "mes"}
+                      onChange={() => setModo("mes")}
+                    />
+                    Mensual
+                  </label>
+                  <label className="ingesta-modo-opcion">
+                    <input
+                      type="radio"
+                      name={idGrupoPeriodo}
+                      checked={modo === "anno"}
+                      onChange={() => setModo("anno")}
+                    />
+                    Anual
+                  </label>
+                </div>
+                {modo === "mes" ? (
+                  <input
+                    id={idMes}
+                    type="month"
+                    aria-label="Mes"
+                    value={mesElegido}
+                    onChange={(e) => cambiarPeriodo(e.target.value)}
+                    aria-describedby={idAyudaPeriodo}
+                  />
+                ) : (
+                  <select
+                    id={idAnno}
+                    aria-label="Año"
+                    value={annoElegido}
+                    onChange={(e) => cambiarPeriodo(e.target.value)}
+                    aria-describedby={idAyudaPeriodo}
+                  >
+                    <option value="">Elige el año</option>
+                    {ANNOS.map((anno) => (
+                      <option key={anno} value={String(anno)}>
+                        {anno}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </fieldset>
             <p id={idAyudaPeriodo} className="ingesta-ayuda">
-              AAAA para un periodo anual, AAAA-MM para uno mensual, con el mes
-              entre 01 y 12.
+              El calendario trae los meses; en modo anual se elige solo el año.
             </p>
           </div>
 
@@ -267,39 +336,28 @@ export default function Ingesta() {
           </div>
         </div>
 
-        <div
-          className={
-            arrastrando
-              ? "ingesta-soltar ingesta-soltar-activa"
-              : "ingesta-soltar"
-          }
-          onDragOver={(e) => {
+        <ZonaSubida
+          idArchivo={idArchivo}
+          arrastrando={arrastrando}
+          alArrastrar={(e) => {
             // Sin esto el navegador no deja soltar aqui: abriria el archivo.
             e.preventDefault();
             setArrastrando(true);
           }}
-          onDragLeave={() => setArrastrando(false)}
-          onDrop={alSoltar}
-        >
-          <label htmlFor={idArchivo}>Archivo</label>
-          {/* `accept` solo filtra el selector. Lo que se suelta no se revisa
-              aqui: una extension sin adaptador la rechaza el backend con 400. */}
-          <input
-            id={idArchivo}
-            type="file"
-            accept=".csv,.xlsx,.json"
-            onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
-          />
-          <p className="ingesta-ayuda">
-            Arrastra el archivo hasta aquí o elígelo con el selector: CSV, Excel
-            (.xlsx) o JSON.
-          </p>
-          {archivo && (
-            <p className="ingesta-archivo">
-              Archivo elegido: <strong>{archivo.name}</strong>
-            </p>
-          )}
-        </div>
+          alSalir={() => setArrastrando(false)}
+          alSoltar={alSoltar}
+          alElegir={(elegido) => setArchivo(elegido)}
+        />
+        {archivo && (
+          <>
+            <p className="ingesta-ficha-titulo">Archivo elegido</p>
+            <FichaArchivo
+              archivo={archivo}
+              enviando={enviando}
+              alQuitar={quitarArchivo}
+            />
+          </>
+        )}
 
         <div className="ingesta-acciones">
           <button
@@ -310,13 +368,11 @@ export default function Ingesta() {
           >
             {etiquetaSubir()}
           </button>
-          {/* El aviso dice lo unico que decide el cliente: que el periodo este
-              completo. Que el mes exista lo contesta el servidor con su 400, y
-              el rango del mes se explica en la ayuda del campo. */}
+          {/* El aviso pide elegir el periodo; el mes imposible lo contesta el
+              servidor con su 400. */}
           {!periodoListo && (
             <p id={idAvisoPeriodo} className="ingesta-ayuda">
-              Escribe el periodo completo para poder subir el reporte: AAAA, o
-              AAAA-MM.
+              Elige el periodo para poder subir el reporte: un mes o un año.
             </p>
           )}
         </div>
