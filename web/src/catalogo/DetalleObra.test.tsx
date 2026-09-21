@@ -306,7 +306,7 @@ describe("detalle de obra (integracion con App)", () => {
     // Los metadatos, cada uno con su rotulo.
     expect(within(dato("Género")).getByText("Drama")).toBeTruthy();
     expect(within(dato("Año")).getByText("1991")).toBeTruthy();
-    expect(within(dato("Tipo")).getByText("serie")).toBeTruthy();
+    expect(within(dato("Tipo")).getByText("Serie")).toBeTruthy();
     expect(within(dato("IDA")).getByText("IDA-1")).toBeTruthy();
     expect(
       within(dato("Identificador de la obra")).getByText("obra-1"),
@@ -314,7 +314,7 @@ describe("detalle de obra (integracion con App)", () => {
 
     // Y las dos cifras que calcula el servidor, tal cual llegan.
     expect(
-      within(dato("Suma de los porcentajes declarados")).getByText("100.0000%"),
+      within(dato("Suma de los porcentajes declarados")).getByText("100%"),
     ).toBeTruthy();
     expect(within(dato("Versión vigente")).getByText("3")).toBeTruthy();
     expect(within(dato("Estado")).getByText("Completa")).toBeTruthy();
@@ -335,13 +335,13 @@ describe("detalle de obra (integracion con App)", () => {
       within(filaDePartes("tit-1"))
         .getAllByRole("cell")
         .map((td) => td.textContent),
-    ).toEqual(["tit-1", "IPI-00000001", "—", "75.0000%"]);
+    ).toEqual(["tit-1", "IPI-00000001", "—", "75%"]);
     expect(
       within(filaDePartes("tit-2"))
         .getAllByRole("cell")
         .map((td) => td.textContent),
-    ).toEqual(["tit-2", "IPI-00000002", "—", "25.0000%"]);
-    expect(screen.queryByText("60.0000%")).toBeNull();
+    ).toEqual(["tit-2", "IPI-00000002", "—", "25%"]);
+    expect(screen.queryByText("60%")).toBeNull();
 
     // La vuelta al catalogo: sin haber pasado por el catalogo no hay busqueda
     // que devolver, asi que lleva al catalogo entero. Lo que se prueba con el
@@ -436,7 +436,7 @@ describe("detalle de obra (integracion con App)", () => {
 
     // La suma va igual, porque es lo que el backend manda para ese caso.
     expect(
-      within(dato("Suma de los porcentajes declarados")).getByText("0.0000%"),
+      within(dato("Suma de los porcentajes declarados")).getByText("0%"),
     ).toBeTruthy();
 
     // Sin declaracion no hay partes ni tabla de partes.
@@ -448,10 +448,14 @@ describe("detalle de obra (integracion con App)", () => {
     // historial vacio en pantalla: el hecho se dice UNA vez.
     expect(consultas()).toEqual(["/api/obras/obra-3"]);
     expect(document.body.textContent).not.toMatch(/historial/i);
-    expect(document.body.textContent).toMatch(/no tiene ninguna declaración/i);
+    expect(
+      screen.getByText("Esta obra no tiene ninguna declaración."),
+    ).toBeTruthy();
+    // El hecho, sin la consecuencia de R-04 explicada.
+    expect(document.body.textContent).not.toMatch(/R-04|en reserva/);
   });
 
-  it("una declaracion incompleta se explica como el estado valido que es, en ambar", async () => {
+  it("una declaracion incompleta se dice con la etiqueta, en ambar, sin prosa", async () => {
     simularServidor({
       obra: () => json(obraIncompleta),
       historial: () => json([versionDosIncompleta]),
@@ -469,12 +473,11 @@ describe("detalle de obra (integracion con App)", () => {
     expect(etiqueta.className).toContain("badge-estado-incompleta");
     expect(etiqueta.className).not.toMatch(/error/);
 
-    // La consecuencia se explica -R-04, la reserva, que no se prorratea- y el
-    // texto dice que no es un error: un total por debajo de 100 no lo es.
-    expect(document.body.textContent).toMatch(/R-04/);
-    expect(document.body.textContent).toMatch(/en reserva/);
-    expect(document.body.textContent).toMatch(/nunca se prorratea/);
-    expect(document.body.textContent).toMatch(/no es un error/i);
+    // El estado lo comunica la etiqueta: la consecuencia de R-04 (reserva, sin
+    // prorrateo) ya no se explica en un parrafo.
+    expect(document.body.textContent).not.toMatch(/R-04/);
+    expect(document.body.textContent).not.toMatch(/en reserva/);
+    expect(document.body.textContent).not.toMatch(/no es un error/i);
     // Y no afirma nada sobre la suma que el estado no pruebe: `incompleta` es
     // tambien una parte sin IPI con la suma en 100, y el contrato manda los dos
     // campos justamente porque ninguno se deduce del otro.
@@ -486,9 +489,9 @@ describe("detalle de obra (integracion con App)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
 
     expect(
-      within(dato("Suma de los porcentajes declarados")).getByText("74.5000%"),
+      within(dato("Suma de los porcentajes declarados")).getByText("74.5%"),
     ).toBeTruthy();
-    expect(within(filaDePartes("tit-1")).getByText("74.5000%")).toBeTruthy();
+    expect(within(filaDePartes("tit-1")).getByText("74.5%")).toBeTruthy();
   });
 
   it("pinta el estado y la suma del backend aunque no cuadren con las partes", async () => {
@@ -519,11 +522,11 @@ describe("detalle de obra (integracion con App)", () => {
 
     expect(within(dato("Estado")).getByText("Incompleta")).toBeTruthy();
     expect(
-      within(dato("Suma de los porcentajes declarados")).getByText("12.5000%"),
+      within(dato("Suma de los porcentajes declarados")).getByText("12.5%"),
     ).toBeTruthy();
-    // Y la parte sigue diciendo lo suyo: 100.0000% en su fila, que es lo
+    // Y la parte sigue diciendo lo suyo: 100% en su fila, que es lo
     // declarado por ese titular.
-    expect(within(filaDePartes("tit-1")).getByText("100.0000%")).toBeTruthy();
+    expect(within(filaDePartes("tit-1")).getByText("100%")).toBeTruthy();
   });
 
   it("el titular_id va visible y el nombre sale del padron, en UNA peticion por los ids que la tabla muestra", async () => {
@@ -604,7 +607,7 @@ describe("detalle de obra (integracion con App)", () => {
 
     expect(consultasAlPadron()).toHaveLength(1);
     expect(nombreDeLaFila("tit-1")).toBe("—");
-    expect(within(filaDePartes("tit-1")).getByText("75.0000%")).toBeTruthy();
+    expect(within(filaDePartes("tit-1")).getByText("75%")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -669,7 +672,7 @@ describe("detalle de obra (integracion con App)", () => {
     ).toBeTruthy();
     expect(within(dato("Estado")).getByText("Completa")).toBeTruthy();
     expect(
-      within(dato("Suma de los porcentajes declarados")).getByText("100.0000%"),
+      within(dato("Suma de los porcentajes declarados")).getByText("100%"),
     ).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -706,9 +709,7 @@ describe("detalle de obra (integracion con App)", () => {
       // Las cifras de la obra siguen siendo las del backend.
       expect(within(dato("Estado")).getByText("Completa")).toBeTruthy();
       expect(
-        within(dato("Suma de los porcentajes declarados")).getByText(
-          "100.0000%",
-        ),
+        within(dato("Suma de los porcentajes declarados")).getByText("100%"),
       ).toBeTruthy();
     },
   );
@@ -828,7 +829,7 @@ describe("detalle de obra (integracion con App)", () => {
       // En particular, una version SIN `vigente_hasta` no se lee como abierta:
       // seria pintar como reparto de hoy el de una version ya cerrada. Y una
       // parte con el porcentaje como texto no se pinta como cifra.
-      expect(screen.queryByText("75.0000%")).toBeNull();
+      expect(screen.queryByText("75%")).toBeNull();
     },
   );
 
