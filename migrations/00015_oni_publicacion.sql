@@ -6,19 +6,18 @@
 -- de proceso ni direcciones. Esta migracion congela la instantanea y redefine
 -- la vista sobre lo publicado. Sigue sin una sola columna de dinero.
 --
--- COORDINACION DE NUMERO: esta migracion se llamaba 00003, luego 00008.
--- Esos numeros ya no se pueden usar: `main` llego a 00009
--- (`usuarios_de_recaudo`) y la rama de liquidacion (#36 / #80) reclama el
--- 00010. goose corre con `allowMissing = false`, asi que un numero LIBRE
--- por debajo de la version ya aplicada aborta con
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00003, luego 00008,
+-- luego 00013. Esos numeros ya no se pueden usar: `main` aplico hasta 00014
+-- y mergeo `00013_matching_difuso.sql` (duplicate version 13). goose corre
+-- con `allowMissing = false`, asi que un numero LIBRE por debajo de la
+-- version ya aplicada aborta con
 --
 --     found 1 missing migrations before current version N
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00013: main mergeo `00011_usos_modalidades_y_canales.sql`
--- (duplicate version 11). #80 reclama 00012 y #88 reclama 00014. Un ADR
--- admite huecos; una migracion no.
+-- Se toma el 00015: primer libre por encima de 00014. Un ADR admite huecos;
+-- una migracion no.
 
 -- +goose Up
 
