@@ -6,9 +6,10 @@
  * buscador los asocia por `id`-, para probarla sin renderizar nada.
  *
  * El `id` es el nombre EXACTO del parametro de `GET /obras` y tambien el de la
- * URL (`titulo` parcial sin distinguir mayusculas, `genero` exacto, `ipi`
- * exacto, `anio` entero positivo). Una sola forma de nombrarlos evita la
- * traduccion que se desvia.
+ * URL (`titulo` por subcadena o por parecido: ignora mayusculas, tildes y orden
+ * de palabras, y el servidor ordena por parecido; `genero` exacto, `ipi` exacto,
+ * `anio` entero positivo). Una sola forma de nombrarlos evita la traduccion que
+ * se desvia.
  */
 
 export type CategoriaId = "titulo" | "genero" | "ipi" | "anio";
@@ -45,7 +46,7 @@ export const CATEGORIAS: readonly CategoriaDeBusqueda[] = [
   {
     id: "titulo",
     etiqueta: "Título",
-    placeholder: "Parte del título…",
+    placeholder: "Título o parte, sin importar tildes…",
     inputMode: "text",
     modo: "vivo",
   },

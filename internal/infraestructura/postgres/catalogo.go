@@ -227,22 +227,42 @@ func (c catalogo) PorID(ctx context.Context, id string) (repertorio.Obra, error)
 // corriera antes del recorte, la primera pagina costaria mas que servir el
 // catalogo entero.
 //
-// ORDER BY id nombra la clave (no la posicion): el ADR 0005 exige
-// reproducibilidad, y el UNION ALL duplica columnasCatalogoDe.
+// ORDER BY nombra las claves (no la posicion): ADR 0005, y el UNION ALL duplica
+// columnasCatalogoDe. Ordena por parecido y luego por id; sin titulo el parecido
+// vale 0 y queda el orden de id de siempre. El id detras es lo que evita que la
+// pagina 2 repita o se salte filas cuando varias obras empatan.
 //
 // OFFSET degrada linealmente con la profundidad (KISS hoy). Cuando el
 // catalogo sea real, el paso a keyset es una decision, no un descubrimiento.
+//
+// Con titulo el orden es por parecido, y el paginado por OFFSET puede mover filas
+// entre paginas si el catalogo cambia mientras se navega: una obra nueva mas
+// parecida empuja a las demas hacia abajo, y la pagina 2 puede repetir la ultima
+// fila de la 1. Se acepta porque la respuesta no promete totales ni estabilidad
+// entre paginas (lo senalo la revision de #145). El filtro `ILIKE OR %` sigue los
+// dos indices con un BitmapOr: EXPLAIN en docs/planes/32-difuso/explain-trgm.md.
 func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error) {
 	p := f.ConDefecto()
+	// El titulo casa por SUBCADENA o por PARECIDO: el ILIKE no cruza tildes ni
+	// orden de palabras. El corte de `%` se deja en el de fabrica (0.3) porque
+	// esto es un buscador y no decide pagos (D10).
 	const filtrosComunes = `
-		    AND ($1 = ''  OR o.titulo ILIKE $2)
+		    AND ($1 = ''  OR o.titulo ILIKE $2
+		                  OR o.titulo_norm % titulo_normalizado($1))
 		    AND ($3 = ''  OR o.genero = $3)
 		    AND ($4 = 0   OR o.anio   = $4)`
+
+	// parecido viaja como columna para ordenar despues del LATERAL sin
+	// recalcularlo; no se proyecta: es criterio de orden, no dato de la obra.
+	const parecido = `
+		    CASE WHEN $1 = '' THEN 0
+		         ELSE similarity(o.titulo_norm, titulo_normalizado($1))
+		    END AS parecido`
 	// pagina: ids + metadatos sin coautores. El LATERAL va fuera, contra
 	// las filas que pasan el LIMIT (o contra todas si LimiteSinTope).
 	pagina := `
 	     (
-	       SELECT ` + columnasCatalogoDe + `
+	       SELECT ` + columnasCatalogoDe + `,` + parecido + `
 	         FROM obras o
 	        WHERE $5 <> ''
 	          AND EXISTS (SELECT 1 FROM obra_coautores c
@@ -250,13 +270,13 @@ func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]reperto
 	     )
 	     UNION ALL
 	     (
-	       SELECT ` + columnasCatalogoDe + `
+	       SELECT ` + columnasCatalogoDe + `,` + parecido + `
 	         FROM obras o
 	        WHERE $5 = ''` + filtrosComunes + `
 	     )`
 	sql := `SELECT ` + columnasCatalogoDe + `, COALESCE(ca.coautores, '[]'::jsonb)
 	   FROM (` + pagina + `
-	     ORDER BY id`
+	     ORDER BY parecido DESC, id`
 	args := []any{f.Titulo, patronContiene(f.Titulo), f.Genero, f.Anio, f.IPI}
 	if p.Limite != aplicacion.LimiteSinTope {
 		sql += `
@@ -265,7 +285,7 @@ func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]reperto
 	}
 	sql += `
 	   ) o` + lateralCoautores + `
-	 ORDER BY o.id`
+	 ORDER BY o.parecido DESC, o.id`
 
 	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {

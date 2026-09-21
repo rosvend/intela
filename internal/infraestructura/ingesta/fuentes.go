@@ -80,11 +80,12 @@ func MapaCaracol() Mapa {
 		// mes que viene por un motivo que no es.
 		Hoja: "",
 		Columnas: []Columna{
-			// `Titulo` y no `Titulo_original`: es el titulo con el que se emitio
-			// en Colombia, que es contra el que resuelve la cascada. Los dos
-			// difieren en 16 de 59 filas; el original se recuperara cuando el
-			// esquema canonico admita las dos variantes.
+			// `Titulo` es el titulo con el que se emitio en Colombia y
+			// `Titulo_original` el de origen: difieren en 16 de 59 filas, y el
+			// escalon 3 prueba los dos (#32). El original no es requerido: una
+			// entrega sin esa columna se lee igual y solo pierde ese recall.
 			{Campo: CampoTitulo, Nombre: "Titulo", Requerida: true},
+			{Campo: CampoTituloOrig, Nombre: "Titulo_original", Requerida: false},
 			// `ID_Ficha` es la clave de obra de la fuente. El valor va tal
 			// cual; la clave del contrato es `id_ficha`, que es lo que indexa
 			// `alias_obra.tipo_id` (ADR 0018). Sin el par `id_ficha=<valor>`,
