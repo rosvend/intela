@@ -22,13 +22,19 @@ type Procesos struct {
 	Repo       RepositorioProcesos
 	Parametros ParametrosNormativos
 
-	// Los cuatro puertos de abajo solo hacen falta para valorizar (Nacional,
-	// RD 13.5): abrir un proceso, firmarlo o rechazar una compuerta no los
-	// toca. El internacional no valoriza por puntos (RD 7.4) y nunca los usa.
+	// Los cinco de abajo solo hacen falta para valorizar (Nacional, RD 13.5):
+	// abrir un proceso, firmarlo o rechazar una compuerta no los tocan. El
+	// internacional no valoriza por puntos (RD 7.4) y nunca los usa.
 	Bolsas        RepositorioRecaudo
 	Declaraciones GestionDeclaraciones
 	Usos          RepositorioUsosDeReparto
 	Resultados    RepositorioResultados
+	// Unidad ata la escritura de resultados_* (puerto Resultados) y la de
+	// procesos.etapa (puerto Repo) a UN solo hecho: valorizar sin persistir la
+	// nueva etapa dejaria una corrida cuyo resultado ya esta en la base pero
+	// que un reintento volveria a valorizar -- doble escritura del mismo
+	// dinero. Solo hace falta cuando AvanzarEtapa entra a valorizar.
+	Unidad UnidadDeTrabajo
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -95,11 +101,27 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 	if err != nil {
 		return ProcesoVista{}, err
 	}
+
 	if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
-		if err := uc.valorizar(ctx, p); err != nil {
+		// Valorizar y guardar la nueva etapa son un solo hecho: sin la unidad,
+		// un fallo entre las dos escrituras deja un resultado ya guardado pero
+		// el proceso todavia en deducciones, y un reintento lo volveria a
+		// valorizar -- doble escritura del mismo dinero.
+		if uc.Unidad == nil {
+			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta UnidadDeTrabajo", procesoID)
+		}
+		err := uc.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+			if err := uc.valorizar(ctx, p); err != nil {
+				return err
+			}
+			return uc.Repo.Guardar(ctx, aProcesoVista(p))
+		})
+		if err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
+		return aProcesoVista(p), nil
 	}
+
 	if err := uc.Repo.Guardar(ctx, aProcesoVista(p)); err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
@@ -175,11 +197,11 @@ func (uc Procesos) Firmar(ctx context.Context, procesoID string, rol reparto.Rol
 	if err != nil {
 		return ProcesoVista{}, err
 	}
+	// Firmar solo agrega una fila a `firmas`: no toca etapa, revision ni
+	// rechazo de `procesos`, asi que no hay una segunda escritura que
+	// coordinar con esta.
 	nueva := p.Firmas[len(p.Firmas)-1]
 	if err := uc.Repo.GuardarFirma(ctx, procesoID, nueva); err != nil {
-		return ProcesoVista{}, fmt.Errorf("firmar %q: %w", procesoID, err)
-	}
-	if err := uc.Repo.Guardar(ctx, aProcesoVista(p)); err != nil {
 		return ProcesoVista{}, fmt.Errorf("firmar %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil

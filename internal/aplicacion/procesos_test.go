@@ -361,6 +361,7 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		}},
 		Usos:       &usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("z", reparto.TV, "")}},
 		Resultados: &repositorioResultadosFalso{},
+		Unidad:     &unidadFalsa{},
 	}
 
 	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
@@ -376,6 +377,26 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 	}
 	if resultados.guardado.SnapshotID != "snap-1" {
 		t.Fatalf("SnapshotID del resultado = %q, se esperaba el snapshot congelado del proceso", resultados.guardado.SnapshotID)
+	}
+}
+
+func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Nacional, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = reparto.EtapaDeducciones
+	if err := repo.Guardar(t.Context(), aProcesoVista(p)); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	uc := Procesos{Repo: repo} // sin Unidad
+
+	_, err = uc.AvanzarEtapa(t.Context(), "proc-1")
+	if err == nil {
+		t.Fatal("se esperaba un error de cableado, no un panico ni una valorizacion sin atomicidad")
 	}
 }
 
