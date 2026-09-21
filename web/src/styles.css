@@ -35,6 +35,7 @@
   --ok-fondo: #eaf5ee;
   --alerta-fondo: #fdf3e7;
   --radio: 8px;
+  --radio-tarjeta: 16px; /* tarjetas del catalogo: todas con la misma curva */
   --radio-boton: 99px; /* todos los botones del mockup son pill */
   --sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -1055,7 +1056,7 @@ td {
   padding: 1.1rem 1.25rem;
   background: var(--superficie);
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
 }
 
 .catalogo-campos {
@@ -1125,15 +1126,11 @@ td {
   outline-offset: 2px;
 }
 
-.catalogo-resumen {
-  margin: 0;
-}
-
 /* La tabla y su pie viven en la misma tarjeta blanca del mockup. */
 .catalogo-caja {
   background: var(--superficie);
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
   overflow: hidden;
 }
 
@@ -1247,16 +1244,25 @@ td {
   gap: 0.5rem;
 }
 
-.catalogo-pagina {
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.35rem 0.9rem;
+/* Boton redondo con icono: paginador del catalogo y quitar fila del editor.
+   El nombre accesible va en aria-label; el SVG es decorativo. */
+.catalogo-pagina,
+.boton-icono {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
   border: 1px solid var(--borde);
-  border-radius: var(--radio-boton);
+  border-radius: 50%;
   background: var(--superficie);
   color: var(--texto);
   cursor: pointer;
+}
+
+.boton-icono:hover:not(:disabled) {
+  border-color: var(--acento);
+  color: var(--acento);
 }
 
 .catalogo-pagina:disabled {
@@ -1265,7 +1271,8 @@ td {
   cursor: default;
 }
 
-.catalogo-pagina:focus-visible {
+.catalogo-pagina:focus-visible,
+.boton-icono:focus-visible {
   outline: 2px solid var(--acento);
   outline-offset: 2px;
 }
@@ -1279,7 +1286,7 @@ td {
   background: var(--error-fondo);
   border: 1px solid var(--borde);
   border-left: 4px solid var(--error);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
   color: var(--error);
   overflow-wrap: anywhere;
 }
@@ -1333,7 +1340,7 @@ td {
   padding: 1.1rem 1.25rem;
   background: var(--superficie);
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
 }
 
 .detalle-ficha > div {
@@ -1467,7 +1474,7 @@ td {
   background: var(--acento-activo);
   border: 1px solid var(--borde);
   border-left: 4px solid var(--acento);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
   font-size: 0.9rem;
   max-width: 62rem;
 }
