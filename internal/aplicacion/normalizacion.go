@@ -13,8 +13,15 @@ import (
 )
 
 // Origenes de la cola de revision. El listado es uno; el tipo dice de cual
-// detector salio la fila. "anomalia" lo rellena el #37. "adaptador" son los
-// rechazos del mapa de columnas (#25): no se afirman como normalizacion.
+// detector salio la fila. "adaptador" son los rechazos del mapa de columnas
+// (#25): no se afirman como normalizacion.
+//
+// "anomalia" NO lo rellena nadie, y el comentario anterior decia que lo haria
+// el #37. No fue asi: las anomalias de un periodo aterrizaron en su propia
+// tabla y su propio recurso (`/alertas`, ADR 0020), porque necesitan estado de
+// resolucion y esta cola no lo tiene. El valor se conserva porque el CHECK de
+// `usos_rechazados.tipo` lo admite desde la migracion 00010 y quitarlo seria
+// un cambio de esquema sin motivo.
 const (
 	TipoRevisionNormalizacion = "normalizacion"
 	TipoRevisionAnomalia      = "anomalia"

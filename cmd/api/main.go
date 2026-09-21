@@ -149,6 +149,22 @@ func ejecutar(log *slog.Logger) error {
 		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 
+	// La deteccion de anomalias de un periodo (#37). Seis puertos del mismo
+	// *Store, y tres de ellos son ESTRECHOS a proposito: `Entregas` solo lee
+	// -- no puede llamar a GuardarEntrega, que quema la huella de un archivo
+	// --, `Declaraciones` es el mismo LectorDeDeclaraciones que usa el
+	// catalogo y `Coautores` es una sola consulta. La unidad de trabajo esta
+	// porque las alertas y su asiento tienen que ser un solo hecho (ADR 0006).
+	anomalias := aplicacion.Anomalias{
+		Entregas:      store,
+		Declaraciones: store,
+		Coautores:     store,
+		Alertas:       store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
@@ -158,6 +174,7 @@ func ejecutar(log *slog.Logger) error {
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Anomalias:     anomalias,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

@@ -62,6 +62,7 @@ type API struct {
 	declaraciones Declaraciones
 	recaudo       Recaudo
 	cola          ColaRevision
+	anomalias     Anomalias
 	opts          Opciones
 	log           *slog.Logger
 }
@@ -82,11 +83,17 @@ type Casos struct {
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
 	Cola          ColaRevision
+	Anomalias     Anomalias
 }
 
-// ColaRevision lista lo que espera ojo humano: filas que no se pudieron
-// normalizar, y mas adelante las anomalias del #37. Se declara en el
-// consumidor, igual que [Catalogo].
+// ColaRevision lista las filas que no se pudieron normalizar y esperan ojo
+// humano. Se declara en el consumidor, igual que [Catalogo].
+//
+// NO lleva las anomalias del #37, aunque un comentario anterior lo anunciara:
+// aterrizaron en su propio recurso, `/alertas`, porque necesitan estado de
+// resolucion y `ItemRevision` no lo tiene, y porque `/admin/*` es solo de
+// `administrador` y el tablero de anomalias lo miran tambien `distribucion` y
+// `auditor` (ADR 0020).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
@@ -111,6 +118,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
 		cola:          casos.Cola,
+		anomalias:     casos.Anomalias,
 		opts:          opts,
 		log:           log,
 	}
@@ -221,6 +229,37 @@ func (a *API) Router() http.Handler {
 			))
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
+		})
+
+		// La bandeja de anomalias de un periodo (#37). Recurso de nivel
+		// superior y NO bajo `/admin/*`, que es solo `administrador`: el
+		// tablero de anomalias lo miran los tres roles que operan o auditan
+		// el reparto, y meterlo ahi dejaria en 403 permanente al panel de
+		// #104 para `distribucion` y `auditor` (ADR 0020).
+		//
+		// Dos sub-grupos y NO un chequeo a mano dentro del handler, porque
+		// ver y resolver no piden lo mismo. `auditor` lee todo y no opera el
+		// pipeline ni firma (docs/architecture/roles.md), asi que puede mirar
+		// la bandeja y no puede cerrar una alerta: cerrarla es una decision
+		// sobre a quien se le paga. `distribucion` si, porque es quien
+		// persigue estas alertas con los autores (`RD 13.5`). Escribir el
+		// chequeo en el handler es justo el fallo que rbac.go existe para que
+		// se pueda auditar en un solo sitio (#47).
+		protegido.Route("/alertas", func(al chi.Router) {
+			al.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.conAnomalias(a.listarAlertas))
+			})
+			al.Group(func(escritura chi.Router) {
+				escritura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+				))
+				escritura.Post("/evaluacion", a.conAnomalias(a.evaluarAnomalias))
+				escritura.Post("/{id}/resolver", a.conAnomalias(a.resolverAlerta))
+			})
 		})
 
 		// La ingesta manual de reportes de uso. Pide `administrador` por lo

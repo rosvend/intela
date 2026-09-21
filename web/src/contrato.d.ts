@@ -120,10 +120,15 @@ export interface paths {
         };
         /**
          * Cola de revision
-         * @description Lista las filas que esperan ojo humano antes de ponderar: las que
-         *     no se pudieron normalizar (fecha inparseable, moneda no reconocida,
-         *     parametro normativo ausente) y, cuando aterrice el #37, las anomalias
-         *     de un periodo (ONI, duplicados, declaraciones que no suman 100%).
+         * @description Lista las filas que esperan ojo humano antes de ponderar: las que no
+         *     se pudieron normalizar (fecha inparseable, moneda no reconocida,
+         *     parametro normativo ausente) y los rechazos del adaptador de formato.
+         *
+         *     **Las anomalias de un periodo NO salen por aqui.** Esta descripcion
+         *     prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
+         *     necesita estado de resolucion y este schema no lo tiene, y este prefijo
+         *     es solo de `administrador` mientras el tablero de anomalias lo miran
+         *     ademas `distribucion` y `auditor`. Viven en `/alertas` (ADR 0020).
          *
          *     Un solo listado y un solo schema. `tipo` discrimina el origen
          *     (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
@@ -503,6 +508,103 @@ export interface paths {
         get: operations["bolsaPorID"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alertas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar las anomalias de un periodo
+         * @description Devuelve las alertas que cuadran con el filtro, de la mas reciente a
+         *     la mas antigua. Sin coincidencias devuelve una lista vacia, no un 404.
+         *
+         *     Los tres filtros son opcionales y ninguno se ignora cuando llega mal:
+         *     un `periodo` mal formado o un `tipo` que no esta en la lista cerrada
+         *     salen con 400. Ignorados devolverian todo -o nada- y quien pregunta lo
+         *     leeria como "ese periodo no tuvo anomalias".
+         *
+         *     Esta ruta NO evalua: es una lectura. La pasada de deteccion se dispara
+         *     con `POST /alertas/evaluacion`.
+         */
+        get: operations["listarAlertas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alertas/evaluacion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluar las anomalias de un periodo
+         * @description Corre los seis detectores sobre el periodo ya armado y escribe las
+         *     alertas que encuentre.
+         *
+         *     **Es idempotente.** Se puede correr al cerrar la ingesta, otra vez
+         *     cuando un autor declara, y otra antes de la compuerta: la clave natural
+         *     de la tabla es la identidad del hallazgo (periodo, tipo y registro
+         *     ofensor), asi que la misma anomalia no se escribe dos veces. Por eso la
+         *     respuesta trae `detectadas` y `nuevas` por separado: la segunda pasada
+         *     sigue detectando seis y escribe cero.
+         *
+         *     Una alerta que una persona ya cerro **no se reabre** aunque la anomalia
+         *     siga ahi. Limitacion conocida, ver ADR 0020.
+         *
+         *     Responde 200 y no 201: la pasada no crea un recurso con URL, crea N
+         *     alertas o ninguna, y lo que devuelve es el recuento.
+         *
+         *     Escribe, asi que pide `administrador` o `distribucion`. `auditor` lee
+         *     la bandeja y no la dispara.
+         */
+        post: operations["evaluarAnomalias"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alertas/{id}/resolver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolver una alerta
+         * @description Marca la alerta como atendida a nombre de quien la atiende. Quien firma
+         *     sale de la SESION y no del cuerpo: dejarlo llegar por JSON permitiria
+         *     firmar la decision a nombre de otro, y el asiento del ADR 0006 tiene
+         *     que nombrar a quien la tomo de verdad.
+         *
+         *     **No toca el registro ofensor.** Asignar la obra de un ONI o descartar
+         *     una fila es la bandeja de #39, con su propio caso de uso y su propio
+         *     asiento; esto solo deja constancia de que alguien se hizo cargo.
+         *
+         *     Resolver dos veces responde 409, no 200: quien pulsa el boton el
+         *     segundo tiene que saber que la firma escrita no es la suya. Dos
+         *     personas mirando el mismo tablero es el caso normal.
+         */
+        post: operations["resolverAlerta"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1151,11 +1253,190 @@ export interface components {
             error: string;
         };
         /**
-         * @description Una fila de la cola de revision. El mismo schema sirve a la
-         *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
-         *     y a las anomalias (OE-5 / #37): `tipo` dice de cual detector salio,
-         *     `codigo` es el motivo tipado (columna propia) y `motivo` nombra el
-         *     campo. No hay importes: una fila en revision no pondera.
+         * @description Los seis detectores de OE-5 / #37. Lista cerrada: lo que se guarde con
+         *     otra grafia no lo encuentra ningun filtro, y nada falla de forma
+         *     visible.
+         *
+         *     Los cinco primeros son el contrato que el tablero de anomalias ya fijo
+         *     antes de que existiera el backend; el sexto lo anade esta issue.
+         *
+         *     - `oni` — la cascada de identificacion corrio y no reconocio la obra
+         *       (ADR 0007). No es un fallo: es una etapa del diseno, y su parte queda
+         *       en reserva hasta que se resuelva o prescriba (`R-19`, `RD 13.8`).
+         *     - `duplicado_archivo` — los mismos bytes en dos entregas. El
+         *       `UNIQUE (sha256, fuente)` de `reportes` solo cierra la repeticion de
+         *       la MISMA fuente; esto caza la que cruza fuentes o periodos.
+         *     - `duplicado_registro` — el mismo registro logico en dos archivos del
+         *       mismo periodo. La repeticion DENTRO de un archivo ya la rechaza el
+         *       adaptador de formato al ingerir.
+         *     - `titular_sin_porcentaje` — un coautor del catalogo sin parte en la
+         *       declaracion vigente, o una parte sin IPI. Nombra a la PERSONA.
+         *     - `reserva_declaracion_incompleta` — `R-04` / `RD 13.1.3`: lo declarado
+         *       no suma 100 y se retiene el TOTAL de esa obra. Nombra la OBRA y el
+         *       dinero. Es un estado valido del modelo, no un error.
+         *     - `tipo_obra_sin_mapear` — la obra no cae en ninguna de las cuatro
+         *       categorias de `RD 9.1.1`, asi que no hay ponderacion que aplicarle.
+         * @enum {string}
+         */
+        TipoDeAnomalia: "oni" | "duplicado_archivo" | "duplicado_registro" | "titular_sin_porcentaje" | "reserva_declaracion_incompleta" | "tipo_obra_sin_mapear";
+        /**
+         * @description Una anomalia de un periodo, con el registro exacto que la disparo.
+         *
+         *     No hay importes, y por la misma razon que no los tiene un uso: una
+         *     alerta dice que una fila o una obra no esta en condiciones de ponderar,
+         *     nunca cuanto vale.
+         */
+        Alerta: {
+            /**
+             * Format: uuid
+             * @description Identificador de la alerta. Lo genera la base.
+             */
+            id: string;
+            tipo: components["schemas"]["TipoDeAnomalia"];
+            /**
+             * @description La frase que lee una persona de distribucion, con las cifras
+             *     concretas -que suma da, que otra entrega colisiona, en que fila
+             *     venia el registro repetido-. Quien persigue la alerta tiene que
+             *     poder actuar sin abrir la base.
+             */
+            detalle: string;
+            /**
+             * @description Periodo de la evaluacion que la levanto. Va en la fila y no se
+             *     deduce del registro ofensor: la misma obra puede quedar retenida en
+             *     dos periodos seguidos y cada uno tiene su propia alerta.
+             * @example 2025-01
+             */
+            periodo: string;
+            /**
+             * @description El registro ofensor en una sola cadena, para pintar:
+             *     `<ref_tipo>:<ref_id>`, y `#<ref_titular>` detras cuando lo hay.
+             *     Es lo que el tablero mete en la celda "Referencia"; para navegar al
+             *     registro usar `ref_tipo` y `ref_id`, que no hay que partir.
+             * @example obra:obra-12#IPI-00000002
+             */
+            referencia: string;
+            /**
+             * @description A que tabla apunta el registro ofensor. NO es una clave foranea, y
+             *     es deliberado: la referencia apunta a tablas distintas segun el
+             *     detector, y una FK con CASCADE se llevaria la alerta por delante el
+             *     dia que la resolucion de #39 borre el uso ofensor -y con ella el
+             *     rastro de que aquello paso.
+             * @enum {string}
+             */
+            ref_tipo: "uso" | "reporte" | "obra";
+            /**
+             * @description Identificador del registro ofensor dentro de su tabla.
+             * @example obra-12
+             */
+            ref_id: string;
+            /**
+             * @description IPI de la persona a la que le falta la parte. Solo lo trae
+             *     `titular_sin_porcentaje`: es la segunda coordenada del registro
+             *     ofensor, porque lo que falta es una fila de `declaraciones` y su
+             *     identidad es (obra, titular). Con la obra sola, dos coautores
+             *     ausentes de la misma obra serian la misma alerta.
+             * @example IPI-00000002
+             */
+            ref_titular?: string;
+            /**
+             * @description Si este tipo BLOQUEA la distribucion del periodo. Es DERIVADO del
+             *     tipo, no un dato guardado: persistirlo congelaria la clasificacion
+             *     en el momento de detectar.
+             *
+             *     La linea no es "que tan grave suena" sino si dejarlo sin resolver
+             *     hace que las cifras del periodo salgan MAL. Bloquean los dos
+             *     duplicados -una emision contada dos veces infla los puntos de su
+             *     obra y desinfla los de todas las demas del mismo canal, y el valor
+             *     punto de `RD 9.1.1` es un cociente- y `tipo_obra_sin_mapear`. NO
+             *     bloquean `oni` -etapa del diseno- ni las dos de declaracion -estado
+             *     valido del modelo: se retiene esa obra y el periodo sigue-.
+             */
+            critica: boolean;
+            /**
+             * Format: date-time
+             * @description Cuando se vio por PRIMERA vez. Una segunda pasada que vuelva a
+             *     detectarla no lo mueve.
+             */
+            detectada: string;
+            /**
+             * @description Si alguien ya se hizo cargo. Una alerta resuelta no se reabre
+             *     aunque la anomalia siga ahi (ADR 0020).
+             */
+            resuelta: boolean;
+            /**
+             * @description Cuenta que la cerro. Sale de la sesion, nunca del cuerpo.
+             * @example usr-admin
+             */
+            resuelta_por?: string;
+            /**
+             * Format: date-time
+             * @description Instante de la resolucion, tomado del reloj del nucleo.
+             */
+            resuelta_en?: string;
+            /** @description Lo que quien resolvio quiso dejar escrito. Opcional. */
+            nota?: string;
+        };
+        /**
+         * @description El periodo que se va a evaluar. Va en el cuerpo y no en la query porque
+         *     esta operacion ESCRIBE: un POST cuyo unico argumento viaja en la URL se
+         *     copia y se repite desde la barra del navegador con demasiada facilidad.
+         */
+        PedidoDeEvaluacion: {
+            /** @example 2025-01 */
+            periodo: string;
+        };
+        /**
+         * @description La nota de quien resuelve. Todo lo demas -quien y cuando- lo pone el
+         *     servidor: la firma sale de la sesion y el instante del reloj del
+         *     nucleo.
+         */
+        ResolucionDeAlerta: {
+            /** @example hablado con la autora, declara esta semana */
+            nota?: string;
+        };
+        /** @description Recuento de una pasada de deteccion. */
+        ResumenDeEvaluacion: {
+            /** @example 2025-01 */
+            periodo: string;
+            /**
+             * @description Cuantas anomalias tiene el periodo AHORA. No baja porque ya
+             *     estuvieran escritas.
+             */
+            detectadas: number;
+            /**
+             * @description Cuantas de esas no estaban antes de esta pasada. Las dos cifras
+             *     hacen falta: con una sola, correr la evaluacion dos veces daria 0 la
+             *     segunda y se leeria como "el periodo esta limpio".
+             */
+            nuevas: number;
+            /**
+             * @description Lo detectado en esta pasada, por tipo. Trae los SEIS tipos siempre,
+             *     con cero explicito donde no hubo nada: una clave ausente no se
+             *     distingue de un cero al otro lado del JSON, y el tablero pinta una
+             *     tarjeta por tipo.
+             */
+            por_tipo: {
+                [key: string]: number;
+            };
+            /**
+             * @description Alertas sin resolver del periodo cuyo tipo bloquea la distribucion.
+             *     Es el predicado que consumira la compuerta de #34 -que todavia no
+             *     existe: `/admin/pipeline` es un andamio-. Se expone aqui para que
+             *     la cifra se pueda mirar antes de que esa compuerta la use.
+             */
+            criticas_abiertas: number;
+        };
+        /**
+         * @description Una fila de la cola de revision. Sirve a la normalizacion (OE-1) y a
+         *     los rechazos del adaptador de formato (#25): `tipo` dice de cual
+         *     detector salio, `codigo` es el motivo tipado (columna propia) y
+         *     `motivo` nombra el campo. No hay importes: una fila en revision no
+         *     pondera.
+         *
+         *     `anomalia` sigue en el enum de `tipo` porque la columna
+         *     `usos_rechazados.tipo` lo admite desde la migracion 00010, pero las
+         *     anomalias de OE-5 / #37 **no se sirven por aqui**: van por `/alertas`,
+         *     que si tiene estado de resolucion y roles propios (ADR 0020).
          */
         ItemRevision: {
             /** @description Identificador de la fila, el mismo espacio que `usos`. */
@@ -1167,9 +1448,9 @@ export interface components {
             tipo: "normalizacion" | "anomalia" | "adaptador";
             /**
              * @description Motivo tipado (`fecha_inparseable`, `moneda_desconocida`,
-             *     `parametro_ausente`, `rechazo_formato`, y los del #37). Permite
-             *     filtrar sin parsear prosa. Se persiste en columna propia; no se
-             *     re-deriva cortando el texto del motivo.
+             *     `parametro_ausente`, `rechazo_formato`). Permite filtrar sin
+             *     parsear prosa. Se persiste en columna propia; no se re-deriva
+             *     cortando el texto del motivo.
              */
             codigo: string;
             /** @description Texto que nombra el campo y explica que falta o esta mal. */
@@ -3034,6 +3315,359 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "esa bolsa no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listarAlertas: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y `12`.
+                 *     Un valor mal formado se rechaza con 400 en vez de ignorarse.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Uno de los seis tipos de anomalia. Una grafia que no este en la
+                 *     lista se rechaza con 400: devolver la lista vacia haria pasar un
+                 *     `onni` por "no hay ninguna de ese tipo".
+                 */
+                tipo?: components["schemas"]["TipoDeAnomalia"];
+                /**
+                 * @description `false` deja solo las abiertas, `true` solo las cerradas. Sin el
+                 *     parametro salen las dos: "no filtrar" y "solo las resueltas" no
+                 *     pueden ser el mismo valor, o no habria forma de pedir el historial.
+                 * @example false
+                 */
+                resueltas?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Las alertas que cuadran. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "3f1d0a4e-0000-4000-8000-000000000001",
+                     *         "tipo": "reserva_declaracion_incompleta",
+                     *         "detalle": "la declaracion vigente de la obra \"obra-12\" suma 60% en 1 parte(s) y no llega a 100: se retiene el TOTAL de esa obra, no se reparte la parte declarada (R-04, RD 13.1.3)",
+                     *         "periodo": "2025-01",
+                     *         "referencia": "obra:obra-12",
+                     *         "ref_tipo": "obra",
+                     *         "ref_id": "obra-12",
+                     *         "critica": false,
+                     *         "detectada": "2026-05-02T08:30:00Z",
+                     *         "resuelta": false
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Alerta"][];
+                };
+            };
+            /** @description Un filtro llego mal formado o fuera de su lista cerrada. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    evaluarAnomalias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "periodo": "2025-01"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PedidoDeEvaluacion"];
+            };
+        };
+        responses: {
+            /** @description La pasada termino. Recuento de lo que se vio y de lo que se escribio. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2025-01",
+                     *       "detectadas": 6,
+                     *       "nuevas": 6,
+                     *       "por_tipo": {
+                     *         "oni": 1,
+                     *         "duplicado_archivo": 1,
+                     *         "duplicado_registro": 1,
+                     *         "titular_sin_porcentaje": 1,
+                     *         "reserva_declaracion_incompleta": 1,
+                     *         "tipo_obra_sin_mapear": 1
+                     *       },
+                     *       "criticas_abiertas": 3
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ResumenDeEvaluacion"];
+                };
+            };
+            /** @description El periodo falta o esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resolverAlerta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identificador de la alerta (UUID).
+                 * @example 3f1d0a4e-0000-4000-8000-000000000001
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * @description Opcional. La nota es informacion para quien lea el tablero despues;
+         *     el dato obligatorio -quien resolvio- sale de la sesion.
+         */
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "nota": "hablado con la autora, declara esta semana"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ResolucionDeAlerta"];
+            };
+        };
+        responses: {
+            /** @description La alerta, ya cerrada y firmada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "3f1d0a4e-0000-4000-8000-000000000001",
+                     *       "tipo": "reserva_declaracion_incompleta",
+                     *       "detalle": "la declaracion vigente de la obra \"obra-12\" suma 60% en 1 parte(s) y no llega a 100",
+                     *       "periodo": "2025-01",
+                     *       "referencia": "obra:obra-12",
+                     *       "ref_tipo": "obra",
+                     *       "ref_id": "obra-12",
+                     *       "critica": false,
+                     *       "detectada": "2026-05-02T08:30:00Z",
+                     *       "resuelta": true,
+                     *       "resuelta_por": "usr-admin",
+                     *       "resuelta_en": "2026-05-03T14:05:00Z",
+                     *       "nota": "hablado con la autora, declara esta semana"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Alerta"];
+                };
+            };
+            /** @description El cuerpo no es un JSON valido. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el cuerpo tiene que ser un JSON con la nota"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ninguna alerta con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "esa alerta no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La alerta existe y alguien la cerro antes. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "esa alerta ya estaba resuelta"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

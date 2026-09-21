@@ -788,8 +788,67 @@ type Calendario interface {
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 
+// RepositorioAlertas es la bandeja de anomalias de un periodo (#37).
+//
+// # Guardar tiene que ser IDEMPOTENTE, y no es un detalle del adaptador
+//
+// [Anomalias.Evaluar] se puede correr las veces que haga falta -- al cerrar la
+// ingesta, otra vez despues de arreglar una declaracion, otra vez antes de la
+// compuerta de #34 -- y las tres pasadas ven las mismas anomalias. Sin clave
+// natural, la tercera pasada triplica el tablero y el contador de la compuerta
+// deja de significar nada.
+//
+// La clave es (periodo, tipo, ref_tipo, ref_id, ref_titular), que es la
+// identidad del HALLAZGO: la misma anomalia sobre el mismo registro del mismo
+// periodo es una sola alerta, se detecte una vez o veinte. El detalle NO entra
+// en la clave a proposito -- es prosa, y reescribir una frase duplicaria la
+// fila --.
+//
+// Devuelve cuantas filas nuevas entraron, no cuantas se le pasaron: es la
+// unica forma de que quien llama pueda decir "esta pasada encontro tres
+// anomalias que antes no estaban".
+//
+// # Una alerta ya resuelta NO se reabre
+//
+// Volver a detectar algo que una persona marco como resuelto deja la fila como
+// esta. Es deliberado: la resolucion de #39 actua sobre el REGISTRO OFENSOR
+// -asignar la obra, descartar la fila-, asi que si la anomalia sigue ahi es
+// porque el registro sigue igual, y reabrirla borraria la decision de quien la
+// cerro sin que nadie lo pidiera. Queda escrito como limitacion conocida en el
+// ADR 0020.
+// # Los metodos llevan "Alerta(s)" en el nombre y no es redundancia
+//
+// `Listar`, `Guardar` y `Resolver` a secas serian mas cortos y no caben: el
+// mismo *Store satisface este puerto y [GestionDeclaraciones], que ya tiene un
+// `Guardar` con otra firma, y dos metodos con el mismo nombre no caben en un
+// tipo. Es lo mismo que le paso a `Store.Cerrar` cuando llego
+// [ColaTrabajos.Cerrar] (ver [postgres.Store.CerrarPool]). El issue ademas
+// nombra `ResolverAlerta` por su nombre.
 type RepositorioAlertas interface {
-	Listar(ctx context.Context) ([]Alerta, error)
+	// ListarAlertas devuelve las que cuadran con el filtro, de la mas reciente
+	// a la mas antigua y desempatando por id. Sin coincidencias devuelve la
+	// lista vacia, no ErrNoEncontrado.
+	ListarAlertas(ctx context.Context, f FiltroAlertas) ([]Alerta, error)
+
+	// GuardarAlertas escribe las que todavia no estaban. El lote entra entero
+	// o no entra ninguna, por lo mismo que [RepositorioIngesta.GuardarUsos]:
+	// una evaluacion guardada a medias deja un tablero que no corresponde a
+	// ninguna pasada.
+	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, err error)
+
+	// ResolverAlerta marca una alerta y devuelve como quedo. Devuelve
+	// ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo estaba --
+	// que no es lo mismo: lo primero es un id equivocado, lo segundo es una
+	// carrera entre dos personas mirando el mismo tablero.
+	ResolverAlerta(ctx context.Context, id, actorID, nota string, cuando time.Time) (Alerta, error)
+
+	// ContarAlertasSinResolver cuenta las abiertas de un periodo entre los
+	// tipos que se le pidan. Una lista de tipos vacia cuenta TODOS.
+	//
+	// Los tipos llegan como parametro y no se deciden en el SQL: cuales
+	// bloquean es [anomalias.EsCritica], en el dominio, y un adaptador que
+	// llevara su propia lista seria un segundo criterio que nadie mira.
+	ContarAlertasSinResolver(ctx context.Context, periodo string, tipos []string) (int, error)
 }
 
 type RepositorioAnticipos interface {
