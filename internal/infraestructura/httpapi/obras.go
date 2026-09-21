@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -28,9 +29,14 @@ import (
 // declaracion ya compuesto. La forma que viaja por la red la decide este
 // fichero: los cuatro devuelven la misma proyeccion para que las cuatro
 // respuestas que llevan el schema `Obra` digan exactamente lo mismo.
+//
+// Las dos escrituras piden un actorID, igual que [Declaraciones.GuardarSplits]
+// y por lo mismo: es quien FIRMA el asiento de bitacora (ADR 0006). Sale de la
+// sesion y nunca del cuerpo -- un actor que llegue por la red es un actor que
+// se puede falsificar --, y por eso las dos rutas van detras de conSesion.
 type Catalogo interface {
-	RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos) (aplicacion.ObraDelCatalogo, error)
-	ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos) (aplicacion.ObraDelCatalogo, error)
+	RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error)
+	ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error)
 	ObraPorID(ctx context.Context, id string) (aplicacion.ObraDelCatalogo, error)
 	BuscarObras(ctx context.Context, f aplicacion.FiltroObras) ([]aplicacion.ObraDelCatalogo, error)
 }
@@ -295,6 +301,33 @@ func (a *API) obraPorID(w http.ResponseWriter, r *http.Request) {
 	escribirJSON(w, http.StatusOK, aObraJSON(obra))
 }
 
+// maxCuerpoObra acota el JSON del cuerpo antes de decodificarlo: sin limite,
+// un array arbitrariamente grande de coautores se asigna entero en memoria
+// antes de que repertorio.NuevaObra tenga oportunidad de rechazarlo, y desde
+// #91 cada PATCH escribe esos coautores en `asientos.payload` -- una tabla
+// append-only, indexada por GIN entera y conservada diez anos (ADR 0006).
+// Mismo tope que maxCuerpoDeclaracion, en declaraciones.go: ninguna obra real
+// tiene miles de coautores.
+const maxCuerpoObra = 1 << 20 // 1 MiB
+
+// cuerpoExcedido contesta 413 cuando el cuerpo se paso del tope, y devuelve
+// false cuando el error del decodificador es cualquier otra cosa.
+//
+// Mismo criterio que subirReporte en reportes.go y por el mismo motivo:
+// pasarse del tope no es un cuerpo mal formado, y contestarlo con el 400 de
+// "el cuerpo tiene que ser un JSON" manda a quien llama a revisar un JSON que
+// era valido. [http.MaxBytesReader] devuelve *[http.MaxBytesError], que el
+// decodificador propaga tal cual.
+func cuerpoExcedido(w http.ResponseWriter, err error, tope int64) bool {
+	var excede *http.MaxBytesError
+	if !errors.As(err, &excede) {
+		return false
+	}
+	escribirError(w, http.StatusRequestEntityTooLarge,
+		fmt.Sprintf("el cuerpo pasa de %d MiB", tope>>20))
+	return true
+}
+
 // registrarObra da de alta una obra.
 //
 // El identificador lo trae el cuerpo: es el numero de obra de REDES-SYS, que
@@ -304,13 +337,25 @@ func (a *API) obraPorID(w http.ResponseWriter, r *http.Request) {
 // El cuerpo se decodifica en [nuevaObraJSON] y no en [obraJSON]: el estado de
 // la declaracion que la respuesta lleva no entra por aqui.
 func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoObra)
+
 	var cuerpo nuevaObraJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
+		if cuerpoExcedido(w, err, maxCuerpoObra) {
+			return
+		}
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con la obra")
 		return
 	}
 
-	obra, err := a.catalogo.RegistrarObra(r.Context(), cuerpo.ID, cuerpo.aDominio())
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		// Inalcanzable detras de conSesion, igual que en guardarDeclaracion.
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+
+	obra, err := a.catalogo.RegistrarObra(r.Context(), cuerpo.ID, cuerpo.aDominio(), usuario.ID)
 	switch {
 	case err == nil:
 	case errors.Is(err, repertorio.ErrObraInvalida):
@@ -338,14 +383,25 @@ func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
 // escrito en una obra fantasma del catalogo, y contra el catalogo resuelve
 // todo el matching.
 func (a *API) actualizarObra(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoObra)
+
 	var cuerpo metadatosJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
+		if cuerpoExcedido(w, err, maxCuerpoObra) {
+			return
+		}
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con los metadatos")
 		return
 	}
 
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+
 	obra, err := a.catalogo.ActualizarMetadatosObra(
-		r.Context(), chi.URLParam(r, "id"), cuerpo.aDominio())
+		r.Context(), chi.URLParam(r, "id"), cuerpo.aDominio(), usuario.ID)
 	switch {
 	case err == nil:
 	case errors.Is(err, repertorio.ErrObraInvalida):

@@ -14,7 +14,7 @@ var _ aplicacion.RepositorioIdentificacion = (*Store)(nil)
 // garantiza como mucho una fila.
 func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, error) {
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT obra_id FROM alias_obra WHERE fuente = $1 AND tipo_id = $2 AND valor = $3`,
 		fuente, tipo, valor).Scan(&obraID)
 	if err != nil {
@@ -30,7 +30,7 @@ func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, 
 //
 // quien vacio entra como NULL: la columna es nullable y "" no es un actor.
 func (s *Store) GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO alias_obra (fuente, tipo_id, valor, obra_id, quien)
 		 VALUES ($1, $2, $3, $4, NULLIF($5, ''))
 		 ON CONFLICT (fuente, tipo_id, valor) DO NOTHING`,
@@ -53,7 +53,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 		return "", fmt.Errorf("obra por id global sin ningun identificador poblado: %w", aplicacion.ErrNoEncontrado)
 	}
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id FROM obras
 		  WHERE ($1 <> '' AND ida = $1) OR ($2 <> '' AND eidr = $2) OR ($3 <> '' AND imdb = $3)
 		  ORDER BY id LIMIT 1`,
@@ -84,7 +84,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
 // ErrNoEncontrado y la salta.
 func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos
 		    SET obra_id = NULLIF($2, ''), escalon = $3, evidencia = $4, puntaje = $5,
 		        oni = ($2 = '' AND $3 <> 'excluido')
