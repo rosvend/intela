@@ -418,6 +418,7 @@ a {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   text-decoration: none;
 }
@@ -1111,16 +1112,28 @@ table button {
 .ingesta-formulario {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1.1rem 1.25rem;
+  gap: 1.25rem;
+  padding: 1.5rem;
   background: var(--superficie);
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 12px 32px rgba(28, 29, 33, 0.06);
+  animation: ingesta-entrada 320ms ease-out both;
+}
+
+/* Titulo interno de la tarjeta, como el "Import File" de la referencia. */
+.ingesta-tarjeta-cabecera h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.ingesta-tarjeta-cabecera .muted {
+  margin: 0;
 }
 
 .ingesta-campos {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 1rem 1.5rem;
 }
 
@@ -1128,8 +1141,80 @@ table button {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  flex: 1 1 14rem;
-  max-width: 22rem;
+  min-width: 0;
+}
+
+/* Grupo del periodo: la leyenda hace de rotulo, sin borde de fieldset. */
+.ingesta-periodo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.ingesta-periodo legend {
+  padding: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* Modo y valor en una sola fila, a la par del campo de fuente. */
+.ingesta-periodo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ingesta-periodo-fila .ingesta-modo {
+  flex: none;
+}
+
+.ingesta-periodo-fila input,
+.ingesta-periodo-fila select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mensual/Anual como pildoras; la marcada va en vinotinto tenue. */
+.ingesta-modo {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ingesta-modo-opcion {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ingesta-modo-opcion input {
+  margin: 0;
+  accent-color: var(--acento);
+}
+
+.ingesta-modo-opcion:has(input:checked) {
+  border-color: var(--acento);
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.ingesta-modo-opcion:has(input:focus-visible) {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
 }
 
 .ingesta-formulario label {
@@ -1141,11 +1226,14 @@ table button {
 .ingesta-campo select {
   font: inherit;
   font-size: 0.95rem;
-  padding: 0.6rem 0.8rem;
+  padding: 0.6rem 1rem;
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-boton);
   background: var(--fondo);
   color: var(--texto);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .ingesta-campo input::placeholder {
@@ -1154,8 +1242,9 @@ table button {
 
 .ingesta-formulario input:focus-visible,
 .ingesta-formulario select:focus-visible {
-  outline: 2px solid var(--acento);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-activo);
 }
 
 .ingesta-ayuda {
@@ -1164,23 +1253,105 @@ table button {
   color: var(--texto-suave);
 }
 
-/* Zona de soltar: borde discontinuo en reposo; con un archivo encima toma el
-   color de marca para decir que ahi se puede soltar. */
+/* Zona de soltar: tarjeta punteada centrada, como la referencia. */
 .ingesta-soltar {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
-  padding: 1rem 1.1rem;
+  padding: 2.25rem 1.5rem;
   border: 2px dashed var(--borde);
-  border-radius: var(--radio);
+  border-radius: var(--radio-tarjeta);
   background: var(--fondo);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+}
+
+.ingesta-soltar:hover {
+  border-color: var(--acento);
+  transform: translateY(-1px);
+}
+
+/* Foco del input oculto: el anillo se ve en la zona. */
+.ingesta-soltar:focus-within {
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-activo);
+  outline: none;
 }
 
 .ingesta-soltar-activa {
   border-color: var(--acento);
   background: var(--acento-activo);
+  transform: scale(1.01);
 }
 
+/* Ilustracion de hojas: grises frios con un detalle en vinotinto. */
+.ingesta-soltar-ilustracion {
+  width: 88px;
+  height: 88px;
+  margin-bottom: 0.5rem;
+  animation: ingesta-flotar 3.2s ease-in-out infinite;
+}
+
+.ingesta-soltar-hoja-atras rect {
+  fill: #ececf1;
+}
+
+.ingesta-soltar-hoja-frente rect:first-child {
+  fill: #ffffff;
+  stroke: #e0e0e8;
+  stroke-width: 2;
+}
+
+.ingesta-soltar-hoja-frente path {
+  fill: #ececf1;
+}
+
+.ingesta-soltar-hoja-frente rect:nth-child(3),
+.ingesta-soltar-hoja-frente rect:nth-child(4) {
+  fill: #d9d9e2;
+}
+
+.ingesta-soltar-hoja-frente rect:nth-child(5) {
+  fill: var(--acento);
+  opacity: 0.85;
+}
+
+.ingesta-soltar-titulo {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.ingesta-soltar-texto {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--texto-suave);
+}
+
+/* El "clic para elegirlo" con el color de marca. */
+.ingesta-soltar-enlace {
+  color: var(--acento);
+  font-weight: 600;
+}
+
+/* Label e input reales: ocultos a la vista, presentes para el lector. */
+.ingesta-soltar-oculto,
+.ingesta-soltar-entrada {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Sin uso directo: se conserva para no dejar referencias colgadas. */
 .ingesta-soltar input {
   font: inherit;
   font-size: 0.85rem;
@@ -1192,16 +1363,205 @@ table button {
   overflow-wrap: anywhere;
 }
 
+/* Rotulo pequeno sobre la ficha, como "Uploaded files" de la referencia. */
+.ingesta-ficha-titulo {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* Ficha del archivo elegido: fila con icono, datos y retiro. */
+.ingesta-ficha {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  animation: ingesta-ficha-entrada 220ms ease-out both;
+}
+
+.ingesta-ficha-icono {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.ingesta-ficha-icono svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.ingesta-ficha-datos {
+  flex: 1;
+  min-width: 0;
+}
+
+.ingesta-ficha-nombre {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingesta-ficha-estado {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+
+/* Progreso indeterminado: el POST no reporta avance real. */
+.ingesta-ficha-progreso {
+  height: 6px;
+  margin-top: 0.5rem;
+  border-radius: 99px;
+  background: var(--borde);
+  overflow: hidden;
+}
+
+.ingesta-ficha-barra {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--acento);
+  animation: ingesta-barra 1.2s ease-in-out infinite;
+}
+
+/* Icono de papelera tenue, rojo solo al pasar el cursor. */
+.ingesta-ficha-quitar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--texto-suave);
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ingesta-ficha-quitar svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.ingesta-ficha-quitar:hover {
+  background: var(--error-fondo);
+  color: var(--error);
+}
+
+.ingesta-ficha-quitar:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
 .ingesta-acciones {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 0.75rem 1rem;
+}
+
+/* Listado en tarjeta para cerrar la pagina con el mismo radio. */
+.ingesta-cargas {
+  padding: 1.5rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 12px 32px rgba(28, 29, 33, 0.06);
+  animation: ingesta-entrada 320ms ease-out 80ms both;
 }
 
 .ingesta-cargas h2 {
   margin: 0 0 0.75rem;
   font-size: 1.1rem;
+}
+
+/* Entrada de las tarjetas: aparece y sube apenas. */
+@keyframes ingesta-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Entrada de la ficha: mas corta que la de la tarjeta. */
+@keyframes ingesta-ficha-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Barrido de la barra de progreso indeterminada. */
+@keyframes ingesta-barra {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+/* Flote tenue de la ilustracion. */
+@keyframes ingesta-flotar {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Sin movimiento: se pierde el adorno, no la informacion. */
+@media (prefers-reduced-motion: reduce) {
+  .ingesta-formulario,
+  .ingesta-cargas,
+  .ingesta-ficha,
+  .ingesta-soltar-ilustracion,
+  .ingesta-ficha-barra {
+    animation: none;
+  }
+  .ingesta-soltar,
+  .ingesta-soltar-activa {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ingesta-campos {
+    grid-template-columns: 1fr;
+  }
+  .ingesta-acciones {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 /* ---------- catalogo (#30) ---------- */
