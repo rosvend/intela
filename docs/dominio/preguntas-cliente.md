@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-18
+actualizado: 2026-09-21
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -53,6 +53,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
 | P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
 | P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
+| P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
 
 ## Respuestas
 

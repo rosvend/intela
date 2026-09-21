@@ -181,12 +181,13 @@ func TestAnioDeClasificacionEsElInmediatamenteAnterior(t *testing.T) {
 }
 
 type usosDeCanalFalsos struct {
-	porCanal    map[string][]UsoDeReparto
-	resumen     ResumenUsosDeCanal
-	sinCanal    int
-	err         error
-	errSinCanal error
-	pedido      []string
+	porCanal       map[string][]UsoDeReparto
+	resumen        ResumenUsosDeCanal
+	sinCanal       int
+	err            error
+	errSinCanal    error
+	pedido         []string
+	pedidoSinCanal []string
 }
 
 func (u *usosDeCanalFalsos) UsosDeCanal(_ context.Context, periodo, canalID string, anio int) ([]UsoDeReparto, ResumenUsosDeCanal, error) {
@@ -194,7 +195,8 @@ func (u *usosDeCanalFalsos) UsosDeCanal(_ context.Context, periodo, canalID stri
 	return u.porCanal[canalID], u.resumen, u.err
 }
 
-func (u *usosDeCanalFalsos) UsosSinCanal(_ context.Context, _ string) (int, error) {
+func (u *usosDeCanalFalsos) UsosSinCanal(_ context.Context, periodo string) (int, error) {
+	u.pedidoSinCanal = append(u.pedidoSinCanal, periodo)
 	return u.sinCanal, u.errSinCanal
 }
 
@@ -286,5 +288,59 @@ func TestUsosSinCanalPropagaElConteo(t *testing.T) {
 	}
 	if n != 59 {
 		t.Fatalf("n = %d, se esperaban 59", n)
+	}
+}
+
+// TestUsosDeCanalNormalizaPeriodoYCanalAntesDeConsultar: el filtro tiene que
+// llegar al repositorio ya recortado. `recaudo.ValidarPeriodo` recorta el
+// periodo, pero antes de este ajuste el valor CRUDO -- con espacios -- era el
+// que viajaba a la consulta, y `" caracol "` no es igual a `"caracol"` para un
+// `=` de SQL: la fila real se perdia y el resultado era una lista vacia sin
+// error, indistinguible de "el canal no emitio".
+func TestUsosDeCanalNormalizaPeriodoYCanalAntesDeConsultar(t *testing.T) {
+	t.Parallel()
+
+	repo := &usosDeCanalFalsos{}
+	r := Reparto{Usos: repo}
+
+	if _, _, err := r.UsosDeCanal(t.Context(), " 2025-01 ", " rcn "); err != nil {
+		t.Fatalf("UsosDeCanal con espacios: %v", err)
+	}
+	if len(repo.pedido) != 1 || repo.pedido[0] != "2025-01/rcn/2024" {
+		t.Fatalf("consulta = %v, se esperaba el periodo y el canal ya recortados", repo.pedido)
+	}
+}
+
+// TestUsosSinCanalRechazaUnPeriodoInvalido: sin validar, `"2026-13"` no
+// coincide con ningun reporte y la cuenta vuelve en 0 -- que se lee como "sin
+// hueco" cuando en realidad el periodo ni siquiera existe.
+func TestUsosSinCanalRechazaUnPeriodoInvalido(t *testing.T) {
+	t.Parallel()
+
+	repo := &usosDeCanalFalsos{sinCanal: 0}
+	r := Reparto{Usos: repo}
+
+	_, err := r.UsosSinCanal(t.Context(), "2026-13")
+	if err == nil {
+		t.Fatal("un periodo invalido tiene que fallar y no devolver 0 en silencio")
+	}
+	if len(repo.pedidoSinCanal) != 0 {
+		t.Errorf("se consulto el repositorio con un periodo invalido: %v", repo.pedidoSinCanal)
+	}
+}
+
+// TestUsosSinCanalNormalizaElPeriodo: el mismo recorte que UsosDeCanal, por la
+// misma razon -- un periodo con espacios no calza contra `reportes.periodo`.
+func TestUsosSinCanalNormalizaElPeriodo(t *testing.T) {
+	t.Parallel()
+
+	repo := &usosDeCanalFalsos{}
+	r := Reparto{Usos: repo}
+
+	if _, err := r.UsosSinCanal(t.Context(), " 2025-01 "); err != nil {
+		t.Fatalf("UsosSinCanal con espacios: %v", err)
+	}
+	if len(repo.pedidoSinCanal) != 1 || repo.pedidoSinCanal[0] != "2025-01" {
+		t.Fatalf("consulta = %v, se esperaba el periodo ya recortado", repo.pedidoSinCanal)
 	}
 }

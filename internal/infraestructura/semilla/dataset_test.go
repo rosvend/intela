@@ -337,3 +337,15 @@ func TestCadaCanalDeTVTieneSuBolsa(t *testing.T) {
 		}
 	}
 }
+
+// TestPagadorCineNuncaEsIgualAFuenteCine fija el invariante que su propio
+// comentario afirma. `FuenteCine` es lo que estampa el adaptador de ingesta y
+// lo que indexa `alias_obra` (ADR 0018); `PagadorCine` es quien paga y contra
+// cuya bolsa ponderan sus usos (#119). Confundirlos fue exactamente el
+// defecto que el PR #142 corrigio para `FuenteCine`.
+func TestPagadorCineNuncaEsIgualAFuenteCine(t *testing.T) {
+	if PagadorCine == FuenteCine {
+		t.Fatalf("PagadorCine (%q) y FuenteCine (%q) son el mismo valor: "+
+			"un reporte de cine y su pagador son dos ejes distintos", PagadorCine, FuenteCine)
+	}
+}

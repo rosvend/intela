@@ -432,10 +432,10 @@ func TestResetRechazaClasificacionAjena(t *testing.T) {
 	}
 }
 
-// TestCadaBolsaNacionalTieneUsosAtribuidos es el segundo hallazgo de esa
-// revision: solo usoTV fijaba CanalID, asi que UsosDeCanal devolvia vacio
-// para las bolsas de cine, OTT y transporte aunque el reporte trajera filas
-// para ese pagador.
+// TestCadaBolsaNacionalTieneUsosAtribuidos comprueba que los cuatro
+// constructores de uso fijen CanalID y no solo usoTV: sin el, UsosDeCanal
+// devolveria vacio para las bolsas de cine, OTT y transporte aunque el
+// reporte trajera filas para ese pagador.
 func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
 	store, pool := abrir(t)
 	ctx := t.Context()

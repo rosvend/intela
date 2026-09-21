@@ -33,18 +33,31 @@ type Reparto struct {
 
 // UsosDeCanal reune los usos que ponderan la bolsa de un canal en un periodo.
 //
-// Un canal sin filas devuelve la lista vacia y no un error: que un canal no
-// haya emitido repertorio en el periodo es un hecho del negocio, no un fallo.
+// Un canal sin filas devuelve la lista vacia y no un error. Eso no siempre
+// significa "el canal no emitio": mientras P-20 siga abierta, tambien puede
+// significar que la fuente ingirio filas sin canal_id -- UsosSinCanal es lo
+// que distingue los dos casos.
+//
 // Un canal VACIO es otra cosa -- no identifica ninguna bolsa, y tratarlo como
 // un filtro mas devolveria las filas sin atribuir de todos los pagadores
 // mezcladas en una sola corrida -- y por eso es un error tipado.
 //
-// El [ResumenUsosDeCanal] que devuelve es tan parte del contrato como la
-// lista: una fila pendiente, ONI o excluida nunca esta en `usos`, pero
-// tampoco desaparece sin dejar rastro (RD 13.8, R-18/R-19).
+// El [ResumenUsosDeCanal] que devuelve cuenta lo que se quedo fuera, pero NO
+// lo reserva: ver la advertencia en el propio tipo antes de pasar `usos`
+// directo a [reparto.Reparto].
 func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]reparto.Uso, ResumenUsosDeCanal, error) {
-	if strings.TrimSpace(canalID) == "" {
+	canalID = strings.TrimSpace(canalID)
+	if canalID == "" {
 		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos de %q: %w", periodo, ErrCanalVacio)
+	}
+
+	// Recortado ANTES de consultar y no solo antes de comparar contra "": un
+	// periodo o canal con espacios no calza contra un `=` de SQL, y la fila
+	// real se perderia en silencio -- 0 usos sin error, indistinguible de "el
+	// canal no emitio".
+	periodo, err := recaudo.ValidarPeriodo(periodo)
+	if err != nil {
+		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q: %w", canalID, err)
 	}
 
 	anio, err := anioDeClasificacion(periodo)
@@ -76,6 +89,11 @@ func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]re
 // sin este conteo aparte. Un numero mayor que cero es una senal de que hay
 // usos que ninguna corrida va a ponderar nunca, no un fallo en si mismo.
 func (r Reparto) UsosSinCanal(ctx context.Context, periodo string) (int, error) {
+	periodo, err := recaudo.ValidarPeriodo(periodo)
+	if err != nil {
+		return 0, fmt.Errorf("usos sin canal: %w", err)
+	}
+
 	n, err := r.Usos.UsosSinCanal(ctx, periodo)
 	if err != nil {
 		return 0, fmt.Errorf("usos sin canal en %q: %w", periodo, err)

@@ -9,7 +9,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 )
 
-// TestElMapaDeCaracolNoPuebladCanalIDYElHuecoEsObservable fija el estado real
+// TestElMapaDeCaracolNoPueblaCanalIDYElHuecoEsObservable fija el estado real
 // de la ingesta: MapaCaracol, MapaNetflix y MapaCine no mapean ninguna columna
 // a CampoCanalID, asi que TODA fila que entra por el camino real de ingesta
 // (IngerirReporte, no GuardarUsos con filas armadas a mano) llega con
@@ -18,7 +18,7 @@ import (
 // prueba comprueba que el hueco -- que sigue sin cablearse, P-20 en
 // docs/dominio/preguntas-cliente.md -- es observable y que un canal vacio no
 // se puede confundir con "todos los canales".
-func TestElMapaDeCaracolNoPuebladCanalIDYElHuecoEsObservable(t *testing.T) {
+func TestElMapaDeCaracolNoPueblaCanalIDYElHuecoEsObservable(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
 

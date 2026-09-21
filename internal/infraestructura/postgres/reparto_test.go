@@ -223,9 +223,17 @@ func TestElGrupoSeResuelveContraElAnoAnterior(t *testing.T) {
 // una obra fantasma. `usos.oni` tiene DEFAULT TRUE y `obra_id` es NULL hasta
 // que la cascada resuelve, asi que toda fila recien ingerida cumple eso; sin
 // filtrar por obra_id, COALESCE(obra_id, ”) las convertiria en una obra
-// fantasma de id "" que suma puntos e importe de verdad. Pendiente y ONI son
-// motivos distintos -- uno es "la cascada no ha corrido", el otro "corrio y no
-// reconocio nada" -- y el reglamento los trata distinto (RD 13.8, R-18/R-19).
+// fantasma de id "" que suma puntos e importe de verdad. Pendiente, ONI y
+// excluido son motivos distintos -- "la cascada no ha corrido", "corrio y no
+// reconocio nada", "esta fuera del catalogo" (R-27) -- y el reglamento los
+// trata distinto (RD 13.8, R-18/R-19).
+//
+// Las filas de OTRO canal y de OTRO periodo no son relleno: sin ellas, quitar
+// el filtro `canal_id = $2` o el de periodo de `resumenExclusiones` no pone
+// esta prueba en rojo, porque el unico canal y el unico periodo sembrados son
+// los que se piden. Y la fila `excluido` es real -- no basta con afirmar
+// `Excluidos: 0`, porque un `escalon = 'excluido'` roto (comparado contra
+// cualquier otra cadena) tambien da 0 por casualidad.
 func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 	s, pool := sembrarReportes(t)
 	ctx := t.Context()
@@ -234,6 +242,10 @@ func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 		`INSERT INTO obras (id, titulo, genero, anio, tipo)
 		 VALUES ('obra-1', 'La Casa', 'Telenovela', 1994, 'serie')`); err != nil {
 		t.Fatalf("sembrar obra: %v", err)
+	}
+	if err := s.GuardarReporte(ctx, reporteRCN, "rcn", periodoDosTV,
+		shaRCN, "reportes/"+shaRCN, 64); err != nil {
+		t.Fatalf("sembrar la entrega de rcn: %v", err)
 	}
 
 	identificada := usoPendiente("uso-identificada", reporteEnero, "La Casa")
@@ -252,7 +264,26 @@ func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 	pendiente.CanalID = "caracol"
 	// Escalon y ONI se quedan en el default de usoPendiente: "pendiente" / true.
 
-	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{identificada, oni, pendiente}); err != nil {
+	excluida := usoPendiente("uso-excluida", reporteEnero, "Fuera De Catalogo")
+	excluida.CanalID = "caracol"
+	excluida.Escalon = "excluido"
+	excluida.ONI = false
+
+	// Distractor de OTRO canal, mismo periodo: si el filtro por canal_id se
+	// perdiera, este ONI se colaria en el resumen de "caracol".
+	oniDeOtroCanal := usoPendiente("uso-oni-rcn", reporteRCN, "Sin Reconocer en RCN")
+	oniDeOtroCanal.CanalID = "rcn"
+	oniDeOtroCanal.Escalon = "oni"
+	oniDeOtroCanal.ONI = true
+
+	// Distractor de OTRO periodo, mismo canal: si el filtro por periodo se
+	// perdiera, este pendiente se colaria en el resumen de "2026-01".
+	pendienteDeOtroPeriodo := usoPendiente("uso-pendiente-febrero", reporteFebrero, "Sin Intentar en Febrero")
+	pendienteDeOtroPeriodo.CanalID = "caracol"
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		identificada, oni, pendiente, excluida, oniDeOtroCanal, pendienteDeOtroPeriodo,
+	}); err != nil {
 		t.Fatalf("sembrar usos: %v", err)
 	}
 
@@ -270,17 +301,19 @@ func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 		}
 	}
 
-	if resumen != (aplicacion.ResumenUsosDeCanal{Pendientes: 1, ONI: 1}) {
-		t.Fatalf("resumen = %+v, se esperaba 1 pendiente y 1 ONI (0 excluidos)", resumen)
+	if resumen != (aplicacion.ResumenUsosDeCanal{Pendientes: 1, ONI: 1, Excluidos: 1}) {
+		t.Fatalf("resumen = %+v, se esperaba 1 pendiente, 1 ONI y 1 excluido -- "+
+			"ni el distractor de rcn ni el de febrero", resumen)
 	}
-	if resumen.TotalSinIdentificar() != 2 {
-		t.Fatalf("TotalSinIdentificar() = %d, se esperaban 2", resumen.TotalSinIdentificar())
+	total := resumen.Pendientes + resumen.ONI + resumen.Excluidos
+	if total != 3 {
+		t.Fatalf("total sin identificar = %d, se esperaban 3", total)
 	}
 }
 
-// TestUsosSinCanalCuentaLoQueNingunPagadorReclama es el B1 de la revision:
-// mientras ningun adaptador de ingesta puebla canal_id (P-20), "cero usos de
-// un canal" no se distingue de "el canal no emitio" sin este conteo aparte.
+// TestUsosSinCanalCuentaLoQueNingunPagadorReclama: mientras ningun adaptador
+// de ingesta puebla canal_id (P-20), "cero usos de un canal" no se distingue
+// de "el canal no emitio" sin este conteo aparte.
 func TestUsosSinCanalCuentaLoQueNingunPagadorReclama(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
@@ -314,6 +347,91 @@ func TestUsosDeCanalRechazaUnCanalVacioAntesDeConsultar(t *testing.T) {
 
 	if _, _, err := r.UsosDeCanal(t.Context(), "2026-01", ""); !errors.Is(err, aplicacion.ErrCanalVacio) {
 		t.Fatalf("se esperaba ErrCanalVacio, se obtuvo %v", err)
+	}
+}
+
+// TestElResumenNoReservaLaParteONIDocumentaElHueco NO corrige nada: fija -- y
+// le pone una alarma -- un hueco real. `ResumenUsosDeCanal` cuenta las filas
+// ONI; no reserva su importe. Quien pase el resultado de UsosDeCanal
+// directamente a reparto.Reparto -- que es lo unico que existe hoy, porque
+// #33/#34 todavia no orquestan una corrida -- reparte el 100% de la bolsa
+// entre las obras IDENTIFICADAS, y la parte que le habria correspondido a la
+// fila ONI desaparece dentro de esa obra en vez de quedar en reserva
+// (RD 13.8, R-18/R-19; ver "Implementacion" bajo R-18 en
+// docs/dominio/reglas-negocio.md).
+//
+// Esta prueba tiene que EMPEZAR A FALLAR el dia que #33/#34 implementen la
+// reserva de verdad -- ese fallo es la senal de borrar esta prueba (o
+// convertirla en su contraria) junto con la advertencia del comentario de
+// ResumenUsosDeCanal.
+func TestElResumenNoReservaLaParteONIDocumentaElHueco(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO obras (id, titulo, genero, anio, tipo)
+		 VALUES ('obra-a', 'Obra Identificada', 'Drama', 2020, 'serie')`); err != nil {
+		t.Fatalf("sembrar obra: %v", err)
+	}
+
+	// Las mismas medidas en las dos filas: si el reglamento se cumpliera, la
+	// bolsa se partiria por igual (500.000 / 500.000), porque las dos pesan lo
+	// mismo en puntos.
+	identificada := usoPendiente("uso-a", reporteEnero, "Obra Identificada")
+	identificada.CanalID = "caracol"
+	identificada.Escalon = "alias"
+	identificada.ONI = false
+	identificada.ObraID = "obra-a"
+	identificada.Evidencia = "alias caracol/ID_Ficha=1"
+	identificada.TipoObra = "serie"
+	identificada.DuracionMin = dec("48")
+	identificada.Rating = dec("9")
+	identificada.Emisiones = 1
+
+	oni := usoPendiente("uso-oni", reporteEnero, "Sin Reconocer")
+	oni.CanalID = "caracol"
+	oni.Escalon = "oni"
+	oni.ONI = true
+	oni.TipoObra = "serie"
+	oni.DuracionMin = dec("48")
+	oni.Rating = dec("9")
+	oni.Emisiones = 1
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{identificada, oni}); err != nil {
+		t.Fatalf("sembrar usos: %v", err)
+	}
+
+	r := aplicacion.Reparto{Usos: s}
+	usos, resumen, err := r.UsosDeCanal(ctx, "2026-01", "caracol")
+	if err != nil {
+		t.Fatalf("UsosDeCanal: %v", err)
+	}
+	if resumen.ONI != 1 {
+		t.Fatalf("ONI = %d, se esperaba 1: la fila ONI tiene que contarse aunque no reparta", resumen.ONI)
+	}
+
+	bolsa, err := recaudo.NuevaBolsa("caracol", "2026-01", recaudo.Nacional, dec("1000000"))
+	if err != nil {
+		t.Fatalf("bolsa: %v", err)
+	}
+	res, err := reparto.Reparto(bolsa, usos, snapshotDePrueba(), nil, reparto.Opciones{SinDeducciones: true})
+	if err != nil {
+		t.Fatalf("reparto: %v", err)
+	}
+
+	// Esto es el HUECO documentado, no el resultado correcto: obra-a absorbe
+	// el 100% porque la fila ONI nunca llego al motor. El dia que esto deje de
+	// ser 1000000 (por ejemplo, porque baje a 500000), hay que borrar esta
+	// prueba y la advertencia que cita, no arreglarla para que vuelva a pasar.
+	var importe decimal.Decimal
+	for _, o := range res.Obras {
+		if o.ObraID == "obra-a" {
+			importe = o.Importe
+		}
+	}
+	if !importe.Equal(dec("1000000")) {
+		t.Fatalf("importe de obra-a = %s; si esto cambio, el hueco B1 ya se cerro: "+
+			"borra esta prueba y la advertencia en ResumenUsosDeCanal / RepositorioUsosDeReparto", importe)
 	}
 }
 

@@ -258,11 +258,8 @@ type UsoDeReparto struct {
 
 // ResumenUsosDeCanal cuenta, dentro de un (periodo, canal), los usos que NO
 // llegan al motor porque no tienen obra identificada (`usos.obra_id IS NULL`).
-//
-// La plata de esas filas no se puede sumar a otra obra ni desaparecer en
-// silencio: la de ONI queda en reserva (`RD 13.8`, R-18/R-19), y ningun
-// tratamiento se puede confundir con otro, porque el reglamento los trata
-// distinto:
+// Ningun tratamiento se puede confundir con otro, porque el reglamento los
+// trata distinto:
 //
 //   - Pendientes: la cascada de identificacion (ADR 0007) todavia no corrio
 //     sobre la fila. No es lo mismo que "no se reconocio nada" -- es "no se
@@ -270,16 +267,24 @@ type UsoDeReparto struct {
 //   - ONI: la cascada corrio y no reconocio ninguna obra.
 //   - Excluidos: el canal esta fuera del catalogo de REDES SGC (R-27), asi
 //     que la fila nunca tuvo obra que identificar.
+//
+// # Esto SOLO cuenta. No reserva nada
+//
+// `RD 13.8` / R-18 / R-19 mandan que la parte de una obra no identificada
+// quede en reserva, no que se pierda ni que se reparta entre las demas obras.
+// Este tipo no implementa eso: es un conteo, para que el hueco sea visible.
+// Quien tome los `[]reparto.Uso] que devuelve UsosDeCanal y los pase
+// directamente a [reparto.Reparto] -- que es lo unico que existe hoy, porque
+// ProcesoDeReparto (#33/#34) todavia no orquesta una corrida -- reparte el
+// 100% de la bolsa entre las obras IDENTIFICADAS: la parte que le habria
+// correspondido a una fila ONI desaparece DENTRO de esas obras, no en
+// reserva. Reservarla de verdad -- y decidir como se libera cuando la obra se
+// identifica (R-19: 3 anos) -- es trabajo de #33/#34, registrado con
+// implementacion pendiente bajo R-18 en docs/dominio/reglas-negocio.md.
 type ResumenUsosDeCanal struct {
 	Pendientes int
 	ONI        int
 	Excluidos  int
-}
-
-// TotalSinIdentificar es cuantos usos del (periodo, canal) se quedaron fuera
-// de la corrida por cualquiera de los tres motivos.
-func (r ResumenUsosDeCanal) TotalSinIdentificar() int {
-	return r.Pendientes + r.ONI + r.Excluidos
 }
 
 // ItemRevision es una fila de la cola de revision: lo que no se pudo

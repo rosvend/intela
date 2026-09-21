@@ -366,8 +366,10 @@ type RepositorioIdentificacion interface {
 // Un canal sin filas devuelve la lista vacia, no ErrNoEncontrado. UsosDeCanal
 // solo devuelve filas con obra identificada (`obra_id IS NOT NULL`): una fila
 // pendiente, ONI o excluida (R-27) nunca llega al motor con un `ObraID`
-// vacio, y ResumenUsosDeCanal cuenta cuantas se quedaron fuera y por que, para
-// que ese dinero no desaparezca en silencio (RD 13.8, R-18/R-19).
+// vacio. [ResumenUsosDeCanal] cuenta cuantas se quedaron fuera y por que --
+// pero SOLO cuenta: no reserva su importe. Ver la advertencia en
+// [ResumenUsosDeCanal] antes de pasar el resultado de UsosDeCanal a
+// [reparto.Reparto].
 type RepositorioUsosDeReparto interface {
 	UsosDeCanal(
 		ctx context.Context, periodo, canalID string, anioClasificacion int,
