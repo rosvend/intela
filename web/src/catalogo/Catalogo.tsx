@@ -2,7 +2,7 @@ import { useId, useState, type ReactElement } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
-import { formatearPorcentaje } from "./declaracion";
+import { formatearPorcentaje, formatearTipo } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import Paginador from "./Paginador";
 import { esObra, type Obra } from "./tipos";
@@ -137,32 +137,6 @@ function leerDesplazamiento(bruto: string | null): number {
 }
 
 /**
- * El dato de cabecera del catalogo.
- *
- * El mockup ponia "Periodo 2024-S2" aqui. Se sustituye a proposito: el contrato
- * no tiene ningun concepto de periodo para una obra -los filtros son titulo,
- * genero, anio e IPI, y una obra no esta acotada a un semestre; lo que tiene
- * vigencia es su declaracion- asi que ese texto sugeriria un ambito temporal
- * que la API no puede acotar (D-010). Lo que se dice es lo que el sistema sabe:
- * cuantas obras trae la pagina y cuantos filtros estan puestos.
- *
- * "En esta pagina" no es un adorno: la respuesta NO trae el total de
- * coincidencias, solo la pagina pedida, asi que decir "N obras registradas"
- * seria afirmar un total que nadie conto.
- */
-function textoDelResumen(obras: number, filtrosActivos: number): string {
-  const cuantas =
-    obras === 1 ? "1 obra en esta página" : `${obras} obras en esta página`;
-  const activos =
-    filtrosActivos === 0
-      ? "sin filtros activos"
-      : filtrosActivos === 1
-        ? "1 filtro activo"
-        : `${filtrosActivos} filtros activos`;
-  return `${cuantas} · ${activos}`;
-}
-
-/**
  * Catalogo de obras con busqueda (issue #30, S1). Solo administrador: el grupo
  * entero `/obras` del servidor esta bajo `requiereRol(RolAdministrador)`
  * (`internal/infraestructura/httpapi/server.go`), y la entrada de `RUTAS` se
@@ -242,10 +216,7 @@ export default function Catalogo() {
   const idGenero = useId();
   const idIpi = useId();
   const idAnio = useId();
-  const idAyudaTitulo = useId();
-  const idAyudaGenero = useId();
-  const idAyudaIpi = useId();
-  const idAyudaAnio = useId();
+  const idAvisoAnio = useId();
 
   const anioAplicable = textoAnio === "" || esAnioAplicable(textoAnio);
 
@@ -322,9 +293,6 @@ export default function Catalogo() {
     const obras = lista.elementos;
     contenido = (
       <>
-        <p className="catalogo-resumen muted">
-          {textoDelResumen(obras.length, filtrosActivos)}
-        </p>
         <div className="catalogo-caja">
           {obras.length === 0 ? (
             <VacioCatalogo
@@ -353,12 +321,6 @@ export default function Catalogo() {
     <section className="catalogo">
       <header className="catalogo-cabecera">
         <h1>Catálogo de obras</h1>
-        <p className="muted">
-          El estado de la declaración vigente y su suma los calcula el servidor.
-          Una declaración incompleta no es un error: bajo R-04 (RD 13.1.3) no se
-          reparte nada de esa obra, el importe completo queda en reserva y nunca
-          se prorratea.
-        </p>
       </header>
 
       {/* Sin `<form>`: los filtros se aplican al escribir, asi que un submit no
@@ -378,11 +340,7 @@ export default function Catalogo() {
               placeholder="Buscar por título…"
               value={filtros.titulo}
               onChange={(e) => aplicarFiltro("titulo", e.target.value)}
-              aria-describedby={idAyudaTitulo}
             />
-            <p id={idAyudaTitulo} className="catalogo-ayuda">
-              Coincidencia parcial, sin distinguir mayúsculas.
-            </p>
           </div>
 
           <div className="catalogo-campo">
@@ -394,11 +352,7 @@ export default function Catalogo() {
               placeholder="Drama"
               value={filtros.genero}
               onChange={(e) => aplicarFiltro("genero", e.target.value)}
-              aria-describedby={idAyudaGenero}
             />
-            <p id={idAyudaGenero} className="catalogo-ayuda">
-              Coincidencia exacta, tal como se declaró.
-            </p>
           </div>
 
           <div className="catalogo-campo">
@@ -410,11 +364,7 @@ export default function Catalogo() {
               placeholder="IPI-00000001"
               value={filtros.ipi}
               onChange={(e) => aplicarFiltro("ipi", e.target.value)}
-              aria-describedby={idAyudaIpi}
             />
-            <p id={idAyudaIpi} className="catalogo-ayuda">
-              IPI exacto de uno de los coautores de la obra.
-            </p>
           </div>
 
           <div className="catalogo-campo">
@@ -430,13 +380,17 @@ export default function Catalogo() {
               placeholder="1991"
               value={textoAnio}
               onChange={(e) => cambiarAnio(e.target.value)}
-              aria-describedby={idAyudaAnio}
+              aria-invalid={anioAplicable ? undefined : "true"}
+              aria-describedby={anioAplicable ? undefined : idAvisoAnio}
             />
-            <p id={idAyudaAnio} className="catalogo-ayuda">
-              {anioAplicable
-                ? "Año de producción exacto."
-                : "No se filtra por año mientras el valor no sea un año entero positivo."}
-            </p>
+            {/* Solo cuando el valor no se aplica: es la respuesta a lo que se
+                tecleo, no una explicacion de como funciona el filtro. */}
+            {!anioAplicable && (
+              <p id={idAvisoAnio} className="catalogo-ayuda">
+                No se filtra por año mientras el valor no sea un año entero
+                positivo.
+              </p>
+            )}
           </div>
         </div>
 
@@ -573,9 +527,10 @@ function TablaCatalogo({
             {/* El anio va sin agrupar miles, por eso no pasa por
                 `formatearEntero`: "1.991" no es un anio. */}
             <td>{obra.anio}</td>
-            {/* El valor del enum, tal cual: es la clasificacion del reglamento
-                (RD 9.1.1) y no hay traduccion de la casa que no invente. */}
-            <td>{obra.tipo}</td>
+            {/* El valor del enum, sin traducir: es la clasificacion del
+                reglamento (RD 9.1.1) y no hay traduccion de la casa que no
+                invente. Solo se le pone mayuscula inicial al mostrarlo. */}
+            <td>{formatearTipo(obra.tipo)}</td>
             <td className="catalogo-identificador">
               {/* El contrato declara `ida` opcional y de texto, con la cadena
                   vacia como "no se conoce": el guion dice eso y no otra cosa. */}
