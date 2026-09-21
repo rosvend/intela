@@ -110,12 +110,12 @@ func (r *repositorioResultadosFalso) ResultadoPorProceso(_ context.Context, _ st
 }
 
 type repositorioProcesosFalso struct {
-	procesos    map[string]ProcesoVista
-	guardados   []ProcesoVista
-	firmas      []reparto.Firma
-	errGuardar  error
-	errPorID    error
-	errFirmar   error
+	procesos   map[string]ProcesoVista
+	guardados  []ProcesoVista
+	firmas     []reparto.Firma
+	errGuardar error
+	errPorID   error
+	errFirmar  error
 }
 
 func nuevoRepositorioProcesosFalso() *repositorioProcesosFalso {
@@ -159,10 +159,10 @@ func (r *repositorioProcesosFalso) GuardarFirma(_ context.Context, procesoID str
 }
 
 type parametrosNormativosFalso struct {
-	id       string
-	snap     reparto.Snapshot
-	err      error
-	pedido   []time.Time
+	id     string
+	snap   reparto.Snapshot
+	err    error
+	pedido []time.Time
 }
 
 func (p *parametrosNormativosFalso) SnapshotEnFecha(_ context.Context, fecha time.Time) (string, reparto.Snapshot, error) {

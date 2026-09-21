@@ -256,7 +256,7 @@ func TestRechazarGateExigeMotivo(t *testing.T) {
 
 func TestAbrirProcesoRechazaCamposVacios(t *testing.T) {
 	casos := []struct {
-		nombre                                      string
+		nombre                                       string
 		id, periodo, bolsaID, snapshotID, reglamento string
 	}{
 		{"id vacio", "", "2026-01", "bolsa-1", "snap-1", "IX"},
