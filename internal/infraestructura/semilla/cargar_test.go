@@ -208,6 +208,48 @@ func TestCargarEsIdempotenteSinReset(t *testing.T) {
 	}
 }
 
+// TestCargarAditivoEscribeConObrasAjenasPresentes es el caso que motivo
+// CargarAditivo (#155): Cargar (con o sin reset) rechaza una base con obras
+// ajenas; CargarAditivo escribe el dataset igual, sin tocarlas.
+func TestCargarAditivoEscribeConObrasAjenasPresentes(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO obras (id, titulo, genero, anio, tipo)
+		VALUES ('obra-demo-001', 'Ajena', 'Drama', 2020, 'unitario')`,
+	); err != nil {
+		t.Fatalf("insertar obra ajena: %v", err)
+	}
+
+	if err := CargarAditivo(ctx, store, disco(t), hasher(), clavesPrueba(), silencio()); err != nil {
+		t.Fatalf("CargarAditivo: %v", err)
+	}
+
+	var nObras, nTitulares, nAjena int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&nObras); err != nil {
+		t.Fatalf("contar obras: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM titulares`).Scan(&nTitulares); err != nil {
+		t.Fatalf("contar titulares: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM obras WHERE id = 'obra-demo-001'`).Scan(&nAjena); err != nil {
+		t.Fatalf("contar la obra ajena: %v", err)
+	}
+
+	d := Construir()
+	if nObras != len(d.Obras)+1 {
+		t.Fatalf("obras = %d, se esperaban %d del dataset + 1 ajena", nObras, len(d.Obras)+1)
+	}
+	if nTitulares != len(d.Titulares) {
+		t.Fatalf("titulares = %d, se esperaban %d", nTitulares, len(d.Titulares))
+	}
+	if nAjena != 1 {
+		t.Fatal("CargarAditivo toco la obra ajena")
+	}
+}
+
 func TestCargarConResetReescribe(t *testing.T) {
 	store, pool := abrir(t)
 	ctx := t.Context()
