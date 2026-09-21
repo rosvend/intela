@@ -115,12 +115,29 @@ services:
       # y eso no existe para `up`: `SEED_RESET=true docker compose --profile demo up`
       # levantaba el stack y NO recargaba, en silencio.
       SEED_RESET: "${SEED_RESET:-false}"
-      # Interpolado igual que SEED_RESET, y por la misma razon: sin esto el
-      # binario siempre cae al default "admin-local" (cmd/seed/main.go),
-      # aunque quien levante el stack exporte SEED_CLAVE_ADMIN -y entonces
-      # deploy/smoke.sh, que si lee esa variable del host, intenta iniciar
-      # sesion con una clave que el seed nunca uso.
+      # Interpoladas igual que SEED_RESET, y por la misma razon: sin esto el
+      # binario siempre cae a los defaults de cmd/seed/main.go, aunque quien
+      # levante el stack exporte las variables -y entonces deploy/smoke.sh,
+      # que si lee SEED_CLAVE_ADMIN del host, intenta iniciar sesion con una
+      # clave que el seed nunca uso.
+      #
+      # Estan las CINCO, no solo la del admin. Con solo ADMIN aqui, las otras
+      # cuatro se quedaban en el host: docs/ARRANQUE.md prometia
+      # "sobreescribibles con SEED_CLAVE_*" y por el camino documentado
+      # -docker compose- cuatro de las cinco no se podian sobreescribir. Eso
+      # dejaba sin ejercer la guarda que mas importa de las cinco: el seed
+      # RECHAZA dos roles con la misma clave, porque una clave compartida
+      # entre `distribucion` y `contabilidad` anula el control de doble firma
+      # (ADR 0008, RD 13.5). Una guarda que no se puede disparar por el camino
+      # documentado no esta verificada.
+      #
+      # Vacio equivale a no puesta: config.Cadena descarta el valor en blanco
+      # y aplica el default del binario.
       SEED_CLAVE_ADMIN: "${SEED_CLAVE_ADMIN:-}"
+      SEED_CLAVE_DISTRIBUCION: "${SEED_CLAVE_DISTRIBUCION:-}"
+      SEED_CLAVE_CONTABILIDAD: "${SEED_CLAVE_CONTABILIDAD:-}"
+      SEED_CLAVE_AUDITOR: "${SEED_CLAVE_AUDITOR:-}"
+      SEED_CLAVE_TITULAR: "${SEED_CLAVE_TITULAR:-}"
     depends_on:
       postgres:
         condition: service_healthy

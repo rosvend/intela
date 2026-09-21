@@ -402,13 +402,20 @@ func TestRegistrarObraConCuerpoQueNoEsJSONEs400(t *testing.T) {
 // asigna completo en memoria antes de que el dominio tenga oportunidad de
 // rechazarlo, y desde #91 cada PATCH ademas escribe esos coautores en
 // `asientos.payload`, que no se puede recortar despues (bloqueante 5).
-func TestRegistrarObraConCuerpoDemasiadoGrandeEs400(t *testing.T) {
+//
+// Es 413 y no 400, igual que la subida de reportes: el cuerpo era un JSON
+// valido, lo que sobraba era el tamano, y el mensaje tiene que decir eso o
+// manda a revisar un JSON que estaba bien.
+func TestRegistrarObraConCuerpoDemasiadoGrandeEs413(t *testing.T) {
 	h := servidorConCatalogo(t, &catalogoFalso{})
 
 	rec := pedir(t, h, http.MethodPost, "/obras", cuerpoDemasiadoGrande(), "tok")
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if msj := decodificar(t, rec)["error"]; msj != "el cuerpo pasa de 1 MiB" {
+		t.Fatalf("error = %v, se esperaba el mensaje del tope", msj)
 	}
 }
 
@@ -468,16 +475,31 @@ func TestActualizarObraInvalidaEs400(t *testing.T) {
 	}
 }
 
+// El 413 del tope no se puede llevar por delante el 400 de siempre: un cuerpo
+// pequeno y mal formado sigue siendo una peticion mal formada.
+func TestActualizarObraConCuerpoQueNoEsJSONEs400(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPatch, "/obras/obra-1", "esto no es json", "tok")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 // Mismo tope que en el alta (bloqueante 5): el PATCH es el camino por el que
 // #91 escribe coautores en la bitacora, y esa tabla es la que no se puede
 // recortar despues de escrita.
-func TestActualizarObraConCuerpoDemasiadoGrandeEs400(t *testing.T) {
+func TestActualizarObraConCuerpoDemasiadoGrandeEs413(t *testing.T) {
 	h := servidorConCatalogo(t, &catalogoFalso{})
 
 	rec := pedir(t, h, http.MethodPatch, "/obras/obra-1", cuerpoDemasiadoGrande(), "tok")
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if msj := decodificar(t, rec)["error"]; msj != "el cuerpo pasa de 1 MiB" {
+		t.Fatalf("error = %v, se esperaba el mensaje del tope", msj)
 	}
 }
 

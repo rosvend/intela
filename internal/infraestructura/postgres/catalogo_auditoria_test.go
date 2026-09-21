@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -489,7 +490,20 @@ type bitacoraConPausa struct {
 
 func (b *bitacoraConPausa) Asentar(ctx context.Context, a aplicacion.Asiento) error {
 	close(b.listo)
-	<-b.seguir
+	select {
+	case <-b.seguir:
+	case <-ctx.Done():
+		// La pausa mira el contexto porque el que la suelta es el test, y un
+		// test puede morirse antes de soltarla: un t.Fatal a mitad de camino
+		// -el de esperarBloqueoPorUpdate, sin ir mas lejos- dejaria a T1
+		// dormida para siempre CON su transaccion abierta y su conexion del
+		// pool tomada. El paquete entonces no termina, y lo que CI reporta
+		// diez minutos despues es un "test timed out" en vez del fallo que de
+		// verdad ocurrio. Con esta rama, cancelar el contexto del test
+		// (t.Context) basta para que T1 se despierte, revierta y devuelva la
+		// conexion.
+		return ctx.Err()
+	}
 	return b.Store.Asentar(ctx, a)
 }
 
@@ -561,6 +575,17 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 	fin1 := make(chan error, 1)
 	fin2 := make(chan error, 1)
 
+	// El cierre ordenado, valga el camino que valga. t.Fatal es un Goexit, asi
+	// que estos defer corren tambien cuando la prueba se rinde a medias: se
+	// suelta a T1 -sin arriesgar un segundo close, de ahi el OnceFunc- y se
+	// espera a que las dos goroutines terminen ANTES de que el cleanup de
+	// sembrar cierre el pool. Sin esto, un fallo de esta prueba se reporta
+	// como el timeout de 10 minutos del paquete y no como lo que fue.
+	var enVuelo sync.WaitGroup
+	liberarUnaVez := sync.OnceFunc(func() { close(liberarT1) })
+	defer enVuelo.Wait()
+	defer liberarUnaVez()
+
 	cat1 := aplicacion.Catalogo{
 		Obras:         s,
 		Declaraciones: s,
@@ -568,7 +593,9 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 		Unidad:        s,
 		Reloj:         &relojEnPasos{},
 	}
+	enVuelo.Add(1)
 	go func() {
+		defer enVuelo.Done()
 		_, err := cat1.ActualizarMetadatosObra(ctx, obraNueva,
 			metadatosDePrueba(func(m *repertorio.Metadatos) { m.Titulo = "Version-T1" }), usuarioAdmin)
 		fin1 <- err
@@ -581,14 +608,16 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 	}
 
 	cat2 := catalogoConBitacora(s)
+	enVuelo.Add(1)
 	go func() {
+		defer enVuelo.Done()
 		_, err := cat2.ActualizarMetadatosObra(ctx, obraNueva,
 			metadatosDePrueba(func(m *repertorio.Metadatos) { m.Titulo = "Version-T2" }), usuarioAdmin)
 		fin2 <- err
 	}()
 	esperarBloqueoPorUpdate(t, vigia, ctx)
 
-	close(liberarT1)
+	liberarUnaVez()
 	if err := <-fin1; err != nil {
 		t.Fatalf("ActualizarMetadatosObra de T1: %v", err)
 	}

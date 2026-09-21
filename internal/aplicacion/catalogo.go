@@ -236,9 +236,13 @@ func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repe
 // exige saber QUIEN hizo cada hecho. Por HTTP nunca llega vacio (sale de la
 // sesion, ver httpapi/obras.go), pero el contrato de este caso de uso es el
 // que lo sostiene, no el adaptador que llame antes.
+//
+// La guarda es [exigirActor], compartida con los otros dos casos de uso que
+// firman un hecho: declaraciones y recaudo (ver errores.go, donde esta escrito
+// por que vive en esta capa y no en el adaptador).
 func (c Catalogo) asentar(ctx context.Context, hecho, obraID, actorID string, p AsientoObra) error {
-	if actorID == "" {
-		return fmt.Errorf("asentar %q sobre la obra %q: actorID vacio", hecho, obraID)
+	if err := exigirActor(actorID, fmt.Sprintf("asentar %q sobre la obra %q", hecho, obraID)); err != nil {
+		return err
 	}
 	payload, err := json.Marshal(p)
 	if err != nil {

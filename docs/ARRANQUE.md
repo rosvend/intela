@@ -6,8 +6,11 @@ make verificar                 # tidy, build, vet, gofmt y test - lo mismo que c
 ```
 
 UI: <http://localhost>
-API: <http://localhost/api/health> -notese la barra final; `/api` a secas cae
-en la ruta del tablero y devuelve el index con 200
+API: <http://localhost/api/health> -notese la barra final: `/api` a secas
+devuelve 301 a `/api/`, y `/api/` devuelve 404 `{"error":"ruta no
+encontrada"}`. Una ruta cualquiera que no empiece por `/api/` -`/catalogo`,
+por ejemplo- si cae en el tablero y devuelve el index con 200, que es como
+funciona el enrutado de la SPA
 
 > Esto deja la base **migrada y vacia**. Para un arranque de una sola orden que
 > ademas siembra el dataset -y una prueba de humo que lo comprueba-, ver
@@ -79,6 +82,15 @@ compartida entre `distribucion` y `contabilidad` anula el control de doble
 firma: una persona firmaba por ambos. El seed **rechaza** dos roles con la
 misma clave: bcrypt lleva sal, asi que dos hashes distintos no delatan nada y
 el control se perderia en silencio.
+
+Las cinco `SEED_CLAVE_*` se interpolan en `docker-compose.yml`, asi que
+exportarlas en el entorno del `docker compose` basta para que lleguen al
+sembrador. Antes solo se interpolaba `SEED_CLAVE_ADMIN` y las otras cuatro se
+quedaban en el host sin aviso: esta pagina prometia "sobreescribibles con
+`SEED_CLAVE_*`" y por el camino documentado cuatro de las cinco no lo eran, lo
+que ademas dejaba sin poder disparar la guarda de dos roles con la misma
+clave. Se comprueba con `docker compose --profile demo config`, que imprime lo
+que de verdad le llega al servicio.
 
 ## Entrar al tablero
 

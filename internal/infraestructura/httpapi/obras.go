@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -309,6 +310,24 @@ func (a *API) obraPorID(w http.ResponseWriter, r *http.Request) {
 // tiene miles de coautores.
 const maxCuerpoObra = 1 << 20 // 1 MiB
 
+// cuerpoExcedido contesta 413 cuando el cuerpo se paso del tope, y devuelve
+// false cuando el error del decodificador es cualquier otra cosa.
+//
+// Mismo criterio que subirReporte en reportes.go y por el mismo motivo:
+// pasarse del tope no es un cuerpo mal formado, y contestarlo con el 400 de
+// "el cuerpo tiene que ser un JSON" manda a quien llama a revisar un JSON que
+// era valido. [http.MaxBytesReader] devuelve *[http.MaxBytesError], que el
+// decodificador propaga tal cual.
+func cuerpoExcedido(w http.ResponseWriter, err error, tope int64) bool {
+	var excede *http.MaxBytesError
+	if !errors.As(err, &excede) {
+		return false
+	}
+	escribirError(w, http.StatusRequestEntityTooLarge,
+		fmt.Sprintf("el cuerpo pasa de %d MiB", tope>>20))
+	return true
+}
+
 // registrarObra da de alta una obra.
 //
 // El identificador lo trae el cuerpo: es el numero de obra de REDES-SYS, que
@@ -322,6 +341,9 @@ func (a *API) registrarObra(w http.ResponseWriter, r *http.Request) {
 
 	var cuerpo nuevaObraJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
+		if cuerpoExcedido(w, err, maxCuerpoObra) {
+			return
+		}
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con la obra")
 		return
 	}
@@ -365,6 +387,9 @@ func (a *API) actualizarObra(w http.ResponseWriter, r *http.Request) {
 
 	var cuerpo metadatosJSON
 	if err := json.NewDecoder(r.Body).Decode(&cuerpo); err != nil {
+		if cuerpoExcedido(w, err, maxCuerpoObra) {
+			return
+		}
 		escribirError(w, http.StatusBadRequest, "el cuerpo tiene que ser un JSON con los metadatos")
 		return
 	}

@@ -893,20 +893,27 @@ func sinPanic(t *testing.T, fn func() error) error {
 // quien sostiene el contrato del ADR 0006, no el adaptador HTTP que lo llame
 // antes (bitacora.go usa NULLIF sobre la cadena vacia y actor_id es nullable
 // en la base).
+// Un actor de solo espacios cuenta como vacio: el NULLIF del adaptador solo
+// casa con la cadena vacia, asi que " " se escribiria como actor literal y
+// solo lo pararia la clave foranea contra `usuarios`, ya como un 500 generico.
 func TestRegistrarObraConActorVacioFalla(t *testing.T) {
-	repo := &catalogoFalso{}
-	libro, unidad := &bitacoraFalsa{}, &unidadFalsa{}
+	for nombre, actor := range map[string]string{"vacio": "", "solo espacios": "  "} {
+		t.Run(nombre, func(t *testing.T) {
+			repo := &catalogoFalso{}
+			libro, unidad := &bitacoraFalsa{}, &unidadFalsa{}
 
-	_, err := catalogoDePrueba(repo, libro, unidad).
-		RegistrarObra(t.Context(), "obra-1", metadatosValidos(), "")
-	if err == nil {
-		t.Fatal("se esperaba un error con actorID vacio")
-	}
-	if len(libro.asientos) != 0 {
-		t.Fatalf("se asento un hecho sin actor: %+v", libro.asientos)
-	}
-	if unidad.confirmo {
-		t.Fatal("la unidad se confirmo con un asiento sin firmar")
+			_, err := catalogoDePrueba(repo, libro, unidad).
+				RegistrarObra(t.Context(), "obra-1", metadatosValidos(), actor)
+			if !errors.Is(err, ErrActorAusente) {
+				t.Fatalf("err = %v, se esperaba ErrActorAusente", err)
+			}
+			if len(libro.asientos) != 0 {
+				t.Fatalf("se asento un hecho sin actor: %+v", libro.asientos)
+			}
+			if unidad.confirmo {
+				t.Fatal("la unidad se confirmo con un asiento sin firmar")
+			}
+		})
 	}
 }
 

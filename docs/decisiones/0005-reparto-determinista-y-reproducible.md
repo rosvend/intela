@@ -50,8 +50,9 @@ acceso al puerto de parametros.
 
 **La identidad del snapshot esta versionada.** El id es un hash direccionado por contenido sobre los
 pares (clave, valor) que el snapshot consume, pero EL CONJUNTO DE CLAVES QUE CUENTA no es un dato
-fijo para siempre: `#118` fijo once, `#126` (posterior) obligo a anadir seis mas -- los porcentajes de
-grupo de canal y la asignacion a terceros --, y nada impide que un issue futuro anada otra. Si el id
+fijo para siempre: `#118` fijo trece, `#126` (posterior) obligo a anadir seis mas -- los porcentajes
+de grupo de canal y la asignacion a terceros --, diecinueve en total hoy (`clausulasDelSnapshot`, en
+`postgres/parametros.go`), y nada impide que un issue futuro anada otra. Si el id
 no dijera CONTRA QUE CONJUNTO se calculo, anadir una clave seria un cambio de FORMATO disfrazado de
 cambio de contenido: releer un snapshot viejo con el conjunto de hoy reportaria "le falta
 `grupo.privados_pct`" -que suena a corrupcion- cuando lo que pasa es que esa clave todavia no existia

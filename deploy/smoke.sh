@@ -23,10 +23,11 @@
 #   SMOKE_EMAIL      Usuario con el que se entra. Por defecto admin@redes.co
 #   SMOKE_CLAVE      Su clave. Por defecto SEED_CLAVE_ADMIN, o admin-local
 #   SMOKE_COMPOSE    Orden de compose. Por defecto "docker compose --profile
-#                    demo": sin el perfil, `ps`/`logs` en fatal() no ven el
-#                    contenedor del seed -Compose v2 los excluye de esos dos
-#                    comandos en cuanto un servicio declara `profiles`-, y el
-#                    seed es el fallo mas probable de toda la funcionalidad.
+#                    demo": sin el perfil, `logs` en fatal() no ve el
+#                    contenedor del seed -Compose v2 lo excluye de ese
+#                    comando en cuanto el servicio declara `profiles` y el
+#                    perfil no esta activo- aunque `ps --all` si lo liste, y
+#                    el seed es el fallo mas probable de toda la funcionalidad.
 #   SMOKE_SIN_COMPOSE  =1 para omitir el estado de los contenedores (util
 #                      cuando se apunta a un despliegue remoto)
 #
@@ -44,10 +45,24 @@ CLAVE="${SMOKE_CLAVE:-${SEED_CLAVE_ADMIN:-admin-local}}"
 read -r -a COMPOSE <<<"${SMOKE_COMPOSE:-docker compose --profile demo}"
 
 # Los servicios que tienen que seguir en pie al final. `migrate` y `seed` no
-# estan: son de una sola pasada y su exito lo demuestra el resto del script
-# -si la base no estuviera migrada no habria /ready, y si no estuviera sembrada
-# no habria con quien entrar-.
+# estan: son de una sola pasada y se comprueban aparte, por su codigo de
+# salida (comprobacion 1/7 mas abajo), no por lo que el resto del script
+# infiera de ellos.
 SERVICIOS=(postgres api worker scheduler web nginx)
+
+# Servicios de una sola pasada (comprobados en una_pasada_ok(), mas abajo).
+# Antes de esto, el resto del script "demostraba" su exito por indirectas -si
+# la base no estuviera migrada no habria /ready, y si no estuviera sembrada no
+# habria con quien entrar-, y esas indirectas son falsas en cuanto la base YA
+# tenia datos de una corrida anterior: un `seed` que falla a medias dice adios
+# con un `warning` (`required: false` en docker-compose.yml, deliberado: es lo
+# que permite `up` sin --profile demo) y los usuarios y obras de la corrida
+# anterior siguen ahi para que el login y `/api/obras` pasen igual.
+#
+# `migrate` es obligatorio; `seed` solo existe si el perfil `seed` o `demo`
+# esta activo, asi que su ausencia no es un fallo -es un `up` pelado-.
+UNA_PASADA=(migrate seed)
+UNA_PASADA_OBLIGATORIO=migrate
 
 # ---------------------------------------------------------------------------
 # Salida
@@ -113,6 +128,57 @@ esperar() {
 # valida que hay que poder comparar, no un error de curl.
 codigo() { curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$@"; }
 
+# una_pasada_ok exige que los servicios de una sola pasada hayan TERMINADO y
+# hayan terminado BIEN, preguntandoselo al contenedor (`ps --all`), no
+# deduciendolo de que la base tenga datos -que es de donde salia el verde
+# falso: los datos podian ser de la corrida de ayer-.
+#
+# Se exige `exited` ademas de `ExitCode == 0` porque un contenedor que todavia
+# corre, o que se quedo en `created` y nunca arranco, tambien lleva `ExitCode`
+# 0 en esta salida: sin mirar el estado, "no ha terminado" se leeria como
+# "termino bien", que es la misma clase de fallo que esto viene a cerrar.
+#
+# La forma de `ps --format json` NO es estable entre versiones de Compose: unas
+# devuelven un array JSON y otras una linea por contenedor (NDJSON). `-s` mas
+# `flatten(1)` acepta las dos. Importa mas de lo que parece: si la guarda se
+# rompiera por la version de Compose, se romperia en CI -que es el unico sitio
+# donde nadie la esta mirando-.
+una_pasada_ok() {
+  local crudo estado servicio situacion codigo_salida visto_obligatorio=0
+  local nombres_json
+
+  crudo=$("${COMPOSE[@]}" ps --all --format json 2>/dev/null) ||
+    fatal "no se pudo consultar '${COMPOSE[*]} ps --all --format json'"
+
+  nombres_json=$(printf '%s\n' "${UNA_PASADA[@]}" |
+    jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+  estado=$(jq -r -s --argjson nombres "$nombres_json" \
+    'flatten(1)[]
+     | select(.Service as $s | $nombres | index($s))
+     | "\(.Service) \(.State) \(.ExitCode)"' <<<"$crudo") ||
+    fatal "no se pudo interpretar la salida de '${COMPOSE[*]} ps --all --format json'"
+
+  while read -r servicio situacion codigo_salida; do
+    [ -n "$servicio" ] || continue
+    if [ "$servicio" = "$UNA_PASADA_OBLIGATORIO" ]; then
+      visto_obligatorio=1
+    fi
+    if [ "$situacion" != "exited" ]; then
+      fatal "el servicio de una sola pasada '$servicio' no termino: sigue en '$situacion'"
+    fi
+    if [ "$codigo_salida" != "0" ]; then
+      fatal "el servicio de una sola pasada '$servicio' termino con codigo $codigo_salida: revisa sus logs abajo"
+    fi
+  done <<<"$estado"
+
+  # Sin `migrate` en la salida, `SMOKE_COMPOSE` no esta mirando el proyecto que
+  # se levanto, y entonces ni esta comprobacion ni la 7/7 significan nada.
+  if [ "$visto_obligatorio" != "1" ]; then
+    fatal "no aparece el contenedor de '$UNA_PASADA_OBLIGATORIO' en '${COMPOSE[*]} ps --all': revisa SMOKE_COMPOSE"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Comprobaciones
 
@@ -123,10 +189,25 @@ done
 
 printf 'Prueba de humo contra %s\n' "$BASE"
 
-# 1. La sonda de disponibilidad. NO es /health: /health solo dice que el
+# 1. Los pasos de una sola pasada (migrate, seed) salieron con 0. Sin esto,
+#    una base ya sembrada de una corrida anterior deja pasar un `seed` roto:
+#    las comprobaciones 5 y 6 de mas abajo (login y catalogo) no distinguen
+#    "sembrado" de "sembrado a medias por la corrida de HOY": solo miran
+#    que haya datos, y los datos pueden ser de ayer.
+paso "1/7  migrate y seed (si esta en el perfil) terminaron con exito"
+if [ "${SMOKE_SIN_COMPOSE:-0}" = "1" ]; then
+  ok "omitido (SMOKE_SIN_COMPOSE=1)"
+elif ! command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
+  ok "omitido: '${COMPOSE[0]}' no esta en el PATH"
+else
+  una_pasada_ok
+  ok "servicios de una sola pasada en 0"
+fi
+
+# 2. La sonda de disponibilidad. NO es /health: /health solo dice que el
 #    proceso vive, /ready dice que ademas la base responde, que es lo que
 #    distingue "arranco" de "sirve".
-paso "1/6  la API responde a traves de nginx"
+paso "2/7  la API responde a traves de nginx"
 ready() { [ "$(codigo "$BASE/ready")" = "200" ]; }
 esperar "GET $BASE/ready -> 200" ready
 
@@ -137,8 +218,8 @@ esperar "GET $BASE/ready -> 200" ready
   fatal "GET $BASE/api/health no devolvio 200: revisa el proxy_pass de /api/ en deploy/nginx.conf"
 ok "GET $BASE/api/health -> 200 (el prefijo /api/ enruta)"
 
-# 2. El tablero, servido por el contenedor `web` a traves de nginx.
-paso "2/6  el tablero web se sirve por nginx"
+# 3. El tablero, servido por el contenedor `web` a traves de nginx.
+paso "3/7  el tablero web se sirve por nginx"
 raiz=$(curl -fsS --max-time 10 "$BASE/") ||
   fatal "GET $BASE/ no respondio: nginx no esta sirviendo la SPA"
 grep -q 'id="root"' <<<"$raiz" ||
@@ -167,18 +248,18 @@ bundle=$(awk 'match($0, /\/assets\/[^"]*\.js/) { print substr($0, RSTART, RLENGT
   fatal "GET $BASE$bundle no devolvio 200: el tablero no puede cargar"
 ok "GET $BASE$bundle -> 200 (el bundle del tablero carga)"
 
-# 3. Una ruta protegida SIN credencial. Un 200 aqui seria un agujero, y un 404
+# 4. Una ruta protegida SIN credencial. Un 200 aqui seria un agujero, y un 404
 #    querria decir que la ruta ni existe -las dos cosas se ven igual de bien
 #    desde fuera si solo se mira que "algo responde"-.
-paso "3/6  las rutas protegidas piden sesion"
+paso "4/7  las rutas protegidas piden sesion"
 sin_token=$(codigo "$BASE/api/obras")
 [ "$sin_token" = "401" ] ||
   fatal "GET $BASE/api/obras sin token devolvio $sin_token, se esperaba 401"
 ok "GET $BASE/api/obras sin token -> 401"
 
-# 4. Entrar. Esto es lo que espera al seed: los usuarios los crea el, asi que
+# 5. Entrar. Esto es lo que espera al seed: los usuarios los crea el, asi que
 #    hasta que no termina no hay con quien iniciar sesion.
-paso "4/6  se puede iniciar sesion con el usuario del seed"
+paso "5/7  se puede iniciar sesion con el usuario del seed"
 sesion=""
 login() {
   sesion=$(curl -fsS --max-time 10 -X POST "$BASE/api/auth/session" \
@@ -191,11 +272,11 @@ token=$(jq -r '.token' <<<"$sesion")
 rol=$(jq -r '.usuario.rol' <<<"$sesion")
 ok "sesion abierta con rol '$rol'"
 
-# 5. Un endpoint de negocio de verdad, con datos de verdad. Que devuelva 200 no
+# 6. Un endpoint de negocio de verdad, con datos de verdad. Que devuelva 200 no
 #    basta: el catalogo vacio tambien es un 200, y es exactamente el sintoma de
 #    "levanto pero nadie lo sembro", que es lo que este perfil existe para
 #    evitar.
-paso "5/6  el catalogo devuelve las obras sembradas"
+paso "6/7  el catalogo devuelve las obras sembradas"
 obras=""
 catalogo() {
   obras=$(curl -fsS --max-time 10 -H "Authorization: Bearer $token" \
@@ -207,7 +288,7 @@ printf '   %d obras en el catalogo: %s\n' \
   "$(jq 'length' <<<"$obras")" \
   "$(jq -r '[.[].titulo] | join(", ")' <<<"$obras")"
 
-# 6. Lo que HTTP no puede ver. `worker` y `scheduler` no publican puerto: si
+# 7. Lo que HTTP no puede ver. `worker` y `scheduler` no publican puerto: si
 #    uno de los dos esta reiniciandose en bucle, todo lo de arriba sigue en
 #    verde y el sistema esta roto igual.
 #
@@ -218,6 +299,14 @@ printf '   %d obras en el catalogo: %s\n' \
 # veces con margen entre medias -sin fiarse de RestartCount, que podman no
 # expone igual que Docker- para que un servicio que muere en el hueco salga
 # en al menos una de las dos como no corriendo.
+#
+# COBERTURA PARCIAL, a proposito y declarada: esto atrapa el bucle rapido -el
+# que revive cada pocos segundos, que es la forma que toma un servicio que
+# muere al arrancar-, no cualquier bucle. Uno cuya ventana de "running" pase
+# de los 3 s de margen puede salir "en pie" en las dos fotos. Cerrarlo de
+# verdad pide contar reinicios, y `RestartCount` no se lee igual en Docker
+# que en podman, que son los dos entornos donde esto tiene que correr. Lo que
+# NO se puede hacer es presentarlo como cubierto: un bucle lento pasa.
 en_pie() {
   local corriendo
   corriendo=$("${COMPOSE[@]}" ps --status running --services 2>/dev/null) || return 1
@@ -227,7 +316,7 @@ en_pie() {
   done
 }
 
-paso "6/6  todos los servicios siguen en pie"
+paso "7/7  todos los servicios siguen en pie"
 if [ "${SMOKE_SIN_COMPOSE:-0}" = "1" ]; then
   ok "omitido (SMOKE_SIN_COMPOSE=1)"
 elif ! command -v "${COMPOSE[0]}" >/dev/null 2>&1; then

@@ -81,10 +81,12 @@
 // propia). Desde la revision de PR #134 lo hace TODO el paquete: catalogo.go
 // y bitacora.go, que son los dos puertos que la unidad del catalogo abarca
 // (#91); parametros.go, que desde la #118 congela el snapshot con el que se
-// abre un proceso -- el corte y el `procesos.snapshot_id` que lo referencia
-// son un solo hecho --; y el resto (afiliacion.go, calendario.go, cola.go,
-// declaraciones.go, identificacion.go, ingesta.go, provision.go, recaudo.go,
-// reparto.go, repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
+// abre un proceso -- el corte no se confirma por su cuenta, sino con la
+// unidad de quien lo pidio: el dia que exista adaptador de procesos, esa
+// misma unidad sera la que escriba `procesos.snapshot_id` --; y el resto
+// (afiliacion.go, calendario.go, cola.go, declaraciones.go,
+// identificacion.go, ingesta.go, provision.go, recaudo.go, reparto.go,
+// repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
 // metodo que NO puede participar en la unidad de otro puerto el dia que
 // alguien lo necesite, y ese dia no avisa con un fallo de compilacion: avisa
 // con una escritura que se confirma sola (ver

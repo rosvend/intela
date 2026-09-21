@@ -116,6 +116,15 @@ func (s *Store) CerrarPool() {
 //
 // El error de fn sube sin envolver: quien llama distingue sus propios
 // centinelas.
+//
+// EnTransaccion abre SIEMPRE una transaccion nueva contra el pool, incluso si
+// el contexto ya lleva la de una unidad de trabajo en curso: no mira el
+// contexto. Por eso, dentro de una unidad no se usa este metodo sino
+// [Store.EnUnidad] -- que es reentrante -- o [Store.enTransaccionDe], que
+// participa en la transaccion que el contexto ya trae y solo abre una propia
+// cuando no hay ninguna. Llamar aqui desde dentro de una unidad confirmaria
+// por separado lo que la unidad todavia podria revertir, y ademas pediria una
+// segunda conexion del pool.
 func (s *Store) EnTransaccion(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -61,7 +61,23 @@ jobs:
             -v "${GITHUB_WORKSPACE}:/repo" \
             -w /repo \
             "koalaman/shellcheck:${VERSION}" \
-            deploy/smoke.sh
+            deploy/smoke.sh deploy/smoke_guardia_test.sh
+
+      # The one assertion in `deploy/smoke.sh` that the bring-up below CANNOT
+      # exercise. The blocking case is a `seed` that fails against a database
+      # that ALREADY HAD DATA: reaching it for real means seeding, corrupting
+      # the dataset by hand and seeding again, on a runner whose database is
+      # empty by construction (`down -v`). So the bring-up would always take
+      # the happy path and the guard would never be proven.
+      #
+      # This runs the guard against a stubbed `docker compose ps`, in seconds
+      # and with no containers, and it is red if the guard is removed. It goes
+      # BEFORE the build for the same reason as the linter: eight minutes is a
+      # slow way to find out the guard regressed.
+      - name: Unit-test the one-shot guard
+        run: |
+          set -euo pipefail
+          deploy/smoke_guardia_test.sh
 
       # `--build` is not optional, and not only for freshness: the runner has no
       # images at all, so this is what produces them. `--profile demo` is what
@@ -96,9 +112,17 @@ jobs:
           echo "--- compose logs ---"
           docker compose --profile demo logs --no-color --tail 200
 
-      # `-v` because the runner is thrown away anyway, but a leaked volume on a
-      # self-hosted runner would seed the NEXT run's database and make this
-      # stage pass without the seed having worked.
+      # `-v` because the runner is thrown away anyway, and because a leaked
+      # volume on a self-hosted runner would carry this run's data into the
+      # NEXT one.
+      #
+      # That used to be load-bearing: with a pre-seeded database a failing
+      # `seed` still left usable users and works behind it, so the stage went
+      # green without the seed having worked, and `down -v` was the only thing
+      # standing between the pipeline and that false green. It is not the only
+      # thing any more - `deploy/smoke.sh` now checks the one-shot services'
+      # exit codes directly (check 1/7), which holds whether or not the volume
+      # leaked. This stays as hygiene, not as the guard.
       - name: Tear down
         if: always()
         run: |

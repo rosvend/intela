@@ -62,6 +62,19 @@ var (
 	// clave literal.
 	ErrTasaAmbigua = errors.New("tasa de cambio ambigua")
 
+	// ErrActorAusente: un hecho que va FIRMADO llego sin quien lo firme.
+	//
+	// El ADR 0006 exige saber quien hizo cada hecho de los que nacen de una
+	// accion de una persona. La base no lo impide -- `asientos.actor_id` es
+	// nullable y el adaptador convierte el actor vacio en NULL --, y ese hueco es
+	// deliberado: el ADR solo pide el actor "en ese ultimo caso", el de la
+	// decision manual, asi que un hecho que el sistema produzca solo (un
+	// calculo, una identificacion automatica) podra asentarse sin firma el dia
+	// que exista. Lo que NO puede pasar es que un caso de uso que recibe un
+	// actor de la sesion lo pierda por el camino y deje el asiento sin firmar:
+	// eso lo cierra [exigirActor], en esta capa, antes de escribir nada.
+	ErrActorAusente = errors.New("actorID vacio")
+
 	// ErrUsuarioInvalido: los datos de una cuenta nueva no cumplen el esquema.
 	//
 	// Se envuelve siempre con el campo concreto que falla, por la misma razon
@@ -299,3 +312,28 @@ func (e *ErrorTasaAmbigua) Error() string {
 // Unwrap deja que quien solo quiera saber "hay una tasa ambigua" siga usando
 // errors.Is(err, ErrTasaAmbigua) sin conocer este tipo.
 func (e *ErrorTasaAmbigua) Unwrap() error { return ErrTasaAmbigua }
+
+// exigirActor rechaza un actor vacio en los casos de uso que asientan un hecho
+// FIRMADO por una persona. operacion es lo que se estaba haciendo, para que el
+// mensaje diga que se quedo sin hacer y no solo que faltaba un campo.
+//
+// Vive en esta capa y no en el adaptador a proposito. El adaptador convierte
+// el actor vacio en NULL -- con un NULLIF sobre la cadena vacia, ver
+// bitacora.go -- sobre una columna nullable porque el ADR 0006 pide el actor
+// para la DECISION MANUAL -- "y en ese ultimo caso quien la tomo y cuando" --
+// y no para un hecho que el sistema produzca solo. Meter la guarda en
+// [postgres.asentar] cerraria de paso esa puerta, que hoy no tiene usuario
+// pero es la prevista para el calculo de una corrida o una identificacion
+// automatica. Lo que hay que cerrar es lo otro: un caso de uso que SI recibe
+// un actor de la sesion y lo pierde por el camino.
+//
+// Se recorta antes de comparar: un actor de solo espacios no lo atrapa el
+// NULLIF -- solo casa con la cadena vacia --, y llega hasta la clave foranea
+// contra `usuarios`, que devuelve un 500 generico en vez de decir que falta la
+// firma.
+func exigirActor(actorID, operacion string) error {
+	if strings.TrimSpace(actorID) == "" {
+		return fmt.Errorf("%s: %w", operacion, ErrActorAusente)
+	}
+	return nil
+}

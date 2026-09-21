@@ -214,9 +214,11 @@ func versionesConocidas() []int {
 }
 
 // patronIDSnapshot es la forma GENERAL de un id de snapshot: `snp<version>-<hex64>`.
-// Mas laxo que el CHECK de la tabla -que fija la version exacta que este
-// binario escribe hoy- porque tiene que reconocer tambien versiones mas
-// viejas que ya no son la actual.
+// Es el MISMO patron que el CHECK de `snapshots_parametros.snapshot_id`
+// (migrations/00012): los dos admiten cualquier version, no solo la que este
+// binario escribe hoy, porque una fila ya escrita no deja de ser valida
+// cuando `versionClausulasActual` sube. Quien decide si la version es
+// interpretable por este binario es clausulasPorVersion, no la forma.
 var patronIDSnapshot = regexp.MustCompile(`^snp([0-9]+)-[0-9a-f]{64}$`)
 
 // versionDeID extrae la version embebida en el prefijo de un id
@@ -274,12 +276,19 @@ func (p parametroResuelto) texto() string { return p.valor.StringFixed(escalaPar
 //
 // # Por que resolver y congelar van juntos
 //
-// enTransaccionDe y no EnTransaccion: abrir el proceso escribe el snapshot y
-// el `procesos.snapshot_id` que lo referencia, y eso es un solo hecho. Si el
-// caso de uso abrio una unidad ([aplicacion.UnidadDeTrabajo]), esta escritura
-// entra EN ELLA y la confirma quien la abrio; con EnTransaccion el snapshot se
-// confirmaria aqui y un fallo posterior dejaria un corte congelado que ninguna
-// corrida referencia.
+// enTransaccionDe y no EnTransaccion: congelar el corte es una escritura de
+// quien esta abriendo algo mas, no un hecho suelto. Si el caso de uso abrio
+// una unidad ([aplicacion.UnidadDeTrabajo]), esta escritura entra EN ELLA y la
+// confirma quien la abrio; con EnTransaccion el snapshot se confirmaria aqui y
+// un fallo posterior dejaria un corte congelado que ninguna corrida
+// referencia.
+//
+// Hoy nadie escribe todavia `procesos.snapshot_id` -- la columna existe desde
+// la 00001, pero el repositorio de procesos esta declarado sin adaptador y
+// [aplicacion.Parametros] no esta cableado en cmd/api --, asi que el unico
+// consumidor de la unidad es quien llame a este metodo. La decision no depende
+// de esa escritura: lo que la justifica es que el corte no puede confirmarse
+// por su cuenta.
 func (s *Store) SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (string, reparto.Snapshot, error) {
 	dia := enDia(fechaPeriodo)
 	diaTexto := texto(dia)

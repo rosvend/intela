@@ -331,3 +331,56 @@ func TestRegistrarUsuarioSinConstruirEsInvalido(t *testing.T) {
 		t.Fatal("se intento escribir un usuario que el dominio rechaza")
 	}
 }
+
+// Las dos altas de recaudo asientan DENTRO de la transaccion del adaptador
+// (postgres/recaudo.go), asi que un actor vacio no deja un asiento sin firmar
+// pendiente de revertir: deja uno confirmado. La guarda esta en el caso de
+// uso, que es el que recibe el actor de la sesion; el adaptador conserva el
+// NULLIF porque `asientos.actor_id` sigue siendo nullable a proposito, para
+// los hechos que el sistema produzca solo (ADR 0006: el actor se exige "en
+// ese ultimo caso", el de la decision manual).
+//
+// ahoraRecibido delata la llamada aunque el doble no llegue a acumular nada:
+// gestionRecaudoFalsa lo escribe ANTES de mirar su error.
+func TestRegistrarSinActorNoLlegaAlPuerto(t *testing.T) {
+	for nombre, actor := range map[string]string{"vacio": "", "solo espacios": "  "} {
+		t.Run(nombre, func(t *testing.T) {
+			gestion := &gestionRecaudoFalsa{}
+			r := Recaudo{Gestion: gestion, Reloj: relojDePrueba(t)}
+
+			_, err := r.Registrar(t.Context(), bolsaDePrueba(), actor)
+			if !errors.Is(err, ErrActorAusente) {
+				t.Fatalf("err = %v, se esperaba ErrActorAusente", err)
+			}
+			if len(gestion.bolsas) != 0 {
+				t.Fatalf("se escribio una bolsa que nadie firma: %+v", gestion.bolsas)
+			}
+			if !gestion.ahoraRecibido.IsZero() {
+				t.Fatal("el puerto se llamo con un asiento sin firmar")
+			}
+		})
+	}
+}
+
+func TestRegistrarUsuarioSinActorNoLlegaAlPuerto(t *testing.T) {
+	gestion := &gestionRecaudoFalsa{}
+	r := Recaudo{Gestion: gestion, Reloj: relojDePrueba(t)}
+
+	u, err := recaudo.NuevoUsuario("caracol", recaudo.Datos{
+		Nombre:    "Caracol Television S.A.",
+		Categoria: recaudo.TVAbierta,
+	})
+	if err != nil {
+		t.Fatalf("NuevoUsuario: %v", err)
+	}
+
+	if _, err := r.RegistrarUsuario(t.Context(), u, ""); !errors.Is(err, ErrActorAusente) {
+		t.Fatalf("err = %v, se esperaba ErrActorAusente", err)
+	}
+	if len(gestion.usuarios) != 0 {
+		t.Fatalf("se dio de alta un usuario que nadie firma: %+v", gestion.usuarios)
+	}
+	if !gestion.ahoraRecibido.IsZero() {
+		t.Fatal("el puerto se llamo con un asiento sin firmar")
+	}
+}
