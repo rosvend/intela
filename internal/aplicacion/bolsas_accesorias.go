@@ -32,7 +32,7 @@ type BolsasAccesorias struct {
 // tasaPct es la tasa vigente al momento de esa corrida (RD 14.5.1); quien
 // orquesta la corrida ya la tiene del mismo snapshot que uso para calcularla.
 func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string, circuito reparto.Circuito, tasaPct decimal.Decimal) (reparto.PoolReserva, error) {
-	resultado, err := b.Resultados.PorProceso(ctx, procesoID)
+	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
 		return reparto.PoolReserva{}, fmt.Errorf("registrar reserva de %q: %w", procesoID, err)
 	}
@@ -40,7 +40,7 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 	if err != nil {
 		return reparto.PoolReserva{}, err
 	}
-	if err := b.Reservas.Guardar(ctx, pool); err != nil {
+	if err := b.Reservas.GuardarReserva(ctx, pool); err != nil {
 		return reparto.PoolReserva{}, fmt.Errorf("guardar reserva de %q: %w", procesoID, err)
 	}
 	return pool, nil
@@ -56,11 +56,11 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 // Que la corrida sea prescrita o no lo decide quien llama (#34/prescripcion,
 // fuera de este alcance): este caso de uso solo ejecuta la liberacion.
 func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID string, rendimientoAcumulado decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
-	pool, err := b.Reservas.PorProceso(ctx, procesoID)
+	pool, err := b.Reservas.ReservaPorProceso(ctx, procesoID)
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
 	}
-	resultado, err := b.Resultados.PorProceso(ctx, procesoID)
+	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
 	}
@@ -72,7 +72,7 @@ func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID
 	}
 
 	pool.Saldo = decimal.Zero
-	if err := b.Reservas.Guardar(ctx, pool); err != nil {
+	if err := b.Reservas.GuardarReserva(ctx, pool); err != nil {
 		return nil, decimal.Zero, fmt.Errorf("guardar reserva liberada de %q: %w", procesoID, err)
 	}
 	return nuevas, residuo, nil
@@ -97,7 +97,7 @@ func (b BolsasAccesorias) RegistrarRendimiento(ctx context.Context, circuito rep
 			return reparto.PoolRendimiento{}, err
 		}
 	}
-	if err := b.Rendimientos.Guardar(ctx, pool); err != nil {
+	if err := b.Rendimientos.GuardarRendimiento(ctx, pool); err != nil {
 		return reparto.PoolRendimiento{}, fmt.Errorf("guardar rendimiento %s/%s: %w", circuito, vigencia, err)
 	}
 	return pool, nil
@@ -110,7 +110,7 @@ func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID s
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, err)
 	}
-	resultado, err := b.Resultados.PorProceso(ctx, procesoID)
+	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento sobre %q: %w", procesoID, err)
 	}
@@ -131,7 +131,7 @@ func (b BolsasAccesorias) AbrirReclamacion(
 	if err != nil {
 		return reparto.ReclamacionReserva{}, err
 	}
-	if err := b.Reclamaciones.Guardar(ctx, r); err != nil {
+	if err := b.Reclamaciones.GuardarReclamacion(ctx, r); err != nil {
 		return reparto.ReclamacionReserva{}, fmt.Errorf("abrir reclamacion %q: %w", id, err)
 	}
 	return r, nil
@@ -141,7 +141,7 @@ func (b BolsasAccesorias) AbrirReclamacion(
 // dominio rechaza un actor cubriendo los dos roles o un rol firmando dos
 // veces; este caso de uso no repite esa validacion, la propaga.
 func (b BolsasAccesorias) FirmarReclamacion(ctx context.Context, id string, rol reparto.RolAvalReclamacion, actorID string) (reparto.ReclamacionReserva, error) {
-	r, err := b.Reclamaciones.PorID(ctx, id)
+	r, err := b.Reclamaciones.ReclamacionPorID(ctx, id)
 	if err != nil {
 		return reparto.ReclamacionReserva{}, fmt.Errorf("firmar reclamacion %q: %w", id, err)
 	}
@@ -149,7 +149,7 @@ func (b BolsasAccesorias) FirmarReclamacion(ctx context.Context, id string, rol 
 	if err != nil {
 		return reparto.ReclamacionReserva{}, err
 	}
-	if err := b.Reclamaciones.Guardar(ctx, r); err != nil {
+	if err := b.Reclamaciones.GuardarReclamacion(ctx, r); err != nil {
 		return reparto.ReclamacionReserva{}, fmt.Errorf("guardar aval de %q: %w", id, err)
 	}
 	return r, nil

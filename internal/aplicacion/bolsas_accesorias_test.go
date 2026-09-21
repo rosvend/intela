@@ -15,9 +15,9 @@ type resultadosFalso struct {
 	err        error
 }
 
-func (r *resultadosFalso) Guardar(context.Context, string, reparto.Resultado) error { return r.err }
+func (r *resultadosFalso) GuardarResultado(context.Context, string, reparto.Resultado) error { return r.err }
 
-func (r *resultadosFalso) PorProceso(_ context.Context, procesoID string) (reparto.Resultado, error) {
+func (r *resultadosFalso) ResultadoPorProceso(_ context.Context, procesoID string) (reparto.Resultado, error) {
 	if r.err != nil {
 		return reparto.Resultado{}, r.err
 	}
@@ -34,7 +34,7 @@ type reservasFalso struct {
 	err       error
 }
 
-func (r *reservasFalso) Guardar(_ context.Context, p reparto.PoolReserva) error {
+func (r *reservasFalso) GuardarReserva(_ context.Context, p reparto.PoolReserva) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -46,7 +46,7 @@ func (r *reservasFalso) Guardar(_ context.Context, p reparto.PoolReserva) error 
 	return nil
 }
 
-func (r *reservasFalso) PorProceso(_ context.Context, procesoID string) (reparto.PoolReserva, error) {
+func (r *reservasFalso) ReservaPorProceso(_ context.Context, procesoID string) (reparto.PoolReserva, error) {
 	if r.err != nil {
 		return reparto.PoolReserva{}, r.err
 	}
@@ -67,7 +67,7 @@ func claveRendimiento(circuito reparto.Circuito, vigencia string) string {
 	return string(circuito) + "|" + vigencia
 }
 
-func (r *rendimientosFalso) Guardar(_ context.Context, p reparto.PoolRendimiento) error {
+func (r *rendimientosFalso) GuardarRendimiento(_ context.Context, p reparto.PoolRendimiento) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -96,7 +96,7 @@ type reclamacionesFalso struct {
 	err       error
 }
 
-func (r *reclamacionesFalso) Guardar(_ context.Context, c reparto.ReclamacionReserva) error {
+func (r *reclamacionesFalso) GuardarReclamacion(_ context.Context, c reparto.ReclamacionReserva) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -108,7 +108,7 @@ func (r *reclamacionesFalso) Guardar(_ context.Context, c reparto.ReclamacionRes
 	return nil
 }
 
-func (r *reclamacionesFalso) PorID(_ context.Context, id string) (reparto.ReclamacionReserva, error) {
+func (r *reclamacionesFalso) ReclamacionPorID(_ context.Context, id string) (reparto.ReclamacionReserva, error) {
 	if r.err != nil {
 		return reparto.ReclamacionReserva{}, r.err
 	}

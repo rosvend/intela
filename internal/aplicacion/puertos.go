@@ -607,11 +607,16 @@ type ProcesoVista struct {
 
 // RepositorioResultados guarda y lee las corridas.
 //
-// Guardar es transaccional por contrato: un resultado a medias es una cifra
-// que alguien puede leer y pagar.
+// GuardarResultado es transaccional por contrato: un resultado a medias es
+// una cifra que alguien puede leer y pagar.
+//
+// Nombres largos y no Guardar/PorProceso a secas: el mismo *Store satisface
+// [GestionDeclaraciones] (que ya tiene su propio Guardar) y este puerto, y
+// tambien [RepositorioReservas] y [RepositorioReclamacionesReserva] mas
+// abajo -- mismo patron que AsientoPorID en [BitacoraAuditoria].
 type RepositorioResultados interface {
-	Guardar(ctx context.Context, procesoID string, r reparto.Resultado) error
-	PorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
+	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
 // RepositorioLiquidacion sirve lo que le corresponde a un titular.
@@ -623,23 +628,23 @@ type RepositorioLiquidacion interface {
 // Una por corrida: la proveniencia es la clave (ADR sobre corrida-por-bolsa,
 // 0019).
 type RepositorioReservas interface {
-	Guardar(ctx context.Context, r reparto.PoolReserva) error
-	PorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
+	GuardarReserva(ctx context.Context, r reparto.PoolReserva) error
+	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
 }
 
 // RepositorioRendimientos guarda y lee los pools de rendimientos financieros
 // (RD 10), uno por (circuito, vigencia) -- RD 10.3 exige los ledgers
 // segregados, y la clave los mantiene separados por construccion.
 type RepositorioRendimientos interface {
-	Guardar(ctx context.Context, p reparto.PoolRendimiento) error
+	GuardarRendimiento(ctx context.Context, p reparto.PoolRendimiento) error
 	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
 }
 
 // RepositorioReclamacionesReserva guarda y lee los reclamos contra la
 // reserva (RD 14.5).
 type RepositorioReclamacionesReserva interface {
-	Guardar(ctx context.Context, r reparto.ReclamacionReserva) error
-	PorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error)
+	GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error
+	ReclamacionPorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error)
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.
