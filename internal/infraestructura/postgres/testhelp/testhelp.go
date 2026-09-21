@@ -19,7 +19,7 @@
 // funcionar en cuanto una prueba escribiera un asiento -que es exactamente lo
 // que van a hacer los issues que copien este harness.
 //
-// Restore tira la base y la recrea desde una plantilla tomada justo despues de
+// restaurar tira la base y la recrea desde una plantilla tomada justo despues de
 // las migraciones. No borra filas, asi que no dispara ningun trigger.
 //
 // # Las pruebas que usen Pool NO pueden llamar a t.Parallel()
@@ -33,6 +33,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -57,6 +58,9 @@ const (
 	base    = "intela_test"
 	usuario = "intela"
 	clave   = "intela"
+
+	// Nombre de la plantilla migrada que toma Snapshot y que copia restaurar.
+	plantilla = "migrated_template"
 )
 
 var (
@@ -122,10 +126,51 @@ func DSN(t *testing.T) string {
 		t.Fatalf("levantar postgres: %v", errArranque)
 	}
 
-	if err := contenedor.Restore(t.Context()); err != nil {
+	if err := restaurar(t.Context()); err != nil {
 		t.Fatalf("restaurar la plantilla migrada: %v", err)
 	}
 	return dsn
+}
+
+// restaurar deja la base de pruebas como la plantilla: la tira y la recrea.
+//
+// Hace lo mismo que PostgresContainer.Restore de testcontainers-go v0.40.0 y
+// no lo llama porque esa version filtra una conexion por llamada: abre un
+// *sql.DB contra la base "postgres", pide de el un *sql.Conn y al terminar
+// cierra el DB pero nunca la Conn, que queda viva en el servidor hasta que el
+// recolector de basura finaliza su descriptor. Con una Restore por prueba, el
+// binario acumula conexiones a "postgres" hasta que corre un GC -medido: 59
+// simultaneas con el paquete solo-, y en CI, donde las pruebas asignan poco y
+// el GC tarda, se llego a `too many clients already` (SQLSTATE 53300) en 28
+// pruebas seguidas de identificacion_test.go, ajenas a la que agoto el limite.
+//
+// Aqui la conexion se cierra siempre, asi que el servidor ve una a la vez.
+func restaurar(ctx context.Context) error {
+	admin, err := url.Parse(dsn)
+	if err != nil {
+		return fmt.Errorf("dsn de la base de sistema: %w", err)
+	}
+	admin.Path = "/postgres"
+
+	db, err := sql.Open("pgx", admin.String())
+	if err != nil {
+		return fmt.Errorf("abrir conexion de restauracion: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	db.SetMaxOpenConns(1)
+
+	for _, cmd := range []string{
+		// DROP ... WITH (FORCE) a veces no expulsa a quien tiene la plantilla
+		// abierta, y CREATE ... TEMPLATE exige que nadie la use.
+		fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, plantilla),
+		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, base),
+		fmt.Sprintf(`CREATE DATABASE "%s" WITH TEMPLATE "%s" OWNER "%s"`, base, plantilla, usuario),
+	} {
+		if _, err := db.ExecContext(ctx, cmd); err != nil {
+			return fmt.Errorf("restaurar la plantilla (%s): %w", cmd, err)
+		}
+	}
+	return nil
 }
 
 // arrancar levanta el contenedor, migra y toma la plantilla. Corre una sola
@@ -170,7 +215,7 @@ func arrancar() {
 		return
 	}
 	// La plantilla se toma con el esquema migrado y sin una sola fila.
-	if err := ctr.Snapshot(ctx); err != nil {
+	if err := ctr.Snapshot(ctx, tcpostgres.WithSnapshotName(plantilla)); err != nil {
 		errArranque = fmt.Errorf("tomar plantilla: %w", err)
 	}
 }

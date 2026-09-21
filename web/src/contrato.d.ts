@@ -287,10 +287,12 @@ export interface paths {
          *     un listado, y la paginacion es el tope que evita servir el catalogo
          *     real de REDES SGC de un golpe.
          *
-         *     Los filtros se combinan con Y. `titulo` es PARCIAL y no distingue
-         *     mayusculas -es el unico campo por el que se busca sin saber el dato
-         *     exacto: en la muestra, el titulo localizado y el original difieren en
-         *     16 de 59 filas-. `genero`, `anio` e `ipi` son exactos.
+         *     Los filtros se combinan con Y. `titulo` casa por SUBCADENA o por
+         *     PARECIDO -ignora mayusculas, tildes y el orden de las palabras- y
+         *     ordena el resultado de mas a menos parecido. Es el unico campo por el
+         *     que se busca sin saber el dato exacto: en la muestra, el titulo
+         *     localizado y el original difieren en 16 de 59 filas. `genero`, `anio`
+         *     e `ipi` son exactos.
          *
          *     `ipi` cruza contra los COAUTORES de la obra: el IPI identifica
          *     personas, no obras (`RD 3`).
@@ -2139,7 +2141,8 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description Trozo del titulo. Coincidencia parcial, sin distinguir mayusculas.
+                 * @description Trozo del titulo o titulo parecido. Ignora mayusculas, tildes y el
+                 *     orden de las palabras, y ordena por parecido.
                  * @example dos palmas
                  */
                 titulo?: string;
@@ -2168,8 +2171,8 @@ export interface operations {
                  */
                 limite?: number;
                 /**
-                 * @description Cuantas obras saltarse desde el inicio del resultado ordenado por
-                 *     identificador. Cero o ausente es la primera pagina.
+                 * @description Cuantas obras saltarse desde el inicio del resultado. Cero o
+                 *     ausente es la primera pagina.
                  * @example 0
                  */
                 desplazamiento?: number;
@@ -2181,9 +2184,10 @@ export interface operations {
         requestBody?: never;
         responses: {
             /**
-             * @description Las obras que cuadran, ordenadas por identificador, recortadas a
-             *     la pagina pedida. Sin coincidencias devuelve una lista vacia, no
-             *     un 404.
+             * @description Las obras que cuadran, recortadas a la pagina pedida. Con `titulo`
+             *     van ordenadas de mas a menos parecido (y por identificador entre
+             *     las que empatan); sin `titulo`, por identificador. Sin
+             *     coincidencias devuelve una lista vacia, no un 404.
              */
             200: {
                 headers: {
