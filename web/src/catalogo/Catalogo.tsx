@@ -1,7 +1,9 @@
-import { useId, useState, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { DEBOUNCE_TECLEO_MS, useValorDiferido } from "../useValorDiferido";
+import BuscadorCatalogo from "./BuscadorCatalogo";
+import type { CategoriaId } from "./categoriasDeBusqueda";
 import { formatearPorcentaje, formatearTipo } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import Paginador from "./Paginador";
@@ -108,23 +110,8 @@ function busquedaDeVueltaAlCatalogo(estado: unknown): string {
  * parametros de la URL: una sola forma de nombrarlos evita la traduccion que se
  * desvia.
  */
-const FILTROS = ["titulo", "genero", "anio", "ipi"] as const;
-type Filtro = (typeof FILTROS)[number];
-
-/**
- * La forma de un anio que el backend acepta: un entero positivo. Es la misma
- * regla de `buscarObras` (`strconv.Atoi` y `anio <= 0` = 400).
- *
- * Existe solo para no mandar una consulta que se sabe rechazada -teclear un
- * anio pasa por formas a medias-, no para sustituir al backend: la autoridad
- * para aceptar o rechazar sigue siendo el servidor, y si su regla cambia, su
- * mensaje es el que se ve en pantalla.
- */
-const FORMA_ANIO = /^\d+$/;
-
-function esAnioAplicable(texto: string): boolean {
-  return FORMA_ANIO.test(texto) && Number(texto) > 0;
-}
+type Filtro = CategoriaId;
+const FILTROS: readonly Filtro[] = ["titulo", "genero", "anio", "ipi"];
 
 /**
  * El desplazamiento que se pide, leido de la URL. Un valor que no sea un entero
@@ -155,8 +142,8 @@ export default function Catalogo() {
   // atras o compartir el enlace conserven la busqueda, y lo que deja a `useApi`
   // pedir sola la consulta cuando cambia el path.
   //
-  // El TEXTO de los filtros se difiere (`DEBOUNCE_TECLEO_MS`): los cuatro campos
-  // de arriba escriben en la URL a cada tecla, y sin esa espera cada una era una
+  // El TEXTO de los filtros se difiere (`DEBOUNCE_TECLEO_MS`): el titulo
+  // escribe en la URL a cada tecla, y sin esa espera cada una era una
   // peticion al servidor -y la respuesta de la penultima podia llegar despues de
   // la ultima-. La pagina no se difiere: un clic en "Siguiente" no es tecleo. El
   // numero y su motivo estan declarados una sola vez, en `useValorDiferido.ts`.
@@ -192,35 +179,6 @@ export default function Catalogo() {
   const lista = useLista(`/api/obras?${params.toString()}`, esObra);
 
   /**
-   * El texto del campo del anio y el ultimo valor que la URL tenia de el.
-   *
-   * El campo no puede ser un reflejo de la URL como los otros tres: un valor
-   * que no sea un anio entero positivo NO se manda al servidor -lo rechaza con
-   * 400 en vez de ignorarlo-, asi que la URL se queda sin `anio` mientras el
-   * campo muestra lo que se tecleo. Si el campo se resincronizara con esa URL
-   * en cada tecla, borraria lo que se acaba de escribir. `anioVisto` marca el
-   * valor del que ya se sincronizo: al escribir algo no aplicable se pone al
-   * dia a la vez que la URL, y la resincronizacion queda para cuando la URL
-   * cambie por fuera del campo -el enlace de la navegacion, el boton de atras-,
-   * que es cuando si hay que seguirla.
-   */
-  const anioAplicado = filtros.anio;
-  const [textoAnio, setTextoAnio] = useState(anioAplicado);
-  const [anioVisto, setAnioVisto] = useState(anioAplicado);
-  if (anioAplicado !== anioVisto) {
-    setAnioVisto(anioAplicado);
-    setTextoAnio(anioAplicado);
-  }
-
-  const idTitulo = useId();
-  const idGenero = useId();
-  const idIpi = useId();
-  const idAnio = useId();
-  const idAvisoAnio = useId();
-
-  const anioAplicable = textoAnio === "" || esAnioAplicable(textoAnio);
-
-  /**
    * Pone un filtro en la URL. Cambiar cualquier filtro vuelve a la primera
    * pagina: seguir en el desplazamiento 40 de un resultado que ya es otro deja
    * la pantalla vacia por una razon que nada en pantalla explica.
@@ -239,13 +197,6 @@ export default function Catalogo() {
       },
       { replace: true },
     );
-  }
-
-  function cambiarAnio(valor: string) {
-    setTextoAnio(valor);
-    const aplicable = esAnioAplicable(valor);
-    if (!aplicable) setAnioVisto("");
-    aplicarFiltro("anio", aplicable ? valor : "");
   }
 
   function limpiarFiltros() {
@@ -323,87 +274,13 @@ export default function Catalogo() {
         <h1>Catálogo de obras</h1>
       </header>
 
-      {/* Sin `<form>`: los filtros se aplican al escribir, asi que un submit no
-          tendria nada que hacer y pulsar Enter recargaria la pagina. */}
-      <div
-        className="catalogo-filtros"
-        role="search"
-        aria-label="Filtros del catálogo"
-      >
-        <div className="catalogo-campos">
-          <div className="catalogo-campo">
-            <label htmlFor={idTitulo}>Título</label>
-            <input
-              id={idTitulo}
-              type="text"
-              autoComplete="off"
-              placeholder="Buscar por título…"
-              value={filtros.titulo}
-              onChange={(e) => aplicarFiltro("titulo", e.target.value)}
-            />
-          </div>
-
-          <div className="catalogo-campo">
-            <label htmlFor={idGenero}>Género</label>
-            <input
-              id={idGenero}
-              type="text"
-              autoComplete="off"
-              placeholder="Drama"
-              value={filtros.genero}
-              onChange={(e) => aplicarFiltro("genero", e.target.value)}
-            />
-          </div>
-
-          <div className="catalogo-campo">
-            <label htmlFor={idIpi}>IPI de coautor</label>
-            <input
-              id={idIpi}
-              type="text"
-              autoComplete="off"
-              placeholder="IPI-00000001"
-              value={filtros.ipi}
-              onChange={(e) => aplicarFiltro("ipi", e.target.value)}
-            />
-          </div>
-
-          <div className="catalogo-campo">
-            <label htmlFor={idAnio}>Año</label>
-            {/* Campo de texto y no `type="number"`: un `number` descarta lo que
-                no parsea sin decirlo y su valor llega vacio, con lo que la
-                pantalla no podria explicar por que no esta filtrando. */}
-            <input
-              id={idAnio}
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="1991"
-              value={textoAnio}
-              onChange={(e) => cambiarAnio(e.target.value)}
-              aria-invalid={anioAplicable ? undefined : "true"}
-              aria-describedby={anioAplicable ? undefined : idAvisoAnio}
-            />
-            {/* Solo cuando el valor no se aplica: es la respuesta a lo que se
-                tecleo, no una explicacion de como funciona el filtro. */}
-            {!anioAplicable && (
-              <p id={idAvisoAnio} className="catalogo-ayuda">
-                No se filtra por año mientras el valor no sea un año entero
-                positivo.
-              </p>
-            )}
-          </div>
-        </div>
-
-        {filtrosActivos > 0 && (
-          <button
-            type="button"
-            className="catalogo-limpiar"
-            onClick={limpiarFiltros}
-          >
-            Limpiar filtros
-          </button>
-        )}
-      </div>
+      {/* Sin `<form>`: Enter se maneja en el campo y asi no recarga la pagina. */}
+      <BuscadorCatalogo
+        filtros={filtros}
+        onAplicar={aplicarFiltro}
+        onQuitar={(filtro) => aplicarFiltro(filtro, "")}
+        onLimpiar={limpiarFiltros}
+      />
 
       {contenido}
     </section>

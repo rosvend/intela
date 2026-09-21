@@ -412,7 +412,9 @@ describe("detalle de obra (integracion con App)", () => {
     ).toBeTruthy();
     expect(consultas()).toContain("/api/obras?limite=20");
     expect(consultas().some((url) => url.includes("titulo="))).toBe(false);
-    expect(screen.getByLabelText("Título")).toHaveProperty("value", "");
+    expect(
+      screen.getByRole("textbox", { name: "Texto de búsqueda" }),
+    ).toHaveProperty("value", "");
   });
 
   it("una obra sin declaracion NO se pinta como una declarada incompleta", async () => {
