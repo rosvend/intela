@@ -20,10 +20,18 @@ const quienCascada = "cascada"
 // tabla fija que clave de ids_fuente (ADR 0018) lo identifica en cada fuente
 // conocida. Netflix trae tres ids a granularidades distintas; show_id es el
 // del mismo nivel que id_ficha, asi que un alias aprendido cubre todos los
-// episodios del show.
+// episodios del show. El cine trae hoy una sola clave (id_pelicula) y aun asi
+// va declarado: el dia que el archivo real de exhibicion emita una segunda,
+// el fallback alfabetico elegiria la primera y los alias aprendidos bajo
+// id_pelicula dejarian de casar en silencio.
+//
+// Las claves son literales y no las constantes de ingesta a proposito: la
+// capa prohibe ese import, y lo que ata las dos mitades son las pruebas
+// gemelas de ingesta/idsfuente_test.go (una por fuente), no el compilador.
 var parCanonicoPorFuente = map[string]string{
 	"caracol": ClaveIDFicha,
 	"netflix": ClaveShowID,
+	"cine":    ClaveIDPelicula,
 }
 
 // ResolverUsos corre los escalones 1-2 de la cascada del ADR 0007, mas el

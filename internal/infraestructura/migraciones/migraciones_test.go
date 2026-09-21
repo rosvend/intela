@@ -186,3 +186,62 @@ func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, d
 		t.Fatalf("dejar la base en la version desplegada: %v", err)
 	}
 }
+
+// TestUpYDownRecorrenTodasLasMigraciones baja y vuelve a subir el esquema
+// entero, que hasta ahora no lo hacia nadie: CI solo prueba el `up`, y un
+// bloque `-- +goose Down` roto no se descubriria hasta necesitarlo, que es el
+// peor momento posible.
+//
+// Con Provider y no con las globales de [migraciones.Aplicar]: esas son estado
+// del proceso y esto corre dentro de un binario de pruebas con -race.
+//
+// # No empieza en cero
+//
+// testhelp.DSN entrega una base ya migrada a la version mas alta (es su
+// plantilla, para que las pruebas de este paquete no repitan el costo de
+// migrar). El primer Up de aqui abajo es por tanto un no-op de verificacion,
+// no el ejercicio real. Lo que de verdad prueba esta funcion es el ciclo
+// DownTo(0) -> Up: si algun bloque Down deja algo a medio revertir -- una
+// tabla, un indice, un CHECK -- el Up que le sigue choca contra lo que quedo,
+// y sin datos de por medio ese choque solo puede venir de un Down mal escrito.
+func TestUpYDownRecorrenTodasLasMigraciones(t *testing.T) {
+	ctx := t.Context()
+
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir el esquema: %v", err)
+	}
+	version, err := p.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("leer la version: %v", err)
+	}
+	if version == 0 {
+		t.Fatal("el esquema quedo en la version 0 despues de un up")
+	}
+
+	if _, err := p.DownTo(ctx, 0); err != nil {
+		t.Fatalf("bajar el esquema entero: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != 0 {
+		t.Fatalf("version tras el down = %d (err %v), se esperaba 0", v, err)
+	}
+
+	// Volver a subir sobre lo que dejo el down: si un Down olvida soltar algo,
+	// el Up siguiente choca contra el resto.
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir despues de un down limpio: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != version {
+		t.Fatalf("version tras el segundo up = %d (err %v), se esperaba %d", v, err, version)
+	}
+}
