@@ -164,7 +164,10 @@ func TestLote10kEnMenosDe5Min(t *testing.T) {
 			TituloOrig: uso.TituloOrig,
 			TipoID:     "id_ficha",
 			ValorID:    idFicha(uso.IDsFuente),
-		}, identificacion.Consulta{AliasObraID: alias[idFicha(uso.IDsFuente)]}, nil)
+		}, identificacion.Consulta{AliasObraID: alias[idFicha(uso.IDsFuente)]}, nil,
+			// Todas las filas entran por el escalon 1 (alias): los umbrales del
+			// escalon 3 no se usan, pero Resolver los pide (#32).
+			identificacion.Umbrales{Match: d10k("0.60"), Banda: d10k("0.45")})
 		if res.ObraID == "" || res.ONI {
 			t.Fatalf("fila %d sin identificar: %+v", i, res)
 		}

@@ -105,7 +105,7 @@ function busquedaDeVueltaAlCatalogo(estado: unknown): string {
 
 /**
  * Los cuatro filtros de busqueda, con los nombres EXACTOS de los parametros
- * que acepta `GET /obras` (`titulo` parcial sin distinguir mayusculas, `genero`
+ * que acepta `GET /obras` (`titulo` por subcadena o por parecido, `genero`
  * exacto, `anio` entero positivo, `ipi` exacto). Son tambien los nombres de los
  * parametros de la URL: una sola forma de nombrarlos evita la traduccion que se
  * desvia.

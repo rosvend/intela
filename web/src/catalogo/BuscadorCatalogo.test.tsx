@@ -251,7 +251,9 @@ describe("selector de categoría", () => {
   it("cada categoría pone su placeholder y su inputMode", () => {
     montar();
 
-    expect(campo().getAttribute("placeholder")).toBe("Parte del título…");
+    expect(campo().getAttribute("placeholder")).toBe(
+      "Título o parte, sin importar tildes…",
+    );
     expect(campo().getAttribute("inputmode")).toBe("text");
     elegir("Año");
     expect(campo().getAttribute("placeholder")).toBe("Año exacto, p. ej. 1991");

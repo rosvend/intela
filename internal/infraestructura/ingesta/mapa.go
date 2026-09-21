@@ -30,6 +30,10 @@ const (
 	// hay nada que identificar.
 	CampoTitulo Campo = "titulo"
 
+	// CampoTituloOrig es el titulo original cuando la fuente trae los dos.
+	// Opcional: el escalon 3 lo prueba ademas de CampoTitulo.
+	CampoTituloOrig Campo = "titulo_original"
+
 	// CampoIDsFuente es un identificador de la fuente. El VALOR va tal como
 	// viene, sin normalizar; la CLAVE no: [Columna.ClaveID] tiene que ser una
 	// constante `aplicacion.Clave*`, y al persistir se juntan con
@@ -77,6 +81,7 @@ const (
 // dos cosas no se puedan separar.
 var tipos = map[Campo]tipo{
 	CampoTitulo:         texto,
+	CampoTituloOrig:     texto,
 	CampoIDsFuente:      texto,
 	CampoModalidad:      texto,
 	CampoTipoObra:       texto,
@@ -453,6 +458,8 @@ func (m Mapa) asignarTexto(u *aplicacion.UsoPersistido, c Campo, v string) {
 	switch c {
 	case CampoTitulo:
 		u.Titulo = v
+	case CampoTituloOrig:
+		u.TituloOrig = v
 	case CampoTipoObra:
 		u.TipoObra = v
 	case CampoCanalID:
