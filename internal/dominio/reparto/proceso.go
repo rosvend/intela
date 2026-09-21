@@ -45,7 +45,7 @@ func secuenciaEtapas(c Circuito) []Etapa {
 // Tesoreria) para Verificacion y Pago y Registro, pero el modelo de firmas
 // hoy solo tiene dos roles (`firmas.rol`, PR #104 ya escrito contra ellos).
 // Subir a los tres roles del texto verbatim es una migracion aparte,
-// deliberadamente diferida -- ver la descripcion del PR.
+// deliberadamente diferida -- ver ADR 0020.
 type RolAcompuerta string
 
 const (
