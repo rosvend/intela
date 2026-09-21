@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-13
+actualizado: 2026-09-20
 evidencia: internal/infraestructura/semilla/dataset.go
 ---
 
@@ -46,6 +46,8 @@ es lo que permite decir "esta cifra es de demo" sin tener que leer el codigo.
 | Coeficientes OTT `Wa/Wb/Wc` | Si | Si | El valor real (P-04) |
 | Rating por franja | **Parcial** | **No** | La tabla y la marca |
 | Mapeo de generos | **No existe** | -- | Todo |
+| Registro de canales | Si | n/a | El quintil real de `RD 9.5.4` (P-17) |
+| Atribucion de canal en el uso | Si | n/a | -- |
 
 ## Declaraciones de Obra
 
@@ -86,9 +88,14 @@ REDES-SYS no tiene campo de IPI.
 Fixtures: `Dataset.usuariosDeRecaudo()` y `Dataset.bolsas()`.
 
 Forma de la bolsa: `(id, usuario_id, periodo, circuito, bruto, convenio, tarifa, factura)`.
-Cuatro bolsas del periodo `2025-01`, tres `nacional` y una `internacional` -- los dos circuitos
-importan porque el internacional **no se valoriza por puntos** (`RD 7.4`), se reparte tal como
-lo discrimino la sociedad hermana.
+Una bolsa por pagador del periodo `2025-01`, casi todas `nacional` y una `internacional` -- los
+dos circuitos importan porque el internacional **no se valoriza por puntos** (`RD 7.4`), se
+reparte tal como lo discrimino la sociedad hermana.
+
+**Dos de las bolsas son de canales de TV abierta del mismo periodo**, y eso no es relleno: es la
+unica forma de comprobar que el valor punto de `RD 9.1.1` se calcula por canal y no por periodo.
+Una corrida es una bolsa (ADR 0019), asi que dos canales son dos corridas y dos valor punto
+independientes.
 
 Rangos: importes redondos del orden de $200.000 a $1.000.000 COP. Son redondos a proposito.
 
@@ -100,13 +107,15 @@ ADR 0006, de donde salio este dinero -- y van en la propia fila, marcadas `-sint
 ### Los pagadores
 
 Desde la migracion 00009 (#27), `bolsas.usuario_id` tiene clave foranea a `usuarios_recaudo`, y
-el dataset da de alta los cuatro pagadores que sus bolsas citan:
+el dataset da de alta los pagadores que sus bolsas citan:
 
 | `id` | Categoria | Por que esa |
 | ---- | --------- | ----------- |
 | `caracol` | `tv_abierta` | `RT 3.1.1`; se reparte por puntos (`RD 9.1.1`) |
+| `rcn` | `tv_abierta` | El segundo canal, que es lo que hace observable `RD 9.1` |
 | `procinal` | `cine` | `RT 3.2`; proporcional a taquilla (`RD 9.2`) |
 | `netflix` | `medios_digitales` | `RT 3.6`; formula OTT (`RD 9.7`) |
+| `expreso-bolivariano` | `transporte_terrestre` | `RT 3.4.1`; por exhibiciones (`RD 9.4`) |
 | `dago-films` | `sin_clasificar` | Es el del circuito internacional |
 
 La categoria **no** sirve para tarifar -- Intela no factura -- sino para saber que formula de
@@ -195,3 +204,52 @@ alguien.
 Pendiente de implementar: la tabla debe vivir como **dato con vigencia**, no como constantes en
 codigo, para que corregirla despues sea cambiar una fila. Corresponde a #26, que es donde una fila
 de parrilla adquiere su tipo de obra.
+
+## Registro de canales y atribucion del uso
+
+Fixture: `Dataset.canales()`. Tablas `canales` y `canales_clasificacion` (migracion 00011).
+
+Forma del canal: `(id, nombre, grupo_estructural)`. Forma de la clasificacion:
+`(canal_id, anio_audiencia, grupo_efectivo)`.
+
+Son dos tablas y no una columna porque `RD 9.5` clasifica de dos maneras distintas.
+`grupo_estructural` es lo que no cambia (`RD 9.5.1`-`9.5.3`: privado nacional, regional o de
+operacion publica, premium). `grupo_efectivo` se recalcula **cada ano** contra el quintil de
+audiencia del ano inmediatamente anterior (`RD 9.5.4`), asi que reejecutar un periodo pasado
+tiene que leer la fila de aquel ano y no la vigente hoy (ADR 0005).
+
+En el sembrador, `anio_audiencia` es el ano del periodo **menos uno**. No sale del reloj: sale
+del periodo, igual que en el nucleo.
+
+El quintil real es **P-17** y sigue abierto: hace falta el feed del proveedor de audiencia. Los
+dos canales del dataset se clasifican como `privado_nacional`, que es su grupo estructural, y por
+tanto no afirman nada sobre rating que nadie haya medido.
+
+### El canal en la fila de uso
+
+`usos.canal_id` es **quien pago**, no quien entrego el archivo. Son cosas distintas y la
+confusion sale cara: `fuente` es la entrega (ADR 0018), y una sola entrega de Caracol puede
+cubrir varios canales. Por eso la columna existe aparte, y por eso los cuatro constructores de
+uso del sembrador (`usoTV`, `usoCine`, `usoOTT`, `usoTransporte`) la reciben como parametro
+explicito.
+
+No tiene clave foranea a `canales` a proposito (migracion 00011): conserva el identificador que
+declaro la fuente aunque el catalogo anual todavia no conozca ese canal. Un canal sin fila en
+`canales_clasificacion` devuelve grupo vacio, que fuera de suscripcion no se usa y dentro de ella
+falla ruidosamente en el motor.
+
+**El sembrador es la unica fuente que puebla `canal_id` hoy.** Ningun adaptador de ingesta real
+(`MapaCaracol`, `MapaNetflix`, `MapaCine`) mapea una columna del archivo del cliente a
+`CampoCanalID`: quien puebla esta columna en produccion es **P-20**, abierta en
+[`preguntas-cliente.md`](preguntas-cliente.md). Mientras no se resuelva, toda fila que entra por
+`IngerirReporte` llega con `canal_id = ''`, y `UsosSinCanal` es como se detecta ese hueco en vez
+de confundirlo con "el canal no emitio".
+
+### Medidas de `RD 9.2` y `RD 9.4`
+
+`espectadores` acompana a `taquilla` en el uso de cine porque el ejemplo de `RD 9.2` reparte por
+espectadores mientras su prosa dice taquilla. La contradiccion es **P-18** y se resuelve con
+`Snapshot.BaseCineTeatro`, no reescribiendo el esquema: por eso el dato tiene que estar sembrado.
+
+`exhibiciones` es la medida de `RD 9.4` (transporte publico) y es distinta de `emisiones`. El
+reporte de `expreso-bolivariano` la ejercita.
