@@ -105,6 +105,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+require pgregory.net/rapid v1.3.0
+
 require (
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
