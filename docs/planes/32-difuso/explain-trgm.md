@@ -56,6 +56,68 @@ que corte antes-. En operacion real el escalon 1 se lleva casi todo a coste cero
 tabla de alias se llena, que es precisamente el efecto que el ADR 0007 busca. El numero de
 arriba es el del primer periodo, cuando no hay ningun alias aprendido.
 
+## Por que no se reescribio como KNN (review de #146, S2)
+
+El review propuso quitar la transaccion por titulo (`EnTransaccion` + `SET LOCAL`, un par de
+viajes de mas por fila) con una consulta que no necesitara el GUC: pedir los N vecinos mas
+cercanos con el operador de distancia y aplicar el piso como filtro. `gist_trgm_ops` soporta
+`<->` (distancia = 1 - similitud) para busqueda por vecindad, asi que era razonable esperar que el
+indice la sirviera. Se midio antes de tocar el adaptador, con la misma tabla (20.004 obras,
+`postgres:16.15-alpine`, `ANALYZE`, migraciones reales hasta 00013), y **no sirve**.
+
+La candidata:
+
+```sql
+SELECT id, puntaje FROM (
+  SELECT id, similarity(titulo_norm, titulo_normalizado($1)) AS puntaje
+    FROM obras
+   ORDER BY titulo_norm <-> titulo_normalizado($1), id
+   LIMIT 5
+) c
+WHERE puntaje >= $2::numeric::float4
+ORDER BY puntaje DESC, id ASC;
+```
+
+| Consulta | Plan | Tiempo |
+| --- | --- | --- |
+| Actual: `%` + `set_config(..., true)` | `Index Scan using obras_titulo_norm_gist` | **0,6 ms** |
+| KNN con desempate por `id` | `Seq Scan` + `top-N heapsort` | **217 ms** |
+| KNN con desempate por `id`, como sentencia preparada de plan generico | `Seq Scan` + `top-N heapsort` | 300 ms |
+| KNN con desempate por `id` y `enable_seqscan = off` | `Seq Scan` + `top-N heapsort` (sigue sin usar el indice) | 270 ms |
+| KNN **sin** desempate | `Index Scan using obras_titulo_norm_gist` | 6,2 ms |
+
+El plan de la candidata, tal cual salio:
+
+```
+Limit  (actual time=217.239..217.241 rows=5 loops=1)
+  ->  Sort  (actual time=217.238..217.239 rows=5 loops=1)
+        Sort Key: ((obras.titulo_norm <-> 'la casa de las dos palmas'::text)), obras.id
+        Sort Method: top-N heapsort  Memory: 25kB
+        ->  Seq Scan on obras  (actual time=0.031..210.072 rows=20004 loops=1)
+```
+
+Lo que decide:
+
+- **El desempate por `id` no es negociable.** Sin el, dos obras con el mismo puntaje en el
+  limite del `LIMIT` salen en el orden que el indice recorra, y dos corridas sobre el mismo dato
+  podrian tener por "mejor candidato" obras distintas: el ADR 0005 pide orden total. Con el, el
+  planificador no combina un orden por `<->` del indice con una segunda clave (ni con Incremental
+  Sort: `enable_seqscan = off` tampoco lo consigue) y barre la tabla.
+- Sin el desempate el indice si se usa, pero 10 veces mas lento que `%` -el KNN visita 319
+  paginas para dar 5 filas- y el problema anterior queda abierto.
+- Las 10.000 filas de KR-1 (#46) a 217 ms son **treinta y seis minutos**. Con `%`, seis segundos.
+
+Por eso el adaptador **conserva** `%` con `set_config('pg_trgm.similarity_threshold', ..., true)`
+dentro de una transaccion, y solo cambia a [`enTransaccionDe`]: si el contexto ya trae la unidad
+de trabajo de otro puerto, corre en ella en vez de abrir la suya. La otra salida del review,
+fijar el GUC una vez por corrida, esta descartada: un GUC de sesion no sobrevive al pool, que
+reparte conexiones distintas a cada consulta. `WHERE similarity(...) >= piso` sin `%` tampoco:
+la funcion no es indexable y vuelve a ser un barrido (68 ms).
+
+Un detalle que la transaccion deja al descubierto y que queda documentado en el metodo: dentro de
+una unidad, el corte LOCAL dura hasta que termina **la unidad**. `ResolverUsos` consulta la
+similitud fuera de su unidad de escritura, asi que no lo sufre.
+
 ## Reproducirlo
 
 ```

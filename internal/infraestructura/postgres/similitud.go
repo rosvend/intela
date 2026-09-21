@@ -18,6 +18,17 @@ var _ aplicacion.Similitud = (*Store)(nil)
 // Va en transaccion por el SET LOCAL: `%` es el operador que usa el indice y su
 // corte es el GUC, no un argumento. LOCAL para que la conexion vuelva al pool
 // sin el corte puesto. El desempate por id da orden total (ADR 0005).
+//
+// Se midio quitar la transaccion con una consulta KNN (`ORDER BY titulo_norm <->
+// $1, id LIMIT n` y el piso como filtro) y NO sirve: con el desempate por id el
+// planificador no usa el GiST y hace Seq Scan (217 ms frente a 0,6 ms con 20.004
+// obras); sin el id usa el indice pero deja el orden de los empates a la suerte,
+// que es justo lo que el ADR 0005 prohibe. Los planes estan en explain-trgm.md.
+//
+// Participa en la unidad de trabajo del contexto ([Store.enTransaccionDe]). Dentro
+// de una, el corte LOCAL dura hasta que TERMINA LA UNIDAD y no este metodo: quien
+// la llame dentro de una unidad y despues use `%` en la misma vera el piso
+// puesto. [aplicacion.ResolverUsos] la consulta fuera de su unidad de escritura.
 func (s *Store) Candidatos(ctx context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error) {
 	var cs []identificacion.Candidato
 
