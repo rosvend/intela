@@ -366,10 +366,17 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// ON CONFLICT DO NOTHING: en produccion la instalacion ya tiene el primer
+	// administrador (orden primer-administrador) y a veces el padron demo
+	// (sembrar-titulares-demo). Sin esto, Cargar fallaba al chocar con esas
+	// filas aunque obras y reportes estuvieran vacios (hay.vacio() mira solo
+	// esas dos tablas). La clave del admin provisionado se conserva: no se
+	// reescribe el hash.
 	for _, tit := range d.Titulares {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			tit.ID, tit.Nombre, tit.IPI, tit.PersonaNatural, tit.Clase, tit.Email); err != nil {
 			return fmt.Errorf("insertar titular %s: %w", tit.ID, err)
 		}
@@ -386,7 +393,8 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO usuarios (id, email, nombre, rol, titular_id, password_hash)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			u.ID, u.Email, u.Nombre, string(u.Rol), titular, hash); err != nil {
 			return fmt.Errorf("insertar usuario %s: %w", u.ID, err)
 		}
