@@ -52,7 +52,7 @@ func resumir(token string) string {
 // otra viene del servidor es pedir que una diferencia de reloj rechace un
 // login legitimo.
 func (s *Store) Crear(ctx context.Context, token, usuarioID string, expira time.Time) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO sesiones (token, usuario_id, expira) VALUES ($1, $2, $3)`,
 		resumir(token), usuarioID, expira)
 	return traducirError(err, "crear sesion de %q", usuarioID)
@@ -80,7 +80,7 @@ func (s *Store) Crear(ctx context.Context, token, usuarioID string, expira time.
 // JOIN habria que calificar las cinco columnas con el alias de la tabla, y esa
 // proyeccion se comparte con afiliacion.go justamente para que no diverjan.
 func (s *Store) PorToken(ctx context.Context, token string, ahora time.Time) (aplicacion.Usuario, error) {
-	fila := s.pool.QueryRow(ctx,
+	fila := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasUsuario+` FROM usuarios
 		  WHERE id = (SELECT usuario_id FROM sesiones
 		               WHERE token = $1 AND expira > $2)`,
@@ -102,6 +102,6 @@ func (s *Store) PorToken(ctx context.Context, token string, ahora time.Time) (ap
 // Un cliente que reintenta el logout no merece un 500, y responder "ese token
 // no existia" le cuenta a quien pregunte si un token ajeno esta vivo.
 func (s *Store) Revocar(ctx context.Context, token string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM sesiones WHERE token = $1`, resumir(token))
+	_, err := s.ejecutorDe(ctx).Exec(ctx, `DELETE FROM sesiones WHERE token = $1`, resumir(token))
 	return traducirError(err, "revocar sesion")
 }

@@ -70,7 +70,7 @@ const columnasParteEscritura = `titular_id, ipi, porcentaje`
 func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (int, time.Time, error) {
 	ahora = ahora.Truncate(time.Microsecond)
 	var version int
-	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		var existe string
 		if err := tx.QueryRow(ctx, `SELECT id FROM obras WHERE id = $1 FOR UPDATE`, d.ObraID).
 			Scan(&existe); err != nil {
@@ -211,6 +211,11 @@ func (s *Store) Guardar(ctx context.Context, d repertorio.Declaracion, ahora tim
 // El LIMIT va sobre las VERSIONES, no sobre el resultado: puesto en la consulta
 // de fuera recortaria filas de PARTES, y una version con tres coautores podria
 // llegar con dos. De ahi la CTE.
+//
+// s.ejecutorDe(ctx) y no s.pool: como el resto del paquete, para que una
+// lectura pedida DENTRO de una unidad de trabajo (aplicacion.UnidadDeTrabajo)
+// vea lo que esa misma transaccion todavia no ha confirmado, en vez de abrir
+// una conexion aparte que no puede verlo.
 func (s *Store) Historial(ctx context.Context, obraID string, pag aplicacion.Paginacion) ([]aplicacion.VersionDeclaracion, error) {
 	pag = pag.ConDefecto()
 	// LIMIT NULL es "sin limite" en PostgreSQL.
@@ -218,7 +223,7 @@ func (s *Store) Historial(ctx context.Context, obraID string, pag aplicacion.Pag
 	if pag.Limite != aplicacion.LimiteSinTope {
 		limite = &pag.Limite
 	}
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`WITH versiones AS (
 		     SELECT obra_id, version, vigente_desde, vigente_hasta
 		       FROM declaracion_versiones
@@ -287,7 +292,7 @@ func (s *Store) Historial(ctx context.Context, obraID string, pag aplicacion.Pag
 // EXCLUDE de la migracion garantiza que esa fila, si existe, es unica.
 func (s *Store) VigenteEn(ctx context.Context, obraID string, momento time.Time) (aplicacion.VersionDeclaracion, error) {
 	var vd aplicacion.VersionDeclaracion
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT version, vigente_desde, vigente_hasta FROM declaracion_versiones
 		  WHERE obra_id = $1 AND vigente_desde <= $2 AND (vigente_hasta IS NULL OR vigente_hasta > $2)`,
 		obraID, momento).Scan(&vd.Version, &vd.VigenteDesde, &vd.VigenteHasta)
@@ -339,7 +344,12 @@ func (s *Store) VigentesDeObras(ctx context.Context, obraIDs []string) (map[stri
 	// version no entra en el orden porque no hace falta: el EXCLUDE de la
 	// migracion 00008 garantiza una sola version abierta por obra, asi que
 	// obra_id ya la determina.
-	filas, err := s.pool.Query(ctx,
+	//
+	// s.ejecutorDe(ctx) y no s.pool: el catalogo llama a esto desde dentro de
+	// [aplicacion.Catalogo.conDeclaracion], y una lectura del pool en vez de la
+	// transaccion ambiente no veria lo que esa misma unidad de trabajo todavia
+	// no confirmo. Mismo criterio que [Store.Historial] arriba.
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT dv.obra_id, dv.version, dv.vigente_desde, d.titular_id, d.ipi, d.porcentaje
 		   FROM declaracion_versiones dv
 		   LEFT JOIN declaraciones d
@@ -399,7 +409,7 @@ func (s *Store) VigentesDeObras(ctx context.Context, obraIDs []string) (map[stri
 // partesDeObra (repertorio.go), que solo lee la version vigente para el
 // motor de reparto y el estado del catalogo.
 func (s *Store) partesDeVersion(ctx context.Context, obraID string, version int) ([]repertorio.Parte, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasParteEscritura+` FROM declaraciones
 		  WHERE obra_id = $1 AND version = $2 ORDER BY titular_id`,
 		obraID, version)
