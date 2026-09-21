@@ -501,12 +501,13 @@ describe("editor de reparto (integracion con App)", () => {
     // El total va ROTULADO como lo que es -una cuenta de esta pantalla- y el
     // estado del borrador no es el de la version guardada.
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "100.0000%",
+      "100%",
     );
     expect(dato("Estado del borrador")).toContain("Completa");
-    expect(texto()).toMatch(
-      /El estado de la declaración guardada lo calcula el servidor/,
-    );
+    // Sin prosa bajo las cifras: ni la nota del servidor ni la explicacion del
+    // estado del borrador.
+    expect(texto()).not.toMatch(/lo calcula el servidor/);
+    expect(texto()).not.toMatch(/El borrador suma 100/);
     expect(botonGuardar()).toHaveProperty("disabled", false);
     expect(guardados()).toHaveLength(0);
   });
@@ -523,7 +524,7 @@ describe("editor de reparto (integracion con App)", () => {
 
     expect(dato("Estado del borrador")).toContain("Sin nada declarado");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "0.0000%",
+      "0%",
     );
     expect(botonGuardar()).toHaveProperty("disabled", true);
     expect(
@@ -545,11 +546,16 @@ describe("editor de reparto (integracion con App)", () => {
 
     expect(dato("Estado del borrador")).toContain("Pasa de 100");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "145.0000%",
+      "145%",
     );
     // La razon que se da NO es que la pantalla lo bloquee: es que el servidor
-    // rechaza esa suma con un 400.
-    expect(texto()).toMatch(/el servidor rechaza con un 400/);
+    // rechaza esa suma con un 400. Es el motivo del guardado bloqueado
+    // (`editor-aviso`), no prosa.
+    expect(
+      screen.getByText(
+        "El total pasa de 100, y el servidor rechaza esa suma con un 400.",
+      ),
+    ).toBeTruthy();
     expect(botonGuardar()).toHaveProperty("disabled", true);
 
     guardar();
@@ -568,13 +574,13 @@ describe("editor de reparto (integracion con App)", () => {
     // lo que es -un cero que alguien tecleo-, no como una fila sin rellenar.
     expect(dato("Estado del borrador")).toContain("Incompleta");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "60.0000%",
+      "60%",
     );
-    // La consecuencia de R-04, no el defecto: se retiene el importe entero.
-    expect(texto()).toMatch(/no es un error/);
-    expect(texto()).toMatch(/R-04 \(RD 13.1.3\)/);
-    expect(texto()).toMatch(/en reserva/);
-    expect(texto()).toMatch(/nunca se prorratea/);
+    // El estado lo dice la etiqueta; la explicacion de R-04 ya no va en un
+    // parrafo, y no hay ningun motivo de bloqueo (se puede guardar).
+    expect(texto()).not.toMatch(/R-04 \(RD 13.1.3\)/);
+    expect(texto()).not.toMatch(/en reserva/);
+    expect(screen.queryByText(/no puede guardar|pasa de 100, y/)).toBeNull();
     // Ni "inválida" -que el backend no puede persistir- ni un tono de fallo.
     expect(texto()).not.toMatch(/inv[aá]lida/i);
     expect(botonGuardar()).toHaveProperty("disabled", false);
@@ -588,7 +594,7 @@ describe("editor de reparto (integracion con App)", () => {
     await abrirElEditor();
 
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "100.0000%",
+      "100%",
     );
     expect(dato("Estado del borrador")).toContain("Completa");
     expect(botonGuardar()).toHaveProperty("disabled", false);
@@ -1298,23 +1304,24 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
-  // El padron SI admite filtrar por identificador: `GET /titulares?ids=` es la
-  // consulta acotada que documenta el contrato y que usa el detalle para pedir
-  // los nombres. Esta nota decia lo contrario -era verdad cuando se escribio- y
-  // era la unica copia del hecho, y la unica que lee quien escribe el reparto,
-  // que nadie actualizo cuando el contrato cambio.
-  it("la nota del padron no afirma que no se pueda filtrar por identificador", async () => {
+  it("el padron no lleva prosa: ni introduccion, ni nota final, ni ayuda bajo el buscador", async () => {
     simularServidor();
     await abrirElEditorConPadron();
 
-    // Se busca la nota por lo que SI dice y que sigue siendo verdad: una pagina
-    // que no trae al titular no prueba que no exista. Si esa frase se quita, la
-    // prueba falla aqui y no pasa en silencio por no tener nada que mirar.
-    const nota = screen.getByText(/una página que no traiga al titular/);
+    const padron = screen
+      .getByRole("heading", { name: "Padrón de titulares" })
+      .closest("section") as HTMLElement;
 
-    expect(nota.textContent).not.toMatch(/no admite filtrar/i);
-    expect(nota.textContent).not.toMatch(/no se puede filtrar/i);
-    expect(nota.textContent).not.toMatch(/sin filtro por identificador/i);
+    // Solo el rotulo, el buscador y la tabla con su paginador.
+    expect(padron.querySelector("p")).toBeNull();
+    expect(padron.querySelector(".catalogo-ayuda")).toBeNull();
+    expect(
+      screen
+        .getByLabelText("Buscar por nombre")
+        .getAttribute("aria-describedby"),
+    ).toBeNull();
+    expect(padron.textContent).not.toMatch(/se sirve por páginas/);
+    expect(padron.textContent).not.toMatch(/Se listan las dos clases/);
   });
 
   it("anadir un titular del padron crea su fila con el IPI y sin porcentaje inventado", async () => {
@@ -1433,7 +1440,7 @@ describe("editor de reparto (integracion con App)", () => {
     // El reparto de la version 2 -60 y 40- sigue visible tal como se declaro
     // entonces: un periodo pasado tiene que poder reproducirse con el split que
     // estaba vigente entonces.
-    expect(screen.getAllByText("60.0000%").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("60%").length).toBeGreaterThan(0);
   });
 
   // WARNING de la revision adversarial: el parrafo del exito prometia, sin
@@ -1886,9 +1893,13 @@ describe("editor de reparto (integracion con App)", () => {
     const boton = within(filaDelBorrador("tit-1")).getByRole("button", {
       name: "Quitar a tit-1 del reparto",
     });
-    // Y el texto visible no cambia de significado: sigue diciendo la accion y el
-    // titular que ya estaban escritos.
-    expect(boton.textContent?.trim()).toBe("Quitar de tit-1");
+    // Es un boton redondo con icono: sin texto visible, con el mismo nombre
+    // accesible en `title`, y el SVG es decorativo.
+    expect(boton.textContent?.trim()).toBe("");
+    expect(boton.getAttribute("title")).toBe("Quitar a tit-1 del reparto");
+    expect(boton.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
   });
 
   it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {
@@ -2156,7 +2167,7 @@ describe("el Enter de un campo de texto no guarda (el 🟠)", () => {
     vi.useFakeTimers();
     try {
       const antes = delPadron().length;
-      fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+      fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
 
       expect(delPadron().length).toBe(antes + 1);
       expect(delPadron().at(-1)?.url).toBe(

@@ -72,7 +72,7 @@ const LIMITE_PADRON = 50;
 type FocoPendiente = MutableRefObject<string | null>;
 
 /**
- * El texto y la explicacion del borrador en cada uno de sus cuatro estados.
+ * El texto del borrador en cada uno de sus cuatro estados.
  *
  * Son estados del BORRADOR, que no existen para el servidor: los de una
  * declaracion guardada son dos -`completa` e `incompleta`- y los asigna el
@@ -80,30 +80,11 @@ type FocoPendiente = MutableRefObject<string | null>;
  * estado que el backend calculo, y por eso ninguna de estas frases dice lo que
  * la version guardada vaya a quedar siendo.
  */
-const ESTADO_DEL_BORRADOR: Record<
-  EstadoBorrador,
-  { texto: string; explicacion: string }
-> = {
-  vacia: {
-    texto: "Sin nada declarado",
-    explicacion:
-      "No hay ningún porcentaje escrito todavía. El servidor rechaza una declaración sin partes, así que esta pantalla no ofrece guardar mientras el borrador esté así.",
-  },
-  completa: {
-    texto: "Completa",
-    explicacion:
-      "El borrador suma 100. La comparación da por bueno el ruido de la coma flotante, para que una suma exacta en aritmética decimal no se lea como incompleta. Si el servidor lo acepta, la versión quedará completa.",
-  },
-  incompleta: {
-    texto: "Incompleta",
-    explicacion:
-      "Un borrador por debajo de 100 no es un error: bajo R-04 (RD 13.1.3) la declaración se guarda igual, no se reparte nada de esa obra y el importe completo queda en reserva, nunca se prorratea. Se puede guardar así.",
-  },
-  excedida: {
-    texto: "Pasa de 100",
-    explicacion:
-      "El total pasa de 100, y el servidor rechaza con un 400 toda declaración cuya suma supere 100. Por eso esta pantalla no ofrece guardar mientras el total esté por encima: baja el porcentaje de alguna fila.",
-  },
+const ESTADO_DEL_BORRADOR: Record<EstadoBorrador, { texto: string }> = {
+  vacia: { texto: "Sin nada declarado" },
+  completa: { texto: "Completa" },
+  incompleta: { texto: "Incompleta" },
+  excedida: { texto: "Pasa de 100" },
 };
 
 /**
@@ -164,12 +145,7 @@ export default function EditorReparto() {
 
   if (estado.estado === "ausente") {
     return (
-      <ObraAusente
-        id={estado.id}
-        volver={destino}
-        className="editor-reparto"
-        explicacion=", así que no hay ninguna declaración que abrir. El reparto de una obra se declara sobre la obra: sin ella no hay nada que editar."
-      />
+      <ObraAusente id={estado.id} volver={destino} className="editor-reparto" />
     );
   }
 
@@ -487,14 +463,6 @@ function FormularioDeReparto({
         <p className="muted detalle-nota">
           {obra.titulo} · {obra.id}
         </p>
-        {/* De que va esta pantalla, sin prometer nada que no se cumpla: los
-            porcentajes de reparto solo salen de la Declaracion de Obra (R-03), y
-            guardar aqui no corrige la version vigente, abre una nueva. */}
-        <p className="muted detalle-nota">
-          Los porcentajes de reparto solo salen de la Declaración de Obra
-          (R-03). Guardar aquí no corrige la versión vigente: la cierra y abre
-          una nueva con el reparto que quede escrito.
-        </p>
       </header>
 
       <AvisoDeVersionVisible aviso={aviso} mensaje={mensajeDelHistorial} />
@@ -515,10 +483,6 @@ function FormularioDeReparto({
       >
         <section className="editor-borrador">
           <h2>Borrador del reparto</h2>
-          <p className="muted detalle-nota">
-            El estado de la declaración guardada lo calcula el servidor; lo de
-            aquí es el borrador, que todavía no existe para el servidor.
-          </p>
           {/* `role="status"` en las dos cifras y en los avisos, siguiendo el
               patron de `PanelDelGuardado`: son nodos VIVOS, y lo que cambia en
               ellos -el total al teclear, el estado del borrador, el motivo por
@@ -540,16 +504,6 @@ function FormularioDeReparto({
               </dd>
             </div>
           </dl>
-          <p className="muted detalle-nota">
-            {ESTADO_DEL_BORRADOR[estado].explicacion}
-          </p>
-          <p className="muted detalle-nota">
-            El total se muestra con 4 decimales, la precisión de la columna, y
-            el estado del borrador se decide sobre la suma exacta de lo escrito,
-            sin redondearla. El total y el estado de la versión guardada los
-            calcula el servidor: son los que se ven en el catálogo y en el
-            historial.
-          </p>
         </section>
 
         <FilasDelReparto
@@ -773,10 +727,6 @@ function FilasDelReparto({
     return (
       <div className="catalogo-vacio">
         <p>El borrador no tiene ninguna parte.</p>
-        <p className="muted">
-          Añade titulares desde el padrón de abajo: el reparto se declara sobre
-          quien figura en él.
-        </p>
       </div>
     );
   }
@@ -857,22 +807,33 @@ function FilasDelReparto({
                 />
               </td>
               <td>
-                {/* El texto visible no cambia de significado: dice la accion y el
-                    titular que ya estaban escritos. El nombre accesible es lo que
-                    anuncia un lector de pantalla, y el paso 11 lo dejo con el
-                    `titular_id` porque la fila no tenia el nombre; ahora se nombra
-                    al titular por su nombre cuando la fila lo sabe -la que se
-                    agrego del padron- y se cae al identificador cuando no -la
-                    sembrada desde el historial (D-006)-, con el mismo criterio con
-                    el que la primera columna se lee. Sin nombre, "Quitar a tit-3
-                    del reparto" nombra sin decir de quien. */}
+                {/* Boton redondo con ×: el nombre accesible es lo que anuncia un
+                    lector de pantalla. Se nombra al titular por su nombre cuando
+                    la fila lo sabe -la que se agrego del padron- y se cae al
+                    identificador cuando no -la sembrada desde el historial
+                    (D-006)-, con el mismo criterio con el que la primera columna
+                    se lee. Sin nombre, "Quitar a tit-3 del reparto" nombra sin
+                    decir de quien. */}
                 <button
                   type="button"
-                  className="enlace"
+                  className="boton-icono"
                   aria-label={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
+                  title={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
                   onClick={() => onQuitar(fila.clave)}
                 >
-                  Quitar de {fila.titularId}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 14 14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path d="M3 3l8 8M11 3l-8 8" />
+                  </svg>
                 </button>
               </td>
             </tr>
@@ -907,7 +868,6 @@ function PadronDelEditor({
   const [busqueda, setBusqueda] = useState("");
   const [desplazamiento, setDesplazamiento] = useState(0);
   const idNombre = useId();
-  const idAyuda = useId();
 
   const nombreDiferido = useValorDiferido(busqueda, DEBOUNCE_TECLEO_MS);
 
@@ -964,89 +924,76 @@ function PadronDelEditor({
   } else {
     const titulares = lista.elementos;
     contenido = (
-      <>
-        <div className="catalogo-caja">
-          <table className="tabla-partes" aria-label="Padrón de titulares">
-            <thead>
-              <tr>
-                <th scope="col">Nombre</th>
-                <th scope="col">Titular</th>
-                <th scope="col">IPI</th>
-                <th scope="col">Clase</th>
-                <th scope="col">Puede ser parte</th>
-              </tr>
-            </thead>
-            <tbody>
-              {titulares.map((titular) => (
-                <tr key={titular.id}>
-                  {/* "Nombre" a secas y no el rotulo del padron actual: esta
-                      tabla ES el padron leido ahora, no el nombre de un titular
-                      junto a una version historica. El dia que un nombre se
-                      pinte al lado de una version, ese si lleva el rotulo
-                      (D-006). */}
-                  <td>{titular.nombre}</td>
-                  <td className="detalle-identificador">{titular.id}</td>
-                  {/* Vacio es "no se conoce": el padron solo exige IPI a las
-                      personas naturales, y esta celda no puede decir mas. */}
-                  <td className="detalle-identificador">
-                    {titular.ipi !== "" ? titular.ipi : "—"}
-                  </td>
-                  <td>{titular.clase}</td>
-                  <td>
-                    {puedeSerParte(titular) ? (
-                      enElReparto.includes(titular.id) ? (
-                        <span className="muted">Ya está en el reparto</span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="catalogo-limpiar"
-                          onClick={() => onAgregar(titular)}
-                        >
-                          Añadir al reparto
-                        </button>
-                      )
+      <div className="catalogo-caja">
+        <table className="tabla-partes" aria-label="Padrón de titulares">
+          <thead>
+            <tr>
+              <th scope="col">Nombre</th>
+              <th scope="col">Titular</th>
+              <th scope="col">IPI</th>
+              <th scope="col">Clase</th>
+              <th scope="col">Puede ser parte</th>
+            </tr>
+          </thead>
+          <tbody>
+            {titulares.map((titular) => (
+              <tr key={titular.id}>
+                {/* "Nombre" a secas y no el rotulo del padron actual: esta
+                    tabla ES el padron leido ahora, no el nombre de un titular
+                    junto a una version historica. El dia que un nombre se
+                    pinte al lado de una version, ese si lleva el rotulo
+                    (D-006). */}
+                <td>{titular.nombre}</td>
+                <td className="detalle-identificador">{titular.id}</td>
+                {/* Vacio es "no se conoce": el padron solo exige IPI a las
+                    personas naturales, y esta celda no puede decir mas. */}
+                <td className="detalle-identificador">
+                  {titular.ipi !== "" ? titular.ipi : "—"}
+                </td>
+                <td>{titular.clase}</td>
+                <td>
+                  {puedeSerParte(titular) ? (
+                    enElReparto.includes(titular.id) ? (
+                      <span className="muted">Ya está en el reparto</span>
                     ) : (
-                      // La explicacion, no un hueco: el titular existe en el
-                      // padron y no se ofrece, y sin esta frase pareceria que
-                      // falta un dato. La regla la impone el backend al guardar
-                      // -400 con su propio mensaje-, y este es el mismo hecho
-                      // dicho antes.
-                      <span className="editor-no-elegible">
-                        No: solo un escritor persona natural puede ser titular
-                        de una declaración (R-01, RD 4.5)
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <Paginador
-            etiqueta="Titulares"
-            desplazamiento={desplazamiento}
-            cuantas={titulares.length}
-            limite={LIMITE_PADRON}
-            onIrA={setDesplazamiento}
-          />
-        </div>
-        <p className="muted detalle-nota">
-          El padrón se sirve por páginas, así que una página que no traiga al
-          titular no prueba que no exista. El nombre y la clase son los que el
-          padrón tiene hoy.
-        </p>
-      </>
+                      <button
+                        type="button"
+                        className="catalogo-limpiar"
+                        onClick={() => onAgregar(titular)}
+                      >
+                        Añadir al reparto
+                      </button>
+                    )
+                  ) : (
+                    // La explicacion, no un hueco: el titular existe en el
+                    // padron y no se ofrece, y sin esta frase pareceria que
+                    // falta un dato. La regla la impone el backend al guardar
+                    // -400 con su propio mensaje-, y este es el mismo hecho
+                    // dicho antes.
+                    <span className="editor-no-elegible">
+                      No: solo un escritor persona natural puede ser titular de
+                      una declaración (R-01, RD 4.5)
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <Paginador
+          etiqueta="Titulares"
+          desplazamiento={desplazamiento}
+          cuantas={titulares.length}
+          limite={LIMITE_PADRON}
+          onIrA={setDesplazamiento}
+        />
+      </div>
     );
   }
 
   return (
     <section className="editor-padron">
       <h2>Padrón de titulares</h2>
-      <p className="muted detalle-nota">
-        Se listan las dos clases de titular a propósito: quien está en el padrón
-        y no puede figurar como parte se explica aquí en vez de faltar. Estar en
-        el padrón no da derecho a cobrar por sí solo: el porcentaje sale de esta
-        declaración (R-02, R-03).
-      </p>
       <div className="catalogo-campo">
         <label htmlFor={idNombre}>Buscar por nombre</label>
         <input
@@ -1056,11 +1003,7 @@ function PadronDelEditor({
           placeholder="Buscar en el padrón…"
           value={busqueda}
           onChange={(e) => buscar(e.target.value)}
-          aria-describedby={idAyuda}
         />
-        <p id={idAyuda} className="catalogo-ayuda">
-          Coincidencia parcial, sin distinguir mayúsculas.
-        </p>
       </div>
       {contenido}
     </section>
