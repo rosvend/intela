@@ -430,7 +430,7 @@ type RepositorioIngesta interface {
 	// puerto oculta -- y depguard deniega `pgx` en esta capa --. Lo que el caso de
 	// uso SI decide es el limite, y lo declara eligiendo esta llamada en vez de
 	// las otras dos. Es la misma forma que [CatalogoObras.Registrar], que mete la
-	// obra y sus coautores juntas, y que [RepositorioResultados.Guardar].
+	// obra y sus coautores juntas, y que [RepositorioResultados.GuardarResultado].
 	//
 	// La boveda se queda FUERA, y no puede ser de otra manera: de un fichero
 	// escrito no se hace rollback. El resto que eso deja -- un objeto sin acuse --
@@ -663,11 +663,16 @@ type ProcesoVista struct {
 
 // RepositorioResultados guarda y lee las corridas.
 //
-// Guardar es transaccional por contrato: un resultado a medias es una cifra
-// que alguien puede leer y pagar.
+// GuardarResultado es transaccional por contrato: un resultado a medias es
+// una cifra que alguien puede leer y pagar.
+//
+// Nombres largos y no Guardar/PorProceso a secas: el mismo *Store satisface
+// [GestionDeclaraciones] (que ya tiene su propio Guardar) y este puerto, y
+// tambien [RepositorioReservas] y [RepositorioReclamacionesReserva] mas
+// abajo -- mismo patron que AsientoPorID en [BitacoraAuditoria].
 type RepositorioResultados interface {
-	Guardar(ctx context.Context, procesoID string, r reparto.Resultado) error
-	PorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
+	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
 // RepositorioLiquidacion sirve lo que le corresponde a un titular.
@@ -684,6 +689,31 @@ type RepositorioLiquidacion interface {
 type Exportador interface {
 	Excel(liq Liquidacion) (Archivo, error)
 	PDF(liq Liquidacion) (Archivo, error)
+}
+
+// RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.
+// LiberarSaldoReserva bloquea reserva y rendimiento, entrega el saldo a fn, y persiste todo en una transaccion.
+type RepositorioReservas interface {
+	CrearReserva(ctx context.Context, r reparto.PoolReserva) error
+	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
+	LiberarSaldoReserva(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal,
+		fn func(saldoActual decimal.Decimal) (nuevoSaldo decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
+}
+
+// RepositorioRendimientos guarda y lee los pools de rendimientos financieros (RD 10), uno por (circuito, vigencia).
+// AcrecerRendimiento suma en una sola sentencia; ActualizarMontoRendimiento bloquea, entrega el monto a fn, y persiste monto+lineas en una transaccion.
+type RepositorioRendimientos interface {
+	AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error
+	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
+	ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia, procesoID string,
+		fn func(montoActual decimal.Decimal) (nuevoMonto decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
+}
+
+// RepositorioReclamacionesReserva guarda y lee los reclamos contra la
+// reserva (RD 14.5).
+type RepositorioReclamacionesReserva interface {
+	GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error
+	ReclamacionPorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error)
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.
