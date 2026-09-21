@@ -422,7 +422,7 @@ type RepositorioIngesta interface {
 	// puerto oculta -- y depguard deniega `pgx` en esta capa --. Lo que el caso de
 	// uso SI decide es el limite, y lo declara eligiendo esta llamada en vez de
 	// las otras dos. Es la misma forma que [CatalogoObras.Registrar], que mete la
-	// obra y sus coautores juntas, y que [RepositorioResultados.Guardar].
+	// obra y sus coautores juntas, y que [RepositorioResultados.GuardarResultado].
 	//
 	// La boveda se queda FUERA, y no puede ser de otra manera: de un fichero
 	// escrito no se hace rollback. El resto que eso deja -- un objeto sin acuse --

@@ -33,6 +33,23 @@ func TestNuevaReclamacionReservaRechazaErrorDeDeclaracion(t *testing.T) {
 	}
 }
 
+func TestNuevaReclamacionReservaRechazaCamposVacios(t *testing.T) {
+	casos := []struct {
+		nombre                         string
+		id, titularID, procesoOrigenID string
+	}{
+		{"id vacio", "", "titular-1", "proceso-1"},
+		{"titularID vacio", "rec-1", "", "proceso-1"},
+		{"procesoOrigenID vacio", "rec-1", "titular-1", ""},
+	}
+	for _, c := range casos {
+		_, err := reparto.NuevaReclamacionReserva(c.id, c.titularID, c.procesoOrigenID, "detalle", d("100.00"), true, false)
+		if err == nil {
+			t.Fatalf("%s: se esperaba error", c.nombre)
+		}
+	}
+}
+
 func TestNuevaReclamacionReservaRechazaDetalleVacio(t *testing.T) {
 	// RD 14.3 exige responder cada reclamo por escrito, individualmente: sin
 	// un detalle no hay que responder.

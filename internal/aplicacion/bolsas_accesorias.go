@@ -18,7 +18,9 @@ import (
 //
 // No conoce RepositorioProcesos ni la maquina de estados de RD 13.5 (#34):
 // recibe circuito y proceso de origen como los da quien ya orquesto la
-// corrida, y solo lee/escribe lo que esta issue necesita.
+// corrida, y solo lee/escribe lo que esta issue necesita. Sin ruta HTTP
+// todavia a proposito: nada aqui exige que el proceso este cerrado o la
+// reserva prescrita, eso lo cablea #34.
 type BolsasAccesorias struct {
 	Resultados    RepositorioResultados
 	Reservas      RepositorioReservas

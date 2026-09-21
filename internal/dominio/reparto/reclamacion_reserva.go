@@ -55,6 +55,9 @@ func NuevaReclamacionReserva(
 	montoSolicitado decimal.Decimal,
 	afiliadoAntesDelPeriodo, esErrorDeDeclaracion bool,
 ) (ReclamacionReserva, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(titularID) == "" || strings.TrimSpace(procesoOrigenID) == "" {
+		return ReclamacionReserva{}, fmt.Errorf("%w: id, titularID y procesoOrigenID no pueden quedar vacios", ErrRepartoInvalido)
+	}
 	if !afiliadoAntesDelPeriodo {
 		return ReclamacionReserva{}, ErrReclamacionAfiliacionPosterior
 	}

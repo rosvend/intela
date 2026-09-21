@@ -30,6 +30,8 @@ var _ aplicacion.RepositorioReclamacionesReserva = (*Store)(nil)
 // saldo >= 0 rechaza comprometer mas de lo que queda.
 func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		// DO NOTHING y no DO UPDATE: detalle y monto_solicitado son el reclamo
+		// declarado, inmutable una vez abierto -- FirmarReclamacion solo avala.
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO reclamaciones (id, titular_id, proceso_id, detalle, estado, monto_solicitado)
 			 VALUES ($1,$2,$3,$4,'abierta',$5)
