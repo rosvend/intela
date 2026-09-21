@@ -251,6 +251,25 @@ function detalleDe(lista: readonly Obra[]): (id: string) => Response {
   };
 }
 
+const AVISO_ANIO = "Escribe un año entero positivo.";
+
+// El buscador: la categoria se elige en el selector y se escribe en el campo
+// unico. Titulo filtra en vivo; las demas categorias se aplican con Enter.
+const campoDeBusqueda = () =>
+  screen.getByRole("textbox", { name: "Texto de búsqueda" });
+
+function elegirCategoria(etiqueta: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: "Buscar por" }));
+  fireEvent.click(screen.getByRole("option", { name: etiqueta }));
+}
+
+/** Elige la categoria, escribe el valor y lo aplica con Enter. */
+function aplicarExacto(etiqueta: string, valor: string) {
+  elegirCategoria(etiqueta);
+  fireEvent.change(campoDeBusqueda(), { target: { value: valor } });
+  fireEvent.keyDown(campoDeBusqueda(), { key: "Enter" });
+}
+
 describe("pantalla de catalogo (integracion con App)", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -299,28 +318,26 @@ describe("pantalla de catalogo (integracion con App)", () => {
       "La Casa de las Dos Palmas",
       "Drama",
       "1991",
-      "serie",
+      "Serie",
       "IDA-1",
-      "Completa100.0000%",
+      "Completa100%",
     ]);
   });
 
-  it("la cabecera explica la consecuencia de una declaracion incompleta sin inventar un estado", async () => {
+  it("la cabecera no lleva prosa y el estado se dice con la etiqueta, no con un parrafo", async () => {
     simularServidor({ rol: "administrador", obras: () => LAS_TRES });
 
     montarApp("/catalogo");
 
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
-    // "En reserva" es un acierto de copy -nombra la consecuencia, no el
-    // defecto- y se conserva como explicacion. Lo que no puede es ocupar el
-    // lugar del enum: el estado que se pinta es el que manda el backend.
+    // Solo el titulo: la consecuencia de R-04 (reserva, sin prorrateo) ya no se
+    // explica en la pantalla, la comunica la etiqueta de estado de la fila.
     const cabecera = screen
       .getByRole("heading", { name: "Catálogo de obras" })
       .closest("header");
-    expect(cabecera?.textContent).toContain("R-04");
-    expect(cabecera?.textContent).toContain("en reserva");
-    expect(cabecera?.textContent).toContain("nunca se prorratea");
+    expect(cabecera?.querySelector("p")).toBeNull();
+    expect(cabecera?.textContent).not.toContain("R-04");
 
     expect(within(tabla()).getByText("Incompleta")).toBeTruthy();
     expect(within(tabla()).queryByText("En reserva")).toBeNull();
@@ -351,8 +368,8 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     // Y la suma va en las dos, la que da el backend (cero cuando no hay
     // declaracion, que es lo que el contrato define para ese caso).
-    expect(within(sinDeclaracion).getByText("0.0000%")).toBeTruthy();
-    expect(within(incompleta).getByText("74.5000%")).toBeTruthy();
+    expect(within(sinDeclaracion).getByText("0%")).toBeTruthy();
+    expect(within(incompleta).getByText("74.5%")).toBeTruthy();
   });
 
   it("la declaracion incompleta se pinta en ambar y nunca como un fallo", async () => {
@@ -408,37 +425,33 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     const filaDiscordante = filaCon("Discordante");
     expect(within(filaDiscordante).getByText("Completa")).toBeTruthy();
-    expect(within(filaDiscordante).getByText("12.5000%")).toBeTruthy();
+    expect(within(filaDiscordante).getByText("12.5%")).toBeTruthy();
 
     const filaCasi = filaCon("Casi Cien");
     expect(within(filaCasi).getByText("Incompleta")).toBeTruthy();
     // 99.9999 no se pinta como 100.0000: la celda no puede contradecir el
     // estado que acaba de mandar el backend.
     expect(within(filaCasi).getByText("99.9999%")).toBeTruthy();
-    expect(within(filaCasi).queryByText("100.0000%")).toBeNull();
+    expect(within(filaCasi).queryByText("100%")).toBeNull();
   });
 
-  it("el resumen dice lo que la API sostiene: la pagina y los filtros, sin periodo ni alta de obras", async () => {
+  it("no hay resumen ni prosa sobre la tabla, ni periodo ni alta de obras", async () => {
     simularServidor({ rol: "administrador", obras: () => LAS_TRES });
 
     montarApp("/catalogo");
 
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
-    // Ni el total de coincidencias -la respuesta no lo trae- ni el periodo del
-    // mockup, que el contrato no puede acotar para una obra (D-010).
-    expect(
-      screen.getByText("3 obras en esta página · sin filtros activos"),
-    ).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/obras? en esta página/);
+    expect(document.body.textContent).not.toMatch(/filtros? activos?/);
     expect(document.body.textContent).not.toContain("2024-S2");
 
     // El alta de obras tiene endpoint, pero no esta en el alcance de #30: un
     // boton que no hace nada es peor que su ausencia.
     expect(screen.queryByRole("button", { name: /nueva obra/i })).toBeNull();
 
-    // El detalle SI existe ya -es el paso 6 y cada fila enlaza con su obra-,
-    // asi que aqui no se afirma su ausencia: el enlace de cada fila y el
-    // destino al que lleva se prueban en su propio test, mas abajo.
+    // Los filtros ya no llevan ayuda bajo el campo.
+    expect(document.querySelector(".catalogo-ayuda")).toBeNull();
   });
 
   it("cada fila enlaza al detalle de SU obra, y el enlace abre esa obra y no otra", async () => {
@@ -490,7 +503,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     const partes = await screen.findByRole("table", {
       name: "Partes de la declaración vigente",
     });
-    expect(within(partes).getByText("74.5000%")).toBeTruthy();
+    expect(within(partes).getByText("74.5%")).toBeTruthy();
   });
 
   it("la vuelta desde la ficha devuelve al catalogo con la busqueda y la pagina que se dejaron", async () => {
@@ -534,7 +547,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
         "/api/obras?titulo=Obra&limite=20&desplazamiento=20",
       ),
     );
-    expect(screen.getByLabelText("Título")).toHaveProperty("value", "Obra");
+    expect(campoDeBusqueda()).toHaveProperty("value", "Obra");
     await screen.findByText("Obras 21 a 40");
   });
 
@@ -578,22 +591,16 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     // `titulo` es parcial y viaja codificado: un `&` o un espacio no pueden
     // partir la query.
-    fireEvent.change(screen.getByLabelText("Título"), {
+    fireEvent.change(campoDeBusqueda(), {
       target: { value: "Casa & Dos" },
     });
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+%26+Dos&limite=20"),
     );
 
-    fireEvent.change(screen.getByLabelText("Género"), {
-      target: { value: "Drama" },
-    });
-    fireEvent.change(screen.getByLabelText("IPI de coautor"), {
-      target: { value: "IPI-00000001" },
-    });
-    fireEvent.change(screen.getByLabelText("Año"), {
-      target: { value: "1991" },
-    });
+    aplicarExacto("Género", "Drama");
+    aplicarExacto("IPI de coautor", "IPI-00000001");
+    aplicarExacto("Año", "1991");
 
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe(
@@ -611,7 +618,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       anio: "1991",
       ipi: "IPI-00000001",
     });
-    await screen.findByText("1 obra en esta página · 4 filtros activos");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
   });
 
   it("el año solo se manda cuando es un entero positivo, y lo dice cuando no filtra", async () => {
@@ -620,33 +627,90 @@ describe("pantalla de catalogo (integracion con App)", () => {
     montarApp("/catalogo");
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
-    fireEvent.change(screen.getByLabelText("Año"), {
-      target: { value: "1991" },
-    });
+    // Un valor que el backend rechazaria con 400 no se aplica: ni URL ni
+    // peticion. El campo conserva lo tecleado -un `type=number` lo habria
+    // descartado sin decirlo- y el mensaje dice por que no filtra.
+    elegirCategoria("Año");
+    fireEvent.change(campoDeBusqueda(), { target: { value: "1991a" } });
+    fireEvent.keyDown(campoDeBusqueda(), { key: "Enter" });
+
+    const aviso = screen.getByText(AVISO_ANIO);
+    expect(campoDeBusqueda().getAttribute("aria-invalid")).toBe("true");
+    expect(campoDeBusqueda().getAttribute("aria-describedby")).toBe(aviso.id);
+    expect(campoDeBusqueda()).toHaveProperty("value", "1991a");
+    expect(ubicacion()).toBe("/catalogo");
+    expect(consultas()).toEqual(["/api/obras?limite=20"]);
+
+    // Al volver a escribir, el aviso se va con el valor que lo motivo.
+    fireEvent.change(campoDeBusqueda(), { target: { value: "1991" } });
+    expect(screen.queryByText(AVISO_ANIO)).toBeNull();
+    expect(campoDeBusqueda().getAttribute("aria-invalid")).toBeNull();
+    // Escribir no aplica: hace falta Enter.
+    expect(ubicacion()).toBe("/catalogo");
+
+    fireEvent.keyDown(campoDeBusqueda(), { key: "Enter" });
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe("/api/obras?anio=1991&limite=20"),
     );
-    expect(screen.getByLabelText("Año")).toHaveProperty("value", "1991");
-    expect(screen.getByText("Año de producción exacto.")).toBeTruthy();
-
-    // Un valor que el backend rechazaria con 400 no se manda. El campo conserva
-    // lo tecleado -un `type=number` lo habria descartado sin decirlo- y la
-    // ayuda explica que no esta filtrando.
-    fireEvent.change(screen.getByLabelText("Año"), {
-      target: { value: "1991a" },
-    });
-    await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?limite=20"),
-    );
-    expect(screen.getByLabelText("Año")).toHaveProperty("value", "1991a");
-    expect(
-      screen.getByText(
-        "No se filtra por año mientras el valor no sea un año entero positivo.",
-      ),
-    ).toBeTruthy();
+    expect(ubicacion()).toBe("/catalogo?anio=1991");
+    expect(screen.getByText("Año: 1991")).toBeTruthy();
+    expect(campoDeBusqueda()).toHaveProperty("value", "");
     expect(consultas().some((url) => url.includes("anio=1991a"))).toBe(false);
-    expect(consultas()).not.toContain("/api/obras?anio=1&limite=20");
-    expect(consultas()).not.toContain("/api/obras?anio=19&limite=20");
+  });
+
+  it("combinar Género con Año produce ?genero=Drama&anio=2024 y dos chips", async () => {
+    simularServidor({ rol: "administrador", obras: () => [obraCompleta] });
+
+    montarApp("/catalogo");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+
+    aplicarExacto("Género", "Drama");
+    aplicarExacto("Año", "2024");
+
+    expect(ubicacion()).toBe("/catalogo?genero=Drama&anio=2024");
+    await vi.waitFor(() =>
+      expect(ultimaConsulta()).toBe(
+        "/api/obras?genero=Drama&anio=2024&limite=20",
+      ),
+    );
+    const chips = screen.getByRole("list", { name: "Filtros aplicados" });
+    expect(within(chips).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("Género: Drama")).toBeTruthy();
+    expect(screen.getByText("Año: 2024")).toBeTruthy();
+  });
+
+  it("abrir /catalogo?genero=Drama muestra el chip sin interacción", async () => {
+    simularServidor({ rol: "administrador", obras: () => [obraCompleta] });
+
+    montarApp("/catalogo?genero=Drama");
+
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+    expect(screen.getByText("Género: Drama")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Quitar el filtro Género" }),
+    ).toBeTruthy();
+    // La categoria elegida no va en la URL: al cargar vuelve a Titulo.
+    expect(
+      screen.getByRole("combobox", { name: "Buscar por" }).textContent,
+    ).toBe("Título");
+    expect(consultas()).toEqual(["/api/obras?genero=Drama&limite=20"]);
+  });
+
+  it("quitar un chip lo saca de la URL y de la consulta, y vuelve a la primera página", async () => {
+    simularServidor({ rol: "administrador", obras: () => [obraCompleta] });
+
+    montarApp("/catalogo?genero=Drama&anio=2024&desplazamiento=20");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Quitar el filtro Género" }),
+    );
+
+    expect(ubicacion()).toBe("/catalogo?anio=2024");
+    await vi.waitFor(() =>
+      expect(ultimaConsulta()).toBe("/api/obras?anio=2024&limite=20"),
+    );
+    expect(screen.queryByText("Género: Drama")).toBeNull();
   });
 
   it("cambiar de filtro vuelve a la primera pagina", async () => {
@@ -661,7 +725,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     await screen.findByRole("table", { name: "Catálogo de obras" });
     expect(consultas()).toEqual(["/api/obras?limite=20&desplazamiento=20"]);
 
-    fireEvent.change(screen.getByLabelText("Título"), {
+    fireEvent.change(campoDeBusqueda(), {
       target: { value: "Obra 3" },
     });
 
@@ -678,7 +742,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     montarApp("/catalogo?titulo=Casa&anio=1991&desplazamiento=20");
     await screen.findByRole("table", { name: "Catálogo de obras" });
-    expect(screen.getByLabelText("Año")).toHaveProperty("value", "1991");
+    expect(screen.getByText("Año: 1991")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
 
@@ -686,10 +750,12 @@ describe("pantalla de catalogo (integracion con App)", () => {
       expect(ultimaConsulta()).toBe("/api/obras?limite=20"),
     );
     expect(ubicacion()).toBe("/catalogo");
-    // El campo del anio sigue a la URL cuando cambia por fuera de el.
-    expect(screen.getByLabelText("Año")).toHaveProperty("value", "");
-    expect(screen.getByLabelText("Título")).toHaveProperty("value", "");
-    await screen.findByText("3 obras en esta página · sin filtros activos");
+    // Los chips y el campo siguen a la URL cuando cambia por fuera de ellos.
+    expect(
+      screen.queryByRole("list", { name: "Filtros aplicados" }),
+    ).toBeNull();
+    expect(campoDeBusqueda()).toHaveProperty("value", "");
+    await screen.findByRole("table", { name: "Catálogo de obras" });
   });
 
   it("la paginacion avanza con desplazamiento y ofrece volver a la anterior", async () => {
@@ -706,11 +772,10 @@ describe("pantalla de catalogo (integracion con App)", () => {
     // No hay un total en la respuesta, asi que no se dice "pagina 2 de 7": el
     // boton se ofrece porque la pagina vino entera.
     expect(screen.getByText("Obras 1 a 20")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Anterior" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    const siguiente = screen.getByRole("button", { name: "Siguiente" });
+    expect(
+      screen.getByRole("button", { name: "Página anterior" }),
+    ).toHaveProperty("disabled", true);
+    const siguiente = screen.getByRole("button", { name: "Página siguiente" });
     expect(siguiente).toHaveProperty("disabled", false);
 
     fireEvent.click(siguiente);
@@ -719,10 +784,9 @@ describe("pantalla de catalogo (integracion con App)", () => {
       expect(ultimaConsulta()).toBe("/api/obras?limite=20&desplazamiento=20"),
     );
     await screen.findByText("Obras 21 a 40");
-    expect(screen.getByRole("button", { name: "Anterior" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página anterior" }),
+    ).toHaveProperty("disabled", false);
   });
 
   it("un clic de paginacion pide de inmediato, sin esperar al debounce del tecleo", async () => {
@@ -740,7 +804,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     vi.useFakeTimers();
     try {
       const antes = consultas().length;
-      fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+      fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
 
       expect(consultas().length).toBe(antes + 1);
       expect(ultimaConsulta()).toBe("/api/obras?limite=20&desplazamiento=20");
@@ -755,10 +819,9 @@ describe("pantalla de catalogo (integracion con App)", () => {
     montarApp("/catalogo");
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente" }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("una pagina avanzada sin obras no afirma que el catalogo este vacio", async () => {
@@ -781,7 +844,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     montarApp("/catalogo");
     await screen.findByText("El catálogo no tiene obras registradas.");
 
-    fireEvent.change(screen.getByLabelText("Título"), {
+    fireEvent.change(campoDeBusqueda(), {
       target: { value: "Zzz" },
     });
 
@@ -873,7 +936,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       expect(
         screen.getByRole("heading", { name: "Catálogo de obras" }),
       ).toBeTruthy();
-      expect(screen.getByLabelText("Título")).toBeTruthy();
+      expect(campoDeBusqueda()).toBeTruthy();
 
       // Y sobre todo: un payload sin `version_vigente` NO se lee como "esta
       // obra no tiene declaracion". La lista entera queda en error en vez de
@@ -940,7 +1003,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
         "Casa de la",
       ];
       for (const texto of tecleo) {
-        fireEvent.change(screen.getByLabelText("Título"), {
+        fireEvent.change(campoDeBusqueda(), {
           target: { value: texto },
         });
       }
@@ -959,13 +1022,13 @@ describe("pantalla de catalogo (integracion con App)", () => {
       // Control negativo: dos tecleos SEPARADOS mas que la espera son dos
       // peticiones. Sin el, un contador que no sube nunca -o un debounce que no
       // agrupara nada- pasaria la afirmacion de arriba igual.
-      fireEvent.change(screen.getByLabelText("Título"), {
+      fireEvent.change(campoDeBusqueda(), {
         target: { value: "Casa de la P" },
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS + 1);
       });
-      fireEvent.change(screen.getByLabelText("Título"), {
+      fireEvent.change(campoDeBusqueda(), {
         target: { value: "Casa de la Pa" },
       });
       await act(async () => {
@@ -991,7 +1054,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       await vi.waitFor(() => expect(servidor.senales).toHaveLength(1));
       expect(servidor.senales[0].aborted).toBe(false);
 
-      fireEvent.change(screen.getByLabelText("Título"), {
+      fireEvent.change(campoDeBusqueda(), {
         target: { value: "Casa de la" },
       });
 
