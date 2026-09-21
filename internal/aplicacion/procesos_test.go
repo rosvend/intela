@@ -39,15 +39,21 @@ func snapshotDePrueba() reparto.Snapshot {
 }
 
 type repositorioRecaudoFalso struct {
-	bolsa BolsaPersistida
-	err   error
+	bolsa         BolsaPersistida
+	bolsasPeriodo []BolsaPersistida
+	err           error
+	pedidoPeriodo []string
 }
 
 func (r *repositorioRecaudoFalso) ListarBolsas(_ context.Context) ([]BolsaPersistida, error) {
 	return nil, nil
 }
-func (r *repositorioRecaudoFalso) BolsasDePeriodo(_ context.Context, _ string) ([]BolsaPersistida, error) {
-	return nil, nil
+func (r *repositorioRecaudoFalso) BolsasDePeriodo(_ context.Context, periodo string) ([]BolsaPersistida, error) {
+	r.pedidoPeriodo = append(r.pedidoPeriodo, periodo)
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.bolsasPeriodo, nil
 }
 func (r *repositorioRecaudoFalso) BolsaPorID(_ context.Context, _ string) (BolsaPersistida, error) {
 	if r.err != nil {
@@ -200,6 +206,43 @@ func TestIniciarProcesoResuelveElSnapshotYAbreElProceso(t *testing.T) {
 	}
 	if len(params.pedido) != 1 || params.pedido[0].Format("2006-01") != "2026-01" {
 		t.Fatalf("snapshot pedido contra %v, se esperaba el primer dia de 2026-01", params.pedido)
+	}
+}
+
+// TestIniciarProcesoEsIdempotentePorID reproduce lo que un reintento de
+// TrabajoEjecutarReparto haria sin esta guarda: reabrir un proceso que un
+// humano ya avanzo lo reiniciaria a EtapaRecaudo revision 1, borrando el
+// progreso. La clave natural del trabajo ya evita encolar dos veces, pero un
+// reintento SI vuelve a tomar el mismo trabajo (ADR sobre Intentos vs
+// Corrida), asi que IniciarProceso tiene que ser el que no repita el efecto.
+func TestIniciarProcesoEsIdempotentePorID(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	ya, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Nacional, "bolsa-1", "snap-viejo", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	ya.Etapa = reparto.EtapaLiquidacionParcial
+	ya.Revision = 3
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(ya)); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	params := &parametrosNormativosFalso{id: "snap-nuevo"}
+	uc := Procesos{Repo: repo, Parametros: params}
+
+	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaLiquidacionParcial || v.Revision != 3 {
+		t.Fatalf("etapa/revision = %q/%d, se esperaba que el reintento NO reabriera el proceso: %+v", v.Etapa, v.Revision, v)
+	}
+	if v.SnapshotID != "snap-viejo" {
+		t.Fatalf("snapshotID = %q, un reintento no debio volver a congelar el snapshot", v.SnapshotID)
+	}
+	if len(params.pedido) != 0 {
+		t.Fatal("un proceso que ya existe no debio resolver un snapshot nuevo")
 	}
 }
 
@@ -427,6 +470,71 @@ func TestAvanzarEtapaInternacionalNuncaValoriza(t *testing.T) {
 	}
 	if resultados.procesoID != "" {
 		t.Fatal("el internacional nunca debe invocar el motor de valorizacion")
+	}
+}
+
+func TestAbrirCorridaDelPeriodoAbreUnProcesoPorBolsa(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	bolsas := &repositorioRecaudoFalso{bolsasPeriodo: []BolsaPersistida{
+		{ID: "bolsa-1", UsuarioID: "z", Periodo: "2026-01", Circuito: recaudo.Nacional, Bruto: d("1000")},
+		{ID: "bolsa-2", UsuarioID: "w", Periodo: "2026-01", Circuito: recaudo.Internacional, Bruto: d("500")},
+	}}
+	params := &parametrosNormativosFalso{id: "snap-1"}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+
+	if err := uc.AbrirCorridaDelPeriodo(t.Context(), "2026-01", 1); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	lista, err := repo.ListarProcesos(t.Context())
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if len(lista) != 2 {
+		t.Fatalf("se esperaba un proceso por bolsa (ADR 0019), hubo %d: %+v", len(lista), lista)
+	}
+	porBolsa := map[string]ProcesoVista{}
+	for _, p := range lista {
+		porBolsa[p.BolsaID] = p
+	}
+	if porBolsa["bolsa-1"].Circuito != reparto.Nacional || porBolsa["bolsa-2"].Circuito != reparto.Internacional {
+		t.Fatalf("circuito no coincide con el de su bolsa: %+v", porBolsa)
+	}
+}
+
+func TestAbrirCorridaDelPeriodoEsIdempotenteReintentandoElMismoTrabajo(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	bolsas := &repositorioRecaudoFalso{bolsasPeriodo: []BolsaPersistida{
+		{ID: "bolsa-1", UsuarioID: "z", Periodo: "2026-01", Circuito: recaudo.Nacional, Bruto: d("1000")},
+	}}
+	params := &parametrosNormativosFalso{id: "snap-1"}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+
+	if err := uc.AbrirCorridaDelPeriodo(t.Context(), "2026-01", 1); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	// El proceso avanza por accion humana entre reintentos del trabajo.
+	if err := repo.GuardarProceso(t.Context(), ProcesoVista{
+		ID: repo.guardados[0].ID, Circuito: reparto.Nacional, Etapa: reparto.EtapaLiquidacionParcial,
+		Periodo: "2026-01", BolsaID: "bolsa-1", SnapshotID: "snap-1", Revision: 1,
+	}); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if err := uc.AbrirCorridaDelPeriodo(t.Context(), "2026-01", 1); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	leido, err := repo.ProcesoPorID(t.Context(), repo.guardados[0].ID)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if leido.Etapa != reparto.EtapaLiquidacionParcial {
+		t.Fatalf("etapa = %q, el reintento del trabajo no debio reabrir el proceso ya avanzado", leido.Etapa)
 	}
 }
 

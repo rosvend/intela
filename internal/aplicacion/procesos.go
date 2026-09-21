@@ -2,6 +2,7 @@ package aplicacion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -73,6 +74,16 @@ func unProceso(v ProcesoVista) reparto.ProcesoDeReparto {
 // la corrida en EtapaRecaudo (ADR 0004/0005). Se llama UNA VEZ: un
 // reproceso lee el snapshot ya congelado, no vuelve a pasar por aqui.
 func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (ProcesoVista, error) {
+	// Idempotente por ID: un reintento de TrabajoEjecutarReparto vuelve a
+	// tomar el MISMO trabajo (Intentos, no Corrida) y llamaria aqui otra vez.
+	// Sin esta guarda, reabrir un proceso que un humano ya avanzo lo
+	// reiniciaria a EtapaRecaudo revision 1 y borraria el progreso.
+	if existente, err := uc.Repo.ProcesoPorID(ctx, id); err == nil {
+		return existente, nil
+	} else if !errors.Is(err, ErrNoEncontrado) {
+		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
+	}
+
 	fecha, err := fechaDePeriodo(strings.TrimSpace(periodo))
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
@@ -89,6 +100,31 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// AbrirCorridaDelPeriodo abre un ProcesoDeReparto por cada bolsa del
+// periodo (ADR 0019: una corrida = una bolsa = un proceso; dos canales en
+// el mismo periodo son dos bolsas y dos procesos).
+//
+// Es lo que dispara TrabajoEjecutarReparto: el trabajo ABRE, no ejecuta
+// (ADR 0008 -- el calendario dispara AbrirProcesoDeReparto y de ahi en
+// adelante el proceso avanza por firma humana o por AvanzarEtapa). El
+// identificador es determinista por bolsa y corrida para que reintentar el
+// mismo trabajo (Intentos, no Corrida) llame a [Procesos.IniciarProceso] con
+// el mismo ID -- que ya es idempotente -- en vez de abrir un proceso
+// duplicado por bolsa.
+func (uc Procesos) AbrirCorridaDelPeriodo(ctx context.Context, periodo string, corrida int) error {
+	bolsas, err := uc.Bolsas.BolsasDePeriodo(ctx, periodo)
+	if err != nil {
+		return fmt.Errorf("abrir corrida de %q: %w", periodo, err)
+	}
+	for _, b := range bolsas {
+		id := fmt.Sprintf("proc-%s-%d", b.ID, corrida)
+		if _, err := uc.IniciarProceso(ctx, id, periodo, b.Circuito, b.ID); err != nil {
+			return fmt.Errorf("abrir corrida de %q: bolsa %q: %w", periodo, b.ID, err)
+		}
+	}
+	return nil
 }
 
 // AvanzarEtapa mueve el proceso a la siguiente etapa y la persiste. Al
