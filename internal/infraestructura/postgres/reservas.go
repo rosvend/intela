@@ -47,14 +47,7 @@ func (s *Store) ReservaPorProceso(ctx context.Context, procesoID string) (repart
 	return r, nil
 }
 
-// LiberarSaldoReserva bloquea reservas (y rendimientos si rendimientoAUsar >
-// 0) con SELECT ... FOR UPDATE, le pasa el saldo actual a fn, y persiste
-// todo en una transaccion: saldo nuevo, rendimiento descontado, y cada
-// linea de fn en reservas_liberaciones. El bloqueo evita que dos
-// liberaciones concurrentes lean el mismo saldo (B1) o el mismo
-// rendimiento (B4); persistir las lineas evita perder el rastro si algo
-// falla despues del commit (B2). Saldo insuficiente en rendimientos lo
-// rechaza el CHECK de la tabla.
+// LiberarSaldoReserva bloquea reservas y rendimientos, entrega el saldo a fn, y persiste saldo/rendimiento/lineas en una transaccion (B1,B2,B4).
 func (s *Store) LiberarSaldoReserva(
 	ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal,
 	fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error),

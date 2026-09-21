@@ -12,22 +12,7 @@ import (
 
 var _ aplicacion.RepositorioReclamacionesReserva = (*Store)(nil)
 
-// GuardarReclamacion crea la fila si es la primera vez, inserta los avales
-// que todavia no estuvieran guardados, y recalcula `estado` a partir de los
-// avales que de verdad quedaron en la base -- no de r.Avales, que puede
-// venir de una lectura hecha antes de que otra llamada concurrente
-// avalara. El SELECT ... FOR UPDATE al principio serializa dos llamadas
-// concurrentes sobre la MISMA reclamacion: la segunda espera a que la
-// primera confirme, y entonces su recalculo ve los avales de las dos
-// (B4). 'resuelta' es "lista para el siguiente proceso de Distribucion"
-// (RD 14.5.9); el dominio no modela un estado de rechazo todavia, asi que
-// no hay 'rechazada' que escribir desde aqui.
-//
-// Al transicionar a 'resuelta' -y solo entonces, una vez- descuenta
-// monto_solicitado de reservas.saldo: sin esto, LiberarReservaPrescrita
-// repartiria mas tarde el saldo completo como si el reclamo resuelto no
-// comprometiera nada, pagando el mismo dinero dos veces (B3). El CHECK
-// saldo >= 0 rechaza comprometer mas de lo que queda.
+// GuardarReclamacion crea/actualiza, bloquea la fila, inserta avales nuevos, recalcula estado desde lo persistido (B4), y debita reservas.saldo una sola vez al pasar a 'resuelta' (B3).
 func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		// DO NOTHING y no DO UPDATE: detalle y monto_solicitado son el reclamo
@@ -87,16 +72,12 @@ func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionRes
 	})
 }
 
-// consultor es la parte comun entre *pgxpool.Pool y pgx.Tx que necesita
-// avalesDe: a veces lee suelto (ReclamacionPorID) y a veces DENTRO de la
-// transaccion de GuardarReclamacion.
+// consultor es la parte comun entre *pgxpool.Pool y pgx.Tx que necesita avalesDe.
 type consultor interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// avalesDe lee los avales que de verdad estan persistidos para una
-// reclamacion. Llamado dentro de una transaccion, ve tambien lo que esa
-// misma transaccion acaba de insertar.
+// avalesDe lee los avales realmente persistidos para una reclamacion.
 func avalesDe(ctx context.Context, q consultor, reclamacionID string) ([]reparto.AvalReclamacion, error) {
 	filas, err := q.Query(ctx,
 		`SELECT rol, actor_id FROM reclamaciones_avales WHERE reclamacion_id = $1 ORDER BY rol`, reclamacionID)
@@ -119,9 +100,7 @@ func avalesDe(ctx context.Context, q consultor, reclamacionID string) ([]reparto
 	return avales, nil
 }
 
-// estadoDeAvales mapea el conjunto de avales persistidos al vocabulario de
-// la tabla `reclamaciones` (migracion 00001), compartida con reclamaciones
-// que no son de reserva.
+// estadoDeAvales mapea los avales al vocabulario de estado de reclamaciones.
 func estadoDeAvales(avales []reparto.AvalReclamacion) string {
 	var tieneRevisoria, tieneDistribucion bool
 	for _, a := range avales {

@@ -12,23 +12,7 @@ import (
 
 var _ aplicacion.RepositorioResultados = (*Store)(nil)
 
-// GuardarResultado persiste una corrida completa -- resultados_proceso,
-// resultados_obra y resultados_titular -- en una sola transaccion: un
-// resultado a medias es una cifra que alguien puede leer y pagar.
-//
-// bruto no es un campo de [reparto.Resultado] (el motor no lo necesita: solo
-// deducciones.go lo consume, y ya viene de Bolsa.Bruto). Se reconstruye para
-// satisfacer el CHECK deducciones_cuadran de la migracion 00001, que es la
-// misma identidad que aplicarDeducciones ya garantiza en el dominio.
-//
-// # Lo que este round-trip NO reproduce
-//
-// resultados_proceso (migracion 00001) no tiene columnas para
-// NoDistribuido, PartesNoDistribuidas ni PorGrupo: ese hueco de esquema es
-// anterior a esta issue (#33/#34) y esta fuera de su alcance. #121 solo
-// necesita Titulares y Reserva para el replay proporcional (RD 14.4,
-// RD 10.1); ver [reparto.DistribuirSobreProporciones]. Persistir esos tres campos
-// es trabajo de quien construya RepositorioProcesos completo.
+// GuardarResultado persiste una corrida completa en una transaccion. bruto se reconstruye para el CHECK deducciones_cuadran; NoDistribuido/PartesNoDistribuidas/PorGrupo no tienen columna todavia (hueco de esquema anterior a #121, fuera de su alcance).
 func (s *Store) GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error {
 	bruto := r.Neto.Add(r.Admin).Add(r.Social).Add(r.Reserva)
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
@@ -74,9 +58,7 @@ func (s *Store) GuardarResultado(ctx context.Context, procesoID string, r repart
 	})
 }
 
-// ResultadoPorProceso relee una corrida. El orden (obra_id, y obra_id +
-// titular_id) es estable: el replay proporcional (RD 14.4, RD 10.1) itera
-// sobre esta lista, y ADR 0005 exige orden reproducible.
+// ResultadoPorProceso relee una corrida, ordenada de forma estable (ADR 0005).
 func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error) {
 	var r reparto.Resultado
 	err := s.pool.QueryRow(ctx,

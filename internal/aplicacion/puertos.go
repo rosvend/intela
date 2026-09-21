@@ -663,16 +663,8 @@ type RepositorioLiquidacion interface {
 	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
 }
 
-// RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14).
-// Una por corrida: la proveniencia es la clave (ADR sobre corrida-por-bolsa,
-// 0019).
-//
-// LiberarSaldoReserva bloquea la fila (y la de rendimientos si
-// rendimientoAUsar > 0), entrega el saldo actual a fn, y persiste todo en
-// una transaccion: el saldo nuevo, el rendimiento descontado, y cada linea
-// que fn devuelva en reservas_liberaciones. Sin esto dos liberaciones
-// concurrentes leerian el mismo saldo y las dos repartirian sobre el, y el
-// rendimiento usado podria financiar dos liberaciones a la vez.
+// RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.
+// LiberarSaldoReserva bloquea reserva y rendimiento, entrega el saldo a fn, y persiste todo en una transaccion.
 type RepositorioReservas interface {
 	CrearReserva(ctx context.Context, r reparto.PoolReserva) error
 	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
@@ -680,17 +672,8 @@ type RepositorioReservas interface {
 		fn func(saldoActual decimal.Decimal) (nuevoSaldo decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
 }
 
-// RepositorioRendimientos guarda y lee los pools de rendimientos financieros
-// (RD 10), uno por (circuito, vigencia) -- RD 10.3 exige los ledgers
-// segregados, y la clave los mantiene separados por construccion.
-//
-// AcrecerRendimiento suma en una sola sentencia: dos acrecimientos
-// concurrentes se suman, ninguno pisa al otro. ActualizarMontoRendimiento
-// bloquea la fila, entrega el monto actual a fn, y persiste el monto nuevo
-// y cada linea que fn devuelva en rendimientos_distribuciones -- consumir
-// el monto es lo que impide que una segunda llamada reparta lo mismo otra
-// vez, y persistir las lineas es lo que evita perder el rastro si algo
-// falla despues del commit.
+// RepositorioRendimientos guarda y lee los pools de rendimientos financieros (RD 10), uno por (circuito, vigencia).
+// AcrecerRendimiento suma en una sola sentencia; ActualizarMontoRendimiento bloquea, entrega el monto a fn, y persiste monto+lineas en una transaccion.
 type RepositorioRendimientos interface {
 	AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error
 	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)

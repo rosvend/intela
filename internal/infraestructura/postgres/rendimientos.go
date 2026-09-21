@@ -12,10 +12,7 @@ import (
 
 var _ aplicacion.RepositorioRendimientos = (*Store)(nil)
 
-// AcrecerRendimiento suma `incremento` al monto de (circuito, vigencia) en
-// una sola sentencia: la aritmetica corre en la base, no en Go, asi que dos
-// acrecimientos concurrentes se suman y ninguno pisa al otro (B2). Crea la
-// fila si es la primera vez.
+// AcrecerRendimiento suma incremento en una sola sentencia SQL: dos acrecimientos concurrentes se suman, ninguno pisa al otro.
 func (s *Store) AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO rendimientos (circuito, vigencia, monto)
@@ -41,12 +38,7 @@ func (s *Store) PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circu
 	return p, nil
 }
 
-// ActualizarMontoRendimiento bloquea la fila, entrega el monto actual a fn,
-// y persiste el monto nuevo y cada linea de fn en rendimientos_distribuciones
-// -- misma forma que [Store.LiberarSaldoReserva]. Consumir el monto es lo
-// que impide que una segunda distribucion reparta lo mismo otra vez (B3);
-// persistir las lineas evita perder el rastro si algo falla despues del
-// commit (B2).
+// ActualizarMontoRendimiento bloquea la fila, entrega el monto a fn, y persiste monto+lineas en una transaccion (B2,B3), misma forma que LiberarSaldoReserva.
 func (s *Store) ActualizarMontoRendimiento(
 	ctx context.Context, circuito reparto.Circuito, vigencia, procesoID string,
 	fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error),
