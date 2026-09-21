@@ -5,6 +5,9 @@ fuentes: Reglamento de Distribucion IX, Reglamento de Tarifas VI, Reglamento de 
 
 # Registro de reglas de negocio
 
+La matriz regla ↔ artículo ↔ implementación ↔ prueba (Objetivo 12) vive en
+[`matriz-reglas.md`](matriz-reglas.md).
+
 Cada regla es operativa: se puede implementar y se puede verificar. La columna de fuente
 apunta a la seccion exacta del reglamento, en `docs/reglamentos/`, para que cualquier cifra
 del sistema sea explicable.

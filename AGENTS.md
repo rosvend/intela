@@ -36,6 +36,9 @@ Cargar solo lo que haga falta para la tarea. Skills en `.claude/skills/`. Cursor
 | ------- | -------- |
 | `docs/dominio/glosario.md` | Lenguaje ubicuo. Que es obra, titular, ONI, recaudo, reparto, IPI, IDA |
 | `docs/dominio/reglas-negocio.md` | Registro de reglas con cita al reglamento. Empezar aqui |
+| `docs/dominio/matriz-reglas.md` | Matriz regla ↔ artículo ↔ módulo ↔ prueba (Objetivo 12) |
+| `docs/demo-sprint5.md` | Guion de demo PO Sprint 5 |
+| `docs/entregables/entregable-consolidado.md` | Entregable consolidado con firmas (Objetivo 14) |
 | `docs/dominio/formulas.md` | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
 | `docs/dominio/identificadores.md` | Por que los IDs de fuente no cruzan y como resolver obras |
 | `docs/dominio/fuentes-datos.md` | Perfil real de los archivos del cliente y que falta pedir |
