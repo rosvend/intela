@@ -37,7 +37,7 @@ CREATE INDEX reservas_liberaciones_proceso ON reservas_liberaciones (proceso_id)
 
 -- +goose StatementBegin
 ALTER TABLE reclamaciones
-  ADD COLUMN IF NOT EXISTS monto_solicitado NUMERIC(18,2) CHECK (monto_solicitado > 0);
+  ADD COLUMN IF NOT EXISTS monto_solicitado NUMERIC(18,2) NOT NULL CHECK (monto_solicitado > 0);
 -- +goose StatementEnd
 
 -- +goose StatementBegin

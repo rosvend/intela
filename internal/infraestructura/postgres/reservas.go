@@ -60,9 +60,10 @@ func (s *Store) LiberarSaldoReserva(
 		}
 
 		if rendimientoAUsar.IsPositive() {
-			if _, err := tx.Exec(ctx,
-				`SELECT 1 FROM rendimientos WHERE circuito = 'nacional' AND vigencia = $1 FOR UPDATE`,
-				vigenciaRendimiento); err != nil {
+			var disponible decimal.Decimal
+			if err := tx.QueryRow(ctx,
+				`SELECT monto FROM rendimientos WHERE circuito = 'nacional' AND vigencia = $1 FOR UPDATE`,
+				vigenciaRendimiento).Scan(&disponible); err != nil {
 				return traducirError(err, "bloquear rendimiento nacional/%s", vigenciaRendimiento)
 			}
 		}

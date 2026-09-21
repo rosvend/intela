@@ -246,6 +246,44 @@ func TestLiberarSaldoReservaPersisteLasLineas(t *testing.T) {
 	}
 }
 
+// TestLiberarSaldoReservaRechazaRendimientoSinFila cubre el hallazgo de
+// CodeRabbit: sin fila (nacional, vigencia) en rendimientos, un FOR UPDATE
+// sobre cero filas no bloquea ni falla, y la liberacion seguiria adelante
+// usando dinero que el ledger de rendimientos no tiene.
+func TestLiberarSaldoReservaRechazaRendimientoSinFila(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	llamadoFn := false
+	err = s.LiberarSaldoReserva(ctx, "proceso-1", "2026-sin-fila", dec("10.00"),
+		func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			llamadoFn = true
+			return decimal.Zero, nil, nil
+		})
+	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("error = %v, se esperaba ErrNoEncontrado", err)
+	}
+	if llamadoFn {
+		t.Fatal("fn no debio invocarse: el rendimiento no existe")
+	}
+
+	leido, err := s.ReservaPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer reserva: %v", err)
+	}
+	if !leido.Saldo.Equal(dec("50.00")) {
+		t.Fatalf("saldo = %s, no debio cambiar: la transaccion tuvo que revertir", leido.Saldo)
+	}
+}
+
 // TestLiberarSaldoReservaDescuentaRendimientoAtomicamenteBajoConcurrencia es
 // la reproduccion de B4: sin bloquear la fila de rendimientos, dos
 // liberaciones concurrentes verian el mismo monto disponible y las dos lo
