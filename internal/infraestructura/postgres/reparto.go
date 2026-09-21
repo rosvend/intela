@@ -70,7 +70,7 @@ func (s *Store) UsosDeCanal(
 // tabla: una fila esta en un escalon exactamente.
 func (s *Store) resumenExclusiones(ctx context.Context, periodo, canalID string) (aplicacion.ResumenUsosDeCanal, error) {
 	var r aplicacion.ResumenUsosDeCanal
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE escalon = 'pendiente'),
 		        COUNT(*) FILTER (WHERE escalon = 'oni'),
 		        COUNT(*) FILTER (WHERE escalon = 'excluido')
@@ -91,7 +91,7 @@ func (s *Store) resumenExclusiones(ctx context.Context, periodo, canalID string)
 // llegaron con `canal_id` vacio -- el hueco de ingesta que P-20 deja abierto.
 func (s *Store) UsosSinCanal(ctx context.Context, periodo string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT COUNT(*) FROM usos
 		  WHERE reporte_id IN (SELECT id FROM reportes WHERE periodo = $1)
 		    AND canal_id = ''`,
@@ -110,7 +110,7 @@ func (s *Store) UsosSinCanal(ctx context.Context, periodo string) (int, error) {
 // es [reparto.ParseGrupoCanal] en el nucleo, con su error tipado.
 func (s *Store) grupoDeCanal(ctx context.Context, canalID string, anio int) (string, error) {
 	var grupo string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT grupo_efectivo FROM canales_clasificacion
 		  WHERE canal_id = $1 AND anio_audiencia = $2`,
 		canalID, anio).Scan(&grupo)

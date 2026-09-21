@@ -418,6 +418,37 @@ func TestGuardarSplitsNoEscribeSiElPadronNoResponde(t *testing.T) {
 	}
 }
 
+// Una declaracion la firma quien la guarda: [GestionDeclaraciones.Guardar]
+// asienta "declaracion.guardada" DENTRO de su transaccion, asi que un actor
+// vacio que llegue hasta el puerto deja un asiento sin firmar ya confirmado
+// -- `asientos.actor_id` es nullable y el adaptador convierte el actor vacio
+// en NULL con un NULLIF sobre la cadena vacia --.
+// El caso de uso lo corta antes de escribir y antes de gastar la consulta al
+// padron, que es la unica E/S de este camino.
+//
+// Los espacios cuentan como vacio: el NULLIF solo casa con la cadena vacia, y
+// un actor de solo espacios llegaria hasta la clave foranea contra `usuarios`
+// para volver como un 500 generico.
+func TestGuardarSplitsSinActorNoEscribeNiConsultaElPadron(t *testing.T) {
+	for nombre, actor := range map[string]string{"vacio": "", "solo espacios": "   "} {
+		t.Run(nombre, func(t *testing.T) {
+			gestion, padron := &gestionFalsa{}, &padronFalso{}
+			d := Declaraciones{Gestion: gestion, Padron: padron, Reloj: relojFijo{}}
+
+			_, err := d.GuardarSplits(t.Context(), "obra-1", partesValidas(), actor)
+			if !errors.Is(err, ErrActorAusente) {
+				t.Fatalf("err = %v, se esperaba ErrActorAusente", err)
+			}
+			if gestion.guardadas != 0 {
+				t.Fatalf("se guardo una version que nadie firma: %d escrituras", gestion.guardadas)
+			}
+			if padronConsultado(padron) {
+				t.Fatal("se consulto el padron antes de comprobar la firma")
+			}
+		})
+	}
+}
+
 // Un titular_id que no esta en el padron NO es "no es persona natural": el
 // rechazo de R-01 solo cubre a quien existe en el padron y no puede recibir
 // reparto. La ausencia la delata la clave foranea al escribir -es lo que el

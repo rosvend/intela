@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -337,5 +338,96 @@ func TestTodasLasCategoriasDelDominioCabenEnElCheck(t *testing.T) {
 				t.Fatalf("el CHECK rechaza la categoria %q del dominio: %v", c, err)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RegistrarBolsa DENTRO de la unidad de otro puerto (ronda 2 de la revision
+// de PR #134: "los metodos que van por s.pool se escapan de la unidad").
+//
+// RegistrarBolsa no es del catalogo -es el primer puerto NO relacionado con
+// #91 que se prueba anidado a proposito-. Antes de esta ronda abria SIEMPRE
+// su propia transaccion con [Store.EnTransaccion] (`s.pool.Begin` directo,
+// sin mirar el contexto): confirmaba SOLA, sin importar como terminara la
+// unidad de quien la llamara, y ademas pedia una conexion propia del pool
+// para hacerlo. Las dos pruebas de abajo prueban esas dos mitades por
+// separado. Corridas contra esa version anterior, LAS DOS fallan -la primera
+// porque la bolsa sobrevive a un rollback que no debia sobrevivir, la
+// segunda porque se queda esperando una conexion que nunca se libera y
+// revienta con el timeout del contexto-.
+
+// Si la unidad de fuera falla DESPUES de que RegistrarBolsa ya escribio, ni
+// la bolsa ni su asiento pueden quedar en la base: son commits de la MISMA
+// transaccion o no son ninguno.
+func TestRegistrarBolsaDentroDeUnaUnidadRevierteConLaDeFuera(t *testing.T) {
+	s, _ := sembrarRecaudo(t)
+	ctx := t.Context()
+	b := bolsa(pagadorCaracol, "2025-01", recaudo.Nacional, "1000000.00")
+	fallo := errors.New("el caso de uso de fuera se arrepintio")
+
+	err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := s.RegistrarBolsa(ctx, b, ahoraDePrueba(), usuarioAdmin); err != nil {
+			return err
+		}
+		return fallo
+	})
+	if !errors.Is(err, fallo) {
+		t.Fatalf("se esperaba el error de la unidad de fuera, se obtuvo %v", err)
+	}
+
+	if _, err := s.BolsaPorID(ctx, b.ID); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("la bolsa sobrevivio al rollback de la unidad de fuera: %v", err)
+	}
+	var asientos int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM asientos WHERE ref_id = $1`, b.ID).Scan(&asientos); err != nil {
+		t.Fatalf("contar asientos: %v", err)
+	}
+	if asientos != 0 {
+		t.Fatalf("el asiento de la bolsa sobrevivio al rollback: %d asientos", asientos)
+	}
+}
+
+// La otra mitad del mismo defecto: no solo que la escritura anidada tenia
+// que confirmar aparte, sino que ademas pedia una SEGUNDA conexion del pool
+// para hacerlo. Se prueba con un pool de UNA sola conexion: la unidad de
+// fuera ya se queda con la unica que hay, asi que si RegistrarBolsa pidiera
+// la suya se quedaria esperando una conexion que jamas se libera -porque
+// quien la tiene esta, en el mismo goroutine, esperando a que ESTA llamada
+// termine-. Es un auto-interbloqueo de un solo goroutine, mas facil de forzar
+// que uno entre dos goroutines y por eso mas determinista: no depende de
+// ganar ninguna carrera, un pool de tamano 1 lo fuerza siempre.
+//
+// El contexto lleva un timeout de 5 s para que, contra la version que no
+// reutilizaba la conexion, la prueba falle limpio en vez de colgarse.
+func TestRegistrarBolsaDentroDeUnaUnidadNoPideSegundaConexion(t *testing.T) {
+	_, pool := sembrarRecaudo(t)
+
+	cfg := pool.Config().Copy()
+	cfg.MaxConns = 1
+	unaConexion, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("abrir pool de una conexion: %v", err)
+	}
+	defer unaConexion.Close()
+	s1 := Nuevo(unaConexion)
+
+	ctx, cancelar := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelar()
+
+	b := bolsa(pagadorCaracol, "2025-01", recaudo.Nacional, "1000000.00")
+	err = s1.EnUnidad(ctx, func(ctx context.Context) error {
+		return s1.RegistrarBolsa(ctx, b, ahoraDePrueba(), usuarioAdmin)
+	})
+	if err != nil {
+		t.Fatalf("RegistrarBolsa anidado con pool de una conexion: %v", err)
+	}
+
+	leida, err := s1.BolsaPorID(t.Context(), b.ID)
+	if err != nil {
+		t.Fatalf("BolsaPorID: %v", err)
+	}
+	if leida.ID != b.ID {
+		t.Fatalf("bolsa leida = %+v, se esperaba %q", leida, b.ID)
 	}
 }

@@ -55,6 +55,13 @@ type Declaraciones struct {
 // comprobacion posterior dejaria guardada una declaracion con una parte que el
 // reparto rechaza al pagar, que es exactamente el defecto que esto cierra.
 func (d Declaraciones) GuardarSplits(ctx context.Context, obraID string, partes []repertorio.Parte, actorID string) (VersionDeclaracion, error) {
+	// Antes que nada: [GestionDeclaraciones.Guardar] asienta POR DENTRO de su
+	// transaccion, asi que un actor vacio que llegue hasta ahi deja un asiento
+	// sin firmar ya confirmado. Aqui no se ha escrito nada todavia.
+	if err := exigirActor(actorID, fmt.Sprintf("guardar la declaracion de la obra %q", obraID)); err != nil {
+		return VersionDeclaracion{}, err
+	}
+
 	decl, err := repertorio.NuevaDeclaracion(obraID, partes)
 	if err != nil {
 		return VersionDeclaracion{}, err
