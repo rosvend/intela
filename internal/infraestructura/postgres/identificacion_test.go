@@ -589,6 +589,7 @@ func cascadaDePrueba(t *testing.T, s *Store, pool *pgxpool.Pool) aplicacion.Reso
 		Identificacion: s,
 		Similitud:      s,
 		Parametros:     s,
+		Unidad:         s,
 	}
 }
 

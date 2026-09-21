@@ -53,11 +53,21 @@ type ResolverUsos struct {
 	// ONI filas que nadie intento identificar.
 	Similitud  Similitud
 	Parametros ParametroEnFecha
+	// Unidad ata la bandeja de candidatos al match de la MISMA fila (S3): son un
+	// solo hecho, y una sin la otra es una ONI con la bandeja de otra decision.
+	// Obligatoria por lo mismo que las dos de arriba.
+	Unidad UnidadDeTrabajo
 	// FueraDeRepertorio son las fuentes excluidas por R-27. Vacio en
 	// produccion hasta que exista el dato de politica (D4 del diseno de #28):
 	// nada se excluye por defecto.
 	FueraDeRepertorio identificacion.FuentesExcluidas
 }
+
+// errFilaCambiada revierte la unidad de una fila que otro proceso cambio entre
+// la lectura y la escritura (una resolucion manual, otra corrida): la bandeja
+// que se iba a escribir ya no le corresponde. Nunca sale de ResolverUsos, la
+// fila se salta.
+var errFilaCambiada = errors.New("la fila cambio entre la lectura y la escritura")
 
 // Las dos claves del escalon 3 en `parametros`: nombres de filas, no reglas.
 const (
@@ -77,8 +87,8 @@ const (
 // Idempotente (D9): una fila resuelta o clasificada a mano no se vuelve a
 // tocar, ni aunque cambie entre la lectura y la escritura (ver guardarMatch).
 func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, error) {
-	if r.Similitud == nil || r.Parametros == nil {
-		return 0, errors.New("resolver usos: la cascada necesita motor de similitud y parametros")
+	if r.Similitud == nil || r.Parametros == nil || r.Unidad == nil {
+		return 0, errors.New("resolver usos: la cascada necesita motor de similitud, parametros y unidad de trabajo")
 	}
 
 	umbrales, err := r.umbrales(ctx, periodo)
@@ -93,7 +103,11 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 
 	resueltas := 0
 	for _, u := range usos {
-		if !reprocesable(u.Escalon) {
+		reprocesar, err := reprocesable(u.Escalon)
+		if err != nil {
+			return resueltas, fmt.Errorf("uso %q: %w", u.ID, err)
+		}
+		if !reprocesar {
 			continue
 		}
 
@@ -117,11 +131,31 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 		case res.ObraID == "":
 			// Sale a ONI: "la cascada corrio y no la reconocio" es un estado
 			// del modelo (RD 13.8), distinto de "todavia sin mirar".
-			if err := r.guardarCandidatos(ctx, u, res); err != nil {
-				return resueltas, err
+			//
+			// La bandeja y el match son UN hecho (S3): en una unidad, la
+			// bandeja va antes (D5, al reves quedaria una ONI con la bandeja
+			// vacia) y si el match no se escribe porque la fila ya es de otro
+			// -una resolucion manual concurrente- la bandeja se revierte con
+			// el. Sin la unidad, la bandeja de la decision perdida quedaba
+			// puesta sobre una fila que esa decision ya no considera ONI.
+			err := r.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+				if err := r.guardarCandidatos(ctx, u, res); err != nil {
+					return err
+				}
+				escrita, err := r.guardarMatch(ctx, u, res)
+				if err != nil {
+					return fmt.Errorf("guardar ONI de %q: %w", u.ID, err)
+				}
+				if !escrita {
+					return errFilaCambiada
+				}
+				return nil
+			})
+			if errors.Is(err, errFilaCambiada) {
+				continue
 			}
-			if _, err := r.guardarMatch(ctx, u, res); err != nil {
-				return resueltas, fmt.Errorf("guardar ONI de %q: %w", u.ID, err)
+			if err != nil {
+				return resueltas, err
 			}
 			continue
 		}
@@ -162,14 +196,21 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 }
 
 // reprocesable dice si una fila entra en esta corrida. Las ONI si entran: el
-// catalogo crece. 'manual' nunca: una decision humana no se pisa. Tabla
-// completa en D6 de docs/planes/32-difuso/diseno.md.
-func reprocesable(escalon string) bool {
+// catalogo crece. 'manual' nunca: una decision humana no se pisa.
+//
+// Un escalon que no esta en la tabla es un ERROR y no un "no": saltarlo en
+// silencio dejaria una fila sin decidir sin que nada lo cuente, y el dia que el
+// esquema admita un escalon nuevo la cascada lo ignoraria en vez de avisar (D8,
+// fallar cerrado). Tabla completa en D6 de docs/planes/32-difuso/diseno.md.
+func reprocesable(escalon string) (bool, error) {
 	switch escalon {
 	case identificacion.EscalonPendiente, identificacion.EscalonExcluido, identificacion.EscalonONI:
-		return true
+		return true, nil
+	case identificacion.EscalonAlias, identificacion.EscalonIDGlobal,
+		identificacion.EscalonDifuso, identificacion.EscalonManual:
+		return false, nil
 	default:
-		return false
+		return false, fmt.Errorf("escalon desconocido %q", escalon)
 	}
 }
 
@@ -196,12 +237,12 @@ func (r ResolverUsos) umbrales(ctx context.Context, periodo string) (identificac
 	if err != nil {
 		return identificacion.Umbrales{}, fmt.Errorf("piso de la banda ambigua: %w", err)
 	}
-	if banda.GreaterThan(match) {
+	u := identificacion.Umbrales{Match: match, Banda: banda}
+	if err := u.Validar(); err != nil {
 		return identificacion.Umbrales{}, fmt.Errorf(
-			"parametros incoherentes: %s (%s) esta por encima de %s (%s)",
-			ClaveUmbralBanda, banda, ClaveUmbralMatch, match)
+			"parametros incoherentes (%s, %s): %w", ClaveUmbralBanda, ClaveUmbralMatch, err)
 	}
-	return identificacion.Umbrales{Match: match, Banda: banda}, nil
+	return u, nil
 }
 
 // fechaDePeriodo devuelve el primer dia del periodo. UTC: la vigencia es una
@@ -216,11 +257,13 @@ func fechaDePeriodo(periodo string) (time.Time, error) {
 }
 
 // guardarCandidatos persiste la banda ANTES del match (D5): al reves quedaria
-// una ONI con la bandeja vacia. Sin candidatos no toca el puerto.
+// una ONI con la bandeja vacia.
+//
+// Sin candidatos SI llama al puerto: la bandeja se REEMPLAZA (D9), y una fila
+// que en una corrida anterior quedo en banda y ahora cae por debajo del piso
+// tiene que quedarse con la bandeja vacia, no con los candidatos viejos. El
+// adaptador borra y luego inserta, asi que con una lista vacia solo borra.
 func (r ResolverUsos) guardarCandidatos(ctx context.Context, u UsoPersistido, res identificacion.Resultado) error {
-	if len(res.Candidatos) == 0 {
-		return nil
-	}
 	if err := r.Identificacion.GuardarCandidatos(ctx, u.ID, res.Candidatos); err != nil {
 		return fmt.Errorf("guardar candidatos de %q: %w", u.ID, err)
 	}

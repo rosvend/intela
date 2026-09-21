@@ -481,3 +481,41 @@ func TestUnirCandidatosNoDependeDelOrdenDeLasListasSinEmpates(t *testing.T) {
 		}
 	}
 }
+
+// Umbrales.Validar: 0 < Banda < Match <= 1. Cada caso es una forma de dejar la
+// cascada en un estado que no decide lo que dice decidir.
+func TestUmbralesValidar(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		umbrales Umbrales
+		quiero   string // fragmento del error; vacio = valido
+	}{
+		{"los de arranque", Umbrales{Match: punt("0.60"), Banda: punt("0.45")}, ""},
+		{"banda pegada al umbral", Umbrales{Match: punt("0.60"), Banda: punt("0.599999")}, ""},
+		{"umbral en el tope", Umbrales{Match: punt("1"), Banda: punt("0.45")}, ""},
+		{"banda igual al umbral: la banda no tiene ancho", Umbrales{Match: punt("0.60"), Banda: punt("0.60")}, "estrictamente por debajo"},
+		{"banda por encima del umbral", Umbrales{Match: punt("0.60"), Banda: punt("0.70")}, "estrictamente por debajo"},
+		{"banda en cero es ausente, no un piso", Umbrales{Match: punt("0.60"), Banda: punt("0")}, "mayor que 0"},
+		{"banda negativa", Umbrales{Match: punt("0.60"), Banda: punt("-0.1")}, "mayor que 0"},
+		{"umbral por encima de 1", Umbrales{Match: punt("1.01"), Banda: punt("0.45")}, "no puede pasar de 1"},
+		{"todo en cero", Umbrales{}, "mayor que 0"},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			err := c.umbrales.Validar()
+			if c.quiero == "" {
+				if err != nil {
+					t.Fatalf("Validar() = %v, se esperaba nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validar() = nil, se esperaba un error con %q", c.quiero)
+			}
+			if !strings.Contains(err.Error(), c.quiero) {
+				t.Fatalf("Validar() = %q, se esperaba que dijera %q", err, c.quiero)
+			}
+		})
+	}
+}

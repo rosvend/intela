@@ -91,7 +91,14 @@ func umbralesVigentes(ctx context.Context, s *postgres.Store, fecha time.Time) (
 	if err != nil {
 		return identificacion.Umbrales{}, err
 	}
-	return identificacion.Umbrales{Match: match, Banda: banda}, nil
+	// Los mismos cortes que aplica la cascada, con la misma comprobacion: medir
+	// contra unos umbrales que ResolverUsos rechazaria seria medir otra cosa.
+	u := identificacion.Umbrales{Match: match, Banda: banda}
+	if err := u.Validar(); err != nil {
+		return identificacion.Umbrales{}, fmt.Errorf("parametros incoherentes (%s, %s): %w",
+			aplicacion.ClaveUmbralBanda, aplicacion.ClaveUmbralMatch, err)
+	}
+	return u, nil
 }
 
 func leerConjunto(ruta string) (conjunto, error) {

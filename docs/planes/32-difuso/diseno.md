@@ -98,7 +98,12 @@ concurrente no se pisa.
 | `excluido` | si | la lista de fuentes es configuracion, y pudo estar mal |
 | `oni` | si | **el catalogo crece**: una obra dada de alta hoy identifica un uso que el mes pasado no se parecia a nada |
 | `alias`, `id_global`, `difuso` | no | ya resuelta; el conocimiento vive en `alias_obra` |
-| `manual` | **no** | una decision humana no se pisa con una automatica |
+| `manual` | **no**, y consta como `EscalonManual` | una decision humana no se pisa con una automatica |
+| cualquier otro | **error** | fallar cerrado (D8): saltarlo en silencio dejaria una fila sin decidir sin que nada lo cuente |
+
+Un escalon fuera de la tabla aborta la corrida con `uso "<id>": escalon desconocido "<x>"`. Hoy no
+puede pasar -el `CHECK` de `usos` admite exactamente los siete de arriba-, y por eso mismo el dia
+que el esquema admita uno nuevo, la cascada avisa en vez de ignorarlo.
 
 Reprocesar las ONI cuesta una consulta de similitud por fila en cada corrida. Es el precio de que
 el sistema mejore solo a medida que se declara repertorio; sin eso, un uso se queda en ONI hasta

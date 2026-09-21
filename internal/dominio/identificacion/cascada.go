@@ -17,6 +17,10 @@ import (
 //
 // EscalonPendiente es el estado con que la ingesta siembra cada fila, y al
 // que vuelve una fila excluida cuya fuente deja de estarlo y no resuelve.
+//
+// EscalonManual es la decision de una persona en la cola de resolucion (#39):
+// la cascada no la escribe -el CHECK manual_tiene_autor de `usos` la reserva a
+// esa cola- pero tiene que conocerla para no pisarla.
 const (
 	EscalonPendiente = "pendiente"
 	EscalonAlias     = "alias"
@@ -24,6 +28,7 @@ const (
 	EscalonExcluido  = "excluido"
 	EscalonDifuso    = "difuso"
 	EscalonONI       = "oni"
+	EscalonManual    = "manual"
 )
 
 // IDGlobal identifica cual de los tres identificadores globales caso en el
@@ -71,6 +76,25 @@ type Consulta struct {
 type Umbrales struct {
 	Match decimal.Decimal // >= Match: asignacion automatica
 	Banda decimal.Decimal // >= Banda y < Match: cola manual con los candidatos
+}
+
+// Validar exige 0 < Banda < Match <= 1.
+//
+// Banda == Match deja la banda sin ancho: nada llega a la bandeja, y lo que no
+// alcanza el umbral se va a ONI a ciegas. Banda 0 es "ausente" (ADR 0004), no un
+// piso: con el corte en cero el motor propondria cualquier obra. Y la similitud
+// no pasa de 1, asi que un umbral mayor no asigna nunca.
+func (u Umbrales) Validar() error {
+	switch {
+	case !u.Banda.IsPositive():
+		return fmt.Errorf("el piso de la banda (%s) tiene que ser mayor que 0: cero es ausente, no un piso", u.Banda)
+	case !u.Banda.LessThan(u.Match):
+		return fmt.Errorf("el piso de la banda (%s) tiene que quedar estrictamente por debajo del umbral (%s): sin ancho, nada llega a la bandeja",
+			u.Banda, u.Match)
+	case u.Match.GreaterThan(decimal.NewFromInt(1)):
+		return fmt.Errorf("el umbral (%s) no puede pasar de 1: la similitud no llega mas arriba y nada se asignaria", u.Match)
+	}
+	return nil
 }
 
 // Resolver aplica la cascada completa del ADR 0007 y devuelve el Resultado.

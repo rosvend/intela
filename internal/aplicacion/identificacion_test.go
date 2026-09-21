@@ -168,6 +168,21 @@ func (s *similitudFalsa) Candidatos(_ context.Context, titulo string, piso decim
 	return s.porTitulo[titulo], nil
 }
 
+// unidadPorFilaFalsa satisface UnidadDeTrabajo pasando el ctx sin mas: las escrituras
+// van a los dobles de siempre, asi que no revierte nada. Lo que SI registra es
+// que devolvio cada fn -el commit o el rollback que habria decidido el
+// adaptador real-, y esa decision es lo que estas pruebas comprueban. La
+// reversion de verdad la prueba el adaptador de PostgreSQL.
+type unidadPorFilaFalsa struct {
+	resultados []error
+}
+
+func (u *unidadPorFilaFalsa) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	err := fn(ctx)
+	u.resultados = append(u.resultados, err)
+	return err
+}
+
 // parametroEnFechaFalso registra con que fecha se pregunto cada umbral.
 type parametroEnFechaFalso struct {
 	valores  map[string]string
@@ -233,12 +248,29 @@ func correrCon(
 	usos ...UsoPersistido,
 ) (int, error) {
 	t.Helper()
+	return correrConUnidad(t, ing, idf, sim, par, &unidadPorFilaFalsa{}, excluidas, usos...)
+}
+
+// correrConUnidad es correrCon con la unidad de trabajo a la vista, para las
+// pruebas que comprueban que decidio la unidad (S3).
+func correrConUnidad(
+	t *testing.T,
+	ing *ingestaFalsa,
+	idf *identificacionFalsa,
+	sim *similitudFalsa,
+	par *parametroEnFechaFalso,
+	unidad UnidadDeTrabajo,
+	excluidas identificacion.FuentesExcluidas,
+	usos ...UsoPersistido,
+) (int, error) {
+	t.Helper()
 	ing.usos = usos
 	r := ResolverUsos{
 		Usos:              ing,
 		Identificacion:    idf,
 		Similitud:         sim,
 		Parametros:        par,
+		Unidad:            unidad,
 		FueraDeRepertorio: excluidas,
 	}
 	return r.ResolverUsos(t.Context(), "2024")
@@ -250,8 +282,11 @@ func soloONI(t *testing.T, idf *identificacionFalsa, usoID string) {
 	if len(idf.guardadosAlias) != 0 {
 		t.Fatalf("una fila no resuelta no aprende alias: %+v", idf.guardadosAlias)
 	}
-	if len(idf.guardadosCandidatos) != 0 {
-		t.Fatalf("sin candidatos no se escribe la bandeja: %+v", idf.guardadosCandidatos)
+	// La bandeja se REEMPLAZA (D9): una ONI sin candidatos la deja vacia, no con
+	// los de una corrida anterior. Es una escritura con la lista vacia.
+	if len(idf.guardadosCandidatos) != 1 ||
+		idf.guardadosCandidatos[0].UsoID != usoID || len(idf.guardadosCandidatos[0].Candidatos) != 0 {
+		t.Fatalf("se esperaba vaciar la bandeja de %q: %+v", usoID, idf.guardadosCandidatos)
 	}
 	if len(idf.guardadosMatch) != 1 {
 		t.Fatalf("se esperaba una escritura de ONI, hubo %d: %+v", len(idf.guardadosMatch), idf.guardadosMatch)
@@ -646,6 +681,7 @@ func TestResolverUsosPideElPeriodoCorrecto(t *testing.T) {
 		Identificacion: idf,
 		Similitud:      &similitudFalsa{},
 		Parametros:     umbralesPorDefecto(),
+		Unidad:         &unidadPorFilaFalsa{},
 	}
 	n, err := r.ResolverUsos(t.Context(), "2024-06")
 	if err != nil {
@@ -802,6 +838,136 @@ func conCandidatos(cs ...identificacion.Candidato) *similitudFalsa {
 
 func cand(obraID, puntaje string) identificacion.Candidato {
 	return identificacion.Candidato{ObraID: obraID, Puntaje: decimal.RequireFromString(puntaje)}
+}
+
+// ---------------------------------------------------------------------------
+// S3: la bandeja y el match de una ONI son una sola unidad (review de PR #146)
+
+// Si el match no se escribe porque la fila ya es de otro (una resolucion manual
+// concurrente), la unidad recibe el error que la revierte -y la bandeja con
+// ella- y la corrida sigue con la fila siguiente.
+func TestResolverUsosONIQuePierdeLaCarreraRevierteLaBandejaYSigue(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{cambiadas: map[string]bool{"u-1": true}}
+	sim := conCandidatos(cand("obra-45", "0.52"))
+	unidad := &unidadPorFilaFalsa{}
+
+	n, err := correrConUnidad(t, ing, idf, sim, umbralesPorDefecto(), unidad, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"),
+		usoPendiente("u-2", "caracol", "id_ficha=2"))
+	if err != nil {
+		t.Fatalf("una fila cambiada por otro no es un error de la corrida: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, ninguna de las dos se identifica", n)
+	}
+
+	// Dos unidades, una por fila ONI. La de u-1 termino con el error que la
+	// revierte; la de u-2 confirmo.
+	if len(unidad.resultados) != 2 {
+		t.Fatalf("unidades = %d, se esperaban 2", len(unidad.resultados))
+	}
+	if !errors.Is(unidad.resultados[0], errFilaCambiada) {
+		t.Fatalf("la unidad de u-1 tenia que revertir con errFilaCambiada: %v", unidad.resultados[0])
+	}
+	if unidad.resultados[1] != nil {
+		t.Fatalf("la unidad de u-2 tenia que confirmar: %v", unidad.resultados[1])
+	}
+
+	// La bandeja de u-1 SI se intento escribir (dentro de la unidad, antes del
+	// match): es la unidad la que la deshace, no el caso de uso a mano.
+	if !slices.Equal(idf.orden, []string{"candidatos:u-1", "candidatos:u-2", "match:u-2"}) {
+		t.Fatalf("orden de escritura = %v", idf.orden)
+	}
+}
+
+// Un fallo que no es la carrera SI aborta y sale envuelto tal cual, para que
+// quien llama distinga sus centinelas.
+func TestResolverUsosONIPropagaElErrorDeLaUnidad(t *testing.T) {
+	idf := &identificacionFalsa{errGuardarMatch: errors.New("disco lleno")}
+	unidad := &unidadPorFilaFalsa{}
+
+	_, err := correrConUnidad(t, &ingestaFalsa{}, idf, &similitudFalsa{}, umbralesPorDefecto(), unidad, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"))
+	if err == nil || !strings.Contains(err.Error(), "disco lleno") || !strings.Contains(err.Error(), "u-1") {
+		t.Fatalf("se esperaba el error del disco nombrando el uso: %v", err)
+	}
+	if errors.Is(err, errFilaCambiada) {
+		t.Fatal("un fallo de escritura no es una carrera")
+	}
+}
+
+// D9, arreglo derivado: una ONI sin candidatos VACIA la bandeja. Una fila que en
+// una corrida anterior quedo en banda y ahora cae bajo el piso no puede quedarse
+// con candidatos que ya no le corresponden.
+func TestResolverUsosONISinCandidatosVaciaLaBandeja(t *testing.T) {
+	idf := &identificacionFalsa{}
+	sim := conCandidatos(cand("obra-45", "0.10"))
+
+	if _, err := correrCon(t, &ingestaFalsa{}, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1")); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if len(idf.guardadosCandidatos) != 1 {
+		t.Fatalf("se esperaba una escritura de la bandeja, hubo %+v", idf.guardadosCandidatos)
+	}
+	if got := idf.guardadosCandidatos[0]; got.UsoID != "u-1" || len(got.Candidatos) != 0 {
+		t.Fatalf("la bandeja tenia que quedar vacia: %+v", got)
+	}
+	if !slices.Equal(idf.orden, []string{"candidatos:u-1", "match:u-1"}) {
+		t.Fatalf("orden de escritura = %v, la bandeja va antes del match (D5)", idf.orden)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S5: un escalon desconocido falla cerrado (review de PR #146)
+
+func TestReprocesable(t *testing.T) {
+	casos := []struct {
+		escalon string
+		quiero  bool
+	}{
+		{identificacion.EscalonPendiente, true},
+		{identificacion.EscalonExcluido, true},
+		{identificacion.EscalonONI, true},
+		{identificacion.EscalonAlias, false},
+		{identificacion.EscalonIDGlobal, false},
+		{identificacion.EscalonDifuso, false},
+		{identificacion.EscalonManual, false},
+	}
+	for _, c := range casos {
+		t.Run(c.escalon, func(t *testing.T) {
+			tengo, err := reprocesable(c.escalon)
+			if err != nil {
+				t.Fatalf("reprocesable(%q): %v", c.escalon, err)
+			}
+			if tengo != c.quiero {
+				t.Fatalf("reprocesable(%q) = %v, se esperaba %v", c.escalon, tengo, c.quiero)
+			}
+		})
+	}
+}
+
+// Saltarlo en silencio dejaria una fila sin decidir sin que nada lo cuente.
+func TestResolverUsosConUnEscalonDesconocidoAbortaNombrandoElUsoYElEscalon(t *testing.T) {
+	idf := &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}
+
+	rara := usoPendiente("u-raro", "caracol", "id_ficha=1")
+	rara.Escalon = "raro"
+
+	n, err := correr(t, &ingestaFalsa{}, idf, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"), rara)
+	if err == nil {
+		t.Fatal("se esperaba un error")
+	}
+	if !strings.Contains(err.Error(), "u-raro") || !strings.Contains(err.Error(), `"raro"`) {
+		t.Fatalf("el error no nombra el uso y el escalon: %v", err)
+	}
+	// Lo que se resolvio antes de toparse con la fila rara se conserva: la
+	// corrida es idempotente y el reintento la retoma.
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1 (la de antes)", n)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,6 +1363,7 @@ func TestResolverUsosLeeLosUmbralesContraLaFechaDelPeriodo(t *testing.T) {
 				Identificacion: &identificacionFalsa{},
 				Similitud:      &similitudFalsa{},
 				Parametros:     par,
+				Unidad:         &unidadPorFilaFalsa{},
 			}
 			if _, err := r.ResolverUsos(t.Context(), c.periodo); err != nil {
 				t.Fatalf("ResolverUsos: %v", err)
@@ -1260,32 +1427,53 @@ func TestResolverUsosAbortaSiFaltaUnUmbral(t *testing.T) {
 	}
 }
 
-// Piso por encima del umbral: nada podria caer en la banda, y filas que
-// merecian revision saldrian a ONI ciega.
-func TestResolverUsosAbortaSiLaBandaEstaPorEncimaDelUmbral(t *testing.T) {
-	par := &parametroEnFechaFalso{valores: map[string]string{
-		ClaveUmbralMatch: "0.40",
-		ClaveUmbralBanda: "0.70",
-	}}
-	idf := &identificacionFalsa{}
-
-	_, err := correrCon(t, &ingestaFalsa{}, idf, &similitudFalsa{}, par, nil,
-		usoPendiente("u-1", "caracol", "id_ficha=1"))
-	if err == nil {
-		t.Fatal("se esperaba un error por parametros incoherentes")
+// Piso por encima del umbral, o igual a el: nada podria caer en la banda, y
+// filas que merecian revision saldrian a ONI ciega. Igual tambien (S4): una
+// banda sin ancho es una banda que no existe. Un piso en cero es "ausente"
+// (ADR 0004), no un piso.
+func TestResolverUsosAbortaSiLosUmbralesNoTienenBanda(t *testing.T) {
+	casos := []struct {
+		nombre       string
+		match, banda string
+	}{
+		{"la banda por encima del umbral", "0.40", "0.70"},
+		{"la banda igual al umbral", "0.60", "0.60"},
+		{"la banda en cero", "0.60", "0"},
+		{"el umbral pasa de 1", "1.50", "0.45"},
 	}
-	if len(idf.guardadosMatch) != 0 {
-		t.Fatal("no se puede tocar ninguna fila con los umbrales incoherentes")
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			par := &parametroEnFechaFalso{valores: map[string]string{
+				ClaveUmbralMatch: c.match,
+				ClaveUmbralBanda: c.banda,
+			}}
+			idf := &identificacionFalsa{}
+
+			_, err := correrCon(t, &ingestaFalsa{}, idf, &similitudFalsa{}, par, nil,
+				usoPendiente("u-1", "caracol", "id_ficha=1"))
+			if err == nil {
+				t.Fatal("se esperaba un error por parametros incoherentes")
+			}
+			// El error nombra las dos claves: hay que saber cual de las filas
+			// de `parametros` corregir.
+			if !strings.Contains(err.Error(), ClaveUmbralBanda) || !strings.Contains(err.Error(), ClaveUmbralMatch) {
+				t.Fatalf("el error no nombra las claves: %v", err)
+			}
+			if len(idf.guardadosMatch) != 0 {
+				t.Fatal("no se puede tocar ninguna fila con los umbrales incoherentes")
+			}
+		})
 	}
 }
 
-func TestResolverUsosExigeMotorYParametros(t *testing.T) {
+func TestResolverUsosExigeMotorParametrosYUnidad(t *testing.T) {
 	casos := []struct {
 		nombre string
 		r      ResolverUsos
 	}{
-		{"sin motor", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Parametros: umbralesPorDefecto()}},
-		{"sin parametros", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Similitud: &similitudFalsa{}}},
+		{"sin motor", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Parametros: umbralesPorDefecto(), Unidad: &unidadPorFilaFalsa{}}},
+		{"sin parametros", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Similitud: &similitudFalsa{}, Unidad: &unidadPorFilaFalsa{}}},
+		{"sin unidad de trabajo", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Similitud: &similitudFalsa{}, Parametros: umbralesPorDefecto()}},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {

@@ -105,6 +105,7 @@ func TestMapaNetflixProduceUnParQueLaCascadaSondeaPorShowID(t *testing.T) {
 		Identificacion: ids,
 		Similitud:      sinSimilitud{},
 		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2018")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -150,6 +151,7 @@ func TestMapaCaracolProduceUnParQueLaCascadaSondeaPorIDFicha(t *testing.T) {
 		Identificacion: ids,
 		Similitud:      sinSimilitud{},
 		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2026-01")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -195,6 +197,7 @@ func TestMapaCineProduceUnParQueLaCascadaSondeaPorIDPelicula(t *testing.T) {
 		Identificacion: ids,
 		Similitud:      sinSimilitud{},
 		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2026-01")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -295,6 +298,14 @@ type sinSimilitud struct{}
 
 func (sinSimilitud) Candidatos(context.Context, string, decimal.Decimal) ([]identificacion.Candidato, error) {
 	return nil, nil
+}
+
+// unidadDirecta corre fn sin transaccion: estas pruebas miran que se sondea, no
+// como se confirma.
+type unidadDirecta struct{}
+
+func (unidadDirecta) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
 type umbralesFijos struct{}
