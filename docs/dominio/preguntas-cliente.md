@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-18
+actualizado: 2026-09-21
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -53,6 +53,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
 | P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
 | P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
+| P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
 
 ## Respuestas
 
@@ -185,6 +186,13 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   a reclamaciones administrativas; ONI (`RD 13.8`) es autor desconocido. El chapeau de
   `RD 15` ("seran preservados") es el unico anclaje. El motor los deja en
   `Resultado.NoDistribuido` con motivo, no en el residuo de redondeo.
+- **P-20** Quien puebla `usos.canal_id` en produccion. Los adaptadores de ingesta reales
+  (`MapaCaracol`, `MapaNetflix`, `MapaCine`) no mapean ninguna columna del archivo del
+  cliente a esa columna: hoy solo la puebla el sembrador sintetico. Sin una columna del
+  cliente que identifique el canal -- o una tabla de correspondencia (fuente, canal) que
+  alguien mantenga -- toda fila real de TV llega con `canal_id` vacio, y `RD 9.1` no se
+  puede repartir por canal sobre datos de produccion. `aplicacion.Reparto.UsosSinCanal`
+  cuenta el hueco mientras la respuesta no llega; no lo cierra.
 
 ## Agenda para la reunion con REDES
 
@@ -203,3 +211,5 @@ cifra defendible.
 7. **Entretenimientos**: es o no repertorio (P-05).
 8. Pedir P-12 a P-17: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI,
    alcance del 80% artistico, feed de quintil `RD 9.5.4`.
+9. **P-20**: que columna del archivo -- si existe alguna -- identifica el canal que pago,
+   por fuente. Sin esto, RD 9.1 no se puede repartir por canal sobre datos reales.

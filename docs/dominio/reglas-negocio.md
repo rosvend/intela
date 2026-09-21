@@ -126,6 +126,14 @@ Se publica en la web de REDES SGC con titulos e informacion identificatoria, **s
 los montos**. La informacion economica se mantiene en reserva. Debe indicarse fecha del
 proceso, periodo, y direccion fisica y electronica para allegar documentacion.
 Estado: Firme. Fuente: `RD 13.8.1` a `RD 13.8.4`
+Implementacion: **pendiente**, dueno #33/#34. `internal/aplicacion.Reparto.UsosDeCanal`
+(#119) cuenta las filas sin obra identificada en `ResumenUsosDeCanal`, pero no reserva su
+importe: hoy quien pasa su resultado directo a `reparto.Reparto` reparte el 100% de la bolsa
+entre las obras identificadas, y la parte ONI desaparece dentro de ellas en vez de quedar en
+reserva. `internal/dominio/reparto` (#33) no tiene todavia una linea de resultado para esto, y
+`ProcesoDeReparto` (#34) es quien tendria que orquestarla. `TestElResumenNoReservaLaParteONIDocumentaElHueco`
+en `internal/infraestructura/postgres/reparto_test.go` fija el hueco y esta escrito para
+fallar el dia que se cierre.
 
 ### R-19 Prescripcion ONI: 3 anos
 Contados desde la publicacion del listado. Prescribe a favor de REDES SGC.

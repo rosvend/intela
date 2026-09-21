@@ -243,6 +243,50 @@ type UsoPersistido struct {
 	RechazoCodigo string
 }
 
+// UsoDeReparto es una fila canonica lista para el motor: el uso mas la
+// clasificacion anual del canal que lo emitio (`RD 9.5.4`).
+//
+// El grupo no es columna de `usos` porque no es un hecho del reporte: se
+// resuelve por ano contra `canales_clasificacion`, y una reejecucion de un
+// periodo pasado tiene que leer la fila de aquel ano (ADR 0005). Llega vacio
+// cuando el catalogo no clasifico el canal, que solo es legal fuera de
+// suscripcion.
+type UsoDeReparto struct {
+	Uso           UsoPersistido
+	GrupoEfectivo string
+}
+
+// ResumenUsosDeCanal cuenta, dentro de un (periodo, canal), los usos que NO
+// llegan al motor porque no tienen obra identificada (`usos.obra_id IS NULL`).
+// Ningun tratamiento se puede confundir con otro, porque el reglamento los
+// trata distinto:
+//
+//   - Pendientes: la cascada de identificacion (ADR 0007) todavia no corrio
+//     sobre la fila. No es lo mismo que "no se reconocio nada" -- es "no se
+//     ha intentado".
+//   - ONI: la cascada corrio y no reconocio ninguna obra.
+//   - Excluidos: el canal esta fuera del catalogo de REDES SGC (R-27), asi
+//     que la fila nunca tuvo obra que identificar.
+//
+// # Esto SOLO cuenta. No reserva nada
+//
+// `RD 13.8` / R-18 / R-19 mandan que la parte de una obra no identificada
+// quede en reserva, no que se pierda ni que se reparta entre las demas obras.
+// Este tipo no implementa eso: es un conteo, para que el hueco sea visible.
+// Quien tome los `[]reparto.Uso] que devuelve UsosDeCanal y los pase
+// directamente a [reparto.Reparto] -- que es lo unico que existe hoy, porque
+// ProcesoDeReparto (#33/#34) todavia no orquesta una corrida -- reparte el
+// 100% de la bolsa entre las obras IDENTIFICADAS: la parte que le habria
+// correspondido a una fila ONI desaparece DENTRO de esas obras, no en
+// reserva. Reservarla de verdad -- y decidir como se libera cuando la obra se
+// identifica (R-19: 3 anos) -- es trabajo de #33/#34, registrado con
+// implementacion pendiente bajo R-18 en docs/dominio/reglas-negocio.md.
+type ResumenUsosDeCanal struct {
+	Pendientes int
+	ONI        int
+	Excluidos  int
+}
+
 // ItemRevision es una fila de la cola de revision: lo que no se pudo
 // normalizar, y mas adelante las anomalias del #37.
 //
