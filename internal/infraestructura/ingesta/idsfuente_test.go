@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
@@ -100,6 +103,9 @@ func TestMapaNetflixProduceUnParQueLaCascadaSondeaPorShowID(t *testing.T) {
 	n, err := (aplicacion.ResolverUsos{
 		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
 		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2018")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -143,6 +149,9 @@ func TestMapaCaracolProduceUnParQueLaCascadaSondeaPorIDFicha(t *testing.T) {
 	n, err := (aplicacion.ResolverUsos{
 		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
 		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2026-01")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -186,6 +195,9 @@ func TestMapaCineProduceUnParQueLaCascadaSondeaPorIDPelicula(t *testing.T) {
 	n, err := (aplicacion.ResolverUsos{
 		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
 		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2026-01")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -275,4 +287,34 @@ func (i *identificacionMemoria) ObraPorIDGlobal(context.Context, string, string,
 }
 func (i *identificacionMemoria) GuardarMatch(context.Context, string, string, identificacion.Resultado) error {
 	return nil
+}
+func (i *identificacionMemoria) GuardarCandidatos(context.Context, string, []identificacion.Candidato) error {
+	return nil
+}
+
+// El escalon 3 no pinta nada en estas gemelas: un motor mudo y unos umbrales
+// cualesquiera bastan para que la cascada corra entera.
+type sinSimilitud struct{}
+
+func (sinSimilitud) Candidatos(context.Context, string, decimal.Decimal) ([]identificacion.Candidato, error) {
+	return nil, nil
+}
+
+// unidadDirecta corre fn sin transaccion: estas pruebas miran que se sondea, no
+// como se confirma.
+type unidadDirecta struct{}
+
+func (unidadDirecta) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+type umbralesFijos struct{}
+
+func (umbralesFijos) ParametroVigente(_ context.Context, clave string, _ time.Time) (decimal.Decimal, error) {
+	switch clave {
+	case aplicacion.ClaveUmbralMatch:
+		return decimal.RequireFromString("0.60"), nil
+	default:
+		return decimal.RequireFromString("0.45"), nil
+	}
 }

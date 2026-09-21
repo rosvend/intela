@@ -23,7 +23,7 @@ var _ aplicacion.RepositorioIngesta = (*Store)(nil)
 //
 // No hay columna de dinero que proyectar, y no la va a haber: un reporte de uso
 // PONDERA la bolsa, no la aporta.
-const columnasUso = `id, reporte_id, fuente, titulo, ids_fuente, COALESCE(obra_id, ''),
+const columnasUso = `id, reporte_id, fuente, titulo, titulo_original, ids_fuente, COALESCE(obra_id, ''),
 	escalon, evidencia, oni, modalidad, tipo_obra, canal_id, fecha, hora,
 	duracion_min, emisiones, rating, taquilla, espectadores, exhibiciones,
 	vistas, minutos_vistos, pb`
@@ -42,7 +42,7 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 	// este campo depende con que formula se valoriza el uso (RD 8) y no
 	// conviene que dependa de que plan de escaneo elija la libreria.
 	err := fila.Scan(
-		&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
+		&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.TituloOrig, &u.IDsFuente, &u.ObraID,
 		&u.Escalon, &u.Evidencia, &u.ONI, &modalidad, &u.TipoObra, &u.CanalID, &u.Fecha, &u.Hora,
 		&u.DuracionMin, &u.Emisiones, &u.Rating, &u.Taquilla, &u.Espectadores,
 		&u.Exhibiciones, &u.Vistas, &u.MinutosVistos, &u.PB,
@@ -273,7 +273,7 @@ func escribirLote(ctx context.Context, tx pgx.Tx, usos []aplicacion.UsoPersistid
 // porque CopyFrom pide el recorte aparte; si una columna entra o sale de una
 // tabla, cambia aqui y en valoresUso/valoresRechazo, nunca en un $n.
 var columnasUsoCopia = []string{
-	"id", "reporte_id", "fuente", "titulo", "ids_fuente", "obra_id", "escalon", "evidencia",
+	"id", "reporte_id", "fuente", "titulo", "titulo_original", "ids_fuente", "obra_id", "escalon", "evidencia",
 	"oni", "modalidad", "tipo_obra", "canal_id", "fecha", "hora",
 	"duracion_min", "emisiones", "rating", "taquilla", "espectadores", "exhibiciones",
 	"vistas", "minutos_vistos", "pb",
@@ -299,7 +299,7 @@ func valoresUso(u aplicacion.UsoPersistido) []any {
 		obraID = nil
 	}
 	return []any{
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, obraID, u.Escalon, u.Evidencia,
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.TituloOrig, u.IDsFuente, obraID, u.Escalon, u.Evidencia,
 		u.ONI, string(u.Modalidad), u.TipoObra, u.CanalID, u.Fecha, u.Hora,
 		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores, u.Exhibiciones,
 		u.Vistas, u.MinutosVistos, u.PB,

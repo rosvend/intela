@@ -86,6 +86,18 @@ func TestCaracolXLSXRealEntraEntero(t *testing.T) {
 		t.Errorf("modalidad[0] = %q", usos[0].Modalidad)
 	}
 
+	// El titulo original llega hasta el uso (#32, review de PR #146): el escalon
+	// 3 lo prueba ademas del emitido, y el perfil dice que difieren en 16 de 59.
+	distintos := 0
+	for _, u := range usos {
+		if u.TituloOrig != "" && u.TituloOrig != u.Titulo {
+			distintos++
+		}
+	}
+	if distintos != 16 {
+		t.Errorf("filas con titulo original distinto = %d, el perfil dice 16", distintos)
+	}
+
 	// La granularidad es la EMISION: 29 ID_Ficha distintos en 59 filas. Si el
 	// adaptador colapsara o rechazara las repetidas, este recuento seria 29.
 	fichas := map[string]struct{}{}
@@ -215,6 +227,44 @@ func TestCaracolCSVSigueElMismoMapaQueSuXLSX(t *testing.T) {
 	// La segunda es otra emision del mismo programa: entra.
 	if usos[1].RechazoMotivo != "" {
 		t.Errorf("fila 2 no deberia rechazarse: %q", usos[1].RechazoMotivo)
+	}
+}
+
+// El titulo original viaja del archivo al uso, y donde la celda viene vacia el
+// uso lo guarda vacio: "la fuente no lo trae" (#32).
+func TestCaracolCSVLlevaElTituloOriginalAlUso(t *testing.T) {
+	t.Parallel()
+
+	usos, err := lector(t, MapaCaracol(), aplicacion.FormatoCSV).Leer(leerFixture(t, "caracol.csv"))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if usos[2].Titulo != "El diario de Diana" || usos[2].TituloOrig != "Diana's Diary" {
+		t.Errorf("fila 3: titulo=%q original=%q", usos[2].Titulo, usos[2].TituloOrig)
+	}
+	// La fila sin titulo se rechaza igual, y el original vacio no lo cambia.
+	if usos[5].TituloOrig != "" {
+		t.Errorf("fila 6: el original tenia que quedar vacio, fue %q", usos[5].TituloOrig)
+	}
+}
+
+// Titulo_original no es requerida: una entrega sin esa columna se lee entera,
+// con el original vacio. Exigirla rechazaria un archivo bueno por perder solo
+// recall.
+func TestCaracolSinTituloOriginalNoSeRechaza(t *testing.T) {
+	t.Parallel()
+
+	csv := "Canal,Titulo,TIPO,ID_Ficha,Fecha,Hora,Duracion_total\n" +
+		"CARACOL,Rebelde,SE,55174,20241231,0:00,45\n"
+	usos, err := lector(t, MapaCaracol(), aplicacion.FormatoCSV).Leer([]byte(csv))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 1 || usos[0].RechazoMotivo != "" {
+		t.Fatalf("la fila tenia que entrar: %+v", motivos(usos))
+	}
+	if usos[0].Titulo != "Rebelde" || usos[0].TituloOrig != "" {
+		t.Errorf("titulo=%q original=%q", usos[0].Titulo, usos[0].TituloOrig)
 	}
 }
 
