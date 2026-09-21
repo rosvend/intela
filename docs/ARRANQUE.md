@@ -6,7 +6,16 @@ make verificar                 # tidy, build, vet, gofmt y test - lo mismo que c
 ```
 
 UI: <http://localhost>
-API: <http://localhost/api>
+API: <http://localhost/api/health> -notese la barra final: `/api` a secas
+devuelve 301 a `/api/`, y `/api/` devuelve 404 `{"error":"ruta no
+encontrada"}`. Una ruta cualquiera que no empiece por `/api/` -`/catalogo`,
+por ejemplo- si cae en el tablero y devuelve el index con 200, que es como
+funciona el enrutado de la SPA
+
+> Esto deja la base **migrada y vacia**. Para un arranque de una sola orden que
+> ademas siembra el dataset -y una prueba de humo que lo comprueba-, ver
+> [`QUICKSTART.md`](QUICKSTART.md). Esta pagina es la referencia: variables,
+> credenciales, y que dato es real y cual sintetico.
 
 Comprobar que responde:
 
@@ -29,14 +38,31 @@ arranca la API. Antes lo hacia la propia API al levantar, lo que significaba que
 cada replica intentaba migrar en paralelo y que un fallo de migracion se
 confundia con un fallo de arranque.
 
-El seed **no corre en `up`**: es un comando explicito, contra una base ya
-migrada, para demos y desarrollo. No hay siembra en produccion.
+El seed **no corre en un `up` pelado**: entra por perfil, o se invoca a mano,
+siempre contra una base ya migrada, para demos y desarrollo. No hay siembra en
+produccion, y por eso nunca esta en el `up` por defecto.
 
 ```bash
-docker compose run --rm seed      # dataset sintetico; no corre en `up`
-SEED_RESET=true docker compose run --rm -e SEED_RESET=true seed
-go run ./cmd/seed                 # equivalente, con DATABASE_URL
+docker compose --profile demo up -d --build   # arranque + siembra, en una orden
+docker compose run --rm seed                  # solo sembrar, con el stack ya arriba
+SEED_RESET=true docker compose run --rm seed  # vaciar y recargar
+go run ./cmd/seed                             # equivalente, con DATABASE_URL
 ```
+
+`SEED_RESET` se interpola desde el entorno del `docker compose`, asi que vale
+tanto para `run` como para `up`. Antes estaba fijo a `"false"` en el compose: la
+unica forma de recargar era repetir el valor con `-e`, y para `up` no habia
+ninguna -el stack levantaba y no recargaba, sin decir nada-.
+
+Las dos ordenes de arriba con `SEED_RESET=true` **fallan** en cuanto hay un
+solo asiento en la bitacora -basta con haber tocado el tablero, o con #91 en
+adelante, con haber dado de alta o corregido una obra por la API-: `Cargar`
+rechaza el reset con `ErrBitacoraNoVacia` en vez de borrar el libro de
+auditoria (ADR 0006). Pasado ese punto el unico reset real es
+`docker compose down -v` y volver a levantar. Tambien es el unico que vacia
+`snapshots_parametros` -el corte congelado de una corrida-: esa tabla es
+inmutable por trigger y ni `vaciar()` ni ninguna de las dos ordenes de
+`SEED_RESET` la toca.
 
 El binario del seed vive en **otra imagen** que la de la API: el `Dockerfile`
 tiene una etapa `seed` y el servicio la pide con `target: seed`. La imagen que
@@ -56,6 +82,15 @@ compartida entre `distribucion` y `contabilidad` anula el control de doble
 firma: una persona firmaba por ambos. El seed **rechaza** dos roles con la
 misma clave: bcrypt lleva sal, asi que dos hashes distintos no delatan nada y
 el control se perderia en silencio.
+
+Las cinco `SEED_CLAVE_*` se interpolan en `docker-compose.yml`, asi que
+exportarlas en el entorno del `docker compose` basta para que lleguen al
+sembrador. Antes solo se interpolaba `SEED_CLAVE_ADMIN` y las otras cuatro se
+quedaban en el host sin aviso: esta pagina prometia "sobreescribibles con
+`SEED_CLAVE_*`" y por el camino documentado cuatro de las cinco no lo eran, lo
+que ademas dejaba sin poder disparar la guarda de dos roles con la misma
+clave. Se comprueba con `docker compose --profile demo config`, que imprime lo
+que de verdad le llega al servicio.
 
 ## Entrar al tablero
 
@@ -98,7 +133,7 @@ autorizacion de verdad va en el servidor y es el `#17`.
 | Sintoma | Causa | Arreglo |
 | --- | --- | --- |
 | `404 ruta no encontrada` al entrar | Imagenes viejas | `docker compose up -d --build` |
-| `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed` |
+| `credenciales invalidas` | La tabla `usuarios` esta vacia | `docker compose run --rm seed`, o arrancar con `--profile demo` |
 | La API se reinicia sola, `lookup postgres ... no such host` | Docker se reinicio y el contenedor quedo con una direccion vieja | `docker compose up -d --force-recreate api` |
 
 ### Modo desarrollo del frontend

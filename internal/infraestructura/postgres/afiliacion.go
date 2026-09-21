@@ -64,7 +64,7 @@ func escanearUsuario(fila pgx.Row, hash *string) (aplicacion.Usuario, error) {
 // si el formulario de #16 normaliza a minusculas, la decision se toma alli y
 // se acompana de su migracion, no con un lower() silencioso aqui.
 func (s *Store) UsuarioPorEmail(ctx context.Context, email string) (aplicacion.Usuario, string, error) {
-	fila := s.pool.QueryRow(ctx,
+	fila := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasUsuarioConClave+` FROM usuarios WHERE email = $1`, email)
 
 	var hash string
@@ -80,7 +80,7 @@ func (s *Store) UsuarioPorEmail(ctx context.Context, email string) (aplicacion.U
 // descartaba, que no es lo mismo -una credencial que no sale de la base no se
 // puede filtrar por el camino-.
 func (s *Store) UsuarioPorID(ctx context.Context, id string) (aplicacion.Usuario, error) {
-	fila := s.pool.QueryRow(ctx,
+	fila := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasUsuario+` FROM usuarios WHERE id = $1`, id)
 
 	u, err := escanearUsuario(fila, nil)

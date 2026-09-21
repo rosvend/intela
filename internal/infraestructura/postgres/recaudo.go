@@ -46,7 +46,7 @@ func (s *Store) RegistrarBolsa(ctx context.Context, b aplicacion.BolsaPersistida
 	// Truncar aqui deja el valor escrito igual al que se compara despues.
 	ahora = ahora.Truncate(time.Microsecond)
 
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		// El bruto viaja como texto con cast a numeric: pasarlo como float64
 		// seria meter binario de coma flotante en el unico sitio del sistema
 		// donde el ADR 0005 exige aritmetica decimal exacta.
@@ -97,7 +97,7 @@ func (s *Store) RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora t
 	ahora = ahora.Truncate(time.Microsecond)
 	d := u.Datos()
 
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO usuarios_recaudo (`+columnasUsuarioRecaudo+`) VALUES ($1, $2, $3, $4)`,
 			u.ID(), d.Nombre, d.NIT, string(d.Categoria))
@@ -133,7 +133,7 @@ func (s *Store) RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora t
 func (s *Store) ListarBolsas(ctx context.Context) ([]aplicacion.BolsaPersistida, error) {
 	// ORDER BY id: el ADR 0005 exige que una corrida se reproduzca bit a bit,
 	// y una lista sin orden explicito no lo es -PostgreSQL no promete ninguno.
-	filas, err := s.pool.Query(ctx, `SELECT `+columnasBolsa+` FROM bolsas ORDER BY id`)
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `SELECT `+columnasBolsa+` FROM bolsas ORDER BY id`)
 	if err != nil {
 		return nil, traducirError(err, "listar bolsas")
 	}
@@ -143,7 +143,7 @@ func (s *Store) ListarBolsas(ctx context.Context) ([]aplicacion.BolsaPersistida,
 // BolsasDePeriodo devuelve las bolsas de un periodo. Sin coincidencias devuelve
 // una lista vacia, no ErrNoEncontrado: la consulta fue bien y no hay filas.
 func (s *Store) BolsasDePeriodo(ctx context.Context, periodo string) ([]aplicacion.BolsaPersistida, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasBolsa+` FROM bolsas WHERE periodo = $1 ORDER BY id`, periodo)
 	if err != nil {
 		return nil, traducirError(err, "listar bolsas del periodo %q", periodo)
@@ -156,7 +156,7 @@ func (s *Store) BolsaPorID(ctx context.Context, id string) (aplicacion.BolsaPers
 	var b aplicacion.BolsaPersistida
 	var circuito string
 
-	err := s.pool.QueryRow(ctx, `SELECT `+columnasBolsa+` FROM bolsas WHERE id = $1`, id).
+	err := s.ejecutorDe(ctx).QueryRow(ctx, `SELECT `+columnasBolsa+` FROM bolsas WHERE id = $1`, id).
 		Scan(&b.ID, &b.UsuarioID, &b.Periodo, &circuito, &b.Bruto, &b.Convenio, &b.Tarifa, &b.Factura)
 	if err != nil {
 		return aplicacion.BolsaPersistida{}, traducirError(err, "bolsa %q", id)
@@ -167,7 +167,7 @@ func (s *Store) BolsaPorID(ctx context.Context, id string) (aplicacion.BolsaPers
 
 // ListarUsuarios devuelve los pagadores dados de alta.
 func (s *Store) ListarUsuarios(ctx context.Context) ([]recaudo.Usuario, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT `+columnasUsuarioRecaudo+` FROM usuarios_recaudo ORDER BY id`)
 	if err != nil {
 		return nil, traducirError(err, "listar usuarios de recaudo")

@@ -186,11 +186,19 @@ type RepositorioRepertorio interface {
 // Registrar y Actualizar son ATOMICOS por contrato -la obra y sus coautores
 // entran o no entran-. Una obra a medias, sin coautores, viola la invariante
 // de [repertorio.Obra] en cuanto alguien la lea de vuelta.
+//
+// Bloquear toma el cerrojo de fila de una obra sin leerla, o devuelve
+// [ErrNoEncontrado]. Solo tiene sentido DENTRO de una [UnidadDeTrabajo]:
+// [Catalogo.ActualizarMetadatosObra] la llama justo antes de PorID para que
+// esa lectura no pueda adelantarse al commit de otro PATCH concurrente sobre
+// la MISMA obra -- ver el comentario de ese metodo para la carrera exacta que
+// evita.
 type CatalogoObras interface {
 	Registrar(ctx context.Context, o repertorio.Obra) error
 	Actualizar(ctx context.Context, o repertorio.Obra) error
 	PorID(ctx context.Context, id string) (repertorio.Obra, error)
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
+	Bloquear(ctx context.Context, id string) error
 }
 
 // GestionDeclaraciones es la escritura y el historial de la Declaracion de
@@ -566,6 +574,30 @@ type GestionRecaudo interface {
 // corrida lee el snapshot del proceso con SnapshotPorID, nunca vuelve a
 // resolver: si volviera, cambiar un parametro cambiaria en silencio el
 // resultado de una corrida ya hecha.
+//
+// "Queda congelado" es una ESCRITURA, y por eso este puerto ya no es de solo
+// lectura desde la #118: resolver sin persistir el corte dejaria SnapshotPorID
+// sin nada que leer, y la unica forma de reproducir la corrida seria volver a
+// resolver la fecha -- que es exactamente lo que el parrafo anterior prohibe.
+// Lo que se congela es el corte, nunca la tabla de vigencias.
+//
+// # El id
+//
+// Esta direccionado por contenido: sale de los pares (clave, valor) que el
+// snapshot consume, ordenados. Tres consecuencias que forman parte del
+// contrato y no del adaptador que lo cumple:
+//
+//   - resolver dos veces la misma fecha sobre los mismos valores da el MISMO
+//     id, asi que abrir el proceso es idempotente;
+//   - dos conjuntos de valores distintos no pueden compartir id;
+//   - un parametro que el snapshot no consume no cambia el id, porque no
+//     cambia el snapshot.
+//
+// # Los ausentes
+//
+// Una clausula sin valor vigente en la fecha NO resuelve a cero ni a un valor
+// por defecto (ADR 0004): sale [ErrorParametroAusente], que la nombra. Un
+// snapshot a medias es una cifra falsa con aspecto de cifra buena.
 type ParametrosNormativos interface {
 	SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (id string, s reparto.Snapshot, err error)
 	SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot, error)
@@ -574,6 +606,11 @@ type ParametrosNormativos interface {
 
 // FilaParametro es un parametro normativo con su procedencia. Sin vigencia y
 // organo aprobador no es un parametro, es una constante disfrazada.
+//
+// Valor es texto y no un decimal porque esta fila se LISTA, no se calcula con
+// ella: es la pantalla de administracion del ADR 0004. El adaptador lo entrega
+// en la misma forma canonica que entra en el id del snapshot, para que lo que
+// se ve en la lista y lo que se congelo sean comparables caracter a caracter.
 type FilaParametro struct {
 	Clave           string
 	Valor           string
@@ -662,6 +699,42 @@ type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
 	AsientoPorID(ctx context.Context, id string) (Asiento, error)
+}
+
+// UnidadDeTrabajo es el limite de transaccion cuando un caso de uso escribe
+// por DOS puertos y las dos escrituras son un solo hecho.
+//
+// # Por que hace falta un puerto para esto
+//
+// Cuando el asiento y la fila que explica salen del MISMO puerto, el limite lo
+// declara el contrato de ese metodo y no hace falta nada mas: es lo que hacen
+// [GestionDeclaraciones.Guardar] y [GestionRecaudo.RegistrarBolsa], que
+// reciben `ahora` y `actorID` y asientan por dentro.
+//
+// El catalogo no puede resolverlo asi. El ADR 0003 pide que la trazabilidad
+// entre por [BitacoraAuditoria] y no por el contrato del modulo -- "ningun
+// modulo escribe en la trazabilidad de otro" solo es exigible si Asentar no
+// esta en el contrato que todos comparten --, asi que [Catalogo] sostiene los
+// dos puertos y es EL quien tiene que decir que la obra y su asiento son una
+// sola cosa. Sin esto solo quedan dos llamadas seguidas, y un alta confirmada
+// cuyo asiento fallo despues es justo la escritura huerfana que el ADR 0006
+// prohibe.
+//
+// # Por que fn recibe un context
+//
+// Porque es lo unico que puede transportar la transaccion sin que el nucleo
+// aprenda el driver: depguard deniega `pgx` en esta capa, asi que una firma
+// con la transaccion como parametro tipado no se puede ni escribir aqui. El
+// contrato es que los puertos invocados DENTRO de fn tienen que recibir ese
+// ctx -- el que fn recibe, no el de fuera --; un puerto llamado con el ctx
+// exterior escribe fuera de la unidad y se confirma aparte.
+//
+// Se confirma si fn devuelve nil y se revierte con cualquier error, que sube
+// sin envolver para que quien llama distinga sus centinelas. Una
+// implementacion puede ser reentrante (una unidad dentro de otra es la misma
+// unidad) pero nadie debe depender de que lo sea.
+type UnidadDeTrabajo interface {
+	EnUnidad(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
