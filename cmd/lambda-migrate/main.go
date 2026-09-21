@@ -9,16 +9,18 @@
 // La mecanica es la misma: internal/infraestructura/migraciones. Este fichero
 // traduce un evento de invocacion en una orden de goose.
 //
-// Y dos que NO son de goose: `primer-administrador` y `sembrar-dataset`.
-// Estan aqui porque el problema que resuelven es el mismo -- hay que ejecutar
-// algo DENTRO de la VPC contra una base sin endpoint publico -- y esta es la
-// unica funcion que ya vive ahi con DATABASE_URL. Levantar una Lambda propia
-// para cada operacion de un solo uso es infraestructura que hay que mantener
-// para siempre.
+// Y tres que NO son de goose: `primer-administrador`, `sembrar-dataset` y
+// `estado-datos`. Estan aqui porque el problema que resuelven es el mismo --
+// hay que ejecutar algo DENTRO de la VPC contra una base sin endpoint publico
+// -- y esta es la unica funcion que ya vive ahi con DATABASE_URL. Levantar una
+// Lambda propia para cada operacion de un solo uso es infraestructura que hay
+// que mantener para siempre.
 //
-// Deuda (ADR 0017): con la segunda orden ajena a goose, este binario ya no es
-// solo migraciones. La siguiente de este tipo tiene que sacar las tres a su
-// propia funcion; no anadir una cuarta aqui.
+// Deuda (ADR 0017): con la tercera orden ajena a goose, este binario ya no es
+// solo migraciones. La siguiente de este tipo tiene que sacar las cuatro a su
+// propia funcion; `estado-datos` se acepto igual, sin conteo, porque no
+// escribe nada -- es puro diagnostico de solo lectura para verificar el
+// dataset antes de una demo, ver #153.
 //
 // Lo invoca Terraform (aws_lambda_invocation en modules/migrations), no el
 // workflow, para que el orden migrar-antes-de-servir quede en el grafo de
@@ -77,6 +79,12 @@ const ordenSembrarDataset = "sembrar-dataset"
 
 const ordenSembrarTitularesDemo = "sembrar-titulares-demo" // alias de sembrar-dataset
 
+// ordenEstadoDatos cuenta filas de las tablas que sembrar-dataset toca. No
+// escribe nada: es para saber que hay en la base antes de decidir si
+// sembrar-dataset es seguro (por ejemplo, con obras ajenas al dataset ya
+// cargadas).
+const ordenEstadoDatos = "estado-datos"
+
 // dirObjetosLambda es donde caen los bytes de los reportes del seed. /tmp es lo
 // unico escribible en provided.al2023; la API no los relee desde aqui (solo el
 // metadato en Postgres). Cuando exista el adaptador S3, se cablea igual que en
@@ -110,6 +118,9 @@ type peticion struct {
 type respuesta struct {
 	Orden  string `json:"orden"`
 	Estado string `json:"estado"`
+
+	// Conteos solo lo llena estado-datos.
+	Conteos map[string]int `json:"conteos,omitempty"`
 }
 
 func main() {
@@ -128,6 +139,9 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 		}
 		if orden == ordenSembrarDataset || orden == ordenSembrarTitularesDemo {
 			return sembrarDataset(ctx, p, log)
+		}
+		if orden == ordenEstadoDatos {
+			return estadoDatos(ctx, log)
 		}
 
 		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
@@ -254,4 +268,38 @@ func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuest
 	}
 	log.Info("dataset sintetico", slog.String("estado", estado), slog.Bool("reset", p.Reset))
 	return respuesta{Orden: ordenSembrarDataset, Estado: estado}, nil
+}
+
+// tablasEstadoDatos son las que sembrar-dataset toca (ver semilla.Cargar).
+var tablasEstadoDatos = []string{"titulares", "obras", "declaraciones", "usuarios", "reportes", "usos"}
+
+// estadoDatos cuenta filas, sin escribir nada. Un SELECT COUNT por tabla en
+// vez de un JOIN: el proposito es diagnostico manual antes de decidir si
+// sembrar-dataset (con o sin reset) es seguro, no un endpoint de negocio.
+func estadoDatos(ctx context.Context, log *slog.Logger) (respuesta, error) {
+	ctx, cancelar := context.WithTimeout(ctx,
+		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
+	defer cancelar()
+
+	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	if err != nil {
+		log.Error("abrir la base", slog.Any("error", err))
+		return respuesta{}, err
+	}
+	defer store.CerrarPool()
+
+	conteos := make(map[string]int, len(tablasEstadoDatos))
+	for _, tabla := range tablasEstadoDatos {
+		var n int
+		// Nombres fijos de tablasEstadoDatos, no entrada del evento: no hay
+		// interpolacion de datos externos en el SQL.
+		if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM `+tabla).Scan(&n); err != nil {
+			log.Error("contar tabla", slog.String("tabla", tabla), slog.Any("error", err))
+			return respuesta{}, fmt.Errorf("contar %s: %w", tabla, err)
+		}
+		conteos[tabla] = n
+	}
+
+	log.Info("estado de datos", slog.Any("conteos", conteos))
+	return respuesta{Orden: ordenEstadoDatos, Estado: "contado", Conteos: conteos}, nil
 }
