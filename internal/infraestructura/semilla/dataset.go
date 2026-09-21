@@ -43,18 +43,22 @@ const (
 
 	Periodo = "2025-01"
 
-	FuenteTV   = "caracol"
-	FuenteCine = "procinal"
+	FuenteTV = "caracol"
+	// "cine" y no "procinal": la fuente del reporte es lo que estampa el
+	// adaptador (ingesta.FuenteCine) y lo que indexa alias_obra; "procinal"
+	// es el pagador de recaudo (usuariosDeRecaudo), otro eje. Sembrar el
+	// reporte como "procinal" dejaba sus alias sin casar con ninguna fila
+	// ingerida de verdad.
+	FuenteCine = "cine"
 	FuenteOTT  = "netflix"
-
 	// La clave de ids_fuente (ADR 0018) con que viaja el id de obra de cada
 	// fuente, y la segunda mitad de la clave de `alias_obra`. Salen del
 	// contrato y no se escriben a mano: un alias sembrado con otra grafia no lo
-	// encontraria nunca la cascada. La de Procinal es sintetica como el resto de
+	// encontraria nunca la cascada. La de cine es sintetica como el resto de
 	// su reporte, porque el cliente no ha entregado el formato de las salas.
-	TipoIDCaracol  = aplicacion.ClaveIDFicha
-	TipoIDProcinal = aplicacion.ClaveIDPelicula
-	TipoIDNetflix  = aplicacion.ClaveShowID
+	TipoIDCaracol = aplicacion.ClaveIDFicha
+	TipoIDCine    = aplicacion.ClaveIDPelicula
+	TipoIDNetflix = aplicacion.ClaveShowID
 
 	// Procedencia de los coeficientes OTT que el reglamento no publica.
 	// ARRANQUE.md y el issue #22 piden marcarlos; el esquema no tiene
@@ -308,13 +312,13 @@ func (d *Dataset) reportes() {
 
 	d.Reportes = []Reporte{
 		{Fuente: FuenteTV, TipoID: TipoIDCaracol, Periodo: Periodo, Usos: tv},
-		{Fuente: FuenteCine, TipoID: TipoIDProcinal, Periodo: Periodo, Usos: cine},
+		{Fuente: FuenteCine, TipoID: TipoIDCine, Periodo: Periodo, Usos: cine},
 		{Fuente: FuenteOTT, TipoID: TipoIDNetflix, Periodo: Periodo, Usos: ott},
 	}
 
 	// La fuente, ids_fuente y la evidencia se estampan aqui y no en los
 	// constructores de arriba porque son propiedades de la ENTREGA, no de la
-	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de Procinal,
+	// fila: la misma "PX-1" viaja en el reporte de Caracol y en el de cine,
 	// y lo que la distingue -la clave con que viaja y lo que la resuelve- es de
 	// que fuente viene. Los constructores dejan en IDsFuente el valor solo, y
 	// aqui se reescribe en el formato del contrato.
