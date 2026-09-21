@@ -121,7 +121,7 @@ jobs:
           # migrations/*.sql is in P_GO on purpose: a PR that only adds a
           # migration used to skip test-go entirely, and the gap-under-applied
           # failure only showed up in terraform apply (#110).
-          P_GO='(\.go$|^go\.(mod|sum)$|^migrations/|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|architecture|migrations)\.yml$)'
+          P_GO='(\.go$|^go\.(mod|sum)$|^migrations/|^\.golangci\.yml$|^\.github/workflows/(ci|lint-go|test-go|perf-10k|repro-reparto|architecture|migrations)\.yml$)'
           P_MIGRATIONS='(^migrations/|^internal/infraestructura/migraciones/|^\.github/workflows/(ci|migrations)\.yml$)'
           # The contract is in here because the frontend commits types generated
           # from it (ADR 0010) and `npm test` checks them for drift: a PR that only
@@ -204,6 +204,8 @@ jobs:
             echo "| lint-workflows | \`$workflows\` | the PR touches \`.github/\` |"
             echo "| lint-go | \`$go\` | \`go.mod\` exists and the PR touches Go |"
             echo "| test-go | \`$go\` | \`go.mod\` exists and the PR touches Go or \`migrations/\` |"
+            echo "| perf-10k | \`$go\` | KR-1: the 10k batch runs without race instrumentation |"
+            echo "| repro-reparto | \`$go\` | ADR 0005: the engine double-run comparison |"
             echo "| architecture | \`$go\` | depguard needs Go code to inspect |"
             echo "| migrations | \`$migrations\` | \`migrations/\` exists and the PR touches migration numbering |"
             echo "| lint-frontend | \`$frontend\` | \`web/package.json\` exists and the PR touches \`web/\` or \`api/openapi.yaml\` |"
@@ -283,6 +285,18 @@ jobs:
     needs: detect
     if: needs.detect.outputs.go == 'true'
     uses: ./.github/workflows/test-go.yml
+
+  perf-10k:
+    name: Perf (10k batch)
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    uses: ./.github/workflows/perf-10k.yml
+
+  repro-reparto:
+    name: Reproducibility (engine re-run)
+    needs: detect
+    if: needs.detect.outputs.go == 'true'
+    uses: ./.github/workflows/repro-reparto.yml
 
   # The Clean Architecture boundary, enforced by depguard over real imports.
   # Gated on Go existing because there is nothing to inspect otherwise.
@@ -424,6 +438,8 @@ jobs:
       - lint-workflows
       - lint-go
       - test-go
+      - perf-10k
+      - repro-reparto
       - architecture
       - migrations
       - lint-frontend

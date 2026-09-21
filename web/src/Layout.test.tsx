@@ -96,6 +96,77 @@ describe("Layout", () => {
     expect(screen.getByText("Auditor")).toBeTruthy();
   });
 
+  it("el perfil abre un menu con Configuración y Salir, con iconos", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    montar();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
+      ).toBeTruthy(),
+    );
+    // Cada enlace del sidebar y el perfil traen su icono Heroicons.
+    expect(
+      screen.getByRole("link", { name: "Inicio" }).querySelector("svg"),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Abrir menú de usuario" })
+        .querySelector("svg"),
+    ).not.toBeNull();
+    // Cerrado al inicio: no hay menu ni item de salida a la vista.
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Salir" })).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+
+    const configuracion = screen.getByRole("menuitem", {
+      name: "Configuración",
+    });
+    const salir = screen.getByRole("menuitem", { name: "Salir" });
+    expect(configuracion.querySelector("svg")).not.toBeNull();
+    expect(salir.querySelector("svg")).not.toBeNull();
+  });
+
+  it("Configuración lleva al primer modulo de esa seccion (Deducciones)", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<p>contenido de inicio</p>} />
+              <Route
+                path="/deducciones"
+                element={<p>pantalla de deducciones</p>}
+              />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Configuración" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("pantalla de deducciones")).toBeTruthy(),
+    );
+  });
+
   it("logout llama a DELETE /auth/session y limpia el token", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("administrador"));
@@ -104,11 +175,14 @@ describe("Layout", () => {
     montar();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Cerrar sesión" }),
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
       ).toBeTruthy(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Salir" }));
 
     await waitFor(() => expect(token()).toBe(""));
     const llamadaDelete = vi.mocked(fetch).mock.calls[1];
