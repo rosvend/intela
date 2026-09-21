@@ -94,8 +94,17 @@ func TestAlertasAplicaLosRolesPorRuta(t *testing.T) {
 		// Lee y no cierra: cerrar una alerta es una decision sobre a quien se
 		// le paga, y el Revisor Fiscal no opera el pipeline.
 		{aplicacion.RolAuditor, http.StatusOK, http.StatusForbidden},
-		// Contabilidad factura; no persigue anomalias de reparto.
-		{aplicacion.RolContabilidad, http.StatusForbidden, http.StatusForbidden},
+		// Contabilidad LEE y no escribe, igual que en `/bolsas`. Es la
+		// segunda firma de la compuerta (`docs/architecture/roles.md`: "La
+		// otra firma de las mismas compuertas"; ADR 0008 sobre `RD 13.8.6`),
+		// y lo que firma depende de cuantas criticas siguen abiertas: sin
+		// lectura firmaria a ciegas. No escribe porque perseguir la anomalia
+		// con los autores es trabajo de `distribucion`.
+		//
+		// El 403 de antes ademas era visible: `web/src/navegacion.ts` de #104
+		// ya declara `/anomalias` para contabilidad, asi que veia la entrada
+		// de menu y comia 403 al entrar.
+		{aplicacion.RolContabilidad, http.StatusOK, http.StatusForbidden},
 		// El titular solo ve las obras donde participa (OE-6).
 		{aplicacion.RolTitular, http.StatusForbidden, http.StatusForbidden},
 	}

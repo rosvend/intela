@@ -1751,6 +1751,29 @@ paths:
           schema:
             type: boolean
           example: false
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Cuantas alertas devolver. Igual que en `/obras` y `/titulares`.
+            Sin el, el por defecto (100). Tres de los seis detectores emiten
+            UNA alerta por fila de uso, asi que una evaluacion real sobre un
+            lote de 10.000 registros deja del orden de 10.000 alertas: sin
+            recorte, el panel -que sondea cada 15 segundos- se traeria varios
+            MB en cada vuelta.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+          example: 100
+        - name: desplazamiento
+          in: query
+          required: false
+          description: Desde que fila. Cero es el principio.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
       responses:
         "200":
           description: Las alertas que cuadran.
@@ -1861,6 +1884,7 @@ paths:
                   reserva_declaracion_incompleta: 1
                   tipo_obra_sin_mapear: 1
                 criticas_abiertas: 3
+                usos_sin_cotejar: 0
         "400":
           description: El periodo falta o esta mal formado.
           content:
@@ -3168,7 +3192,7 @@ components:
 
     ResumenDeEvaluacion:
       type: object
-      required: [periodo, detectadas, nuevas, por_tipo, criticas_abiertas]
+      required: [periodo, detectadas, nuevas, por_tipo, criticas_abiertas, usos_sin_cotejar]
       description: Recuento de una pasada de deteccion.
       properties:
         periodo:
@@ -3206,6 +3230,17 @@ components:
             Es el predicado que consumira la compuerta de #34 -que todavia no
             existe: `/admin/pipeline` es un andamio-. Se expone aqui para que
             la cifra se pueda mirar antes de que esa compuerta la use.
+        usos_sin_cotejar:
+          type: integer
+          minimum: 0
+          description: |
+            Filas del periodo a las que no se les pudo componer clave de
+            registro, asi que el detector de duplicados NO las comparo con
+            ninguna otra. No cuenta anomalias: cuenta el tamano del punto
+            ciego.
+            Viaja porque sin ella "cero duplicados" y "no se miro" se leen
+            igual. El caso es real: `Hora` no es obligatoria en el mapa de
+            Caracol y a la vez forma parte de su clave de registro.
 
     ItemRevision:
       type: object

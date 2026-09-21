@@ -31,6 +31,15 @@ Al llegar a implementarlo, tres cosas del repo apuntaban a tres sitios distintos
    uso. La revision del dueno del repo sobre el issue lo corrigio y pidio que la migracion entrara
    en esta misma PR, no en una aparte.
 
+4. **Lo que el efecto de un `tipo_obra` vacio cambio DESPUES de esa revision.** El comentario de
+   revision (2026-09-15) describe la fila sin `tipo_obra` como una que *"puntua cero y no se paga,
+   en silencio"*. Era exacto **para el repo de esa fecha**. Lo que lo cambio es #120 (commit
+   `5f40ceb`, 2026-09-18, tres dias despues): esa PR introdujo `ponderacionTipo` con su rama
+   `case "":`, que ABORTA la corrida con `ErrRepartoInvalido` en vez de puntuar cero. O sea que
+   hoy el efecto es una parada dura y no un cero silencioso, y **no porque la revision se
+   equivocara**: porque el motor cambio debajo. Se deja escrito aqui para que la diferencia no se
+   lea como una correccion a quien reviso.
+
 Las tres no pueden ser ciertas a la vez.
 
 ## Decision
@@ -40,7 +49,7 @@ tabla, su propio schema y su propio estado de resolucion.** La cola de revision 
 que siempre fue: filas que no se pudieron normalizar.
 
 1. **Recurso propio y no `/admin/*`.**
-   - `GET /alertas` — `administrador`, `distribucion`, `auditor`.
+   - `GET /alertas` — `administrador`, `distribucion`, `contabilidad`, `auditor`.
    - `POST /alertas/evaluacion` — `administrador`, `distribucion`.
    - `POST /alertas/{id}/resolver` — `administrador`, `distribucion`.
 
@@ -125,9 +134,27 @@ adaptadores para que no puedan separarse.
 
 - El tablero de anomalias de la PR #104 funciona contra este backend **sin cambios en su cliente**:
   la ruta y los cinco tipos son los que ya declaro. Lo unico que no vera es una tarjeta propia para
-  el sexto tipo, `tipo_obra_sin_mapear`, porque `TIPOS_DE_ALERTA` esta escrito a mano en
-  `web/src/reparto/anomalias.ts`. **No revienta**: `etiquetaDeTipo` cae a la etiqueta cruda y
-  `conteosPorTipo` anade los tipos que no conoce. Anadir la tarjeta es una linea en esa rama.
+  el sexto tipo, `tipo_obra_sin_mapear`. **No revienta** -- la fila sale en la tabla y
+  `etiquetaDeTipo` cae a la etiqueta cruda -- pero **no tiene tarjeta KPI y no la va a tener sola**:
+  `TableroAnomalias.tsx` pinta las tarjetas recorriendo `TIPOS_DE_ALERTA`, una lista ESTATICA de
+  cinco, y **no importa `conteosPorTipo`**. Anadir la tarjeta es una linea en la rama de #104 y hay
+  que pedirsela a quien la lleva; queda avisado en el cuerpo de esta PR.
+
+- **`contabilidad` tiene LECTURA de `/alertas` y no escritura.** Es el mismo patron que `/bolsas` en
+  el mismo router -- se lee desde mas sitios de los que se escribe -- y la razon es normativa, no de
+  comodidad: `docs/architecture/roles.md` describe a contabilidad como *"La otra firma de las mismas
+  compuertas"* y el ADR 0008 cita `RD 13.8.6`, el control del dinero de las ONI **con aval de
+  Contabilidad**. Lo que decide esa firma es, entre otras cosas, cuantas alertas criticas siguen
+  abiertas en el periodo: sin lectura firmaria a ciegas. Se queda **fuera de escritura** porque
+  perseguir la anomalia con los autores es trabajo de `distribucion` (`RD 13.5`), y resolver una
+  alerta es decir que alguien se hizo cargo de esa gestion.
+
+  No es una ampliacion gratuita: `web/src/navegacion.ts` de la PR #104 ya declara `/anomalias` para
+  los cuatro roles, con el comentario *"Contabilidad es la segunda firma de la compuerta: sin
+  /anomalias no ve el aviso de alertas abiertas antes de firmar. Roles a alinear con el
+  `requiereRol` de #17 cuando aterrice el middleware."* El middleware es este. Sin esta linea,
+  contabilidad veria la entrada de menu y comeria 403 -- y `web/src/tablero/ausente.ts` deja escrito
+  que un 403 *"es un bug de permisos y debe verse"*, o sea banner rojo.
 
 - `GET /alertas` es una lectura pura. Nada puebla la tabla hasta que alguien llama a
   `POST /alertas/evaluacion`, que es el disparador MANUAL mientras la compuerta de #34 no exista.
@@ -153,5 +180,6 @@ adaptadores para que no puedan separarse.
   lee `repertorio` (para `Declaracion.Completa()`, el unico criterio de `R-04`) y `identificacion`
   (para las constantes de escalon). No toca dinero, y la regla `modulos-anomalias` de
   `.golangci.yml` le deniega `reparto`, `recaudo`, `liquidacion` y `anticipos`. El diagrama
-  `docs/diagrams/PATIC2 - Arquitectura.drawio` **no se actualiza en esta PR**: queda pendiente, y
-  mientras tanto manda `depguard` (ADR 0012).
+  `docs/diagrams/PATIC2 - Arquitectura.drawio` se actualiza **en esta misma PR** con el modulo y sus
+  dos aristas, que es lo que el checklist pide; la frontera que manda sigue siendo `depguard`
+  (ADR 0012), el diagrama la acompana.

@@ -48,9 +48,15 @@ const (
 type LecturaDeEntregas interface {
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 
-	// ListarCargas con periodo vacio devuelve TODAS las entregas. La
-	// evaluacion las pide asi a proposito: ver [Anomalias.Evaluar].
-	ListarCargas(ctx context.Context, periodo string) ([]CargaReporte, error)
+	// EntregasRecibidas devuelve TODAS las entregas conocidas, no solo las de
+	// un periodo. La evaluacion las pide asi a proposito: ver
+	// [Anomalias.Evaluar].
+	//
+	// Y devuelve [EntregaRecibida] y no [CargaReporte] por coste: de cada
+	// entrega aqui hacen falta cuatro campos, y `ListarCargas` calcula ademas
+	// dos COUNT correlacionados por fila que esta lectura tira -- 130,8 ms
+	// contra 4,8 ms sobre 5.001 reportes, en cada pasada.
+	EntregasRecibidas(ctx context.Context) ([]EntregaRecibida, error)
 }
 
 // LectorDeCoautores entrega los coautores registrados de un punado de obras en
@@ -116,6 +122,16 @@ type ResumenEvaluacion struct {
 	// CriticasAbiertas son las alertas sin resolver del periodo cuyo tipo
 	// bloquea la distribucion. Es el predicado que consumira #34.
 	CriticasAbiertas int
+
+	// UsosSinCotejar son las filas del periodo a las que no se les pudo
+	// componer clave de registro, asi que el detector de duplicados no las
+	// comparo con ninguna otra ([anomalias.SinClaveDeRegistro]).
+	//
+	// No es un conteo de anomalias: es el TAMANO DEL PUNTO CIEGO. Sin esta
+	// cifra, "cero duplicados" y "no se miro" se leen igual en el tablero, y
+	// la segunda lectura es la que deja pasar una emision contada dos veces.
+	// Es la misma disciplina que `aplicacion.Reparto.UsosSinCanal`.
+	UsosSinCotejar int
 }
 
 // Evaluar corre los seis detectores sobre un periodo y persiste lo que
@@ -178,9 +194,10 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 	}
 
 	resumen := ResumenEvaluacion{
-		Periodo:    periodo,
-		Detectadas: len(hallazgos),
-		PorTipo:    porTipo,
+		Periodo:        periodo,
+		Detectadas:     len(hallazgos),
+		PorTipo:        porTipo,
+		UsosSinCotejar: anomalias.SinClaveDeRegistro(armado.Usos),
 	}
 
 	err = a.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
@@ -191,16 +208,21 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		resumen.Nuevas = nuevas
 
 		payload, err := json.Marshal(struct {
-			Periodo    string         `json:"periodo"`
-			Detectadas int            `json:"detectadas"`
-			Nuevas     int            `json:"nuevas"`
-			PorTipo    map[string]int `json:"por_tipo"`
-			Usos       int            `json:"usos_evaluados"`
-			Obras      int            `json:"obras_evaluadas"`
-			Entregas   int            `json:"entregas_cotejadas"`
+			Periodo        string         `json:"periodo"`
+			Detectadas     int            `json:"detectadas"`
+			Nuevas         int            `json:"nuevas"`
+			PorTipo        map[string]int `json:"por_tipo"`
+			Usos           int            `json:"usos_evaluados"`
+			Obras          int            `json:"obras_evaluadas"`
+			Entregas       int            `json:"entregas_cotejadas"`
+			UsosSinCotejar int            `json:"usos_sin_cotejar"`
 		}{
 			Periodo: periodo, Detectadas: resumen.Detectadas, Nuevas: nuevas, PorTipo: porTipo,
 			Usos: len(armado.Usos), Obras: len(armado.Obras), Entregas: len(armado.Entregas),
+			// El tamano del punto ciego queda en el asiento y no solo en la
+			// respuesta: quien audite la pasada dentro de diez anos tiene que
+			// poder saber sobre cuantas filas NO se miro (`RD 16`).
+			UsosSinCotejar: resumen.UsosSinCotejar,
 		})
 		if err != nil {
 			return fmt.Errorf("serializar el asiento de la evaluacion de %q: %w", periodo, err)
@@ -236,9 +258,9 @@ func (a Anomalias) armarPeriodo(ctx context.Context, periodo string) (anomalias.
 		return anomalias.Periodo{}, fmt.Errorf("usos del periodo %q: %w", periodo, err)
 	}
 
-	// Periodo vacio = todas las entregas conocidas. Ver el comentario de
-	// [Anomalias.Evaluar] sobre por que no se filtra por periodo.
-	cargas, err := a.Entregas.ListarCargas(ctx, "")
+	// TODAS las entregas conocidas. Ver el comentario de [Anomalias.Evaluar]
+	// sobre por que no se filtra por periodo.
+	cargas, err := a.Entregas.EntregasRecibidas(ctx)
 	if err != nil {
 		return anomalias.Periodo{}, fmt.Errorf("entregas recibidas: %w", err)
 	}
@@ -257,6 +279,10 @@ func (a Anomalias) armarPeriodo(ctx context.Context, periodo string) (anomalias.
 			Escalon:   u.Escalon,
 			ObraID:    u.ObraID,
 			TipoObra:  u.TipoObra,
+			// El dominio de anomalias no puede importar `reparto` (ADR 0003),
+			// asi que la modalidad cruza la frontera como string. La necesita
+			// para no avisar de `tipo_obra` en una corrida que no lo lee.
+			Modalidad: string(u.Modalidad),
 			// La clave logica se deriva AQUI y no en el dominio: el
 			// vocabulario de ids_fuente es del ADR 0018 y vive en
 			// idsfuente.go, que el dominio no puede importar (ADR 0002).
@@ -322,7 +348,23 @@ func (a Anomalias) obrasDelPeriodo(ctx context.Context, usos []anomalias.Uso) ([
 		// Los coautores llegan en el orden del adaptador; se ordenan aqui
 		// porque el dominio los recorre y el mensaje de la alerta nombra un
 		// IPI concreto.
+		//
+		// Y se COMPACTAN, igual que `ids` arriba y por una razon mas concreta:
+		// la clave primaria de `obra_coautores` es (obra_id, ipi, ROL), y
+		// `normalizarCoautores` solo prohibe repetir el PAR (IPI, rol). Una
+		// guionista que ademas es adaptadora de la misma obra son dos filas
+		// legitimas del catalogo con el mismo IPI (`RD 7.3`). Aqui el rol no se
+		// mira: lo que el dominio pregunta es a QUIEN le falta declarar, y a esa
+		// persona le falta UNA vez.
+		//
+		// Sin compactar, esa obra levantaba DOS hallazgos identicos. El segundo
+		// no llega a la tabla -- la clave natural (periodo, tipo, ref_tipo,
+		// ref_id, ref_titular) lo absorbe con ON CONFLICT DO NOTHING -- pero SI
+		// cuenta en Detectadas y en PorTipo, asi que el resumen decia 2 donde la
+		// bandeja tiene 1. Y ese resumen se serializa en el asiento de la
+		// bitacora, que es append-only y no se corrige nunca (ADR 0006).
 		slices.Sort(o.CoautoresIPI)
+		o.CoautoresIPI = slices.Compact(o.CoautoresIPI)
 
 		// Ausencia en el mapa es "esta obra no tiene ninguna declaracion", que
 		// NO es lo mismo que una version abierta sin partes: lo dice el
@@ -362,6 +404,11 @@ func (a Anomalias) Listar(ctx context.Context, f FiltroAlertas) ([]Alerta, error
 		return nil, fmt.Errorf("%w: tipo de anomalia %q, se esperaba uno de %v",
 			ErrFiltroInvalido, f.Tipo, anomalias.Tipos())
 	}
+
+	// El defecto lo pone el nucleo, igual que en BuscarObras: una llamada
+	// interna que no diga nada de paginacion no tiene por que traerse la tabla
+	// entera. Los valores ilegales los rechaza el adaptador HTTP con 400.
+	f.Paginacion = f.ConDefecto()
 
 	alertas, err := a.Alertas.ListarAlertas(ctx, f)
 	if err != nil {

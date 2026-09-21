@@ -1425,6 +1425,16 @@ export interface components {
              *     la cifra se pueda mirar antes de que esa compuerta la use.
              */
             criticas_abiertas: number;
+            /**
+             * @description Filas del periodo a las que no se les pudo componer clave de
+             *     registro, asi que el detector de duplicados NO las comparo con
+             *     ninguna otra. No cuenta anomalias: cuenta el tamano del punto
+             *     ciego.
+             *     Viaja porque sin ella "cero duplicados" y "no se miro" se leen
+             *     igual. El caso es real: `Hora` no es obligatoria en el mapa de
+             *     Caracol y a la vez forma parte de su clave de registro.
+             */
+            usos_sin_cotejar: number;
         };
         /**
          * @description Una fila de la cola de revision. Sirve a la normalizacion (OE-1) y a
@@ -3344,6 +3354,21 @@ export interface operations {
                  * @example false
                  */
                 resueltas?: boolean;
+                /**
+                 * @description Cuantas alertas devolver. Igual que en `/obras` y `/titulares`.
+                 *     Sin el, el por defecto (100). Tres de los seis detectores emiten
+                 *     UNA alerta por fila de uso, asi que una evaluacion real sobre un
+                 *     lote de 10.000 registros deja del orden de 10.000 alertas: sin
+                 *     recorte, el panel -que sondea cada 15 segundos- se traeria varios
+                 *     MB en cada vuelta.
+                 * @example 100
+                 */
+                limite?: number;
+                /**
+                 * @description Desde que fila. Cero es el principio.
+                 * @example 0
+                 */
+                desplazamiento?: number;
             };
             header?: never;
             path?: never;
@@ -3471,7 +3496,8 @@ export interface operations {
                      *         "reserva_declaracion_incompleta": 1,
                      *         "tipo_obra_sin_mapear": 1
                      *       },
-                     *       "criticas_abiertas": 3
+                     *       "criticas_abiertas": 3,
+                     *       "usos_sin_cotejar": 0
                      *     }
                      */
                     "application/json": components["schemas"]["ResumenDeEvaluacion"];

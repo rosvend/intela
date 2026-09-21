@@ -245,11 +245,31 @@ func (a *API) Router() http.Handler {
 		// persigue estas alertas con los autores (`RD 13.5`). Escribir el
 		// chequeo en el handler es justo el fallo que rbac.go existe para que
 		// se pueda auditar en un solo sitio (#47).
+		//
+		// `contabilidad` LEE y no escribe, por el mismo patron que `/bolsas`
+		// justo arriba. Es la segunda firma de la compuerta --
+		// `docs/architecture/roles.md` la llama "La otra firma de las mismas
+		// compuertas" y el ADR 0008 cita `RD 13.8.6`, el control del dinero de
+		// las ONI con aval de Contabilidad --, y lo que esta bandeja le da es
+		// justo lo que necesita ANTES de firmar: cuantas alertas criticas
+		// siguen abiertas en el periodo. Fuera de escritura porque perseguir la
+		// anomalia con los autores es trabajo de `distribucion`, no suyo.
+		//
+		// En ESTA rama, `web/src/navegacion.ts` todavia declara `/anomalias`
+		// para tres roles y contabilidad no esta: quien la anade es la PR #104,
+		// SIN mergear, cuyo fichero lleva el comentario "Contabilidad es la
+		// segunda firma de la compuerta: sin /anomalias no ve el aviso de
+		// alertas abiertas antes de firmar. Roles a alinear con el
+		// `requiereRol` de #17 cuando aterrice el middleware". El middleware es
+		// este, y se alinea con lo que #104 va a traer -- si el backend
+		// esperara a verlo mergeado, contabilidad veria la entrada de menu y
+		// comeria 403, que `web/src/tablero/ausente.ts` pinta en rojo a
+		// proposito.
 		protegido.Route("/alertas", func(al chi.Router) {
 			al.Group(func(lectura chi.Router) {
 				lectura.Use(requiereRol(
 					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
-					aplicacion.RolAuditor,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
 				))
 				lectura.Get("/", a.conAnomalias(a.listarAlertas))
 			})

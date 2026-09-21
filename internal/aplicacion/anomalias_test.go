@@ -21,16 +21,15 @@ import (
 // Dobles
 
 // entregasFalsas sirve los dos metodos de lectura que la evaluacion necesita,
-// y APUNTA con que periodo se le pidieron las cargas: que se pidan TODAS -y no
-// solo las del periodo- es la mitad del detector de duplicado por huella, y sin
-// comprobarlo ese filtro se puede colar sin que nada falle.
+// y APUNTA con que periodo se le pidieron los usos: que las entregas se pidan
+// TODAS -y no solo las del periodo- es la mitad del detector de duplicado por
+// huella, y sin comprobarlo ese filtro se puede colar sin que nada falle.
 type entregasFalsas struct {
 	usos   []UsoPersistido
-	cargas []CargaReporte
+	cargas []EntregaRecibida
 
-	periodoDeUsos   string
-	periodoDeCargas string
-	llamadasCargas  int
+	periodoDeUsos  string
+	llamadasCargas int
 
 	errUsos   error
 	errCargas error
@@ -41,8 +40,7 @@ func (e *entregasFalsas) UsosDePeriodo(_ context.Context, periodo string) ([]Uso
 	return e.usos, e.errUsos
 }
 
-func (e *entregasFalsas) ListarCargas(_ context.Context, periodo string) ([]CargaReporte, error) {
-	e.periodoDeCargas = periodo
+func (e *entregasFalsas) EntregasRecibidas(_ context.Context) ([]EntregaRecibida, error) {
 	e.llamadasCargas++
 	return e.cargas, e.errCargas
 }
@@ -202,12 +200,12 @@ func periodoSembrado() (*entregasFalsas, *coautoresFalsos, *vigentesFalsas) {
 			{ID: "u-inc", ReporteID: "r1", Fuente: "caracol", ObraID: "o-inc", Escalon: "alias",
 				TipoObra: "unitario", IDsFuente: "id_ficha=9", Fecha: "2025-01-04", Hora: "19:00:00"},
 		},
-		cargas: []CargaReporte{
-			{Reporte: Reporte{ID: "r1", Fuente: "caracol", Periodo: periodoDePrueba, SHA256: "aa"}},
-			{Reporte: Reporte{ID: "r2", Fuente: "caracol", Periodo: periodoDePrueba, SHA256: "bb"}},
+		cargas: []EntregaRecibida{
+			{ID: "r1", Fuente: "caracol", Periodo: periodoDePrueba, SHA256: "aa"},
+			{ID: "r2", Fuente: "caracol", Periodo: periodoDePrueba, SHA256: "bb"},
 			// La otra pata de la colision vive en OTRO periodo y bajo otra
 			// fuente: es justo lo que el UNIQUE (sha256, fuente) deja pasar.
-			{Reporte: Reporte{ID: "r3", Fuente: "netflix", Periodo: "2024-12", SHA256: "aa"}},
+			{ID: "r3", Fuente: "netflix", Periodo: "2024-12", SHA256: "aa"},
 		},
 	}
 	coautores := &coautoresFalsos{porObra: map[string][]repertorio.Coautor{
@@ -322,13 +320,17 @@ func TestEvaluarReferenciaElRegistroExacto(t *testing.T) {
 		}
 	}
 
-	// La segunda coordenada nombra a la PERSONA a la que le falta declarar.
+	// La segunda coordenada nombra a la PERSONA a la que le falta declarar, y
+	// lleva por delante su espacio de nombres: el detector referencia un IPI
+	// en un caso y un titulares.id en el otro, y sin discriminarlos la clave
+	// natural de `alertas` colapsa los dos hallazgos en cuanto coinciden.
 	for _, a := range alertas.filas {
 		if a.Tipo != anomalias.TipoTitularSinPorcentaje {
 			continue
 		}
-		if a.RefTitular != "ipi-b" {
-			t.Fatalf("titular_sin_porcentaje apunta a %q, se esperaba ipi-b", a.RefTitular)
+		if a.RefTitular != anomalias.PrefijoIPI+"ipi-b" {
+			t.Fatalf("titular_sin_porcentaje apunta a %q, se esperaba %q",
+				a.RefTitular, anomalias.PrefijoIPI+"ipi-b")
 		}
 	}
 }
@@ -428,8 +430,12 @@ func TestEvaluarPideTodasLasEntregasYSoloLosUsosDelPeriodo(t *testing.T) {
 	if entregas.periodoDeUsos != periodoDePrueba {
 		t.Fatalf("los usos se pidieron del periodo %q", entregas.periodoDeUsos)
 	}
-	if entregas.periodoDeCargas != "" {
-		t.Fatalf("las cargas se pidieron filtradas por %q; tienen que pedirse todas", entregas.periodoDeCargas)
+	// Que las entregas se pidan TODAS ya no depende de pasar bien un
+	// parametro: `EntregasRecibidas(ctx)` no tiene ninguno que equivocar. Lo
+	// que queda por comprobar -- y es lo que de verdad importa -- es que la
+	// colision que solo se ve mirandolas todas se siga cazando.
+	if entregas.llamadasCargas != 1 {
+		t.Fatalf("las entregas se pidieron %d veces, se esperaba 1", entregas.llamadasCargas)
 	}
 
 	// Y la colision que eso caza es la de r1 (2025-01, caracol) con r3
@@ -685,5 +691,69 @@ func TestUnServicioMalCableadoFallaAntesDeTocarLaBase(t *testing.T) {
 				t.Fatal("Resolver no fallo con el servicio a medias")
 			}
 		})
+	}
+}
+
+// TestElMismoIPIEnDosRolesCuentaUnaSolaVez es la guarda de B4.
+//
+// `obra_coautores` tiene PRIMARY KEY (obra_id, ipi, ROL) y `normalizarCoautores`
+// solo prohibe repetir el PAR (IPI, rol): una guionista que ademas es
+// adaptadora de la misma obra son dos filas legitimas del catalogo con el mismo
+// IPI (`RD 7.3`). Al detector le da igual el rol -- pregunta a QUIEN le falta
+// declarar -- asi que esa persona tiene que salir UNA vez.
+//
+// Sin el `slices.Compact` de `obrasDelPeriodo`, la obra levantaba DOS hallazgos
+// identicos. El segundo no llega a la tabla -- la clave natural lo absorbe con
+// ON CONFLICT DO NOTHING -- pero SI cuenta en Detectadas y en PorTipo, asi que
+// el resumen informaba 2 donde la bandeja tiene 1. Y ese resumen se serializa
+// en el asiento de la bitacora, que es append-only y no se corrige NUNCA
+// (ADR 0006): la cifra mal queda escrita para siempre.
+//
+// La asimetria cantaba en el propio fichero: veinte lineas mas arriba, `ids` si
+// se compactaba.
+func TestElMismoIPIEnDosRolesCuentaUnaSolaVez(t *testing.T) {
+	entregas, coautores, vigentes := periodoSembrado()
+
+	// Beto es libretista Y adaptador de la misma obra: dos filas legitimas del
+	// catalogo con el mismo IPI.
+	//
+	// Y el IPI repetido tiene que ser el que NO declara -- en `periodoSembrado`
+	// ipi-a declara 60 y ipi-b no declara nada. Si se repitiera ipi-a, el
+	// detector lo saltaria las dos veces por estar ya declarado y el duplicado
+	// no llegaria a manifestarse: la prueba pasaria con y sin el arreglo.
+	coautores.porObra["o-inc"] = []repertorio.Coautor{
+		{IPI: "ipi-a", Nombre: "Ana", Rol: repertorio.RolGuionista},
+		{IPI: "ipi-b", Nombre: "Beto", Rol: repertorio.RolLibretista},
+		{IPI: "ipi-b", Nombre: "Beto", Rol: repertorio.RolAdaptador},
+	}
+
+	alertas := &alertasFalsas{}
+	svc := Anomalias{
+		Entregas: entregas, Declaraciones: vigentes, Coautores: coautores,
+		Alertas: alertas, Bitacora: &bitacoraFalsa{}, Unidad: &unidadFalsa{},
+		Reloj: relojFijo{instante: instanteAnomalias},
+	}
+
+	resumen, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1")
+	if err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+
+	// Solo ipi-b esta sin parte (ipi-a SI declara 60): una alerta, no dos.
+	quiero := 1
+	if got := resumen.PorTipo[anomalias.TipoTitularSinPorcentaje]; got != quiero {
+		t.Fatalf("PorTipo[titular_sin_porcentaje] = %d, se esperaba %d: "+
+			"el mismo IPI en dos roles se esta contando dos veces", got, quiero)
+	}
+
+	// Y la cifra del resumen tiene que cuadrar con las filas que de verdad
+	// entraron: es lo que se asienta en la bitacora.
+	if resumen.Detectadas != len(alertas.filas) {
+		t.Fatalf("Detectadas = %d y en la bandeja hay %d filas: el asiento registraria una cifra "+
+			"que no cuadra con la tabla, y los asientos no se corrigen", resumen.Detectadas, len(alertas.filas))
+	}
+	if resumen.Nuevas != len(alertas.filas) {
+		t.Fatalf("Nuevas = %d y entraron %d filas en la primera pasada sobre un tablero vacio",
+			resumen.Nuevas, len(alertas.filas))
 	}
 }

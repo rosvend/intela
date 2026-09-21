@@ -828,6 +828,17 @@ type RepositorioAlertas interface {
 	// ListarAlertas devuelve las que cuadran con el filtro, de la mas reciente
 	// a la mas antigua y desempatando por id. Sin coincidencias devuelve la
 	// lista vacia, no ErrNoEncontrado.
+	//
+	// ESTA PAGINADO. `FiltroAlertas` lleva [Paginacion] y el cero significa
+	// [LimiteObrasPorDefecto], no "todo": una evaluacion real puede dejar del
+	// orden de 10.000 alertas -- tres de los seis detectores emiten una por
+	// fila de uso y KR-1 habla de lotes de 10.000 registros -- y devolverlas
+	// en un array de ~4 MB a un panel que sondea cada 15 segundos no es
+	// servible. Quien necesite TODAS tiene que pedirlo con [LimiteSinTope],
+	// explicitamente.
+	//
+	// Por eso una cuenta NO se hace sobre este metodo. Ver
+	// ContarAlertasSinResolver.
 	ListarAlertas(ctx context.Context, f FiltroAlertas) ([]Alerta, error)
 
 	// GuardarAlertas escribe las que todavia no estaban. El lote entra entero
@@ -848,6 +859,20 @@ type RepositorioAlertas interface {
 	// Los tipos llegan como parametro y no se deciden en el SQL: cuales
 	// bloquean es [anomalias.EsCritica], en el dominio, y un adaptador que
 	// llevara su propia lista seria un segundo criterio que nadie mira.
+	//
+	// # Cuenta en la base, y NO se puede reimplementar sobre ListarAlertas
+	//
+	// Es un COUNT(*) y no un `len()` de la lista a proposito, porque esta
+	// cuenta es la que lee la compuerta de #34: `ListarAlertas` pagina, asi
+	// que contar sus filas daria como mucho [LimiteObrasPorDefecto] y un
+	// periodo con 3.000 criticas abiertas se leeria como 100 -- o como 0 si
+	// alguien pide la segunda pagina de un periodo limpio. Una compuerta que
+	// cuenta de menos ABRE EL PASO al reparto, que es el unico sentido en el
+	// que puede fallar sin que nadie se entere. Es el mismo modo de fallo que
+	// el `cardinality(NULL)` que ya obligo a un COALESCE en el adaptador.
+	//
+	// [TestLaCompuertaCuentaMasAlertasQueUnaPagina] lo defiende sembrando mas
+	// criticas que el tamano de pagina.
 	ContarAlertasSinResolver(ctx context.Context, periodo string, tipos []string) (int, error)
 }
 

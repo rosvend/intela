@@ -172,6 +172,54 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.
 	return cargas, nil
 }
 
+// EntregasRecibidas devuelve todas las entregas con lo justo para cotejar sus
+// huellas, SIN los dos recuentos de [Store.ListarCargas].
+//
+// # Por que una consulta aparte y no reusar ListarCargas
+//
+// Porque los dos COUNT correlacionados de aquella -- uno sobre `usos` y otro
+// sobre `usos_rechazados`, por cada reporte -- son el 96% de su coste y esta
+// lectura los descarta enteros: la deteccion de anomalias solo mira id, fuente,
+// periodo y sha256. Medido sobre 5.001 reportes y 50.000 usos, `ListarCargas`
+// tarda 130,8 ms y esta 4,8 ms. Y no es un coste que se pague una vez: la
+// evaluacion pide TODAS las entregas conocidas en cada pasada de cada periodo,
+// asi que crece con el historico para siempre.
+//
+// Sin filtro de periodo, y no es un olvido: el UNIQUE (sha256, fuente) de
+// `reportes` no lleva el periodo, asi que la otra pata de una colision puede
+// estar en otro mes. Ver [aplicacion.Anomalias.Evaluar].
+//
+// El orden es el mismo que el de ListarCargas -- `creado` DESC con desempate
+// por id -- porque el dominio recorre esta lista para nombrar "la otra
+// entrega" en el detalle de la alerta, y sin orden total ese mensaje cambia
+// entre pasadas (ADR 0005).
+func (s *Store) EntregasRecibidas(ctx context.Context) ([]aplicacion.EntregaRecibida, error) {
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
+		SELECT r.id, r.fuente, r.periodo, r.sha256
+		  FROM reportes r
+		 ORDER BY r.creado DESC, r.id`)
+	if err != nil {
+		return nil, traducirError(err, "listar las entregas recibidas")
+	}
+	defer filas.Close()
+
+	entregas := make([]aplicacion.EntregaRecibida, 0)
+	for filas.Next() {
+		var e aplicacion.EntregaRecibida
+		if err := filas.Scan(&e.ID, &e.Fuente, &e.Periodo, &e.SHA256); err != nil {
+			return nil, traducirError(err, "escanear entrega recibida")
+		}
+		entregas = append(entregas, e)
+	}
+	// Igual que en ListarCargas: sin esto una lista TRUNCADA por un fallo a
+	// mitad de stream pasa por lista completa, y aqui eso se lee como "esa
+	// huella no habia llegado antes".
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar las entregas recibidas")
+	}
+	return entregas, nil
+}
+
 // GuardarUsos escribe un lote de filas, canonicas y rechazadas.
 //
 // # Es transaccional por contrato

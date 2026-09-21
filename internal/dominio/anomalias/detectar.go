@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 // Detectar corre los seis detectores sobre un periodo armado y devuelve todo
@@ -139,8 +140,14 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 			Tipo:    TipoDuplicadoArchivo,
 			RefTipo: RefReporte,
 			RefID:   e.ID,
+			// La frase explica el MECANISMO y no afirma nada sobre este par.
+			// La anterior decia "porque no comparten fuente ni periodo" como
+			// texto fijo, y el periodo si puede coincidir -- de hecho coincide
+			// siempre que las dos patas caen en el mes evaluado --, con lo que
+			// el propio detalle se desmentia dos lineas mas arriba, donde
+			// `otras` ya imprime el periodo de cada una.
 			Detalle: fmt.Sprintf(
-				"la entrega %q (fuente %q) trae los mismos bytes que %s; sha256 %s. El UNIQUE (sha256, fuente) no lo impide porque no comparten fuente ni periodo",
+				"la entrega %q (fuente %q) trae los mismos bytes que %s; sha256 %s. El UNIQUE (sha256, fuente) de `reportes` no lo impide: solo cierra la puerta a la MISMA fuente reenviando los mismos bytes, y el periodo no entra en esa clave",
 				e.ID, e.Fuente, strings.Join(otras, ", "), e.SHA256),
 		})
 	}
@@ -151,7 +158,7 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 // 3. Duplicado por registro logico
 
 // duplicadosPorRegistro levanta alerta sobre las filas de un periodo que
-// repiten un registro ya visto en OTRO archivo de la misma fuente.
+// repiten un registro ya visto en otra fila de la misma fuente.
 //
 // # Que anade esto a lo que ya hace la ingesta
 //
@@ -161,7 +168,19 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 // puede ver es la repeticion ENTRE archivos del mismo periodo -- dos entregas
 // parciales de Caracol que se solapan una semana, por ejemplo --, y eso es
 // justamente lo que infla los puntos de una obra y desinfla los de todas las
-// demas del canal.
+// demas del canal. Esa es la repeticion que este detector EXISTE para cazar.
+//
+// # La comparacion NO filtra por entrega, y es deliberado
+//
+// El parrafo de arriba dice de donde viene el caso interesante, no lo que la
+// funcion compara: aqui entran todas las filas del periodo de la misma fuente,
+// vengan de la entrega que vengan. Filtrar por `ReporteID` distinto seria
+// confiar en que la puerta de la ingesta no se puede saltar nunca, y las dos
+// puertas no miran lo mismo -- `claveDe` compara celdas CRUDAS del archivo y
+// esta funcion una clave ya normalizada, asi que dos filas que el adaptador
+// dejo pasar por una diferencia de formato pueden ser la misma aqui. Un
+// duplicado dentro de una misma entrega sigue contando el mismo hecho dos
+// veces, asi que se avisa igual.
 //
 // # La clave llega derivada, y una clave vacia no compara
 //
@@ -171,6 +190,9 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 // todas bajo la cadena vacia marcaria como duplicadas entre si todas las
 // filas de las que no se sabe nada, que es el falso positivo mas caro
 // posible: bloquearia el periodo entero.
+//
+// Callar no es gratis y no se deja mudo: [SinClaveDeRegistro] las cuenta y la
+// cifra sube al resumen de la pasada. Ver su doc.
 //
 // # La fuente entra en la clave
 //
@@ -206,6 +228,35 @@ func duplicadosPorRegistro(usos []Uso) []Hallazgo {
 		})
 	}
 	return out
+}
+
+// SinClaveDeRegistro cuenta las filas que [duplicadosPorRegistro] NO pudo
+// cotejar con ninguna otra.
+//
+// No comparar esas filas es lo correcto -- agruparlas bajo la cadena vacia
+// marcaria como duplicadas entre si todas las filas de las que no se sabe nada
+// y bloquearia el periodo entero --, pero dejarlo sin decir convierte el
+// acierto en un punto ciego MUDO: el tablero muestra cero duplicados y nadie
+// sabe sobre cuantas filas no se miro.
+//
+// Y no es hipotetico. `Hora` es `Requerida: false` en `MapaCaracol` y a la vez
+// componente de su `ClaveRegistro`, asi que una fila sin hora se queda sin
+// clave. Ahi hay ademas una asimetria real: dentro de un archivo, `claveDe`
+// compara las celdas CRUDAS y SI caza dos filas con `Hora` vacia; entre
+// archivos la clave sale vacia y no se caza ninguna. El mismo par de filas, en
+// dos archivos, pasa -- y `duplicado_registro` es de los tipos criticos.
+//
+// La cifra sube a [aplicacion.ResumenEvaluacion] para que el hueco se pueda
+// mirar. Un numero mayor que cero no es un fallo: es cuanta de la entrega
+// quedo fuera del cotejo.
+func SinClaveDeRegistro(usos []Uso) int {
+	n := 0
+	for _, u := range usos {
+		if u.ClaveRegistro == "" {
+			n++
+		}
+	}
+	return n
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +327,7 @@ func titularesSinPorcentaje(obras []Obra) []Hallazgo {
 				Tipo:       TipoTitularSinPorcentaje,
 				RefTipo:    RefObra,
 				RefID:      o.ID,
-				RefTitular: ipi,
+				RefTitular: PrefijoIPI + ipi,
 				Detalle: fmt.Sprintf(
 					"el coautor con IPI %s figura en el catalogo de la obra %q y no tiene parte en la declaracion vigente: su porcentaje no esta declarado y sin el no se le puede pagar (R-03)",
 					ipi, o.ID),
@@ -292,7 +343,7 @@ func titularesSinPorcentaje(obras []Obra) []Hallazgo {
 				Tipo:       TipoTitularSinPorcentaje,
 				RefTipo:    RefObra,
 				RefID:      o.ID,
-				RefTitular: p.TitularID,
+				RefTitular: PrefijoTitular + p.TitularID,
 				Detalle: fmt.Sprintf(
 					"la parte del titular %q en la obra %q declara %s%% y no trae IPI: el porcentaje esta, pero no dice a quien se le paga",
 					p.TitularID, o.ID, p.Porcentaje.String()),
@@ -341,13 +392,12 @@ func retencionPorDeclaracionIncompleta(obras []Obra) []Hallazgo {
 		}
 
 		detalle := fmt.Sprintf(
-			"la obra %q no tiene ninguna Declaracion de Obra: se retiene el total de lo que le corresponda en este periodo (R-04, RD 13.1.3)",
-			o.ID)
+			"la obra %q no tiene ninguna Declaracion de Obra%s: se retiene el total de lo que le corresponda en este periodo (R-04, RD 13.1.3)",
+			o.ID, aQuienReclamar(o))
 		if o.Declarada {
-			suma := sumaDeclarada(o)
 			detalle = fmt.Sprintf(
-				"la declaracion vigente de la obra %q suma %s%% en %d parte(s) y no llega a 100: se retiene el TOTAL de esa obra, no se reparte la parte declarada (R-04, RD 13.1.3)",
-				o.ID, suma, len(o.Declaracion.Partes))
+				"la declaracion vigente de la obra %q no esta completa: %s. Se retiene el TOTAL de esa obra, no se reparte la parte declarada (R-04, RD 13.1.3)",
+				o.ID, motivoIncompleta(o.Declaracion))
 		}
 
 		out = append(out, Hallazgo{
@@ -360,14 +410,88 @@ func retencionPorDeclaracionIncompleta(obras []Obra) []Hallazgo {
 	return out
 }
 
-// sumaDeclarada es solo para el texto del detalle. No decide nada: quien
-// decide si la declaracion esta completa es [repertorio.Declaracion.Completa].
-func sumaDeclarada(o Obra) string {
+// motivoIncompleta narra POR QUE [repertorio.Declaracion.Completa] dijo que no.
+//
+// Es solo para el texto del detalle y no decide nada -- quien decide sigue
+// siendo `Completa()` --, pero tiene que narrar el motivo REAL: `Completa()`
+// falla por tres cosas distintas (una parte sin IPI, una parte no positiva, y
+// la suma que no da 100 exactos) y el detalle anterior contaba siempre la
+// tercera. Una obra cuyas partes suman 100 clavado pero a la que le falta un
+// IPI salia como "suma X% y no llega a 100" con X igual a 100: distribucion
+// perseguia un porcentaje que estaba bien mientras el dato que falta es un
+// identificador de persona.
+//
+// El orden de las comprobaciones es el mismo que el de `Completa()`, para que
+// el motivo que se narra sea el que de verdad corto.
+func motivoIncompleta(d repertorio.Declaracion) string {
+	if len(d.Partes) == 0 {
+		return "la version vigente esta abierta y no tiene ninguna parte declarada"
+	}
+
+	sinIPI := make([]string, 0)
+	noPositivas := make([]string, 0)
 	suma := decimal.Zero
-	for _, p := range o.Declaracion.Partes {
+	for _, p := range d.Partes {
+		if p.IPI == "" {
+			sinIPI = append(sinIPI, p.TitularID)
+		}
+		if p.Porcentaje.LessThanOrEqual(decimal.Zero) {
+			noPositivas = append(noPositivas, p.TitularID)
+		}
 		suma = suma.Add(p.Porcentaje)
 	}
-	return suma.String()
+
+	motivos := make([]string, 0, 3)
+	if len(sinIPI) > 0 {
+		motivos = append(motivos, fmt.Sprintf(
+			"%d de %d parte(s) no traen IPI (titular(es) %s), asi que no dicen a quien se le paga",
+			len(sinIPI), len(d.Partes), strings.Join(sinIPI, ", ")))
+	}
+	if len(noPositivas) > 0 {
+		motivos = append(motivos, fmt.Sprintf(
+			"%d parte(s) no son positivas (titular(es) %s)",
+			len(noPositivas), strings.Join(noPositivas, ", ")))
+	}
+	if !suma.Equal(decimal.NewFromInt(100)) {
+		motivos = append(motivos, fmt.Sprintf(
+			"lo declarado suma %s%% en %d parte(s) y R-04 exige 100 exactos",
+			suma.String(), len(d.Partes)))
+	}
+	if len(motivos) == 0 {
+		// Inalcanzable mientras este detector solo llame aqui con una
+		// declaracion que Completa() rechazo. Si alguien invierte esa
+		// condicion, mas vale que el texto lo diga a que invente un motivo.
+		return "no se pudo determinar el motivo"
+	}
+	return strings.Join(motivos, "; ")
+}
+
+// aQuienReclamar nombra a los coautores del catalogo cuando la obra no tiene
+// NINGUNA declaracion.
+//
+// [titularesSinPorcentaje] calla en ese caso -- no hay version abierta a la que
+// le falten partes concretas --, asi que sin esto la obra SIN declaracion, que
+// es el caso PEOR, era la unica que se quedaba sin un solo nombre: la misma
+// obra con una version abierta y vacia emite N alertas con nombre y apellido.
+// `R-04` retiene el total en los dos casos y para desbloquearlo hay que llamar
+// a alguien; el nombre va aqui, en la alerta que si se emite.
+//
+// Devuelve la cadena vacia -- y no una frase -- cuando no hay coautores
+// registrados: `NuevaObra` exige al menos uno, pero una fila escrita por SQL
+// directo podria no tenerlos, y "hay que hablar con: nadie" no ayuda.
+func aQuienReclamar(o Obra) string {
+	ipis := make([]string, 0, len(o.CoautoresIPI))
+	for _, ipi := range o.CoautoresIPI {
+		if ipi == "" {
+			continue
+		}
+		ipis = append(ipis, ipi)
+	}
+	if len(ipis) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" y en el catalogo figura(n) %d coautor(es) a quien(es) reclamarla (IPI %s)",
+		len(ipis), strings.Join(ipis, ", "))
 }
 
 // ---------------------------------------------------------------------------
@@ -386,9 +510,28 @@ func sumaDeclarada(o Obra) string {
 // seria peor: no habria forma de distinguir lo mapeado de lo supuesto.
 //
 // El efecto aguas abajo no es que la obra puntue cero: `reparto` ABORTA la
-// corrida de TV y la de suscripcion con ErrRepartoInvalido en cuanto ve el
-// tipo vacio (reparto/estrategia.go, `case ""`). Esta alerta es el preaviso
-// de esa parada, en el momento en que todavia se puede pedir el dato.
+// corrida con ErrRepartoInvalido en cuanto ve el tipo vacio
+// (reparto/estrategia.go, `case ""`, introducido por #120 el 2026-09-18 junto
+// con la propia `ponderacionTipo` -- antes de esa fecha no habia ponderacion
+// por tipo en absoluto). Esta alerta es el preaviso de esa parada, en el
+// momento en que todavia se puede pedir el dato.
+//
+// # Que el preaviso llegue ANTES que la parada es el punto
+//
+// Hoy esa parada no se esta produciendo, y no porque el dato este: porque la
+// fila no llega al motor. `MapaCaracol` tampoco mapea `canal_id` -- CampoCanalID
+// existe en `ingesta/mapa.go` y no lo usa ningun Mapa --, asi que `UsosDeCanal`
+// devuelve cero filas para esas entregas. El hueco de `tipo_obra` esta LATENTE,
+// y salta el dia que `canal_id` se puebla.
+//
+// Por eso este detector AVISA y no se intenta arreglar el dato por detras.
+// Rellenar `tipo_obra` desde `obras.tipo` al identificar -- que es lo que parece
+// el arreglo de fondo -- se midio contra Postgres real y empeora el conjunto:
+// `MapaCaracol` tampoco mapea `rating`, que queda en 0, y `puntosTV` multiplica
+// por el, asi que la corrida deja de abortar y pasa a repartir CERO con error
+// nil (`noDistribuido` = la bolsa entera). Un fallo ruidoso convertido en uno
+// silencioso. Los tres huecos -- `tipo_obra`, `canal_id`, `rating` -- se cierran
+// juntos y en su propia issue.
 //
 // # Solo las filas con obra identificada
 //
@@ -396,19 +539,48 @@ func sumaDeclarada(o Obra) string {
 // por `obra_id IS NOT NULL` -- asi que su tipo_obra no pondera nada, y su
 // problema es otro y ya tiene su propia alerta. Sin este filtro, cada fila
 // ONI de Caracol levantaria dos alertas por el mismo hecho.
+//
+// # Solo las modalidades cuyo motor LEE el campo
+//
+// `tipo_obra` solo lo consulta `reparto.ponderacionTipo`, y a esa funcion solo
+// se llega por TV, suscripcion y hotel (ver [ModalidadPonderaPorTipoObra]). Una
+// fila de OTT, cine, teatro o transporte con el tipo vacio no rompe nada: su
+// estrategia no lo mira.
+//
+// Sin este filtro la alerta era ademas ACTIVAMENTE danina, no solo ruido.
+// `MapaNetflix` no declara `CampoTipoObra`, asi que TODA fila de Netflix llega
+// con el tipo vacio: un periodo de OTT levantaba N alertas marcadas como
+// criticas por [EsCritica] y repartia perfectamente. Como la compuerta de #34
+// consume `CriticasAbiertas`, ese periodo no se habria podido cerrar NUNCA por
+// un campo que su corrida no lee.
+//
+// Es ademas lo que mantiene honesto a [EsCritica]: si el detector solo dispara
+// sobre filas cuya corrida se aborta, entonces toda alerta de este tipo es de
+// verdad bloqueante, y la criticidad sigue siendo funcion del tipo sin
+// necesidad de una segunda condicion en el SQL.
 func tipoObraSinMapear(usos []Uso) []Hallazgo {
 	out := make([]Hallazgo, 0)
 	for _, u := range usos {
 		if u.ObraID == "" || u.TipoObra != "" {
 			continue
 		}
+		if !ModalidadPonderaPorTipoObra(u.Modalidad) {
+			continue
+		}
 		out = append(out, Hallazgo{
 			Tipo:    TipoTipoObraSinMapear,
 			RefTipo: RefUso,
 			RefID:   u.ID,
+			// "en cuanto esta fila entre en una corrida" y no "la corrida se
+			// aborta": las dos cosas no son la misma, y hoy la segunda seria
+			// falsa. `MapaCaracol` tampoco mapea `canal_id`, asi que
+			// `UsosDeCanal` no devuelve estas filas y el motor ni siquiera
+			// arranca sobre ellas. La alerta es un PREAVISO -- que es para lo
+			// que sirve, mientras todavia se puede pedir el dato -- y el texto
+			// tiene que decir eso y no afirmar una parada que no esta pasando.
 			Detalle: fmt.Sprintf(
-				"el uso %q de la obra %q (fuente %q) no trae tipo_obra: RD 9.1.1 pondera por cuatro categorias y sin una de ellas la corrida de TV se aborta",
-				u.ID, u.ObraID, u.Fuente),
+				"el uso %q de la obra %q (fuente %q, modalidad %q) no trae tipo_obra: RD 9.1.1 pondera por cuatro categorias y el motor de %s aborta la corrida entera (ErrRepartoInvalido) en cuanto esta fila entre en una",
+				u.ID, u.ObraID, u.Fuente, u.Modalidad, u.Modalidad),
 		})
 	}
 	return out

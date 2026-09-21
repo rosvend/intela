@@ -53,6 +53,19 @@ const (
 	RefObra    = "obra"
 )
 
+// Espacios de nombres de [Hallazgo.RefTitular].
+//
+// `titular_sin_porcentaje` referencia dos cosas distintas segun el caso: un
+// IPI de `obra_coautores` cuando falta la parte de un coautor, y un
+// `titulares.id` cuando la parte existe y no trae IPI. Los dos son TEXT y
+// comparten columna, asi que sin prefijo la clave natural de `alertas` los
+// confunde en cuanto coinciden -- y con ON CONFLICT DO NOTHING uno de los dos
+// hallazgos se pierde sin que nada falle. Ver [Hallazgo.RefTitular].
+const (
+	PrefijoIPI     = "ipi:"
+	PrefijoTitular = "titular:"
+)
+
 // Hallazgo es una anomalia detectada, sin identidad de fila y sin instante.
 //
 // No es la alerta persistida: no trae id ni `cuando` ni estado de resolucion.
@@ -69,11 +82,29 @@ type Hallazgo struct {
 	RefTipo string
 	RefID   string
 
-	// RefTitular es el IPI de la persona a la que le falta la parte. Solo lo
-	// rellena [TipoTitularSinPorcentaje], y es la segunda coordenada del
-	// registro ofensor: el registro que falta es una fila de `declaraciones`,
-	// cuya identidad es (obra, titular), asi que con la obra sola dos
-	// coautores ausentes de la MISMA obra serian la misma alerta.
+	// RefTitular es la segunda coordenada del registro ofensor, CON su espacio
+	// de nombres por delante: [PrefijoIPI] o [PrefijoTitular]. Solo lo rellena
+	// [TipoTitularSinPorcentaje].
+	//
+	// Existe porque el registro que falta es una fila de `declaraciones`, cuya
+	// identidad es (obra, titular): con la obra sola, dos coautores ausentes de
+	// la MISMA obra serian la misma alerta y uno de los dos nombres se
+	// perderia.
+	//
+	// # Por que lleva prefijo y no el identificador pelado
+	//
+	// Los dos casos del detector referencian espacios de nombres DISTINTOS: el
+	// caso 1 nombra un IPI (`obra_coautores.ipi`) y el caso 2 un
+	// `titulares.id`. Sin discriminar, los dos caian en la misma columna, y la
+	// clave natural de `alertas` -- UNIQUE (periodo, tipo, ref_tipo, ref_id,
+	// ref_titular) con ON CONFLICT DO NOTHING -- colapsaba los dos hallazgos en
+	// cuanto un `titulares.id` coincidia con un IPI. Uno de los dos
+	// desaparecia SIN RUIDO, y cual sobrevivia no lo fijaba nada: el orden de
+	// [Detectar] empata en las cuatro claves y `slices.SortFunc` no es estable.
+	//
+	// Con el prefijo, los dos espacios no se pueden pisar y la referencia dice
+	// ademas QUE es lo que nombra, que es lo que la bandeja de #39 necesita
+	// para llevar a quien resuelve al registro correcto.
 	RefTitular string
 
 	// Detalle es la frase que lee una persona de distribucion. Lleva las
@@ -93,18 +124,27 @@ type Hallazgo struct {
 //     veces infla los puntos de su obra, y el valor punto de `RD 9.1.1` es un
 //     cociente: la obra duplicada se lleva de mas y TODAS las demas del mismo
 //     canal se llevan de menos. No hay forma de verlo en el resultado.
+//
 //   - tipo_obra_sin_mapear: SI. `RD 9.1.1` pondera por las cuatro categorias,
 //     y una fila sin clasificar no tiene ponderacion que aplicar. El motor de
-//     TV y el de suscripcion ABORTAN la corrida entera con ErrRepartoInvalido
-//     (reparto/estrategia.go, rama `case ""`), asi que esto es ademas el
-//     preaviso de un fallo duro.
+//     TV -- y el de suscripcion y hotel, que pasan por el mismo `puntosTV` --
+//     ABORTAN la corrida entera con ErrRepartoInvalido (reparto/estrategia.go,
+//     rama `case ""`), asi que esto es ademas el preaviso de un fallo duro.
+//
+//     Que sea critico SIEMPRE se sostiene en que [tipoObraSinMapear] solo
+//     dispara sobre las modalidades cuyo motor lee el campo: sin ese filtro,
+//     esta rama marcaria como bloqueante una fila de OTT a la que el tipo
+//     vacio no le afecta en nada.
+//
 //   - oni: NO. Una obra no identificada es una ETAPA del diseno (ADR 0007),
 //     no un fallo: su parte queda en reserva y se libera si se resuelve antes
 //     de la prescripcion de tres anos (`R-19`, `RD 13.8`). Bloquear el
 //     periodo por ONI seria no repartir nunca.
+//
 //   - reserva_declaracion_incompleta: NO. `R-04` / `RD 13.1.3` es un ESTADO
 //     VALIDO del modelo: se retiene el TOTAL de esa obra y el resto del
 //     periodo se reparte con normalidad.
+//
 //   - titular_sin_porcentaje: NO. Es la CAUSA de la anterior, con nombre y
 //     apellidos; el efecto sobre el dinero ya lo cubre la retencion.
 func EsCritica(tipo string) bool {
@@ -113,6 +153,47 @@ func EsCritica(tipo string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// Modalidades cuyo motor consulta `tipo_obra`. El nombre va en minusculas
+// porque es el valor de `usos.modalidad` y el del CHECK de la migracion 00011.
+//
+// Son estas tres y nada mas, y se puede comprobar leyendo el motor:
+// `reparto.ponderacionTipo` -- la UNICA funcion que mira `TipoObra` -- solo la
+// llama `puntosTV`, y a `puntosTV` se llega desde `case TV:` (motor.go) y desde
+// `repartirSuscripcionOrden`, que sirve a `case Suscripcion, Hotel:`.
+// `puntosCineTeatro`, `puntosTransporte` y `puntosOTT` no leen `TipoObra` en
+// ninguna linea.
+const (
+	ModalidadTV          = "tv"
+	ModalidadSuscripcion = "suscripcion"
+	ModalidadHotel       = "hotel"
+)
+
+// ModalidadPonderaPorTipoObra dice si la corrida de esa modalidad LEE
+// `tipo_obra`.
+//
+// Existe para que [tipoObraSinMapear] no avise de un campo que la corrida de
+// esa fila no va a mirar. Sin esta distincion, un periodo de Netflix -- cuyo
+// mapa no trae la columna, asi que TODAS sus filas llegan con el tipo vacio --
+// levantaba una alerta CRITICA por fila y repartia perfectamente: la compuerta
+// de #34 lee [aplicacion.Anomalias.CriticasAbiertas], que contaria esas N, y no
+// abriria nunca.
+//
+// Una modalidad desconocida cuenta como que SI pondera, y es deliberado: el
+// vocabulario lo cierra `reparto.ParseModalidad` y el CHECK de `usos.modalidad`
+// (00011), asi que llegar aqui con otra cosa ya es un fallo en otro sitio.
+// Ante la duda se avisa, que es el lado ruidoso -- callar dejaria pasar en
+// silencio justamente la fila de la que no se sabe nada.
+func ModalidadPonderaPorTipoObra(modalidad string) bool {
+	switch modalidad {
+	case ModalidadTV, ModalidadSuscripcion, ModalidadHotel:
+		return true
+	case "cine", "teatro", "transporte", "ott":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -132,6 +213,16 @@ type Uso struct {
 	// ONI se decide por AQUI y nunca por la bandera `usos.oni`: ver
 	// [deteccionONI].
 	Escalon string
+
+	// Modalidad es la de `usos.modalidad` (`reparto.Modalidad`), como string
+	// porque este paquete NO puede importar `reparto` -- la regla
+	// `modulos-anomalias` de `.golangci.yml` se lo deniega (ADR 0003) -- y
+	// porque aqui solo se compara, nunca se pondera.
+	//
+	// Hace falta porque no todas las modalidades leen los mismos campos, y sin
+	// ella un detector no puede distinguir la fila que rompe una corrida de la
+	// que no la roza: ver [ModalidadPonderaPorTipoObra] y [tipoObraSinMapear].
+	Modalidad string
 
 	// ObraID vacio significa que la fila no tiene obra identificada.
 	ObraID string

@@ -183,6 +183,25 @@ type CargaReporte struct {
 	Rechazados int
 }
 
+// EntregaRecibida es el acuse de un reporte con lo JUSTO para cotejar sus
+// bytes contra los de otra entrega: quien la entrego, de que periodo y que
+// huella trae.
+//
+// Existe aparte de [CargaReporte] por coste, no por gusto. La deteccion de
+// anomalias pide TODAS las entregas conocidas en cada pasada -- el
+// UNIQUE (sha256, fuente) de `reportes` no lleva el periodo, asi que la otra
+// pata de una colision puede estar en otro mes -- y de cada una solo mira estos
+// cuatro campos. `ListarCargas` ademas calcula dos COUNT correlacionados por
+// fila (usos y usos_rechazados) que esta lectura DESCARTA: medido sobre 5.001
+// reportes y 50.000 usos son 130,8 ms contra 4,8 ms sin ellos, en cada pasada y
+// creciendo para siempre.
+type EntregaRecibida struct {
+	ID      string
+	Fuente  string
+	Periodo string
+	SHA256  string
+}
+
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
 // resultado de la identificacion.
 //
@@ -419,6 +438,18 @@ type FiltroAlertas struct {
 	Periodo   string
 	Tipo      string
 	Resueltas *bool
+
+	// Paginacion, con la MISMA forma que `/obras`, `/titulares` y el historial
+	// de declaraciones, y por la misma razon de la nota 4 de #86: los listados
+	// de este sistema paginan juntos, no cada uno a su aire.
+	//
+	// Aqui hace falta ademas por volumen. `oni`, `duplicado_registro` y
+	// `tipo_obra_sin_mapear` emiten UNA alerta por fila de uso, y la meta KR-1
+	// habla de lotes de 10.000 registros: una evaluacion real puede dejar del
+	// orden de 10.000 alertas en un periodo. Sin paginar, `GET /alertas`
+	// devolvia ese array entero -- del orden de 4 MB -- y el panel de #104
+	// sondea cada 15 segundos.
+	Paginacion
 }
 
 type Anticipo struct {

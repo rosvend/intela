@@ -69,12 +69,18 @@ type alertaJSON struct {
 }
 
 // resumenEvaluacionJSON es lo que devuelve una pasada de deteccion.
+//
+// `usos_sin_cotejar` no cuenta anomalias: cuenta las filas a las que no se les
+// pudo componer clave de registro, asi que el detector de duplicados no las
+// comparo con ninguna. Viaja porque sin ella "cero duplicados" y "no se miro"
+// se leen igual en el tablero.
 type resumenEvaluacionJSON struct {
 	Periodo          string         `json:"periodo"`
 	Detectadas       int            `json:"detectadas"`
 	Nuevas           int            `json:"nuevas"`
 	PorTipo          map[string]int `json:"por_tipo"`
 	CriticasAbiertas int            `json:"criticas_abiertas"`
+	UsosSinCotejar   int            `json:"usos_sin_cotejar"`
 }
 
 // evaluacionJSON es el cuerpo de la pasada. Un objeto y no un `?periodo=` en
@@ -170,6 +176,15 @@ func (a *API) listarAlertas(w http.ResponseWriter, r *http.Request) {
 		filtro.Resueltas = &valor
 	}
 
+	// El mismo `leerPaginacion` que `/obras`, `/titulares` y el historial de
+	// declaraciones, no una copia: los cuatro listados aceptan los mismos dos
+	// parametros y rechazan lo mismo con el mismo 400.
+	paginacion, ok := leerPaginacion(w, q)
+	if !ok {
+		return
+	}
+	filtro.Paginacion = paginacion
+
 	alertas, err := a.anomalias.Listar(r.Context(), filtro)
 	switch {
 	case err == nil:
@@ -251,6 +266,7 @@ func (a *API) evaluarAnomalias(w http.ResponseWriter, r *http.Request) {
 		Nuevas:           resumen.Nuevas,
 		PorTipo:          resumen.PorTipo,
 		CriticasAbiertas: resumen.CriticasAbiertas,
+		UsosSinCotejar:   resumen.UsosSinCotejar,
 	})
 }
 

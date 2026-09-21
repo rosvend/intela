@@ -328,7 +328,7 @@ func TestTitularesSinPorcentaje(t *testing.T) {
 					ObraID: "o1", Partes: []repertorio.Parte{parte("tit-a", "ipi-a", 60)},
 				},
 			}},
-			quiero: []string{"titular_sin_porcentaje|obra:o1#ipi-b"},
+			quiero: []string{"titular_sin_porcentaje|obra:o1#ipi:ipi-b"},
 		},
 		{
 			nombre: "declaracion completa y todos los coautores declarados: nada",
@@ -354,7 +354,7 @@ func TestTitularesSinPorcentaje(t *testing.T) {
 					parte("tit-a", "ipi-a", 60), parte("tit-x", "", 40),
 				}},
 			}},
-			quiero: []string{"titular_sin_porcentaje|obra:o1#tit-x"},
+			quiero: []string{"titular_sin_porcentaje|obra:o1#titular:tit-x"},
 		},
 		{
 			// El esquema lo permite y VigentesDeObras usa LEFT JOIN a
@@ -367,8 +367,8 @@ func TestTitularesSinPorcentaje(t *testing.T) {
 				Declaracion:  repertorio.Declaracion{ObraID: "o1"},
 			}},
 			quiero: []string{
-				"titular_sin_porcentaje|obra:o1#ipi-a",
-				"titular_sin_porcentaje|obra:o1#ipi-b",
+				"titular_sin_porcentaje|obra:o1#ipi:ipi-a",
+				"titular_sin_porcentaje|obra:o1#ipi:ipi-b",
 			},
 		},
 		{
@@ -541,6 +541,51 @@ func TestTipoObraSinMapear(t *testing.T) {
 			},
 			quiero: nil,
 		},
+		{
+			// Las tres modalidades cuyo motor SI lee tipo_obra:
+			// `ponderacionTipo` solo la llama `puntosTV`, y a `puntosTV` se
+			// llega por `case TV:` y por `repartirSuscripcionOrden`, que
+			// sirve a `case Suscripcion, Hotel:`.
+			nombre: "modalidades que ponderan por tipo_obra: avisa",
+			usos: []Uso{
+				{ID: "u1", ObraID: "o1", Modalidad: ModalidadTV},
+				{ID: "u2", ObraID: "o2", Modalidad: ModalidadSuscripcion},
+				{ID: "u3", ObraID: "o3", Modalidad: ModalidadHotel},
+			},
+			quiero: []string{
+				"tipo_obra_sin_mapear|uso:u1",
+				"tipo_obra_sin_mapear|uso:u2",
+				"tipo_obra_sin_mapear|uso:u3",
+			},
+		},
+		{
+			// El caso que hacia dano: `MapaNetflix` no declara CampoTipoObra,
+			// asi que TODA fila de Netflix llega con el tipo vacio. Como
+			// EsCritica marca este tipo como bloqueante, un periodo de OTT
+			// levantaba N criticas y repartia perfectamente -- y la compuerta
+			// de #34, que lee CriticasAbiertas, no habria abierto NUNCA por un
+			// campo que la corrida de OTT no lee. `puntosOTT`,
+			// `puntosCineTeatro` y `puntosTransporte` no miran TipoObra en
+			// ninguna linea.
+			nombre: "modalidades que NO leen tipo_obra: calla",
+			usos: []Uso{
+				{ID: "u1", ObraID: "o1", Modalidad: "ott"},
+				{ID: "u2", ObraID: "o2", Modalidad: "cine"},
+				{ID: "u3", ObraID: "o3", Modalidad: "teatro"},
+				{ID: "u4", ObraID: "o4", Modalidad: "transporte"},
+			},
+			quiero: nil,
+		},
+		{
+			// Ante la duda se AVISA. El vocabulario lo cierran
+			// `reparto.ParseModalidad` y el CHECK de `usos.modalidad`, asi
+			// que llegar aqui con otra cosa ya es un fallo en otro sitio:
+			// callar dejaria pasar en silencio la fila de la que menos se
+			// sabe.
+			nombre: "modalidad desconocida: avisa, no calla",
+			usos:   []Uso{{ID: "u1", ObraID: "o1", Modalidad: "radio"}},
+			quiero: []string{"tipo_obra_sin_mapear|uso:u1"},
+		},
 	}
 
 	for _, c := range casos {
@@ -610,7 +655,7 @@ func TestDetectarLevantaUnaDeCadaTipo(t *testing.T) {
 		"oni|uso:u-oni",
 		"reserva_declaracion_incompleta|obra:o-incompleta",
 		"tipo_obra_sin_mapear|uso:u-sintipo",
-		"titular_sin_porcentaje|obra:o-incompleta#ipi-b",
+		"titular_sin_porcentaje|obra:o-incompleta#ipi:ipi-b",
 	}
 	if !slices.Equal(got, quiero) {
 		t.Fatalf("Detectar = %v,\nse esperaba %v", got, quiero)

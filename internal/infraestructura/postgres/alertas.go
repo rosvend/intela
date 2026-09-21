@@ -81,7 +81,9 @@ func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta)
 // ORDER BY detectada DESC, id: `detectada` sola no desempata dos alertas de la
 // MISMA pasada -- que llevan todas el mismo instante del Reloj, a proposito --
 // y sin el desempate el listado cambia de orden entre lecturas, que es lo que
-// el ADR 0005 no admite de nada que alimente una decision.
+// el ADR 0005 no admite de nada que alimente una decision. Con paginacion deja
+// de ser una cuestion de gusto: sin orden total, dos paginas consecutivas
+// pueden repetir una fila y saltarse otra.
 //
 // Los tres filtros van como parametros que pueden venir vacios, no
 // concatenando WHERE: una sola sentencia, un solo plan, y ningun camino en el
@@ -94,13 +96,32 @@ func (s *Store) ListarAlertas(ctx context.Context, f aplicacion.FiltroAlertas) (
 	filtraResueltas := f.Resueltas != nil
 	resueltas := filtraResueltas && *f.Resueltas
 
-	filas, err := s.ejecutorDe(ctx).Query(ctx,
-		`SELECT `+columnasAlerta+` FROM alertas
+	// ConDefecto ANTES de componer, igual que [Store.Buscar] y por un motivo
+	// que aqui es especialmente caro: `Paginacion` con Limite en cero
+	// significa "el por defecto" por contrato, y sin esta linea se traducia a
+	// `LIMIT 0`, o sea CERO filas. Un llamador que no diga nada de paginacion
+	// -- toda llamada directa al adaptador, y el dia de manana cualquier
+	// consumidor interno -- recibiria la lista vacia como si el periodo
+	// estuviera limpio. Es exactamente la clase de fallo silencioso que esta
+	// PR existe para cazar, y lo cazaron dos pruebas de este mismo paquete.
+	p := f.ConDefecto()
+
+	sql := `SELECT ` + columnasAlerta + ` FROM alertas
 		  WHERE ($1 = '' OR periodo = $1)
 		    AND ($2 = '' OR tipo = $2)
 		    AND (NOT $3 OR resuelta = $4)
-		  ORDER BY detectada DESC, id`,
-		f.Periodo, f.Tipo, filtraResueltas, resueltas)
+		  ORDER BY detectada DESC, id`
+	args := []any{f.Periodo, f.Tipo, filtraResueltas, resueltas}
+	// El LIMIT se OMITE con LimiteSinTope en vez de mandar un centinela a la
+	// base, que es la forma de [Store.Buscar]: asi "dame todo" es una rama que
+	// se lee, y no un -1 viajando dentro de la sentencia.
+	if p.Limite != aplicacion.LimiteSinTope {
+		sql += `
+		  LIMIT $5 OFFSET $6`
+		args = append(args, p.Limite, p.Desplazamiento)
+	}
+
+	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, "listar alertas del periodo %q", f.Periodo)
 	}

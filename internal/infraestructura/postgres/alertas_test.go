@@ -170,8 +170,11 @@ func TestEvaluarAnomaliasSobrePostgres(t *testing.T) {
 		// completa. obraCompleta no aparece.
 		"reserva_declaracion_incompleta|obra:" + obraIncompleta,
 		"tipo_obra_sin_mapear|uso:u-sintipo",
-		// El coautor de catalogo de obraIncompleta que no tiene parte.
-		"titular_sin_porcentaje|obra:" + obraIncompleta + "#IPI-00000002",
+		// El coautor de catalogo de obraIncompleta que no tiene parte. La
+		// segunda coordenada lleva su espacio de nombres: este caso referencia
+		// un IPI y el otro caso del mismo detector un titulares.id, y sin
+		// discriminarlos la clave natural los colapsa.
+		"titular_sin_porcentaje|obra:" + obraIncompleta + "#" + anomalias.PrefijoIPI + "IPI-00000002",
 	}
 	if got := refsDeAlertas(alertas); !slices.Equal(got, quiero) {
 		t.Fatalf("alertas = %v,\nse esperaba %v", got, quiero)
