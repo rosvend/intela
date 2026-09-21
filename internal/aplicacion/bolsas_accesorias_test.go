@@ -31,7 +31,7 @@ func (r *resultadosFalso) ResultadoPorProceso(_ context.Context, procesoID strin
 }
 
 // reservasFalso no simula el bloqueo de fila que hace race-safe a
-// ActualizarSaldoReserva de verdad -- eso lo prueban las pruebas de
+// LiberarSaldoReserva de verdad -- eso lo prueban las pruebas de
 // concurrencia contra Postgres en internal/infraestructura/postgres. Aqui
 // solo se comprueba el contrato: fn recibe el saldo actual y lo que
 // devuelve queda persistido.
@@ -70,7 +70,7 @@ func (r *reservasFalso) ReservaPorProceso(_ context.Context, procesoID string) (
 	return p, nil
 }
 
-func (r *reservasFalso) ActualizarSaldoReserva(_ context.Context, procesoID string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+func (r *reservasFalso) LiberarSaldoReserva(_ context.Context, procesoID, _ string, _ decimal.Decimal, fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error)) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -78,7 +78,7 @@ func (r *reservasFalso) ActualizarSaldoReserva(_ context.Context, procesoID stri
 	if !ok {
 		return ErrNoEncontrado
 	}
-	nuevoSaldo, err := fn(p.Saldo)
+	nuevoSaldo, _, err := fn(p.Saldo)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (r *rendimientosFalso) PorCircuitoYVigencia(_ context.Context, circuito rep
 	return p, nil
 }
 
-func (r *rendimientosFalso) ActualizarMontoRendimiento(_ context.Context, circuito reparto.Circuito, vigencia string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+func (r *rendimientosFalso) ActualizarMontoRendimiento(_ context.Context, circuito reparto.Circuito, vigencia, _ string, fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error)) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -132,7 +132,7 @@ func (r *rendimientosFalso) ActualizarMontoRendimiento(_ context.Context, circui
 	if !ok {
 		return ErrNoEncontrado
 	}
-	nuevoMonto, err := fn(p.Monto)
+	nuevoMonto, _, err := fn(p.Monto)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func TestLiberarReservaPrescritaReplicaLasProporcionesDeLaCorridaOriginal(t *tes
 	}}
 	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
 
-	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.Zero)
+	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.Zero)
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
 	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
 
 	// RD 10.4: el rendimiento acumulado sobre la reserva se incluye al liberarla.
-	nuevas, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.RequireFromString("10.00"))
+	nuevas, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.RequireFromString("10.00"))
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestLiberarReservaPrescritaRechazaRendimientoNegativo(t *testing.T) {
 	}}
 	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
 
-	_, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.RequireFromString("-20.00"))
+	_, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.RequireFromString("-20.00"))
 	if !errors.Is(err, reparto.ErrRepartoInvalido) {
 		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: el mismo PR ya rechaza un rendimiento negativo en RegistrarRendimiento", err)
 	}
@@ -302,7 +302,7 @@ func TestLiberarReservaPrescritaDejaElSaldoIgualAlResiduoSinTitulares(t *testing
 	}}
 	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
 
-	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", decimal.Zero)
+	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.Zero)
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}

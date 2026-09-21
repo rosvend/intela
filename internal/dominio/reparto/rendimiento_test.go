@@ -30,3 +30,10 @@ func TestNuevoPoolRendimientoVigenciaConFormatoInvalidoEsError(t *testing.T) {
 		}
 	}
 }
+
+func TestNuevoPoolRendimientoRechazaCircuitoDesconocido(t *testing.T) {
+	_, err := reparto.NuevoPoolRendimiento(reparto.Circuito("marciano"), "2026", d("100.00"))
+	if err == nil {
+		t.Fatal("se esperaba error con circuito desconocido")
+	}
+}

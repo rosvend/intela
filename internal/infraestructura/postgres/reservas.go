@@ -47,29 +47,58 @@ func (s *Store) ReservaPorProceso(ctx context.Context, procesoID string) (repart
 	return r, nil
 }
 
-// ActualizarSaldoReserva bloquea la fila con SELECT ... FOR UPDATE, le pasa
-// el saldo actual a fn, y persiste lo que fn devuelva -- todo en una
-// transaccion. Una segunda llamada concurrente se bloquea en el FOR UPDATE
-// hasta que la primera confirme, y entonces ve el saldo YA actualizado: es
-// lo que impide que dos liberaciones lean el mismo saldo y repartan las dos
-// (B1). Si fn devuelve error, la transaccion no confirma nada (B5: no se
-// persiste un saldo a medias).
-func (s *Store) ActualizarSaldoReserva(ctx context.Context, procesoID string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+// LiberarSaldoReserva bloquea reservas (y rendimientos si rendimientoAUsar >
+// 0) con SELECT ... FOR UPDATE, le pasa el saldo actual a fn, y persiste
+// todo en una transaccion: saldo nuevo, rendimiento descontado, y cada
+// linea de fn en reservas_liberaciones. El bloqueo evita que dos
+// liberaciones concurrentes lean el mismo saldo (B1) o el mismo
+// rendimiento (B4); persistir las lineas evita perder el rastro si algo
+// falla despues del commit (B2). Saldo insuficiente en rendimientos lo
+// rechaza el CHECK de la tabla.
+func (s *Store) LiberarSaldoReserva(
+	ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal,
+	fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error),
+) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		var saldoActual decimal.Decimal
-		err := tx.QueryRow(ctx, `SELECT saldo FROM reservas WHERE proceso_id = $1 FOR UPDATE`, procesoID).
-			Scan(&saldoActual)
-		if err != nil {
+		if err := tx.QueryRow(ctx, `SELECT saldo FROM reservas WHERE proceso_id = $1 FOR UPDATE`, procesoID).
+			Scan(&saldoActual); err != nil {
 			return traducirError(err, "bloquear reserva de %q", procesoID)
 		}
 
-		nuevoSaldo, err := fn(saldoActual)
+		if rendimientoAUsar.IsPositive() {
+			if _, err := tx.Exec(ctx,
+				`SELECT 1 FROM rendimientos WHERE circuito = 'nacional' AND vigencia = $1 FOR UPDATE`,
+				vigenciaRendimiento); err != nil {
+				return traducirError(err, "bloquear rendimiento nacional/%s", vigenciaRendimiento)
+			}
+		}
+
+		nuevoSaldo, lineas, err := fn(saldoActual)
 		if err != nil {
 			return err
 		}
 
 		if _, err := tx.Exec(ctx, `UPDATE reservas SET saldo = $2 WHERE proceso_id = $1`, procesoID, nuevoSaldo); err != nil {
 			return traducirError(err, "actualizar saldo de reserva %q", procesoID)
+		}
+
+		if rendimientoAUsar.IsPositive() {
+			if _, err := tx.Exec(ctx,
+				`UPDATE rendimientos SET monto = monto - $2 WHERE circuito = 'nacional' AND vigencia = $1`,
+				vigenciaRendimiento, rendimientoAUsar); err != nil {
+				return traducirError(err, "descontar rendimiento nacional/%s", vigenciaRendimiento)
+			}
+		}
+
+		for _, l := range lineas {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO reservas_liberaciones (proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
+				 VALUES ($1,$2,$3,$4,$5,$6)`,
+				procesoID, l.ObraID, l.TitularID, l.IPI, l.Porcentaje, l.Importe,
+			); err != nil {
+				return traducirError(err, "guardar linea liberada de %q", procesoID)
+			}
 		}
 		return nil
 	})

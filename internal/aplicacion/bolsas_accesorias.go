@@ -49,25 +49,16 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 }
 
 // LiberarReservaPrescrita reparte el remanente de una reserva prescrita
-// (RD 14.4) sobre las proporciones EXACTAS de la corrida de la que salio,
-// sin revalorizar nada -- lee [reparto.LineaTitular] ya persistidas, no
-// vuelve a correr el motor. rendimientoAcumulado es el rendimiento que esa
-// reserva invertida acumulo mientras estuvo retenida (RD 10.4); cero si no
-// aplica.
+// (RD 14.4) sobre las proporciones EXACTAS de la corrida de la que salio.
+// rendimientoAUsar es el rendimiento acumulado que se suma (RD 10.4);
+// vigenciaRendimiento dice de que (nacional, vigencia) descontarlo.
 //
-// El consumo del saldo pasa por ActualizarSaldoReserva: el adaptador
-// bloquea la fila, entrega el saldo actual, y persiste lo que este metodo
-// devuelva -- todo en una transaccion. Sin eso, dos liberaciones
-// concurrentes leerian el mismo saldo y repartirian las dos.
-//
-// El saldo nuevo es el residuo, no cero: si no hay lineas de titular sobre
-// las que repartir (una corrida con toda la declaracion incompleta), el
-// importe se queda en la reserva en vez de evaporarse.
-//
-// Que la corrida sea prescrita o no lo decide quien llama (#34/prescripcion,
-// fuera de este alcance): este caso de uso solo ejecuta la liberacion.
-func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID string, rendimientoAcumulado decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
-	if rendimientoAcumulado.IsNegative() {
+// LiberarSaldoReserva bloquea reserva y rendimiento, persiste saldo,
+// rendimiento descontado y cada linea repartida, todo en una transaccion
+// (B1, B4). El saldo nuevo es el residuo, no cero: sin titulares a quien
+// repartir, el importe se queda en la reserva en vez de evaporarse (B5).
+func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
+	if rendimientoAUsar.IsNegative() {
 		return nil, decimal.Zero, fmt.Errorf("%w: rendimiento acumulado negativo", reparto.ErrRepartoInvalido)
 	}
 	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
@@ -77,15 +68,16 @@ func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID
 
 	var nuevas []reparto.LineaTitular
 	var residuo decimal.Decimal
-	err = b.Reservas.ActualizarSaldoReserva(ctx, procesoID, func(saldoActual decimal.Decimal) (decimal.Decimal, error) {
-		monto := saldoActual.Add(rendimientoAcumulado)
-		var errDist error
-		nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
-		if errDist != nil {
-			return decimal.Decimal{}, errDist
-		}
-		return residuo, nil
-	})
+	err = b.Reservas.LiberarSaldoReserva(ctx, procesoID, vigenciaRendimiento, rendimientoAUsar,
+		func(saldoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			monto := saldoActual.Add(rendimientoAUsar)
+			var errDist error
+			nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
+			if errDist != nil {
+				return decimal.Decimal{}, nil, errDist
+			}
+			return residuo, nuevas, nil
+		})
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
 	}
@@ -107,8 +99,9 @@ func (b BolsasAccesorias) RegistrarRendimiento(ctx context.Context, circuito rep
 
 // DistribuirRendimiento reparte el pool de rendimiento sobre las
 // proporciones de una corrida, sin revalorizar nada (RD 10.1). Consume el
-// monto: el nuevo valor del pool es el residuo, asi que una segunda llamada
-// no vuelve a repartir lo mismo (B3), igual que LiberarReservaPrescrita.
+// monto y persiste cada linea repartida en la misma transaccion: una
+// segunda llamada no reparte lo mismo otra vez (B3), y un crash despues del
+// commit no pierde el rastro de a quien se le pago (B2).
 func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID string, circuito reparto.Circuito, vigencia string) ([]reparto.LineaTitular, decimal.Decimal, error) {
 	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
 	if err != nil {
@@ -117,14 +110,15 @@ func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID s
 
 	var nuevas []reparto.LineaTitular
 	var residuo decimal.Decimal
-	err = b.Rendimientos.ActualizarMontoRendimiento(ctx, circuito, vigencia, func(montoActual decimal.Decimal) (decimal.Decimal, error) {
-		var errDist error
-		nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(montoActual, resultado.Titulares)
-		if errDist != nil {
-			return decimal.Decimal{}, errDist
-		}
-		return residuo, nil
-	})
+	err = b.Rendimientos.ActualizarMontoRendimiento(ctx, circuito, vigencia, procesoID,
+		func(montoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			var errDist error
+			nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(montoActual, resultado.Titulares)
+			if errDist != nil {
+				return decimal.Decimal{}, nil, errDist
+			}
+			return residuo, nuevas, nil
+		})
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, err)
 	}

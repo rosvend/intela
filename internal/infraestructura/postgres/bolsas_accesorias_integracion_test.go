@@ -51,7 +51,7 @@ func TestReplayDeReservaEsInmuneAQueLosParametrosCambienDespues(t *testing.T) {
 	// un hueco en la firma por el que una tasa o ponderacion vigente HOY
 	// pueda colarse en el replay. Lo que sigue prueba la otra mitad: que el
 	// resultado es identico al proporcionado en 2026.
-	nuevas, residuo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", dec("0.00"))
+	nuevas, residuo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "2026", dec("0.00"))
 	if err != nil {
 		t.Fatalf("liberar reserva: %v", err)
 	}

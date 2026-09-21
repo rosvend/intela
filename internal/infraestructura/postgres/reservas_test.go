@@ -70,7 +70,7 @@ func TestReservaPorProcesoSinFilaEsNoEncontrado(t *testing.T) {
 	}
 }
 
-func TestActualizarSaldoReservaPersisteLoQueDevuelveFn(t *testing.T) {
+func TestLiberarSaldoReservaPersisteLoQueDevuelveFn(t *testing.T) {
 	s := sembrarCorridaBase(t)
 	ctx := t.Context()
 
@@ -83,9 +83,9 @@ func TestActualizarSaldoReservaPersisteLoQueDevuelveFn(t *testing.T) {
 	}
 
 	var saldoRecibido decimal.Decimal
-	err = s.ActualizarSaldoReserva(ctx, "proceso-1", func(saldoActual decimal.Decimal) (decimal.Decimal, error) {
+	err = s.LiberarSaldoReserva(ctx, "proceso-1", "", decimal.Zero, func(saldoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
 		saldoRecibido = saldoActual
-		return dec("12.34"), nil
+		return dec("12.34"), nil, nil
 	})
 	if err != nil {
 		t.Fatalf("actualizar saldo: %v", err)
@@ -103,7 +103,7 @@ func TestActualizarSaldoReservaPersisteLoQueDevuelveFn(t *testing.T) {
 	}
 }
 
-func TestActualizarSaldoReservaNoPersisteSiFnFalla(t *testing.T) {
+func TestLiberarSaldoReservaNoPersisteSiFnFalla(t *testing.T) {
 	s := sembrarCorridaBase(t)
 	ctx := t.Context()
 
@@ -116,8 +116,8 @@ func TestActualizarSaldoReservaNoPersisteSiFnFalla(t *testing.T) {
 	}
 
 	errFn := errors.New("fallo de negocio")
-	err = s.ActualizarSaldoReserva(ctx, "proceso-1", func(decimal.Decimal) (decimal.Decimal, error) {
-		return dec("999.99"), errFn
+	err = s.LiberarSaldoReserva(ctx, "proceso-1", "", decimal.Zero, func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+		return dec("999.99"), nil, errFn
 	})
 	if !errors.Is(err, errFn) {
 		t.Fatalf("error = %v, se esperaba que se propagara errFn", err)
@@ -132,11 +132,11 @@ func TestActualizarSaldoReservaNoPersisteSiFnFalla(t *testing.T) {
 	}
 }
 
-// TestActualizarSaldoReservaEsAtomicoBajoConcurrencia es la reproduccion de
+// TestLiberarSaldoReservaEsAtomicoBajoConcurrencia es la reproduccion de
 // B1: N liberaciones concurrentes sobre la MISMA reserva nunca deben
-// repartir mas de lo que habia. Sin el FOR UPDATE de ActualizarSaldoReserva,
+// repartir mas de lo que habia. Sin el FOR UPDATE de LiberarSaldoReserva,
 // las N goroutines leerian el mismo saldo de 50 y las N lo consumirian.
-func TestActualizarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
+func TestLiberarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 	s := sembrarCorridaBase(t)
 	ctx := t.Context()
 
@@ -159,12 +159,12 @@ func TestActualizarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 		go func(i int) {
 			defer listas.Done()
 			<-arranca
-			errs[i] = s.ActualizarSaldoReserva(ctx, "proceso-1", func(saldoActual decimal.Decimal) (decimal.Decimal, error) {
+			errs[i] = s.LiberarSaldoReserva(ctx, "proceso-1", "", decimal.Zero, func(saldoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
 				saldosVistos[i] = saldoActual
 				// Consume todo lo que ve: si dos goroutines ven 50, las dos
 				// intentan dejar el saldo en cero y el total repartido
 				// (fuera de este test, en BolsasAccesorias) se duplicaria.
-				return decimal.Zero, nil
+				return decimal.Zero, nil, nil
 			})
 		}(i)
 	}
@@ -192,5 +192,129 @@ func TestActualizarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 	}
 	if !leido.Saldo.IsZero() {
 		t.Fatalf("saldo final = %s, se esperaba cero", leido.Saldo)
+	}
+}
+
+// TestLiberarSaldoReservaPersisteLasLineas es B2: las lineas que fn reparte
+// quedan en reservas_liberaciones en la misma transaccion que baja el saldo.
+func TestLiberarSaldoReservaPersisteLasLineas(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	lineas := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("40"), Importe: dec("20.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("60"), Importe: dec("30.00")},
+	}
+	err = s.LiberarSaldoReserva(ctx, "proceso-1", "", decimal.Zero,
+		func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			return decimal.Zero, lineas, nil
+		})
+	if err != nil {
+		t.Fatalf("liberar saldo: %v", err)
+	}
+
+	filas, err := s.pool.Query(ctx,
+		`SELECT obra_id, titular_id, importe FROM reservas_liberaciones WHERE proceso_id = $1 ORDER BY titular_id`,
+		"proceso-1")
+	if err != nil {
+		t.Fatalf("leer reservas_liberaciones: %v", err)
+	}
+	defer filas.Close()
+
+	var vistas int
+	for filas.Next() {
+		var obraID, titularID string
+		var importe decimal.Decimal
+		if err := filas.Scan(&obraID, &titularID, &importe); err != nil {
+			t.Fatalf("escanear fila: %v", err)
+		}
+		if !importe.Equal(lineas[vistas].Importe) {
+			t.Fatalf("linea %d: importe = %s, se esperaba %s", vistas, importe, lineas[vistas].Importe)
+		}
+		vistas++
+	}
+	if vistas != len(lineas) {
+		t.Fatalf("se persistieron %d lineas, se esperaban %d", vistas, len(lineas))
+	}
+}
+
+// TestLiberarSaldoReservaDescuentaRendimientoAtomicamenteBajoConcurrencia es
+// la reproduccion de B4: sin bloquear la fila de rendimientos, dos
+// liberaciones concurrentes verian el mismo monto disponible y las dos lo
+// usarian -- el mismo rendimiento financiando dos liberaciones a la vez.
+func TestLiberarSaldoReservaDescuentaRendimientoAtomicamenteBajoConcurrencia(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", dec("50.00")); err != nil {
+		t.Fatalf("acrecer rendimiento: %v", err)
+	}
+
+	for _, procesoID := range []string{"proceso-1", "proceso-2"} {
+		if procesoID != "proceso-1" {
+			if _, err := s.pool.Exec(ctx,
+				`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
+				 VALUES ('bolsa-2', 'usuario-1', '2026-02', 'nacional', 1000.00)`); err != nil {
+				t.Fatalf("sembrar bolsa-2: %v", err)
+			}
+			if _, err := s.pool.Exec(ctx,
+				`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
+				 VALUES ($1, 'nacional', 'importe_titular', '2026-02', 'bolsa-2', 'snap-1', 'IX')`,
+				procesoID); err != nil {
+				t.Fatalf("sembrar %q: %v", procesoID, err)
+			}
+		}
+		pool, err := reparto.NuevaPoolReserva(procesoID, reparto.Nacional, dec("10.00"), dec("5"))
+		if err != nil {
+			t.Fatalf("construir pool: %v", err)
+		}
+		if err := s.CrearReserva(ctx, pool); err != nil {
+			t.Fatalf("crear reserva de %q: %v", procesoID, err)
+		}
+	}
+
+	var listas sync.WaitGroup
+	arranca := make(chan struct{})
+	errs := make([]error, 2)
+	procesos := []string{"proceso-1", "proceso-2"}
+
+	for i := 0; i < 2; i++ {
+		listas.Add(1)
+		go func(i int) {
+			defer listas.Done()
+			<-arranca
+			errs[i] = s.LiberarSaldoReserva(ctx, procesos[i], "2026", dec("50.00"),
+				func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+					return decimal.Zero, nil, nil
+				})
+		}(i)
+	}
+	close(arranca)
+	listas.Wait()
+
+	exitos := 0
+	for _, err := range errs {
+		if err == nil {
+			exitos++
+		}
+	}
+	if exitos != 1 {
+		t.Fatalf("liberaciones exitosas = %d, se esperaba exactamente 1: el rendimiento de 50.00 solo alcanza para una", exitos)
+	}
+
+	leido, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !leido.Monto.IsZero() {
+		t.Fatalf("monto de rendimiento tras la unica liberacion exitosa = %s, se esperaba cero", leido.Monto)
 	}
 }

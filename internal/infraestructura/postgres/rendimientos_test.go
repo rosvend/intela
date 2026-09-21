@@ -129,10 +129,11 @@ func TestActualizarMontoRendimientoPersisteLoQueDevuelveFn(t *testing.T) {
 	}
 
 	var montoRecibido decimal.Decimal
-	err := s.ActualizarMontoRendimiento(ctx, reparto.Nacional, "2026", func(montoActual decimal.Decimal) (decimal.Decimal, error) {
-		montoRecibido = montoActual
-		return dec("7.00"), nil
-	})
+	err := s.ActualizarMontoRendimiento(ctx, reparto.Nacional, "2026", "proceso-inexistente",
+		func(montoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			montoRecibido = montoActual
+			return dec("7.00"), nil, nil
+		})
 	if err != nil {
 		t.Fatalf("actualizar monto: %v", err)
 	}
@@ -163,10 +164,11 @@ func TestActualizarMontoRendimientoConsumeElMontoParaLlamadasSiguientes(t *testi
 
 	consumir := func() decimal.Decimal {
 		var visto decimal.Decimal
-		if err := s.ActualizarMontoRendimiento(ctx, reparto.Nacional, "2026", func(montoActual decimal.Decimal) (decimal.Decimal, error) {
-			visto = montoActual
-			return decimal.Zero, nil
-		}); err != nil {
+		if err := s.ActualizarMontoRendimiento(ctx, reparto.Nacional, "2026", "proceso-inexistente",
+			func(montoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+				visto = montoActual
+				return decimal.Zero, nil, nil
+			}); err != nil {
 			t.Fatalf("actualizar monto: %v", err)
 		}
 		return visto
@@ -179,5 +181,53 @@ func TestActualizarMontoRendimientoConsumeElMontoParaLlamadasSiguientes(t *testi
 	}
 	if !segundo.IsZero() {
 		t.Fatalf("segundo consumo vio %s, se esperaba cero: el monto ya estaba consumido (B3)", segundo)
+	}
+}
+
+// TestActualizarMontoRendimientoPersisteLasLineas es B2: las lineas que fn
+// reparte quedan en rendimientos_distribuciones en la misma transaccion que
+// baja el monto, no solo en el valor de retorno.
+func TestActualizarMontoRendimientoPersisteLasLineas(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", dec("100.00")); err != nil {
+		t.Fatalf("acrecer: %v", err)
+	}
+
+	lineas := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("40"), Importe: dec("40.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("60.00")},
+	}
+	err := s.ActualizarMontoRendimiento(ctx, reparto.Nacional, "2026", "proceso-1",
+		func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			return decimal.Zero, lineas, nil
+		})
+	if err != nil {
+		t.Fatalf("actualizar monto: %v", err)
+	}
+
+	filas, err := s.pool.Query(ctx,
+		`SELECT obra_id, titular_id, importe FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' ORDER BY obra_id`)
+	if err != nil {
+		t.Fatalf("leer rendimientos_distribuciones: %v", err)
+	}
+	defer filas.Close()
+
+	var vistas int
+	for filas.Next() {
+		var obraID, titularID string
+		var importe decimal.Decimal
+		if err := filas.Scan(&obraID, &titularID, &importe); err != nil {
+			t.Fatalf("escanear fila: %v", err)
+		}
+		if !importe.Equal(lineas[vistas].Importe) {
+			t.Fatalf("linea %d: importe = %s, se esperaba %s", vistas, importe, lineas[vistas].Importe)
+		}
+		vistas++
+	}
+	if vistas != len(lineas) {
+		t.Fatalf("se persistieron %d lineas, se esperaban %d", vistas, len(lineas))
 	}
 }

@@ -667,14 +667,17 @@ type RepositorioLiquidacion interface {
 // Una por corrida: la proveniencia es la clave (ADR sobre corrida-por-bolsa,
 // 0019).
 //
-// ActualizarSaldoReserva es la unica forma de tocar el saldo: bloquea la
-// fila, entrega el saldo actual a fn, y persiste lo que fn devuelva, todo en
-// una transaccion. Sin esto, dos liberaciones concurrentes leen el mismo
-// saldo y las dos reparten sobre el.
+// LiberarSaldoReserva bloquea la fila (y la de rendimientos si
+// rendimientoAUsar > 0), entrega el saldo actual a fn, y persiste todo en
+// una transaccion: el saldo nuevo, el rendimiento descontado, y cada linea
+// que fn devuelva en reservas_liberaciones. Sin esto dos liberaciones
+// concurrentes leerian el mismo saldo y las dos repartirian sobre el, y el
+// rendimiento usado podria financiar dos liberaciones a la vez.
 type RepositorioReservas interface {
 	CrearReserva(ctx context.Context, r reparto.PoolReserva) error
 	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
-	ActualizarSaldoReserva(ctx context.Context, procesoID string, fn func(saldoActual decimal.Decimal) (decimal.Decimal, error)) error
+	LiberarSaldoReserva(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal,
+		fn func(saldoActual decimal.Decimal) (nuevoSaldo decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
 }
 
 // RepositorioRendimientos guarda y lee los pools de rendimientos financieros
@@ -683,12 +686,16 @@ type RepositorioReservas interface {
 //
 // AcrecerRendimiento suma en una sola sentencia: dos acrecimientos
 // concurrentes se suman, ninguno pisa al otro. ActualizarMontoRendimiento
-// es la misma forma que ActualizarSaldoReserva, para consumir el monto al
-// distribuirlo sin que una segunda llamada reparta lo mismo otra vez.
+// bloquea la fila, entrega el monto actual a fn, y persiste el monto nuevo
+// y cada linea que fn devuelva en rendimientos_distribuciones -- consumir
+// el monto es lo que impide que una segunda llamada reparta lo mismo otra
+// vez, y persistir las lineas es lo que evita perder el rastro si algo
+// falla despues del commit.
 type RepositorioRendimientos interface {
 	AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error
 	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
-	ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, fn func(montoActual decimal.Decimal) (decimal.Decimal, error)) error
+	ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia, procesoID string,
+		fn func(montoActual decimal.Decimal) (nuevoMonto decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
 }
 
 // RepositorioReclamacionesReserva guarda y lee los reclamos contra la

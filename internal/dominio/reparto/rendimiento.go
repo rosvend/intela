@@ -3,8 +3,11 @@ package reparto
 import (
 	"fmt"
 	"regexp"
+	"slices"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
 
 // vigenciaValida es el ano de la comunicacion publica (RD 10.1): cuatro
@@ -23,6 +26,9 @@ type PoolRendimiento struct {
 
 // NuevoPoolRendimiento abre el ledger de un circuito y una vigencia.
 func NuevoPoolRendimiento(circuito Circuito, vigencia string, monto decimal.Decimal) (PoolRendimiento, error) {
+	if !slices.Contains(recaudo.Circuitos(), circuito) {
+		return PoolRendimiento{}, fmt.Errorf("%w: circuito %q desconocido", ErrRepartoInvalido, circuito)
+	}
 	if !vigenciaValida.MatchString(vigencia) {
 		return PoolRendimiento{}, fmt.Errorf("%w: vigencia %q, se esperan cuatro digitos (RD 10.1)", ErrRepartoInvalido, vigencia)
 	}

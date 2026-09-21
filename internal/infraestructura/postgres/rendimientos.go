@@ -42,22 +42,25 @@ func (s *Store) PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circu
 }
 
 // ActualizarMontoRendimiento bloquea la fila, entrega el monto actual a fn,
-// y persiste lo que fn devuelva -- misma forma que
-// [Store.ActualizarSaldoReserva]. Consumir el monto (dejarlo en el residuo)
-// es lo que impide que una segunda distribucion reparta lo mismo otra vez
-// (B3).
-func (s *Store) ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, fn func(decimal.Decimal) (decimal.Decimal, error)) error {
+// y persiste el monto nuevo y cada linea de fn en rendimientos_distribuciones
+// -- misma forma que [Store.LiberarSaldoReserva]. Consumir el monto es lo
+// que impide que una segunda distribucion reparta lo mismo otra vez (B3);
+// persistir las lineas evita perder el rastro si algo falla despues del
+// commit (B2).
+func (s *Store) ActualizarMontoRendimiento(
+	ctx context.Context, circuito reparto.Circuito, vigencia, procesoID string,
+	fn func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error),
+) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
 		var montoActual decimal.Decimal
-		err := tx.QueryRow(ctx,
+		if err := tx.QueryRow(ctx,
 			`SELECT monto FROM rendimientos WHERE circuito = $1 AND vigencia = $2 FOR UPDATE`,
 			string(circuito), vigencia,
-		).Scan(&montoActual)
-		if err != nil {
+		).Scan(&montoActual); err != nil {
 			return traducirError(err, "bloquear rendimiento %s/%s", circuito, vigencia)
 		}
 
-		nuevoMonto, err := fn(montoActual)
+		nuevoMonto, lineas, err := fn(montoActual)
 		if err != nil {
 			return err
 		}
@@ -67,6 +70,17 @@ func (s *Store) ActualizarMontoRendimiento(ctx context.Context, circuito reparto
 			string(circuito), vigencia, nuevoMonto,
 		); err != nil {
 			return traducirError(err, "actualizar rendimiento %s/%s", circuito, vigencia)
+		}
+
+		for _, l := range lineas {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO rendimientos_distribuciones
+				   (circuito, vigencia, proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				string(circuito), vigencia, procesoID, l.ObraID, l.TitularID, l.IPI, l.Porcentaje, l.Importe,
+			); err != nil {
+				return traducirError(err, "guardar linea distribuida %s/%s", circuito, vigencia)
+			}
 		}
 		return nil
 	})
