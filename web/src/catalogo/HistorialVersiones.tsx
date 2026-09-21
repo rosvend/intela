@@ -86,7 +86,6 @@ export default function HistorialVersiones() {
         id={estado.id}
         volver={destino}
         className="historial-versiones"
-        explicacion=", así que no hay ningún historial de declaración que mostrar. El historial de una obra que sí existe y todavía no se ha declarado llega como una lista vacía, no como un error: los dos casos no son el mismo."
       />
     );
   }
@@ -156,18 +155,6 @@ function HistorialDeObra({
         <p className="muted detalle-nota">
           {obra.titulo} · {obra.id}
         </p>
-        {/* De que se trata esta pantalla, dicho una vez y sin prometer nada que
-            el contrato no diga: el contrato dice que la version anterior no se
-            borra ni se modifica y que solo se abre una nueva. El estado de cada
-            version es el que el backend calculo para ella, y por eso aqui abajo
-            puede no coincidir con el de hoy: es lo que regia entonces. */}
-        <p className="muted detalle-nota">
-          Cada versión con el reparto que regía en su momento. El servidor no
-          permite editar una versión pasada: la anterior no se borra ni se
-          modifica, solo se abre una nueva, y por eso esta pantalla es de solo
-          lectura. El estado de cada versión lo calcula el servidor para esa
-          versión y se muestra tal como llega.
-        </p>
       </header>
 
       <VersionesDeLaObra lectura={historial} />
@@ -225,24 +212,12 @@ function VersionesDeLaObra({
     return (
       <div className="catalogo-vacio">
         <p>Esta obra no tiene ninguna versión declarada.</p>
-        <p className="muted">
-          El servidor devuelve una lista vacía, no un error, para una obra sin
-          ninguna declaración: no es un fallo de esta pantalla.
-        </p>
       </div>
     );
   }
 
   return (
     <>
-      <p className="muted detalle-nota">
-        {historial.length === 1
-          ? "El historial trae 1 versión."
-          : `El historial trae ${historial.length} versiones.`}{" "}
-        Vienen del servidor de la más antigua a la más reciente, en ese orden:
-        esta pantalla no las reordena. La que rige hoy es la que llega sin
-        cerrar.
-      </p>
       {/* Una version sin partes no monta tabla, asi que si NINGUNA trae partes no
           hay un solo nombre que resolver -y el hook no sabe pedir "ninguno":
           `ids` vacio es, en el contrato, el padron entero-. Quien decide cual de
