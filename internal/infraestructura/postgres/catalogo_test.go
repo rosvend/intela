@@ -573,3 +573,61 @@ func TestLaBaseRechazaUnCoautorConRolNoAutoral(t *testing.T) {
 		}
 	})
 }
+
+// El buscador ordena por parecido: lo primero que se ve es lo que mas se
+// parece a lo que se escribio. Es el camino del usuario de #32.
+func TestBuscarOrdenaPorParecido(t *testing.T) {
+	s, pool := sembrar(t)
+	obraConTitulo(t, pool, "obra-casi", "La Casa de las Dos Palmeras")
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Titulo: "La Casa de las Dos Palmas"})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	if len(obras) < 2 {
+		t.Fatalf("se esperaban las dos parecidas, llegaron %v", ids(obras))
+	}
+	if obras[0].ID() != obraCompleta {
+		t.Fatalf("la mas parecida no llego primera: %v", ids(obras))
+	}
+}
+
+// Lo que el ILIKE no puede: tildes que no se escriben, mayusculas del catalogo
+// de origen y palabras en otro orden.
+func TestBuscarTituloTolerasTildesCajaYOrden(t *testing.T) {
+	s, pool := sembrar(t)
+	obraConTitulo(t, pool, "obra-tildes", "¿Dónde está Elisa?")
+
+	casos := map[string]string{
+		"sin tildes":      "Donde esta Elisa",
+		"en mayusculas":   "DONDE ESTA ELISA",
+		"en otro orden":   "Elisa, donde esta",
+		"con las tildes":  "¿Dónde está Elisa?",
+		"tildes cruzadas": "Dónde esta Elisa",
+	}
+	for nombre, consulta := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Titulo: consulta})
+			if err != nil {
+				t.Fatalf("Buscar: %v", err)
+			}
+			if len(obras) == 0 || obras[0].ID() != "obra-tildes" {
+				t.Fatalf("%q no encontro la obra: %v", consulta, ids(obras))
+			}
+		})
+	}
+}
+
+// Sin titulo no hay contra que parecerse: el orden vuelve a ser el de id, y la
+// paginacion sigue siendo la de siempre.
+func TestBuscarSinTituloSigueOrdenadoPorID(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Genero: "Comedia"})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	if got := ids(obras); !slices.IsSorted(got) {
+		t.Fatalf("sin titulo el orden deberia ser por id: %v", got)
+	}
+}

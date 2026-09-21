@@ -9,8 +9,9 @@
 //
 // # Que hay aqui y que no
 //
-// Andamiaje: los tipos de entrada y salida de la cascada. La cascada en si y
-// la similitud de titulos entran en un PR propio.
+// La cascada entera, pura: [Resolver] decide, y quien llama le trae los
+// sondeos ya resueltos en una [Consulta]. La similitud y la normalizacion de
+// titulos viven en el adaptador, detras de un puerto (D1 del diseno de #32).
 //
 // # La cascada del ADR 0007
 //
@@ -22,6 +23,9 @@
 //  3. Difuso sobre el titulo normalizado, por encima de umbral_match, que es
 //     un parametro normativo con vigencia y no una constante (ADR 0004).
 //  4. ONI: a la cola manual. No es un fallo, es el diseno.
+//
+// El escalon 3 tiene DOS cortes (ver [Umbrales]). Las decisiones de diseno
+// estan en docs/planes/32-difuso/diseno.md.
 //
 // Un error de base de datos al consultar un escalon NO es "no hay match":
 // reclasificar en silencio un uso como ONI por un fallo de red es un error

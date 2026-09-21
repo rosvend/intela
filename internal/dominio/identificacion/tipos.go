@@ -36,4 +36,7 @@ type Resultado struct {
 	Puntaje   decimal.Decimal
 	ONI       bool
 	Evidencia string
+
+	// Candidatos solo viaja en la banda ambigua: es lo que revisa #39 (D2).
+	Candidatos []Candidato
 }

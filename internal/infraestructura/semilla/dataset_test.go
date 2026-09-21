@@ -121,8 +121,9 @@ func TestParametrosSinteticosVanEtiquetados(t *testing.T) {
 		"deduccion.administrativa": true,
 		"deduccion.social":         true,
 		"reserva.errores_tecnicos": true,
-		// Umbral de ingenieria: un ADR no es un reglamento (ADR 0007).
-		"matching.umbral": true,
+		// Umbrales de ingenieria: un ADR no es un reglamento (ADR 0007).
+		"matching.umbral":       true,
+		"matching.umbral_banda": true,
 		// No publicados (RD 9.7, ADR 0004).
 		"ott.wa": true, "ott.wb": true, "ott.wc": true,
 		// Tasas a COP: USD es P-09 provisional; EUR sintetica hasta tasa propia.

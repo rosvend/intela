@@ -6,6 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -73,20 +76,27 @@ type identificacionFalsa struct {
 	alias       map[string]string // "fuente|tipo|valor" -> obraID
 	porIDGlobal map[string]string // "ida|eidr|imdb" -> obraID (con las otras dos vacias)
 
-	errAlias        error
-	errIDGlobal     error
-	errGuardarAlias error
-	errGuardarMatch error
+	errAlias             error
+	errIDGlobal          error
+	errGuardarAlias      error
+	errGuardarMatch      error
+	errGuardarCandidatos error
 	// cambiadas simula filas que otro proceso cambio entre la lectura y la
 	// escritura: GuardarMatch responde ErrNoEncontrado, como el UPDATE
 	// condicional del adaptador real.
 	cambiadas map[string]bool
 
-	llamadasAlias    []string
-	llamadasIDGlobal []string
-	guardadosAlias   []llamadaAlias
-	guardadosMatch   []llamadaMatch
-	orden            []string // "alias" / "match:<usoID>", en el orden en que se llamaron
+	llamadasAlias       []string
+	llamadasIDGlobal    []string
+	guardadosAlias      []llamadaAlias
+	guardadosMatch      []llamadaMatch
+	guardadosCandidatos []llamadaCandidatos
+	orden               []string // "alias" / "candidatos:<usoID>" / "match:<usoID>", en orden
+}
+
+type llamadaCandidatos struct {
+	UsoID      string
+	Candidatos []identificacion.Candidato
 }
 
 func (f *identificacionFalsa) Alias(_ context.Context, fuente, tipo, valor string) (string, error) {
@@ -128,6 +138,61 @@ func (f *identificacionFalsa) GuardarMatch(_ context.Context, usoID, escalonPrev
 	return f.errGuardarMatch
 }
 
+func (f *identificacionFalsa) GuardarCandidatos(_ context.Context, usoID string, cs []identificacion.Candidato) error {
+	f.guardadosCandidatos = append(f.guardadosCandidatos, llamadaCandidatos{usoID, cs})
+	f.orden = append(f.orden, "candidatos:"+usoID)
+	return f.errGuardarCandidatos
+}
+
+// similitudFalsa cuenta consultas: "no se consulta si ya hay match" hay que
+// poder probarlo.
+type similitudFalsa struct {
+	porTitulo map[string][]identificacion.Candidato
+	err       error
+	llamadas  []string
+	pisos     []decimal.Decimal
+}
+
+func (s *similitudFalsa) Candidatos(_ context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error) {
+	s.llamadas = append(s.llamadas, titulo)
+	s.pisos = append(s.pisos, piso)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.porTitulo[titulo], nil
+}
+
+// parametrosFalsos registra con que fecha se pregunto cada umbral.
+type parametrosFalsos struct {
+	valores  map[string]string
+	err      error
+	llamadas []llamadaParametro
+}
+
+type llamadaParametro struct {
+	Clave string
+	Fecha time.Time
+}
+
+func (p *parametrosFalsos) ParametroVigente(_ context.Context, clave string, fecha time.Time) (decimal.Decimal, error) {
+	p.llamadas = append(p.llamadas, llamadaParametro{clave, fecha})
+	if p.err != nil {
+		return decimal.Zero, p.err
+	}
+	v, ok := p.valores[clave]
+	if !ok {
+		return decimal.Zero, errors.New("parametro sin vigencia: " + clave)
+	}
+	return decimal.RequireFromString(v), nil
+}
+
+func umbralesPorDefecto() *parametrosFalsos {
+	return &parametrosFalsos{valores: map[string]string{
+		ClaveUmbralMatch: "0.60",
+		ClaveUmbralBanda: "0.45",
+	}}
+}
+
 // usoPendiente arma un UsoPersistido con los valores que pone la ingesta: TV,
 // oni true, emisiones 1, escalon pendiente. Cada prueba ajusta lo que le
 // importa (fuente, ids_fuente, escalon) por encima de esta base.
@@ -145,11 +210,50 @@ func usoPendiente(id, fuente, idsFuente string) UsoPersistido {
 	}
 }
 
+// correr: cascada con un motor que no propone nada. Caso base de los
+// escalones 1-2, donde lo que no resuelva sale a ONI.
 func correr(t *testing.T, ing *ingestaFalsa, idf *identificacionFalsa, excluidas identificacion.FuentesExcluidas, usos ...UsoPersistido) (int, error) {
 	t.Helper()
+	return correrCon(t, ing, idf, &similitudFalsa{}, umbralesPorDefecto(), excluidas, usos...)
+}
+
+func correrCon(
+	t *testing.T,
+	ing *ingestaFalsa,
+	idf *identificacionFalsa,
+	sim *similitudFalsa,
+	par *parametrosFalsos,
+	excluidas identificacion.FuentesExcluidas,
+	usos ...UsoPersistido,
+) (int, error) {
+	t.Helper()
 	ing.usos = usos
-	r := ResolverUsos{Usos: ing, Identificacion: idf, FueraDeRepertorio: excluidas}
+	r := ResolverUsos{
+		Usos:              ing,
+		Identificacion:    idf,
+		Similitud:         sim,
+		Parametros:        par,
+		FueraDeRepertorio: excluidas,
+	}
 	return r.ResolverUsos(t.Context(), "2024")
+}
+
+// soloONI: la unica escritura fue marcar la fila ONI sin obra.
+func soloONI(t *testing.T, idf *identificacionFalsa, usoID string) {
+	t.Helper()
+	if len(idf.guardadosAlias) != 0 {
+		t.Fatalf("una fila no resuelta no aprende alias: %+v", idf.guardadosAlias)
+	}
+	if len(idf.guardadosCandidatos) != 0 {
+		t.Fatalf("sin candidatos no se escribe la bandeja: %+v", idf.guardadosCandidatos)
+	}
+	if len(idf.guardadosMatch) != 1 {
+		t.Fatalf("se esperaba una escritura de ONI, hubo %d: %+v", len(idf.guardadosMatch), idf.guardadosMatch)
+	}
+	m := idf.guardadosMatch[0]
+	if m.UsoID != usoID || m.R.Escalon != identificacion.EscalonONI || m.R.ObraID != "" || !m.R.ONI {
+		t.Fatalf("se esperaba ONI sin obra para %q: %+v", usoID, m)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -281,9 +385,7 @@ func TestResolverUsosConFilaSinDatosNoResuelve(t *testing.T) {
 	if len(idf.llamadasAlias) != 0 || len(idf.llamadasIDGlobal) != 0 {
 		t.Fatal("una fila sin par ni globales no puede sondear nada")
 	}
-	if len(idf.guardadosAlias) != 0 || len(idf.guardadosMatch) != 0 {
-		t.Fatal("una fila sin datos no puede escribir nada: queda pendiente para el difuso")
-	}
+	soloONI(t, idf, "u-1")
 }
 
 func TestResolverUsosExcluyeSinSondearYGuardaLaExclusion(t *testing.T) {
@@ -384,8 +486,12 @@ func TestResolverUsosExcluidaQueYaNoLoEstaYNoResuelveVuelveAPendiente(t *testing
 		t.Fatalf("se esperaba una escritura: %+v", idf.guardadosMatch)
 	}
 	m := idf.guardadosMatch[0]
-	if m.EscalonPrevio != identificacion.EscalonExcluido || m.R.Escalon != identificacion.EscalonPendiente || m.R.ObraID != "" {
-		t.Fatalf("se esperaba devolver a pendiente sin obra: %+v", m)
+	// Antes del escalon 3 esto volvia a 'pendiente', porque el difuso todavia
+	// no existia y habia que dejarsela. Ahora la cascada esta completa: si
+	// vuelve al repertorio y aun asi no la reconoce nadie, el estado honesto es
+	// ONI (RD 13.8), no "todavia no se ha mirado".
+	if m.EscalonPrevio != identificacion.EscalonExcluido || m.R.Escalon != identificacion.EscalonONI || m.R.ObraID != "" {
+		t.Fatalf("se esperaba ONI sin obra: %+v", m)
 	}
 }
 
@@ -414,19 +520,20 @@ func TestResolverUsosSaltaUnaFilaQueCambioDuranteLaCorrida(t *testing.T) {
 	}
 }
 
-func TestResolverUsosIgnoraLasQueNoEstanPendientes(t *testing.T) {
+// Una automatica no pisa una humana: la fila 'manual' es la que importa.
+func TestResolverUsosNoRehaceLoYaDecidido(t *testing.T) {
 	ing := &ingestaFalsa{}
 	idf := &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}
 
 	yaAlias := usoPendiente("u-1", "caracol", "id_ficha=1")
-	yaAlias.Escalon = "alias"
-	yaOni := usoPendiente("u-2", "caracol", "id_ficha=1")
-	yaOni.Escalon = "oni"
+	yaAlias.Escalon = identificacion.EscalonAlias
+	yaDifuso := usoPendiente("u-2", "caracol", "id_ficha=1")
+	yaDifuso.Escalon = identificacion.EscalonDifuso
 	yaManual := usoPendiente("u-3", "caracol", "id_ficha=1")
 	yaManual.Escalon = "manual"
 	pendiente := usoPendiente("u-4", "caracol", "id_ficha=1")
 
-	n, err := correr(t, ing, idf, nil, yaAlias, yaOni, yaManual, pendiente)
+	n, err := correr(t, ing, idf, nil, yaAlias, yaDifuso, yaManual, pendiente)
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
@@ -434,7 +541,29 @@ func TestResolverUsosIgnoraLasQueNoEstanPendientes(t *testing.T) {
 		t.Fatalf("n = %d, se esperaba 1 (solo la pendiente)", n)
 	}
 	if len(idf.guardadosMatch) != 1 || idf.guardadosMatch[0].UsoID != "u-4" {
-		t.Fatalf("se toco una fila que no estaba pendiente: %+v", idf.guardadosMatch)
+		t.Fatalf("se toco una fila ya decidida: %+v", idf.guardadosMatch)
+	}
+}
+
+// Las ONI SI se reintentan: el catalogo crece y una obra de alta hoy
+// identifica usos que el mes pasado no se parecian a nada (D6).
+func TestResolverUsosReintentaLasONICuandoCreceElCatalogo(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}
+
+	yaOni := usoPendiente("u-1", "caracol", "id_ficha=1")
+	yaOni.Escalon = identificacion.EscalonONI
+
+	n, err := correr(t, ing, idf, nil, yaOni)
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1: la ONI se reintenta", n)
+	}
+	m := idf.guardadosMatch[0]
+	if m.EscalonPrevio != identificacion.EscalonONI || m.R.Escalon != identificacion.EscalonAlias {
+		t.Fatalf("se esperaba resolver la ONI por alias: %+v", m)
 	}
 }
 
@@ -483,9 +612,7 @@ func TestResolverUsosSinAliasYSinGlobalesQueCasenNoResuelve(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("n = %d, se esperaba 0", n)
 	}
-	if len(idf.guardadosAlias) != 0 || len(idf.guardadosMatch) != 0 {
-		t.Fatal("una fila no resuelta no puede escribir nada: queda pendiente para el difuso")
-	}
+	soloONI(t, idf, "u-1")
 }
 
 func TestResolverUsosPropagaElErrorDeGuardarMatch(t *testing.T) {
@@ -508,7 +635,13 @@ func TestResolverUsosPideElPeriodoCorrecto(t *testing.T) {
 	ing := &ingestaFalsa{usos: []UsoPersistido{usoPendiente("u-1", "caracol", "id_ficha=1")}}
 	idf := &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}
 
-	n, err := (ResolverUsos{Usos: ing, Identificacion: idf}).ResolverUsos(t.Context(), "2024-06")
+	r := ResolverUsos{
+		Usos:           ing,
+		Identificacion: idf,
+		Similitud:      &similitudFalsa{},
+		Parametros:     umbralesPorDefecto(),
+	}
+	n, err := r.ResolverUsos(t.Context(), "2024-06")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
@@ -649,5 +782,372 @@ func TestEntradaDesdeUso(t *testing.T) {
 				t.Fatalf("entradaDesdeUso() = %+v, se esperaba %+v", tengo, c.quiero)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U13-U21: el escalon 3 (#32)
+
+const tituloDePrueba = "Titulo de prueba"
+
+func conCandidatos(cs ...identificacion.Candidato) *similitudFalsa {
+	return &similitudFalsa{porTitulo: map[string][]identificacion.Candidato{tituloDePrueba: cs}}
+}
+
+func cand(obraID, puntaje string) identificacion.Candidato {
+	return identificacion.Candidato{ObraID: obraID, Puntaje: decimal.RequireFromString(puntaje)}
+}
+
+func TestResolverUsosResuelvePorDifusoYAprendeAlias(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := conCandidatos(cand("obra-45", "0.83"))
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=871732"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1", n)
+	}
+
+	m := idf.guardadosMatch[0]
+	if m.R.Escalon != identificacion.EscalonDifuso || m.R.ObraID != "obra-45" {
+		t.Fatalf("match mal armado: %+v", m)
+	}
+	if !m.R.Puntaje.Equal(decimal.RequireFromString("0.83")) {
+		t.Fatalf("el puntaje no llego a la fila: %s", m.R.Puntaje)
+	}
+	if m.R.ONI {
+		t.Fatal("una fila identificada no es ONI")
+	}
+
+	// El aprendizaje es lo que hace que la cola encoja (D4).
+	if len(idf.guardadosAlias) != 1 {
+		t.Fatalf("un match difuso tiene que dejar alias: %+v", idf.guardadosAlias)
+	}
+	a := idf.guardadosAlias[0]
+	if a.Fuente != "caracol" || a.Tipo != "id_ficha" || a.Valor != "871732" ||
+		a.ObraID != "obra-45" || a.Quien != quienCascada {
+		t.Fatalf("alias mal aprendido: %+v", a)
+	}
+	// D5: primero el alias, despues el match.
+	if !slices.Equal(idf.orden, []string{"alias", "match:u-1"}) {
+		t.Fatalf("orden de escritura = %v, se esperaba [alias match:u-1]", idf.orden)
+	}
+}
+
+func TestResolverUsosBandaAmbiguaNoAsignaYAdjuntaCandidatos(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := conCandidatos(cand("obra-45", "0.52"), cand("obra-99", "0.47"))
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=871732"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, se esperaba 0: la banda no asigna", n)
+	}
+
+	m := idf.guardadosMatch[0]
+	if m.R.ObraID != "" || !m.R.ONI || m.R.Escalon != identificacion.EscalonONI {
+		t.Fatalf("la banda ambigua no puede asignar obra: %+v", m)
+	}
+	// Nunca a ciegas (ADR 0007): ni siquiera el mejor candidato de la banda.
+	if len(idf.guardadosAlias) != 0 {
+		t.Fatalf("la banda ambigua no aprende alias: %+v", idf.guardadosAlias)
+	}
+
+	if len(idf.guardadosCandidatos) != 1 {
+		t.Fatalf("se esperaba una escritura de candidatos: %+v", idf.guardadosCandidatos)
+	}
+	c := idf.guardadosCandidatos[0]
+	if c.UsoID != "u-1" || len(c.Candidatos) != 2 {
+		t.Fatalf("candidatos mal guardados: %+v", c)
+	}
+	if c.Candidatos[0].ObraID != "obra-45" || !c.Candidatos[0].Puntaje.Equal(decimal.RequireFromString("0.52")) {
+		t.Fatalf("el mejor candidato no llego con su puntaje: %+v", c.Candidatos[0])
+	}
+
+	// Candidatos antes del match (D5): al reves quedaria una ONI con la
+	// bandeja vacia.
+	if !slices.Equal(idf.orden, []string{"candidatos:u-1", "match:u-1"}) {
+		t.Fatalf("orden de escritura = %v, se esperaba [candidatos:u-1 match:u-1]", idf.orden)
+	}
+}
+
+func TestResolverUsosPorDebajoDeLaBandaEsONISinCandidatos(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := conCandidatos(cand("obra-45", "0.20"))
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=871732"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, se esperaba 0", n)
+	}
+	soloONI(t, idf, "u-1")
+}
+
+// Criterio de aceptacion: por debajo del umbral, ONI y NO una asignacion
+// equivocada. Un falso positivo paga a quien no corresponde (R-05).
+func TestResolverUsosNuncaAsignaPorDebajoDelUmbral(t *testing.T) {
+	for _, puntaje := range []string{"0.59999", "0.55", "0.45", "0.10"} {
+		t.Run(puntaje, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			idf := &identificacionFalsa{}
+			sim := conCandidatos(cand("obra-45", puntaje))
+
+			if _, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+				usoPendiente("u-1", "caracol", "id_ficha=871732")); err != nil {
+				t.Fatalf("ResolverUsos: %v", err)
+			}
+			if got := idf.guardadosMatch[0].R.ObraID; got != "" {
+				t.Fatalf("puntaje %s asigno la obra %q por debajo del umbral 0.60", puntaje, got)
+			}
+		})
+	}
+}
+
+// El escalon 3 es la parte cara: si ya hay match, consultarlo es tirarlo.
+func TestResolverUsosNoConsultaElDifusoSiYaHayMatch(t *testing.T) {
+	casos := []struct {
+		nombre string
+		idf    *identificacionFalsa
+	}{
+		{"alias", &identificacionFalsa{alias: map[string]string{"caracol|id_ficha|1": "obra-1"}}},
+		{"id global", &identificacionFalsa{porIDGlobal: map[string]string{"||tt0100001": "obra-1"}}},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			sim := conCandidatos(cand("obra-99", "0.99"))
+
+			if _, err := correrCon(t, ing, c.idf, sim, umbralesPorDefecto(), nil,
+				usoPendiente("u-1", "caracol", "id_ficha=1\nimdb=tt0100001")); err != nil {
+				t.Fatalf("ResolverUsos: %v", err)
+			}
+			if len(sim.llamadas) != 0 {
+				t.Fatalf("se consulto el difuso teniendo match: %v", sim.llamadas)
+			}
+			if idObra := c.idf.guardadosMatch[0].R.ObraID; idObra != "obra-1" {
+				t.Fatalf("un parecido de 0.99 desbanco a una igualdad: %q", idObra)
+			}
+		})
+	}
+}
+
+func TestResolverUsosNoConsultaElDifusoSinTitulo(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := conCandidatos(cand("obra-45", "0.99"))
+
+	u := usoPendiente("u-1", "caracol", "id_ficha=1")
+	u.Titulo = ""
+
+	if _, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil, u); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if len(sim.llamadas) != 0 {
+		t.Fatalf("se comparo la cadena vacia contra el catalogo: %v", sim.llamadas)
+	}
+	soloONI(t, idf, "u-1")
+}
+
+// D8: un fallo del motor no es "no hay match". Tragarselo mandaria a ONI una
+// fila que quiza se identificaba sola.
+func TestResolverUsosAbortaSiFallaElMotorDeSimilitud(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{err: errors.New("base caida")}
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"))
+	if err == nil {
+		t.Fatal("se esperaba un error")
+	}
+	if n != 0 {
+		t.Fatalf("n = %d, se esperaba 0", n)
+	}
+	if len(idf.guardadosMatch) != 0 {
+		t.Fatalf("no se puede marcar nada con el motor caido: %+v", idf.guardadosMatch)
+	}
+	if !strings.Contains(err.Error(), "escalon 3") {
+		t.Fatalf("el error no dice que escalon fallo: %v", err)
+	}
+}
+
+func TestResolverUsosPropagaElErrorDeGuardarCandidatos(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{errGuardarCandidatos: errors.New("disco lleno")}
+	sim := conCandidatos(cand("obra-45", "0.50"))
+
+	_, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"))
+	if err == nil {
+		t.Fatal("se esperaba un error")
+	}
+	if len(idf.guardadosMatch) != 0 {
+		t.Fatal("sin candidatos escritos no se puede marcar la fila ONI: la bandeja quedaria vacia")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U22-U25: los umbrales como parametro normativo
+
+// Contra la fecha del PERIODO, no del reloj: lo que se defiende en una
+// reclamacion es el criterio vigente cuando se decidio (D3).
+func TestResolverUsosLeeLosUmbralesContraLaFechaDelPeriodo(t *testing.T) {
+	casos := []struct {
+		periodo string
+		quiero  time.Time
+	}{
+		{"2024", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{"2024-06", time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)},
+		{"2024-12", time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, c := range casos {
+		t.Run(c.periodo, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			par := umbralesPorDefecto()
+			r := ResolverUsos{
+				Usos:           ing,
+				Identificacion: &identificacionFalsa{},
+				Similitud:      &similitudFalsa{},
+				Parametros:     par,
+			}
+			if _, err := r.ResolverUsos(t.Context(), c.periodo); err != nil {
+				t.Fatalf("ResolverUsos: %v", err)
+			}
+			for _, l := range par.llamadas {
+				if !l.Fecha.Equal(c.quiero) {
+					t.Fatalf("%s se pidio en %s, se esperaba %s", l.Clave, l.Fecha, c.quiero)
+				}
+			}
+		})
+	}
+}
+
+// Una vez por corrida: por fila, un cambio a mitad de lote partiria la corrida
+// en dos criterios sin que nada lo registrara.
+func TestResolverUsosLeeLosUmbralesUnaSolaVez(t *testing.T) {
+	ing := &ingestaFalsa{}
+	par := umbralesPorDefecto()
+
+	usos := make([]UsoPersistido, 0, 5)
+	for _, id := range []string{"u-1", "u-2", "u-3", "u-4", "u-5"} {
+		usos = append(usos, usoPendiente(id, "caracol", "id_ficha=1"))
+	}
+
+	if _, err := correrCon(t, ing, &identificacionFalsa{}, &similitudFalsa{}, par, nil, usos...); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if len(par.llamadas) != 2 {
+		t.Fatalf("se leyeron los parametros %d veces, se esperaban 2 (una por clave): %+v",
+			len(par.llamadas), par.llamadas)
+	}
+}
+
+// ADR 0004: ausente es ausente. Con cero por defecto, el umbral asignaria la
+// primera obra que se pareciera en algo.
+func TestResolverUsosAbortaSiFaltaUnUmbral(t *testing.T) {
+	for _, falta := range []string{ClaveUmbralMatch, ClaveUmbralBanda} {
+		t.Run(falta, func(t *testing.T) {
+			par := umbralesPorDefecto()
+			delete(par.valores, falta)
+
+			ing := &ingestaFalsa{}
+			idf := &identificacionFalsa{}
+			n, err := correrCon(t, ing, idf, &similitudFalsa{}, par, nil,
+				usoPendiente("u-1", "caracol", "id_ficha=1"))
+			if err == nil {
+				t.Fatal("se esperaba un error")
+			}
+			if n != 0 || len(idf.guardadosMatch) != 0 {
+				t.Fatal("sin umbral no se puede tocar ninguna fila")
+			}
+			if !strings.Contains(err.Error(), falta) {
+				t.Fatalf("el error no nombra la clave que falta (%s): %v", falta, err)
+			}
+			// Ni siquiera se leen los usos: fallar antes evita una corrida a
+			// medias que haya que deshacer.
+			if len(ing.usosLlamadas) != 0 {
+				t.Fatal("se leyeron los usos sin tener los umbrales")
+			}
+		})
+	}
+}
+
+// Piso por encima del umbral: nada podria caer en la banda, y filas que
+// merecian revision saldrian a ONI ciega.
+func TestResolverUsosAbortaSiLaBandaEstaPorEncimaDelUmbral(t *testing.T) {
+	par := &parametrosFalsos{valores: map[string]string{
+		ClaveUmbralMatch: "0.40",
+		ClaveUmbralBanda: "0.70",
+	}}
+	idf := &identificacionFalsa{}
+
+	_, err := correrCon(t, &ingestaFalsa{}, idf, &similitudFalsa{}, par, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1"))
+	if err == nil {
+		t.Fatal("se esperaba un error por parametros incoherentes")
+	}
+	if len(idf.guardadosMatch) != 0 {
+		t.Fatal("no se puede tocar ninguna fila con los umbrales incoherentes")
+	}
+}
+
+func TestResolverUsosExigeMotorYParametros(t *testing.T) {
+	casos := []struct {
+		nombre string
+		r      ResolverUsos
+	}{
+		{"sin motor", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Parametros: umbralesPorDefecto()}},
+		{"sin parametros", ResolverUsos{Usos: &ingestaFalsa{}, Identificacion: &identificacionFalsa{}, Similitud: &similitudFalsa{}}},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if _, err := c.r.ResolverUsos(t.Context(), "2024"); err == nil {
+				t.Fatal("se esperaba un error: una cascada incompleta mandaria a ONI lo que nadie intento identificar")
+			}
+		})
+	}
+}
+
+func TestFechaDePeriodoRechazaLoQueNoTieneForma(t *testing.T) {
+	for _, malo := range []string{"", "24-06", "2024/06", "junio", "2024-6"} {
+		t.Run(malo, func(t *testing.T) {
+			if _, err := fechaDePeriodo(malo); err == nil {
+				t.Fatalf("fechaDePeriodo(%q) no fallo", malo)
+			}
+		})
+	}
+}
+
+// El piso del motor es el MISMO parametro que aplica la cascada: configurado
+// aparte, un cambio de parametro no tendria efecto sobre lo que se recupera.
+func TestResolverUsosConsultaElMotorConElPisoVigente(t *testing.T) {
+	ing := &ingestaFalsa{}
+	sim := &similitudFalsa{}
+	par := &parametrosFalsos{valores: map[string]string{
+		ClaveUmbralMatch: "0.80",
+		ClaveUmbralBanda: "0.33",
+	}}
+
+	if _, err := correrCon(t, ing, &identificacionFalsa{}, sim, par, nil,
+		usoPendiente("u-1", "caracol", "id_ficha=1")); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if len(sim.pisos) != 1 {
+		t.Fatalf("se esperaba una consulta al motor: %+v", sim.pisos)
+	}
+	if !sim.pisos[0].Equal(decimal.RequireFromString("0.33")) {
+		t.Fatalf("el motor se consulto con piso %s, se esperaba 0.33", sim.pisos[0])
 	}
 }

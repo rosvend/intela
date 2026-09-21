@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
@@ -44,10 +46,15 @@ type Notificador interface {
 	Notificar(ctx context.Context, dest, asunto, cuerpo string) (acuse string, err error)
 }
 
-// Similitud propone obras candidatas para un titulo. El umbral no se aplica
-// aqui: lo aplica la cascada, con el valor que venga del snapshot normativo.
+// Similitud propone obras candidatas para un titulo, puntuadas 0-1 y de mas a
+// menos parecida.
+//
+// El UMBRAL no se aplica aqui: lo aplica la cascada. `piso` es solo hasta donde
+// merece la pena buscar, y llega por argumento porque es el mismo parametro
+// que resuelve la cascada contra la fecha del periodo. Ver D1 y D3 de
+// docs/planes/32-difuso/diseno.md.
 type Similitud interface {
-	Candidatos(ctx context.Context, titulo string) ([]identificacion.Candidato, error)
+	Candidatos(ctx context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error)
 }
 
 // Hasher verifica y genera hashes de contrasena.
@@ -345,11 +352,14 @@ type FiltroTitulares struct {
 // GuardarMatch escribe r solo si la fila sigue en escalonPrevio, el escalon
 // con que se leyo; si no existe o ya cambio, devuelve ErrNoEncontrado sin
 // escribir nada.
+// GuardarCandidatos REEMPLAZA la bandeja de un uso: son el resultado de una
+// corrida contra el catalogo tal como estaba (D9).
 type RepositorioIdentificacion interface {
 	Alias(ctx context.Context, fuente, tipo, valor string) (obraID string, err error)
 	GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error
 	ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (obraID string, err error)
 	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
+	GuardarCandidatos(ctx context.Context, usoID string, cs []identificacion.Candidato) error
 }
 
 // RepositorioUsosDeReparto entrega los usos que ponderan la bolsa de un canal.
@@ -553,6 +563,15 @@ type RepositorioRecaudo interface {
 type GestionRecaudo interface {
 	RegistrarUsuario(ctx context.Context, u recaudo.Usuario, ahora time.Time, actorID string) error
 	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
+}
+
+// ParametroEnFecha resuelve UN parametro normativo vigente en una fecha.
+//
+// Mas estrecho que [ParametrosNormativos] a proposito: identificar no mueve
+// dinero (ADR 0003) y no necesita el snapshot congelado de #118. Una clave sin
+// vigencia es un error que la nombra, nunca un cero (ADR 0004).
+type ParametroEnFecha interface {
+	ParametroVigente(ctx context.Context, clave string, fecha time.Time) (decimal.Decimal, error)
 }
 
 // ParametrosNormativos resuelve los parametros con vigencia y organo

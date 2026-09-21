@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 )
@@ -98,4 +100,50 @@ func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r
 			usoID, escalonPrevio, aplicacion.ErrNoEncontrado)
 	}
 	return nil
+}
+
+// GuardarCandidatos reemplaza la bandeja de revision de un uso (D9).
+//
+// En transaccion porque borrar y escribir son la misma operacion. `orden` va
+// explicito y no se deduce del puntaje: el desempate es regla del dominio.
+func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identificacion.Candidato) error {
+	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM candidatos_match WHERE uso_id = $1`, usoID); err != nil {
+			return traducirError(err, "limpiar candidatos del uso %q", usoID)
+		}
+		for i, c := range cs {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO candidatos_match (uso_id, obra_id, puntaje, orden)
+				 VALUES ($1, $2, $3, $4)`,
+				usoID, c.ObraID, c.Puntaje, i)
+			if err != nil {
+				return traducirError(err, "guardar candidato %q del uso %q", c.ObraID, usoID)
+			}
+		}
+		return nil
+	})
+}
+
+// CandidatosDeUso lee la bandeja de un uso, en su orden. La consume #39.
+func (s *Store) CandidatosDeUso(ctx context.Context, usoID string) ([]identificacion.Candidato, error) {
+	filas, err := s.pool.Query(ctx,
+		`SELECT obra_id, puntaje FROM candidatos_match WHERE uso_id = $1 ORDER BY orden`, usoID)
+	if err != nil {
+		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+	}
+	defer filas.Close()
+
+	var cs []identificacion.Candidato
+	for filas.Next() {
+		var c identificacion.Candidato
+		if err := filas.Scan(&c.ObraID, &c.Puntaje); err != nil {
+			return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+		}
+		cs = append(cs, c)
+	}
+	// No es opcional: sin esto una lista truncada pasa por completa.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+	}
+	return cs, nil
 }

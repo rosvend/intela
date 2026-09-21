@@ -21,6 +21,8 @@ const (
 	EscalonAlias     = "alias"
 	EscalonIDGlobal  = "id_global"
 	EscalonExcluido  = "excluido"
+	EscalonDifuso    = "difuso"
+	EscalonONI       = "oni"
 )
 
 // IDGlobal identifica cual de los tres identificadores globales caso en el
@@ -54,19 +56,29 @@ type Consulta struct {
 	AliasObraID    string   // lo que devolvio Alias(); "" = sin alias
 	IDGlobalObraID string   // obra del primer id global que caso; "" = ninguno
 	IDGlobalCual   IDGlobal // cual de los tres caso; "" si no se sondeo
+
+	// Candidatos del escalon 3, ya puntuados. Vacio = el motor no propuso nada.
+	Candidatos []Candidato
 }
 
-// Resolver aplica los escalones 0-2 de la cascada del ADR 0007 y devuelve el
-// Resultado. Un Resultado con ObraID == "" y Escalon == "" significa "no
-// resuelto": la fila queda pendiente, es el insumo del difuso (#32).
+// Umbrales son los dos cortes del escalon 3, en la escala 0-1 del motor.
 //
-// Orden, y por que ese orden: el filtro de repertorio corre primero porque una
-// fila fuera de repertorio no debe generar ONI ni consumir un sondeo de alias
-// o de id global (R-27); el alias manda sobre el id global porque, en la
-// operacion real, el caso de uso solo sondea el escalon 2 cuando el 1 no
-// pego -pero el orden aqui esta definido igual para que la funcion sea total
-// sin importar que traiga Consulta.
-func Resolver(e Entrada, c Consulta, excluidas FuentesExcluidas) Resultado {
+// Dos y no uno porque hay tres desenlaces: asignar, pedir revision humana y
+// declarar que no se parece a nada. Son parametros normativos, no constantes
+// (ADR 0004); arrancan conservadores a proposito. Ver D2 de
+// docs/planes/32-difuso/diseno.md.
+type Umbrales struct {
+	Match decimal.Decimal // >= Match: asignacion automatica
+	Banda decimal.Decimal // >= Banda y < Match: cola manual con los candidatos
+}
+
+// Resolver aplica la cascada completa del ADR 0007 y devuelve el Resultado.
+//
+// El repertorio corta primero (R-27), luego alias, luego id global, luego
+// difuso: un parecido de 0.99 no desbanca a una igualdad. Lo que no resuelve
+// nadie sale con EscalonONI, que es un estado del modelo y no un fallo
+// (RD 13.8).
+func Resolver(e Entrada, c Consulta, excluidas FuentesExcluidas, u Umbrales) Resultado {
 	if excluidas.Excluye(e.Fuente) {
 		return Resultado{
 			Escalon:   EscalonExcluido,
@@ -89,8 +101,63 @@ func Resolver(e Entrada, c Consulta, excluidas FuentesExcluidas) Resultado {
 			Evidencia: fmt.Sprintf("%s %s -> %s", c.IDGlobalCual, valorGlobal(e, c.IDGlobalCual), c.IDGlobalObraID),
 		}
 	}
-	return Resultado{}
+	return difuso(e, c.Candidatos, u)
 }
+
+// difuso aplica los dos cortes a los candidatos ya puntuados. No calcula
+// similitud -eso es del adaptador- ni mira creditos (R-02).
+func difuso(e Entrada, candidatos []Candidato, u Umbrales) Resultado {
+	mejor, hay := mejorCandidato(candidatos)
+
+	switch {
+	case hay && mejor.Puntaje.GreaterThanOrEqual(u.Match):
+		return Resultado{
+			ObraID:  mejor.ObraID,
+			Escalon: EscalonDifuso,
+			Puntaje: mejor.Puntaje,
+			Evidencia: fmt.Sprintf("difuso %q ~ %s (%s)",
+				e.Titulo, mejor.ObraID, puntajeLegible(mejor.Puntaje)),
+		}
+
+	// Banda ambigua: no asigna, pero adjunta lo que un humano puede revisar.
+	case hay && mejor.Puntaje.GreaterThanOrEqual(u.Banda):
+		return Resultado{
+			Escalon: EscalonONI,
+			ONI:     true,
+			Evidencia: fmt.Sprintf("banda ambigua: %d candidatos, mejor %s (%s) bajo umbral %s",
+				len(candidatos), mejor.ObraID, puntajeLegible(mejor.Puntaje), puntajeLegible(u.Match)),
+			Candidatos: candidatos,
+		}
+
+	// Por debajo del piso no se adjunta nada: un 0.02 no es material de revision.
+	default:
+		return Resultado{
+			Escalon:   EscalonONI,
+			ONI:       true,
+			Evidencia: fmt.Sprintf("sin candidato sobre %s", puntajeLegible(u.Banda)),
+		}
+	}
+}
+
+// mejorCandidato elige por puntaje y desempata por ObraID ascendente: sin
+// criterio propio, dos corridas podrian pagar a obras distintas (ADR 0005).
+func mejorCandidato(candidatos []Candidato) (Candidato, bool) {
+	var mejor Candidato
+	hay := false
+	for _, c := range candidatos {
+		switch {
+		case !hay,
+			c.Puntaje.GreaterThan(mejor.Puntaje),
+			c.Puntaje.Equal(mejor.Puntaje) && c.ObraID < mejor.ObraID:
+			mejor, hay = c, true
+		}
+	}
+	return mejor, hay
+}
+
+// puntajeLegible fija cinco decimales, la precision de usos.puntaje, para que
+// la evidencia sea comparable entre corridas.
+func puntajeLegible(d decimal.Decimal) string { return d.StringFixed(5) }
 
 // valorGlobal devuelve el identificador de e que corresponde a cual, para que
 // la evidencia nombre el valor exacto que caso.
