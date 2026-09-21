@@ -15,8 +15,20 @@
 -- +goose Up
 
 -- +goose StatementBegin
-CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public;
 
+-- El esquema es `public` A PROPOSITO, y esta escrito dos veces: aqui y en el
+-- cuerpo de la funcion. No se parametriza: una funcion IMMUTABLE no puede
+-- depender del `search_path` de quien la llama -un indice sobre ella se
+-- construiria con un diccionario y se consultaria con otro, y se corromperia sin
+-- ruido al cambiar el `search_path`-. Por eso el cuerpo califica `public.unaccent`
+-- y su diccionario en vez de dejarlos al azar.
+--
+-- La condicion: la extension tiene que vivir en `public`. Si en un despliegue ya
+-- estuviera en otro esquema, `IF NOT EXISTS` no la mueve y la creacion de la
+-- funcion FALLA con `text search dictionary "public.unaccent" does not exist`
+-- (comprobado), que es mejor que normalizar mal en silencio.
+--
 -- IMMUTABLE envolviendo a unaccent(), que en PostgreSQL 16 es STABLE en sus dos
 -- formas: es el rodeo documentado, y sin el no se puede crear ni la columna
 -- generada ni el indice. Precio asumido: si se reescribe unaccent.rules hay que
@@ -71,5 +83,7 @@ DROP TABLE IF EXISTS candidatos_match;
 DROP INDEX IF EXISTS obras_titulo_norm_gist;
 ALTER TABLE obras DROP COLUMN IF EXISTS titulo_norm;
 DROP FUNCTION IF EXISTS titulo_normalizado(TEXT);
-DROP EXTENSION IF EXISTS unaccent;
+-- NO se hace DROP EXTENSION unaccent: es una extension compartida y otra funcion,
+-- indice o migracion pudo apoyarse en ella desde que esta la creo. Se deja
+-- instalada, igual que `pg_trgm` de 00001, que este Down tampoco quita.
 -- +goose StatementEnd
