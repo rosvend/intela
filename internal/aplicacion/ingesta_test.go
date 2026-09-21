@@ -1110,7 +1110,7 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 	recien := UsoPersistido{
 		Titulo:      "La Casa de las Dos Palmas",
 		Modalidad:   reparto.TV,
-		IDsFuente:   "ID_Ficha=1234",
+		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(48),
 	}

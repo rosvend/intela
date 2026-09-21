@@ -617,9 +617,19 @@ func TestEntradaDesdeUso(t *testing.T) {
 		},
 		{
 			nombre:    "fuente sin mapeo con una sola clave local la usa",
-			fuente:    "procinal",
+			fuente:    "sondeo-local",
 			idsFuente: "id_pelicula=PX-1",
-			quiero:    identificacion.Entrada{Fuente: "procinal", TipoID: "id_pelicula", ValorID: "PX-1"},
+			quiero:    identificacion.Entrada{Fuente: "sondeo-local", TipoID: "id_pelicula", ValorID: "PX-1"},
+		},
+		{
+			// La regresion que protege: el cine trae hoy una sola clave, pero
+			// el dia que el archivo real emita una segunda el fallback
+			// alfabetico elegiria id_ficha y los alias bajo id_pelicula
+			// dejarian de casar en silencio. El mapeo canonico gana siempre.
+			nombre:    "cine con dos claves usa la canonica, no la alfabetica",
+			fuente:    "cine",
+			idsFuente: "id_ficha=9\nid_pelicula=PX-1",
+			quiero:    identificacion.Entrada{Fuente: "cine", TipoID: "id_pelicula", ValorID: "PX-1"},
 		},
 		{
 			nombre:    "fuente sin mapeo con varias claves: la alfabetica",

@@ -112,6 +112,92 @@ func TestMapaNetflixProduceUnParQueLaCascadaSondeaPorShowID(t *testing.T) {
 	}
 }
 
+// Gemelo de Caracol: lo que persiste la ingesta es lo que sondea la cascada.
+// Cierra el circulo entre MapaCaracol, la grafia id_ficha del contrato y el
+// par canonico de la fuente en parCanonicoPorFuente. Sin id_ficha en el texto
+// persistido, Alias se llamaria con otra clave y el verde no detectaria el
+// desacuerdo.
+func TestMapaCaracolProduceUnParQueLaCascadaSondeaPorIDFicha(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCaracol().Aplicar(Tabla{
+		Columnas: []string{"Titulo", "ID_Ficha", "Programa ID_IMDB", "Duracion_total", "Fecha", "Hora"},
+		Filas:    [][]string{{"Rebelde", "55174", "tt0100001", "45", "20241231", "0:00"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if got := aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDFicha]; got != "55174" {
+		t.Fatalf("id_ficha persistido = %q", got)
+	}
+
+	uso := usos[0]
+	uso.ID = "u-1"
+	uso.Fuente = FuenteCaracol
+	uso.Escalon = identificacion.EscalonPendiente
+	uso.Modalidad = reparto.TV
+
+	ids := &identificacionMemoria{
+		alias: map[string]string{"caracol|id_ficha|55174": "obra-7"},
+	}
+	n, err := (aplicacion.ResolverUsos{
+		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
+		Identificacion: ids,
+	}).ResolverUsos(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("resueltas = %d, se esperaba 1", n)
+	}
+	if len(ids.sondeos) != 1 || ids.sondeos[0] != "caracol|id_ficha|55174" {
+		t.Fatalf("sondeos de alias = %v, se esperaba [caracol|id_ficha|55174]", ids.sondeos)
+	}
+}
+
+// Gemelo de cine: lo que persiste la ingesta es lo que sondea la cascada.
+// Cierra el circulo entre MapaCine, la grafia id_pelicula del contrato, la
+// fuente "cine" del adaptador y el par canonico en parCanonicoPorFuente. Es
+// ademas la prueba de cine a traves de la cascada que pide la entrada de
+// "cine" en el mapa: sin ella, el fallback alfabetico pasaria por canonico.
+func TestMapaCineProduceUnParQueLaCascadaSondeaPorIDPelicula(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "id", "taquilla"},
+		Filas:    [][]string{{"Pelicula X", "PX-1", "10000"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if got := aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDPelicula]; got != "PX-1" {
+		t.Fatalf("id_pelicula persistido = %q", got)
+	}
+
+	uso := usos[0]
+	uso.ID = "u-1"
+	uso.Fuente = FuenteCine
+	uso.Escalon = identificacion.EscalonPendiente
+	uso.Modalidad = reparto.Cine
+
+	ids := &identificacionMemoria{
+		alias: map[string]string{"cine|id_pelicula|PX-1": "obra-9"},
+	}
+	n, err := (aplicacion.ResolverUsos{
+		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
+		Identificacion: ids,
+	}).ResolverUsos(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("resueltas = %d, se esperaba 1", n)
+	}
+	if len(ids.sondeos) != 1 || ids.sondeos[0] != "cine|id_pelicula|PX-1" {
+		t.Fatalf("sondeos de alias = %v, se esperaba [cine|id_pelicula|PX-1]", ids.sondeos)
+	}
+}
+
 func TestAplicarRechazaLaFilaConCamposDeMas(t *testing.T) {
 	t.Parallel()
 
