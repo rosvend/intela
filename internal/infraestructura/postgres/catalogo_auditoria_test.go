@@ -66,13 +66,14 @@ func (r *relojEnPasos) Ahora() time.Time {
 var _ aplicacion.Reloj = (*relojEnPasos)(nil)
 
 // catalogoConBitacora cablea el caso de uso como lo hace cmd/api: el mismo
-// *Store satisface los tres puertos, y el nucleo sigue viendo tres.
+// *Store satisface los cuatro puertos, y el nucleo sigue viendo cuatro.
 func catalogoConBitacora(s *Store) aplicacion.Catalogo {
 	return aplicacion.Catalogo{
-		Obras:    s,
-		Bitacora: s,
-		Unidad:   s,
-		Reloj:    &relojEnPasos{},
+		Obras:         s,
+		Declaraciones: s,
+		Bitacora:      s,
+		Unidad:        s,
+		Reloj:         &relojEnPasos{},
 	}
 }
 
@@ -561,10 +562,11 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 	fin2 := make(chan error, 1)
 
 	cat1 := aplicacion.Catalogo{
-		Obras:    s,
-		Bitacora: &bitacoraConPausa{Store: s, listo: listoT1, seguir: liberarT1},
-		Unidad:   s,
-		Reloj:    &relojEnPasos{},
+		Obras:         s,
+		Declaraciones: s,
+		Bitacora:      &bitacoraConPausa{Store: s, listo: listoT1, seguir: liberarT1},
+		Unidad:        s,
+		Reloj:         &relojEnPasos{},
 	}
 	go func() {
 		_, err := cat1.ActualizarMetadatosObra(ctx, obraNueva,

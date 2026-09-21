@@ -2,6 +2,7 @@ package repertorio
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -194,5 +195,39 @@ func TestNuevaDeclaracion(t *testing.T) {
 				t.Fatalf("err = %v, no se esperaba ninguno", err)
 			}
 		})
+	}
+}
+
+// El padron guarda `titular_id` e `ipi` recortados; la puerta de entrada de la
+// declaracion fija la misma forma canonica, sobre una copia.
+func TestNuevaDeclaracionRecortaTitularEIPI(t *testing.T) {
+	entrada := []Parte{{TitularID: " tit-ana ", IPI: " IPI-00000001 ", Porcentaje: decimal.NewFromInt(100)}}
+
+	decl, err := NuevaDeclaracion("obra-1", entrada)
+	if err != nil {
+		t.Fatalf("NuevaDeclaracion: %v", err)
+	}
+	if got := decl.Partes[0]; got.TitularID != "tit-ana" || got.IPI != "IPI-00000001" {
+		t.Fatalf("parte = %+v, se esperaba recortada", got)
+	}
+	if entrada[0].TitularID != " tit-ana " || entrada[0].IPI != " IPI-00000001 " {
+		t.Fatalf("se mutaron las partes del llamante: %+v", entrada[0])
+	}
+}
+
+func TestNuevaDeclaracionTitularDeSoloEspaciosNoTrae(t *testing.T) {
+	_, err := NuevaDeclaracion("obra-1", []Parte{{TitularID: "   ", IPI: "1", Porcentaje: decimal.NewFromInt(100)}})
+	if !errors.Is(err, ErrDeclaracionInvalida) || !strings.Contains(err.Error(), "no trae titular") {
+		t.Fatalf("err = %v, se esperaba 'no trae titular'", err)
+	}
+}
+
+func TestNuevaDeclaracionTitularRepetidoConEspacios(t *testing.T) {
+	_, err := NuevaDeclaracion("obra-1", []Parte{
+		{TitularID: " tit-a ", IPI: "1", Porcentaje: decimal.NewFromInt(50)},
+		{TitularID: "tit-a", IPI: "1", Porcentaje: decimal.NewFromInt(50)},
+	})
+	if !errors.Is(err, ErrDeclaracionInvalida) || !strings.Contains(err.Error(), "aparece dos veces") {
+		t.Fatalf("err = %v, se esperaba titular repetido", err)
 	}
 }

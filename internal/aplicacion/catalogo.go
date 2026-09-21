@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
@@ -32,6 +34,20 @@ const (
 // declaraciones -- en el orden en que ocurrio, que es lo que un auditor lee.
 const RefObra = "obra"
 
+// LectorDeDeclaraciones es lo unico que [Catalogo] necesita de la gestion de
+// declaraciones: la version vigente de un punado de obras.
+//
+// Se declara aqui, junto a quien la consume, y con UN solo metodo, por la misma
+// razon que [PadronTitulares]: un puerto tiene que decir lo que su consumidor
+// necesita y nada mas. Antes este campo era [GestionDeclaraciones] -cuatro
+// metodos, uno de ellos de escritura-, y el catalogo podia llamar a `Guardar`:
+// no lo hacia, pero eso solo lo sostenia un comentario, y quitarle el metodo al
+// puerto convierte "no deberia escribir" en "no puede". Un `Guardar` que se
+// cuele aqui deja de compilar, en vez de depender de que nadie lo escriba.
+type LectorDeDeclaraciones interface {
+	VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]VersionDeclaracion, error)
+}
+
 // Catalogo son los casos de uso del catalogo maestro de obras: el cubo contra
 // el que resuelve todo matching (docs/dominio/identificadores.md).
 //
@@ -52,16 +68,28 @@ const RefObra = "obra"
 //
 // # Lo que este servicio NO hace
 //
-// No reparte, no lee `declaraciones` y no toca dinero. Registrar una obra no
-// crea derecho a cobrar: el derecho sale de la Declaracion de Obra (`R-03`),
-// que entra por otro camino. Que los coautores del catalogo no lleven
-// porcentaje es lo que impide construir aqui el segundo camino hasta un pago
-// que `R-02` cierra.
+// No reparte, no ESCRIBE `declaraciones` y no toca dinero. Registrar una obra
+// no crea derecho a cobrar: el derecho sale de la Declaracion de Obra
+// (`R-03`), que entra por otro camino. Que los coautores del catalogo no
+// lleven porcentaje es lo que impide construir aqui el segundo camino hasta un
+// pago que `R-02` cierra.
+//
+// Lo que si hace es LEER la declaracion vigente de las obras que sirve -por
+// [LectorDeDeclaraciones], sin versiones de por medio-, porque el catalogo es
+// donde un administrador ve que obras estan completas y que obras quedan
+// retenidas. Los tres campos que salen de ahi son derivados y de solo lectura:
+// el estado de una obra no se declara desde el catalogo.
 type Catalogo struct {
 	Obras    CatalogoObras
 	Bitacora BitacoraAuditoria
 	Unidad   UnidadDeTrabajo
 	Reloj    Reloj
+
+	// Declaraciones se lee, no se escribe desde aqui. Va aparte de [Obras] por
+	// lo mismo que los dos puertos estan separados (ver [CatalogoObras]): la
+	// obra y su declaracion son dos cosas distintas, y este servicio solo mira
+	// la segunda para poder decir en que estado esta la primera.
+	Declaraciones LectorDeDeclaraciones
 }
 
 // RegistrarObra da de alta una obra en el catalogo y asienta el alta.
@@ -79,10 +107,25 @@ type Catalogo struct {
 // La escritura y el asiento van en la MISMA unidad (ADR 0006): un alta
 // confirmada cuyo asiento fallo no esta hecha, asi que las dos entran o no
 // entra ninguna.
-func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+//
+// Devuelve la obra ya proyectada, con el estado de su declaracion, por el
+// MISMO camino que las tres lecturas: [proyectarObra] sobre un mapa sin
+// entradas devuelve exactamente lo de abajo, y por eso no hace falta releerlo.
+//
+// En un alta ese estado es el cero -`incompleta`, suma 0 y `version_vigente`
+// nil-, y no por darlo por supuesto: una declaracion necesita la fila de
+// `obras` -su clave foranea- y esta operacion es justo la que la crea, asi que
+// no puede haber ninguna. Se compone aqui en vez de preguntarselo a la base
+// porque preguntarselo es pedir lo que se acaba de escribir, y una lectura que
+// falle despues de un alta que SI ocurrio se contesta como "no se pudo
+// registrar la obra": un error sobre una escritura que ya esta hecha. La forma
+// sigue siendo la de las tres lecturas porque la respuesta tiene que tener el
+// MISMO numero de campos que ellas, y `catalogo_test.go` fija que la
+// composicion corta y la larga dan el mismo resultado.
+func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (ObraDelCatalogo, error) {
 	obra, err := repertorio.NuevaObra(id, m)
 	if err != nil {
-		return repertorio.Obra{}, err
+		return ObraDelCatalogo{}, err
 	}
 
 	err = c.enUnidad(ctx, func(ctx context.Context) error {
@@ -96,9 +139,12 @@ func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Met
 		})
 	})
 	if err != nil {
-		return repertorio.Obra{}, err
+		return ObraDelCatalogo{}, err
 	}
-	return obra, nil
+	return ObraDelCatalogo{
+		Obra:       obra,
+		EstadoDecl: repertorio.Declaracion{ObraID: obra.ID()}.Estado(),
+	}, nil
 }
 
 // ActualizarMetadatosObra corrige los metadatos de una obra. Nunca su
@@ -138,13 +184,20 @@ func (c Catalogo) RegistrarObra(ctx context.Context, id string, m repertorio.Met
 // arriba). [CatalogoObras.Bloquear] toma el cerrojo de fila ANTES de PorID:
 // T2 se queda esperando el commit de T1 y solo entonces lee, asi que su
 // "antes" es lo que esta transaccion de verdad sustituyo.
-func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+//
+// Corregir los metadatos no toca la declaracion -son dos cosas distintas, y
+// `R-03` deja el porcentaje fuera del catalogo-, pero la respuesta la lleva
+// igual que la lectura: [conDeclaracionDeUna] se llama DESPUES de que la
+// unidad confirme, no dentro de ella -es una lectura de otro puerto
+// (Declaraciones), no de Obras, y no hace falta que comparta transaccion con
+// el bloqueo de fila de arriba-.
+func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repertorio.Metadatos, actorID string) (ObraDelCatalogo, error) {
 	// Se construye una obra completa y valida ANTES de tocar la base: es el
 	// mismo constructor que el alta, asi que una obra corregida cumple lo
 	// mismo que una recien creada.
 	obra, err := repertorio.NuevaObra(id, m)
 	if err != nil {
-		return repertorio.Obra{}, err
+		return ObraDelCatalogo{}, err
 	}
 
 	err = c.enUnidad(ctx, func(ctx context.Context) error {
@@ -166,9 +219,9 @@ func (c Catalogo) ActualizarMetadatosObra(ctx context.Context, id string, m repe
 		})
 	})
 	if err != nil {
-		return repertorio.Obra{}, err
+		return ObraDelCatalogo{}, err
 	}
-	return obra, nil
+	return c.conDeclaracionDeUna(ctx, obra)
 }
 
 // asentar serializa el payload y lo escribe. El error de [BitacoraAuditoria]
@@ -207,10 +260,10 @@ func (c Catalogo) asentar(ctx context.Context, hecho, obraID, actorID string, p 
 }
 
 // enUnidad es [UnidadDeTrabajo.EnUnidad] con una guarda: un Catalogo cableado
-// a medias -- cargar_test.go, en semilla, construye Catalogo{Obras: store} a
-// proposito para las dos lecturas que no necesitan nada mas -- devuelve un
-// error legible en vez de un nil pointer dereference en cuanto RegistrarObra
-// o ActualizarMetadatosObra intenten escribir.
+// a medias -- cargar_test.go, en semilla, construye Catalogo{Obras: store,
+// Declaraciones: store} a proposito para las dos lecturas que no necesitan
+// nada mas -- devuelve un error legible en vez de un nil pointer dereference
+// en cuanto RegistrarObra o ActualizarMetadatosObra intenten escribir.
 //
 // Comprueba las CUATRO dependencias que un camino de escritura toca -Obras,
 // Unidad, Bitacora y Reloj-, no solo Unidad: un
@@ -250,12 +303,16 @@ func (c Catalogo) HistorialObra(ctx context.Context, obraID string) ([]Asiento, 
 }
 
 // ObraPorID devuelve una obra del catalogo, o ErrNoEncontrado.
-func (c Catalogo) ObraPorID(ctx context.Context, id string) (repertorio.Obra, error) {
+func (c Catalogo) ObraPorID(ctx context.Context, id string) (ObraDelCatalogo, error) {
 	// Sin envolver de nuevo: el adaptador ya nombra la obra y la operacion en
 	// su propio error (ver [postgres.Store.PorID]). Hacerlo tambien aqui
 	// duplicaba el "obra %q" -- una vez del caso de uso, otra del adaptador --
 	// en el mismo mensaje sin anadir nada que errors.Is no pueda ver ya.
-	return c.Obras.PorID(ctx, id)
+	obra, err := c.Obras.PorID(ctx, id)
+	if err != nil {
+		return ObraDelCatalogo{}, err
+	}
+	return c.conDeclaracionDeUna(ctx, obra)
 }
 
 // BuscarObras resuelve una consulta del catalogo.
@@ -265,13 +322,101 @@ func (c Catalogo) ObraPorID(ctx context.Context, id string) (repertorio.Obra, er
 // tope que evita servir el catalogo entero de REDES SGC de un golpe. El
 // defecto vive aqui -no en cada adaptador- para que cualquier
 // [CatalogoObras] lo herede y se pueda comprobar sin levantar Postgres.
-func (c Catalogo) BuscarObras(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error) {
+//
+// La pagina sale con el estado y la suma de cada obra, y la declaracion
+// vigente de TODA la pagina se lee de una vez: ver [Catalogo.conDeclaracion].
+func (c Catalogo) BuscarObras(ctx context.Context, f FiltroObras) ([]ObraDelCatalogo, error) {
 	f.Paginacion = f.ConDefecto()
 	obras, err := c.Obras.Buscar(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("buscar obras: %w", err)
 	}
-	return obras, nil
+	return c.conDeclaracion(ctx, obras)
+}
+
+// conDeclaracion proyecta cada obra con lo que el sistema sabe de su
+// declaracion vigente.
+//
+// UNA consulta para toda la lista y no una por obra: es el mismo N+1 que
+// [CatalogoObras.Buscar] y [GestionDeclaraciones.VigentesDeObras] ya evitan
+// cada uno por su lado, y aqui es donde se juntan.
+func (c Catalogo) conDeclaracion(ctx context.Context, obras []repertorio.Obra) ([]ObraDelCatalogo, error) {
+	ids := make([]string, 0, len(obras))
+	for _, o := range obras {
+		ids = append(ids, o.ID())
+	}
+	// Un slice vacio no consulta: una pagina sin resultados no puede depender
+	// de que el adaptador sepa que ANY('{}') no devuelve nada.
+	vigentes := map[string]VersionDeclaracion{}
+	if len(ids) > 0 {
+		var err error
+		vigentes, err = c.Declaraciones.VigentesDeObras(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("declaraciones vigentes del catalogo: %w", err)
+		}
+	}
+
+	// make no-nil: una pagina vacia sale como [] y no como nil.
+	proyectadas := make([]ObraDelCatalogo, 0, len(obras))
+	for _, o := range obras {
+		proyectadas = append(proyectadas, proyectarObra(o, vigentes))
+	}
+	return proyectadas, nil
+}
+
+// conDeclaracionDeUna es [Catalogo.conDeclaracion] para una sola obra. Pasa
+// por el mismo camino que la pagina a proposito: las cuatro respuestas que
+// devuelven una obra tienen que decir lo mismo que el listado, sin una segunda
+// traduccion que se pueda desviar.
+func (c Catalogo) conDeclaracionDeUna(ctx context.Context, obra repertorio.Obra) (ObraDelCatalogo, error) {
+	proyectadas, err := c.conDeclaracion(ctx, []repertorio.Obra{obra})
+	if err != nil {
+		return ObraDelCatalogo{}, err
+	}
+	return proyectadas[0], nil
+}
+
+// proyectarObra traduce "la declaracion vigente de esta obra" a lo que el
+// catalogo dice de ella.
+//
+// Una obra que no viene en el mapa NO tiene declaracion, y ahi el estado sale
+// de la Declaracion cero -cuyo Estado() es "incompleta"-, que es lo correcto
+// bajo R-04: sin declaracion no se reparte nada. Lo que distingue ese caso es
+// VersionVigente en nil, y por eso es un puntero y no un cero: `version 0` no
+// es una version que exista (consecutivo por obra desde 1), asi que el cero no
+// puede hacer de "no hay".
+func proyectarObra(o repertorio.Obra, vigentes map[string]VersionDeclaracion) ObraDelCatalogo {
+	vd, hay := vigentes[o.ID()]
+	proyectada := ObraDelCatalogo{
+		Obra:       o,
+		EstadoDecl: repertorio.Declaracion{ObraID: o.ID()}.Estado(),
+	}
+	if !hay {
+		return proyectada
+	}
+	version := vd.Version
+	proyectada.VersionVigente = &version
+	proyectada.EstadoDecl = vd.Declaracion.Estado()
+	proyectada.SumaPorcentajes = sumaDePorcentajes(vd.Declaracion)
+	return proyectada
+}
+
+// sumaDePorcentajes suma las partes de una declaracion.
+//
+// El estado NO se calcula aqui: lo dice [repertorio.Declaracion.Completa], que
+// es la autoridad, y esta suma es el numero que se muestra al lado. Los dos
+// pueden no coincidir -una parte sin IPI deja la declaracion incompleta con la
+// suma en 100-, y por eso el catalogo manda las dos cosas y no una derivada de
+// la otra.
+//
+// Suma en decimal y nunca en float: los porcentajes son NUMERIC(8,4) y sumarlos
+// en coma flotante daria un numero distinto del que esta escrito (ADR 0010).
+func sumaDePorcentajes(d repertorio.Declaracion) decimal.Decimal {
+	suma := decimal.Zero
+	for _, p := range d.Partes {
+		suma = suma.Add(p.Porcentaje)
+	}
+	return suma
 }
 
 // ---------------------------------------------------------------------------

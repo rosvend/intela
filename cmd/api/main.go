@@ -79,22 +79,43 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria y
-	// UnidadDeTrabajo. El nucleo sigue viendo tres puertos separados: que el
-	// adaptador sea uno solo es asunto suyo, y es lo que permite que el asiento
-	// del alta comparta transaccion con la obra (ADR 0006, #91).
+	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
+	// UnidadDeTrabajo y -por el puerto GestionDeclaraciones- la lectura de la
+	// declaracion vigente que el catalogo necesita para decir en que estado
+	// esta cada obra. El nucleo sigue viendo puertos separados: que el
+	// adaptador sea uno solo es asunto suyo, y es lo que permite que el
+	// asiento del alta comparta transaccion con la obra (ADR 0006, #91).
 	catalogo := aplicacion.Catalogo{
-		Obras:    store,
-		Bitacora: store,
-		Unidad:   store,
-		Reloj:    reloj.Sistema{},
+		Obras:         store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
 	}
+
+	// El padron de titulares, que es de donde el editor de splits saca las
+	// partes de una declaracion. La satisface el mismo *Store, y con esto es
+	// la primera lectura de `titulares` en produccion.
+	padron := aplicacion.Titulares{Padron: store}
 
 	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
 	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El guardia de R-01 apunta al STORE, no a `padron`. Es el mismo adaptador
+	// -por eso los dos satisfacen el puerto-, pero no es el mismo camino:
+	// `padron` es el MODELO DE LECTURA, y un modelo de lectura recorta. Hoy
+	// mete un tope por defecto de pagina
+	// ([aplicacion.Titulares.BuscarTitulares] lo aplica con `ConDefecto`), y
+	// cualquier dia puede recortar por algo mas -"el padron es de escritores"-
+	// sin que nadie lo mire. Un guardia que mira otra cosa que la tabla que
+	// guarda lo que se le pide comprueba lo que le dejen, y ese dia R-01
+	// dejaria pasar a una sociedad en silencio, que es el defecto caro de esta
+	// regla. El cableado es decision de este main, asi que la decision se
+	// escribe aqui: el nucleo no conoce ninguno de los dos.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
@@ -132,6 +153,7 @@ func ejecutar(log *slog.Logger) error {
 		Salud:         store,
 		Auth:          autenticacion,
 		Catalogo:      catalogo,
+		Padron:        padron,
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,

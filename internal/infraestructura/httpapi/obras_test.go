@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -15,8 +18,8 @@ import (
 // doble que hace que estas pruebas comprueben el ADAPTADOR -codigos, cabeceras
 // y forma del JSON- y no la base.
 type catalogoFalso struct {
-	obra  repertorio.Obra
-	obras []repertorio.Obra
+	obra  aplicacion.ObraDelCatalogo
+	obras []aplicacion.ObraDelCatalogo
 	err   error
 
 	filtro        aplicacion.FiltroObras
@@ -25,22 +28,22 @@ type catalogoFalso struct {
 	actorRecibido string
 }
 
-func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error) {
 	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
-func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (repertorio.Obra, error) {
+func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error) {
 	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
-func (c *catalogoFalso) ObraPorID(_ context.Context, id string) (repertorio.Obra, error) {
+func (c *catalogoFalso) ObraPorID(_ context.Context, id string) (aplicacion.ObraDelCatalogo, error) {
 	c.idRecibido = id
 	return c.obra, c.err
 }
 
-func (c *catalogoFalso) BuscarObras(_ context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error) {
+func (c *catalogoFalso) BuscarObras(_ context.Context, f aplicacion.FiltroObras) ([]aplicacion.ObraDelCatalogo, error) {
 	c.filtro = f
 	return c.obras, c.err
 }
@@ -63,6 +66,34 @@ func obraDePrueba(t *testing.T) repertorio.Obra {
 		t.Fatalf("construir la obra de prueba: %v", err)
 	}
 	return o
+}
+
+// obraDelCatalogo es la obra de prueba con su declaracion vigente ya compuesta
+// por el caso de uso: version 3, 60+40, completa.
+func obraDelCatalogo(t *testing.T) aplicacion.ObraDelCatalogo {
+	t.Helper()
+
+	version := 3
+	return aplicacion.ObraDelCatalogo{
+		Obra:            obraDePrueba(t),
+		EstadoDecl:      "completa",
+		SumaPorcentajes: decimal.NewFromInt(100),
+		VersionVigente:  &version,
+	}
+}
+
+// obraSinDeclaracion es el otro extremo: la obra esta en el catalogo y no
+// tiene ninguna declaracion. El estado sale de la Declaracion cero
+// -"incompleta", R-04- y la version va a null, que es lo unico que permite
+// distinguirla de una declarada a medias.
+func obraSinDeclaracion(t *testing.T) aplicacion.ObraDelCatalogo {
+	t.Helper()
+
+	return aplicacion.ObraDelCatalogo{
+		Obra:            obraDePrueba(t),
+		EstadoDecl:      "incompleta",
+		SumaPorcentajes: decimal.Zero,
+	}
 }
 
 // servidorConCatalogo monta el router con una sesion de administrador ya
@@ -221,7 +252,7 @@ func TestBuscarObrasRechazaUnAnioQueNoEsNumero(t *testing.T) {
 // Lectura por id
 
 func TestObraPorIDDevuelveLaFormaDelContrato(t *testing.T) {
-	cat := &catalogoFalso{obra: obraDePrueba(t)}
+	cat := &catalogoFalso{obra: obraDelCatalogo(t)}
 	h := servidorConCatalogo(t, cat)
 
 	rec := pedir(t, h, http.MethodGet, "/obras/obra-1", "", "tok")
@@ -236,7 +267,10 @@ func TestObraPorIDDevuelveLaFormaDelContrato(t *testing.T) {
 	cuerpo := decodificar(t, rec)
 	// Los nombres de los campos SON el contrato: cuadran con el schema Obra de
 	// api/openapi.yaml, y el id sale al mismo nivel que los metadatos.
-	for _, campo := range []string{"id", "titulo", "genero", "anio", "tipo", "ida", "eidr", "imdb", "coautores"} {
+	for _, campo := range []string{
+		"id", "titulo", "genero", "anio", "tipo", "ida", "eidr", "imdb", "coautores",
+		"estado_declaracion", "suma_porcentajes", "version_vigente",
+	} {
 		if _, hay := cuerpo[campo]; !hay {
 			t.Fatalf("falta el campo %q en la respuesta: %s", campo, rec.Body)
 		}
@@ -246,6 +280,18 @@ func TestObraPorIDDevuelveLaFormaDelContrato(t *testing.T) {
 	}
 	if anio, _ := cuerpo["anio"].(float64); anio != 1991 {
 		t.Fatalf("anio = %v", cuerpo["anio"])
+	}
+	// El porcentaje y su suma viajan como NUMERO, sin comillas (igual que
+	// `porcentaje` en la declaracion): el cliente decide los decimales que
+	// muestra.
+	if suma, esNumero := cuerpo["suma_porcentajes"].(float64); !esNumero || suma != 100 {
+		t.Fatalf("suma_porcentajes = %#v, se esperaba el numero 100", cuerpo["suma_porcentajes"])
+	}
+	if version, esNumero := cuerpo["version_vigente"].(float64); !esNumero || version != 3 {
+		t.Fatalf("version_vigente = %#v, se esperaba el numero 3", cuerpo["version_vigente"])
+	}
+	if cuerpo["estado_declaracion"] != "completa" {
+		t.Fatalf("estado_declaracion = %v", cuerpo["estado_declaracion"])
 	}
 
 	coautores, _ := cuerpo["coautores"].([]any)
@@ -278,7 +324,7 @@ func TestObraPorIDNoEncontradaEs404(t *testing.T) {
 // Alta
 
 func TestRegistrarObraDevuelve201YLocation(t *testing.T) {
-	cat := &catalogoFalso{obra: obraDePrueba(t)}
+	cat := &catalogoFalso{obra: obraDelCatalogo(t)}
 	h := servidorConCatalogo(t, cat)
 
 	rec := pedir(t, h, http.MethodPost, "/obras", cuerpoAlta, "tok")
@@ -373,7 +419,7 @@ func TestRegistrarObraConCuerpoDemasiadoGrandeEs400(t *testing.T) {
 // El cuerpo del PATCH se decodifica en un struct que no tiene campo id, asi
 // que un "id" en el JSON se ignora y el que llega al nucleo es el de la ruta.
 func TestActualizarObraIgnoraCualquierIDDelCuerpo(t *testing.T) {
-	cat := &catalogoFalso{obra: obraDePrueba(t)}
+	cat := &catalogoFalso{obra: obraDelCatalogo(t)}
 	h := servidorConCatalogo(t, cat)
 
 	cuerpo := `{
@@ -458,7 +504,7 @@ func cuerpoDemasiadoGrande() string {
 // dejara de aplanarse, el JSON saldria anidado y el contrato dejaria de
 // cuadrar sin que nada mas se rompa.
 func TestLaObraSerializaPlana(t *testing.T) {
-	bruto, err := json.Marshal(aObraJSON(obraDePrueba(t)))
+	bruto, err := json.Marshal(aObraJSON(obraDelCatalogo(t)))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -472,5 +518,190 @@ func TestLaObraSerializaPlana(t *testing.T) {
 	}
 	if m["id"] != "obra-1" || m["titulo"] != "La Casa de las Dos Palmas" {
 		t.Fatalf("json = %s", bruto)
+	}
+}
+
+// El contrato declara `suma_porcentajes` como `number`, y la libreria de
+// decimales serializa ENTRE COMILLAS por defecto. La prueba mira los BYTES que
+// viajan -que es lo unico que ve un cliente-, porque una cadena "100" y un
+// numero 100 se leen igual de bien al decodificar el JSON pero no son lo
+// mismo: contra la cadena no se puede restar sin parsearla antes.
+func TestLaSumaDePorcentajesViajaComoNumero(t *testing.T) {
+	casos := []struct {
+		nombre string
+		obra   aplicacion.ObraDelCatalogo
+		quiero string
+	}{
+		{"100 sin comillas", obraDelCatalogo(t), `"suma_porcentajes":100`},
+		{"cero sin comillas", obraSinDeclaracion(t), `"suma_porcentajes":0`},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			bruto, err := json.Marshal(aObraJSON(c.obra))
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(bruto), c.quiero) {
+				t.Fatalf("el JSON no trae %s: %s", c.quiero, bruto)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// El estado de la declaracion en las cuatro respuestas (D-008)
+
+// obraDeRespuesta devuelve la obra del cuerpo, sea la respuesta un objeto
+// -GET /obras/{id}, POST, PATCH- o una lista de una sola obra -GET /obras-.
+// Las cuatro llevan el mismo schema, asi que la comprobacion tiene que ser la
+// misma para las cuatro.
+func obraDeRespuesta(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+
+	var bruto any
+	if err := json.Unmarshal(rec.Body.Bytes(), &bruto); err != nil {
+		t.Fatalf("el cuerpo no es JSON: %v (%q)", err, rec.Body.String())
+	}
+	switch v := bruto.(type) {
+	case map[string]any:
+		return v
+	case []any:
+		if len(v) != 1 {
+			t.Fatalf("se esperaba una obra en la lista, llegaron %d: %s", len(v), rec.Body)
+		}
+		obra, ok := v[0].(map[string]any)
+		if !ok {
+			t.Fatalf("la lista no trae objetos: %s", rec.Body)
+		}
+		return obra
+	default:
+		t.Fatalf("cuerpo inesperado: %s", rec.Body)
+		return nil
+	}
+}
+
+// El schema `Obra` sirve a CUATRO respuestas -GET /obras, GET /obras/{id},
+// POST /obras y PATCH /obras/{id}- y los tres campos nuevos son obligatorios
+// en las cuatro. Si una sola se dejara sin ellos, el contrato prometeria algo
+// que esa respuesta no trae, que es el fallo caro de este paso.
+//
+// Las dos de escritura son las peligrosas: no llevaban esos campos antes de
+// este cambio y nadie los echaria de menos leyendo su prueba vieja.
+func TestLasCuatroRespuestasLlevanElEstadoDeLaDeclaracion(t *testing.T) {
+	peticiones := []struct {
+		nombre string
+		metodo string
+		ruta   string
+		cuerpo string
+		codigo int
+	}{
+		{"GET /obras", http.MethodGet, "/obras", "", http.StatusOK},
+		{"GET /obras/{id}", http.MethodGet, "/obras/obra-1", "", http.StatusOK},
+		{"POST /obras", http.MethodPost, "/obras", cuerpoAlta, http.StatusCreated},
+		{"PATCH /obras/{id}", http.MethodPatch, "/obras/obra-1", cuerpoAlta, http.StatusOK},
+	}
+
+	for _, p := range peticiones {
+		t.Run(p.nombre, func(t *testing.T) {
+			cat := &catalogoFalso{
+				obra:  obraDelCatalogo(t),
+				obras: []aplicacion.ObraDelCatalogo{obraDelCatalogo(t)},
+			}
+			h := servidorConCatalogo(t, cat)
+
+			rec := pedir(t, h, p.metodo, p.ruta, p.cuerpo, "tok")
+			if rec.Code != p.codigo {
+				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, p.codigo, rec.Body)
+			}
+
+			cuerpo := obraDeRespuesta(t, rec)
+			for _, campo := range []string{"estado_declaracion", "suma_porcentajes", "version_vigente"} {
+				if _, hay := cuerpo[campo]; !hay {
+					t.Fatalf("%s no trae %q: %s", p.nombre, campo, rec.Body)
+				}
+			}
+			if cuerpo["estado_declaracion"] != "completa" {
+				t.Fatalf("estado_declaracion = %v, se esperaba completa. Cuerpo: %s",
+					cuerpo["estado_declaracion"], rec.Body)
+			}
+			if suma, esNumero := cuerpo["suma_porcentajes"].(float64); !esNumero || suma != 100 {
+				t.Fatalf("suma_porcentajes = %#v, se esperaba el numero 100", cuerpo["suma_porcentajes"])
+			}
+			if version, esNumero := cuerpo["version_vigente"].(float64); !esNumero || version != 3 {
+				t.Fatalf("version_vigente = %#v, se esperaba el numero 3", cuerpo["version_vigente"])
+			}
+		})
+	}
+}
+
+// La otra mitad del mismo contrato: una obra SIN declaracion tiene que traer
+// `version_vigente` PRESENTE y en null. Ausente y null no son lo mismo para un
+// cliente -una clave ausente no distingue "no lo mire" de "no hay"-, y
+// `version_vigente` es justo el campo que dice que no hay ninguna.
+func TestUnaObraSinDeclaracionLlevaVersionVigenteNula(t *testing.T) {
+	cat := &catalogoFalso{
+		obra:  obraSinDeclaracion(t),
+		obras: []aplicacion.ObraDelCatalogo{obraSinDeclaracion(t)},
+	}
+	h := servidorConCatalogo(t, cat)
+
+	for _, ruta := range []string{"/obras/obra-1", "/obras"} {
+		t.Run(ruta, func(t *testing.T) {
+			rec := pedir(t, h, http.MethodGet, ruta, "", "tok")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			cuerpo := obraDeRespuesta(t, rec)
+
+			version, hay := cuerpo["version_vigente"]
+			if !hay {
+				t.Fatalf("falta version_vigente: una obra sin declaracion tiene que decir null, no callarse. Cuerpo: %s", rec.Body)
+			}
+			if version != nil {
+				t.Fatalf("version_vigente = %v, se esperaba null", version)
+			}
+			if cuerpo["estado_declaracion"] != "incompleta" {
+				t.Fatalf("estado_declaracion = %v, se esperaba incompleta (R-04)",
+					cuerpo["estado_declaracion"])
+			}
+			if suma, esNumero := cuerpo["suma_porcentajes"].(float64); !esNumero || suma != 0 {
+				t.Fatalf("suma_porcentajes = %#v, se esperaba 0", cuerpo["suma_porcentajes"])
+			}
+		})
+	}
+}
+
+// El estado NO entra por el cuerpo. Un alta decodifica en un struct que no
+// tiene esos tres campos, asi que un `estado_declaracion: completa` en el JSON
+// se descarta y la respuesta dice lo que el sistema sabe -lo que devuelve el
+// caso de uso-, no lo que mando el cliente. Sin esto, el contrato estaria
+// prometiendo una facultad que nadie tiene: declarar el estado a mano.
+func TestElEstadoDelCuerpoNoSeAceptaEnElAlta(t *testing.T) {
+	cat := &catalogoFalso{obra: obraSinDeclaracion(t)}
+	h := servidorConCatalogo(t, cat)
+
+	cuerpoSecuestrado := `{
+	  "id": "obra-1",
+	  "titulo": "La Casa de las Dos Palmas",
+	  "genero": "Drama",
+	  "anio": 1991,
+	  "tipo": "serie",
+	  "coautores": [{"nombre": "Ana Escritora", "ipi": "IPI-00000001", "rol": "guionista"}],
+	  "estado_declaracion": "completa",
+	  "suma_porcentajes": 100,
+	  "version_vigente": 9
+	}`
+	rec := pedir(t, h, http.MethodPost, "/obras", cuerpoSecuestrado, "tok")
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	respuesta := decodificar(t, rec)
+	if respuesta["estado_declaracion"] != "incompleta" {
+		t.Fatalf("el estado del cuerpo gano: %v", respuesta["estado_declaracion"])
+	}
+	if version, hay := respuesta["version_vigente"]; !hay || version != nil {
+		t.Fatalf("version_vigente = %#v: el cuerpo no puede inventar una version", respuesta["version_vigente"])
 	}
 }

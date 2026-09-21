@@ -19,16 +19,20 @@ import (
 // editor de splits de la #30, declarado aqui igual que [Catalogo].
 type Declaraciones interface {
 	GuardarSplits(ctx context.Context, obraID string, partes []repertorio.Parte, actorID string) (aplicacion.VersionDeclaracion, error)
-	Historial(ctx context.Context, obraID string) ([]aplicacion.VersionDeclaracion, error)
+	Historial(ctx context.Context, obraID string, pag aplicacion.Paginacion) ([]aplicacion.VersionDeclaracion, error)
 }
 
 // ---------------------------------------------------------------------------
 // Formas de red
 
 type parteJSON struct {
-	TitularID  string          `json:"titular_id"`
-	IPI        string          `json:"ipi"`
-	Porcentaje decimal.Decimal `json:"porcentaje"`
+	TitularID string `json:"titular_id"`
+	IPI       string `json:"ipi"`
+
+	// Porcentaje va sin comillas porque el contrato lo declara `number`, y
+	// [decimalComoNumeroJSON] es la forma que lo consigue: lo que el editor de
+	// splits suma son estos numeros, y sobre una cadena la suma concatena.
+	Porcentaje decimalComoNumeroJSON `json:"porcentaje"`
 }
 
 // versionDeclaracionJSON es una version de la declaracion tal como la ve el
@@ -45,7 +49,7 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 	partes := make([]repertorio.Parte, 0, len(ps))
 	for _, p := range ps {
 		partes = append(partes, repertorio.Parte{
-			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje,
+			TitularID: p.TitularID, IPI: p.IPI, Porcentaje: decimal.Decimal(p.Porcentaje),
 		})
 	}
 	return partes
@@ -54,7 +58,10 @@ func aPartesDominio(ps []parteJSON) []repertorio.Parte {
 func aVersionJSON(vd aplicacion.VersionDeclaracion) versionDeclaracionJSON {
 	partes := make([]parteJSON, 0, len(vd.Declaracion.Partes))
 	for _, p := range vd.Declaracion.Partes {
-		partes = append(partes, parteJSON{TitularID: p.TitularID, IPI: p.IPI, Porcentaje: p.Porcentaje})
+		partes = append(partes, parteJSON{
+			TitularID: p.TitularID, IPI: p.IPI,
+			Porcentaje: decimalComoNumeroJSON(p.Porcentaje),
+		})
 	}
 	var vigenteHasta *string
 	if vd.VigenteHasta != nil {
@@ -120,6 +127,29 @@ func (a *API) guardarDeclaracion(w http.ResponseWriter, r *http.Request, codigoE
 		// esas frases son internas.
 		escribirError(w, http.StatusBadRequest, "uno de los titulares indicados no existe")
 		return
+	case errors.Is(err, aplicacion.ErrTitularNoEsPersonaNatural):
+		// 400 por la misma razon que el de arriba -el titular_id viene del
+		// cuerpo-, pero NO es el mismo error y por eso no comparte mensaje: ahi
+		// el identificador no resuelve a nadie y aqui resuelve a un titular del
+		// padron que la regla no admite como parte. Mandar "no existe" a quien
+		// mando el id de una sociedad que si existe lo manda a buscar un error
+		// que no cometio.
+		//
+		// El mensaje es fijo, y nombra la regla, porque es lo unico que permite
+		// entender el rechazo sin conocer `RD 4.5`. Fijo tambien porque el error
+		// del nucleo nombra la fila del padron y esas frases son internas.
+		escribirError(w, http.StatusBadRequest,
+			"uno de los titulares indicados no es persona natural, y solo un escritor persona natural puede recibir reparto (R-01, RD 4.5)")
+		return
+	case errors.Is(err, aplicacion.ErrIPIQueNoCuadra):
+		// 400 por la misma razon que los dos de arriba: el dato discrepante -el
+		// IPI- viene del cuerpo. Mensaje fijo, y NO nombra ni el IPI declarado ni
+		// el del padron: el error del nucleo los trae para el log, y devolverlos
+		// convertiria este endpoint en un oraculo del padron para quien puede
+		// editar una declaracion.
+		escribirError(w, http.StatusBadRequest,
+			"el IPI de uno de los titulares no es el que el padron tiene para ese titular; corrigelo o consulta el padron")
+		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa obra no esta en el catalogo")
 		return
@@ -140,12 +170,17 @@ func (a *API) editarDeclaracion(w http.ResponseWriter, r *http.Request) {
 	a.guardarDeclaracion(w, r, http.StatusOK)
 }
 
-// historialDeclaracion sirve todas las versiones de la declaracion de una
-// obra. Una obra sin ninguna declaracion aun devuelve una lista vacia, no un
+// historialDeclaracion sirve una pagina de versiones de la declaracion de una
+// obra, desde la mas reciente hacia atras y en orden ascendente dentro de la
+// pagina. Una obra sin ninguna declaracion aun devuelve una lista vacia, no un
 // 404: mismo criterio que buscarObras.
 func (a *API) historialDeclaracion(w http.ResponseWriter, r *http.Request) {
 	obraID := chi.URLParam(r, "id")
-	historial, err := a.declaraciones.Historial(r.Context(), obraID)
+	pag, ok := leerPaginacion(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	historial, err := a.declaraciones.Historial(r.Context(), obraID, pag)
 	if err != nil {
 		a.log.ErrorContext(r.Context(), "fallo al leer el historial de una declaracion", slog.Any("error", err))
 		escribirError(w, http.StatusInternalServerError, "no se pudo consultar el historial")

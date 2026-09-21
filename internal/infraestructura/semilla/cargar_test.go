@@ -12,7 +12,6 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
-	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -173,9 +172,10 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 		t.Fatalf("Cargar: %v", err)
 	}
 
-	// Solo las dos lecturas del catalogo: esta prueba cruza el seed con lo que
-	// sirve GET /obras, y ninguna de las dos escribe ni asienta.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// Los dos puertos van cableados: el catalogo compone el estado de la
+	// declaracion de cada obra al leerla, y sin Declaraciones ese puerto queda
+	// nil y la lectura revienta.
+	catalogo := aplicacion.Catalogo{Obras: store, Declaraciones: store}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
 	if err != nil {
@@ -219,7 +219,9 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 	}
 }
 
-func ids(obras []repertorio.Obra) []string {
+// Lo que devuelve el catalogo es la obra con su declaracion ya compuesta
+// (aplicacion.ObraDelCatalogo), no la entidad suelta.
+func ids(obras []aplicacion.ObraDelCatalogo) []string {
 	out := make([]string, len(obras))
 	for i, o := range obras {
 		out[i] = o.ID()
