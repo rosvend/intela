@@ -9,19 +9,18 @@
 -- como CHECK: si declara pertenecer a otra SGC, tiene que haber evidencia
 -- de renuncia, no solo el booleano.
 --
--- COORDINACION DE NUMERO: esta migracion se llamaba 00003. Ese numero ya no
--- se puede usar. El PR #85 dejo produccion en la version 5; #72 entro como
--- 00006, #80 (`liquidacion`) toma el 00007 y #87 (`oni_publicacion`) el
--- 00008. goose corre con `allowMissing = false`, asi que un numero LIBRE
--- por debajo de la version ya aplicada aborta con
+-- COORDINACION DE NUMERO: esta migracion se llamaba 00003, luego 00014.
+-- Esos numeros ya no se pueden usar: `main` aplico hasta 00014
+-- (`usos_titulo_original`, duplicate version 14). goose corre con
+-- `allowMissing = false`, asi que un numero LIBRE por debajo de la
+-- version ya aplicada aborta con
 --
 --     found 1 missing migrations before current version N
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00014: main mergeo `00011_usos_modalidades_y_canales.sql`
--- (duplicate version 11). #80 reclama 00012 y #87 reclama 00013. Un ADR
--- admite huecos; una migracion no.
+-- Se toma el 00015: primer libre por encima de 00014. Un ADR admite huecos;
+-- una migracion no.
 
 -- +goose Up
 -- +goose StatementBegin
