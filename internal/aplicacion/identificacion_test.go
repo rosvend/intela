@@ -162,8 +162,8 @@ func (s *similitudFalsa) Candidatos(_ context.Context, titulo string, piso decim
 	return s.porTitulo[titulo], nil
 }
 
-// parametrosFalsos registra con que fecha se pregunto cada umbral.
-type parametrosFalsos struct {
+// parametroEnFechaFalso registra con que fecha se pregunto cada umbral.
+type parametroEnFechaFalso struct {
 	valores  map[string]string
 	err      error
 	llamadas []llamadaParametro
@@ -174,7 +174,7 @@ type llamadaParametro struct {
 	Fecha time.Time
 }
 
-func (p *parametrosFalsos) ParametroVigente(_ context.Context, clave string, fecha time.Time) (decimal.Decimal, error) {
+func (p *parametroEnFechaFalso) ParametroVigente(_ context.Context, clave string, fecha time.Time) (decimal.Decimal, error) {
 	p.llamadas = append(p.llamadas, llamadaParametro{clave, fecha})
 	if p.err != nil {
 		return decimal.Zero, p.err
@@ -186,8 +186,8 @@ func (p *parametrosFalsos) ParametroVigente(_ context.Context, clave string, fec
 	return decimal.RequireFromString(v), nil
 }
 
-func umbralesPorDefecto() *parametrosFalsos {
-	return &parametrosFalsos{valores: map[string]string{
+func umbralesPorDefecto() *parametroEnFechaFalso {
+	return &parametroEnFechaFalso{valores: map[string]string{
 		ClaveUmbralMatch: "0.60",
 		ClaveUmbralBanda: "0.45",
 	}}
@@ -222,7 +222,7 @@ func correrCon(
 	ing *ingestaFalsa,
 	idf *identificacionFalsa,
 	sim *similitudFalsa,
-	par *parametrosFalsos,
+	par *parametroEnFechaFalso,
 	excluidas identificacion.FuentesExcluidas,
 	usos ...UsoPersistido,
 ) (int, error) {
@@ -1087,7 +1087,7 @@ func TestResolverUsosAbortaSiFaltaUnUmbral(t *testing.T) {
 // Piso por encima del umbral: nada podria caer en la banda, y filas que
 // merecian revision saldrian a ONI ciega.
 func TestResolverUsosAbortaSiLaBandaEstaPorEncimaDelUmbral(t *testing.T) {
-	par := &parametrosFalsos{valores: map[string]string{
+	par := &parametroEnFechaFalso{valores: map[string]string{
 		ClaveUmbralMatch: "0.40",
 		ClaveUmbralBanda: "0.70",
 	}}
@@ -1135,7 +1135,7 @@ func TestFechaDePeriodoRechazaLoQueNoTieneForma(t *testing.T) {
 func TestResolverUsosConsultaElMotorConElPisoVigente(t *testing.T) {
 	ing := &ingestaFalsa{}
 	sim := &similitudFalsa{}
-	par := &parametrosFalsos{valores: map[string]string{
+	par := &parametroEnFechaFalso{valores: map[string]string{
 		ClaveUmbralMatch: "0.80",
 		ClaveUmbralBanda: "0.33",
 	}}

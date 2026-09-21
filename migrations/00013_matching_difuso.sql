@@ -1,6 +1,14 @@
 -- Escalon 3 de la cascada (#32): titulo normalizado indexable y los candidatos
 -- que la cascada considero y no eligio.
 --
+-- COORDINACION DE NUMERO: este archivo nacio como 00012, pero 00012 ya lo tomo
+-- 00012_snapshots_de_parametros.sql (#118), que entro a main antes. Numero: 00013,
+-- primero libre por encima de 00012. Nunca un hueco por debajo de la version ya
+-- aplicada (goose allowMissing=false; ver 00006). Dos PRs pueden pedir "el
+-- siguiente libre" a la vez sin que git marque conflicto -son archivos distintos
+-- con el mismo numero-, y ahi es donde falla la compuerta de numeracion de
+-- migraciones: verificarlo ahi, no de memoria.
+--
 -- Diseno y alternativas: docs/planes/32-difuso/diseno.md
 -- Por que GiST y no GIN, medido: docs/planes/32-difuso/explain-trgm.md
 

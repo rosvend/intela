@@ -25,7 +25,7 @@ const maxCandidatos = 5
 func (s *Store) Candidatos(ctx context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error) {
 	var cs []identificacion.Candidato
 
-	err := s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		// set_config y no interpolacion: el valor viaja como parametro. El
 		// tercer argumento en true es lo que lo hace LOCAL.
 		if _, err := tx.Exec(ctx,

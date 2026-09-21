@@ -61,7 +61,7 @@ arriba es el del primer periodo, cuando no hay ningun alias aprendido.
 ```
 docker run -d --name trgm-check -e POSTGRES_PASSWORD=x -e POSTGRES_USER=intela \
   -e POSTGRES_DB=intela_test postgres:16-alpine
-# aplicar 00001 + 00012, rellenar obras con generate_series, ANALYZE
+# aplicar 00001 + 00013, rellenar obras con generate_series, ANALYZE
 # y comparar EXPLAIN (ANALYZE, BUFFERS) con cada indice
 ```
 
@@ -79,5 +79,5 @@ SELECT p.oid::regprocedure, p.provolatile
 
 Por eso `titulo_normalizado` se declara `IMMUTABLE` envolviendo una llamada `STABLE`: es el
 rodeo documentado y sin el no se puede crear ni la columna generada ni el indice. El razonamiento
-completo y el precio asumido estan en la cabecera de `migrations/00012_matching_difuso.sql`.
+completo y el precio asumido estan en la cabecera de `migrations/00013_matching_difuso.sql`.
 En PostgreSQL 17 la forma de dos argumentos ya viene `IMMUTABLE`.

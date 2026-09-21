@@ -1,0 +1,130 @@
+# Reusable stage: bring the whole compose stack up and prove that it serves.
+#
+# This is the stage that turns "it compiles" into "it starts and serves". Every
+# other stage verifies a layer in isolation: `test-go` runs the suite,
+# `container` builds the images, `build-frontend` builds the bundle. All three
+# can be green while the system does not come up at all - a DSN pointing at a
+# host that only exists in another compose file, a migration that fails to
+# apply, the `proxy_pass` without its trailing slash that makes nginx forward
+# /api/obras to the API as /api/obras and answer 404 to the entire dashboard.
+# None of those are visible until someone opens a browser, and until now the
+# first someone was a reviewer on demo day.
+#
+# It exercises the SAME command the quickstart documents -
+# `docker compose --profile demo up` - rather than a CI-only compose file. A
+# smoke test against a stack assembled differently from the documented one
+# verifies a system nobody runs, and the documented one is then free to rot.
+#
+# The assertions live in `deploy/smoke.sh`, not in this file, for the same
+# reason: a developer has to be able to run exactly what CI runs.
+
+name: Smoke
+
+on:
+  workflow_call:
+    inputs:
+      shellcheck-version:
+        description: Tag of the official shellcheck image.
+        type: string
+        default: "v0.10.0"
+      smoke-timeout:
+        description: Seconds the smoke test waits for each condition.
+        type: string
+        default: "180"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: compose up + smoke
+    runs-on: ubuntu-latest
+    # The only job in the pipeline that boots containers and waits on them, so
+    # the only one where a hang costs a runner for hours instead of minutes.
+    # The script has its own per-condition timeout; this is the outer bound.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Before booting anything: eight minutes of image builds is a slow way to
+      # discover an unquoted variable. `actionlint` already shellchecks every
+      # `run:` block in this repo, but it does not see standalone scripts, so
+      # without this step `deploy/smoke.sh` would be the one piece of shell in
+      # the repo that nothing lints. Pinned official image, like actionlint: no
+      # `curl | bash`.
+      - name: Lint the smoke script
+        env:
+          VERSION: ${{ inputs.shellcheck-version }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo" \
+            -w /repo \
+            "koalaman/shellcheck:${VERSION}" \
+            deploy/smoke.sh deploy/smoke_guardia_test.sh
+
+      # The one assertion in `deploy/smoke.sh` that the bring-up below CANNOT
+      # exercise. The blocking case is a `seed` that fails against a database
+      # that ALREADY HAD DATA: reaching it for real means seeding, corrupting
+      # the dataset by hand and seeding again, on a runner whose database is
+      # empty by construction (`down -v`). So the bring-up would always take
+      # the happy path and the guard would never be proven.
+      #
+      # This runs the guard against a stubbed `docker compose ps`, in seconds
+      # and with no containers, and it is red if the guard is removed. It goes
+      # BEFORE the build for the same reason as the linter: eight minutes is a
+      # slow way to find out the guard regressed.
+      - name: Unit-test the one-shot guard
+        run: |
+          set -euo pipefail
+          deploy/smoke_guardia_test.sh
+
+      # `--build` is not optional, and not only for freshness: the runner has no
+      # images at all, so this is what produces them. `--profile demo` is what
+      # adds the one-shot `seed` service, which is the difference between a
+      # migrated empty database and a system with something to show.
+      #
+      # No `--wait`: it treats the one-shot `migrate` and `seed` containers
+      # exiting as a failure of the wait. Readiness is the smoke script's job,
+      # and it polls for it.
+      - name: Bring the stack up
+        run: |
+          set -euo pipefail
+          docker compose --profile demo up -d --build
+
+      - name: Smoke test
+        env:
+          SMOKE_ESPERA: ${{ inputs.smoke-timeout }}
+        run: |
+          set -euo pipefail
+          deploy/smoke.sh
+
+      # The script dumps container state and logs when one of ITS checks fails.
+      # This covers the other half: a failure in `up` itself - an image that
+      # does not build, a container that dies on boot - where the script never
+      # ran and there is otherwise nothing in the log but a non-zero exit.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "--- compose ps ---"
+          docker compose --profile demo ps --all
+          echo "--- compose logs ---"
+          docker compose --profile demo logs --no-color --tail 200
+
+      # `-v` because the runner is thrown away anyway, and because a leaked
+      # volume on a self-hosted runner would carry this run's data into the
+      # NEXT one.
+      #
+      # That used to be load-bearing: with a pre-seeded database a failing
+      # `seed` still left usable users and works behind it, so the stage went
+      # green without the seed having worked, and `down -v` was the only thing
+      # standing between the pipeline and that false green. It is not the only
+      # thing any more - `deploy/smoke.sh` now checks the one-shot services'
+      # exit codes directly (check 1/7), which holds whether or not the volume
+      # leaked. This stays as hygiene, not as the guard.
+      - name: Tear down
+        if: always()
+        run: |
+          set -euo pipefail
+          docker compose --profile demo down -v --remove-orphans

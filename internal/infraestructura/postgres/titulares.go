@@ -77,7 +77,10 @@ func (s *Store) BuscarTitulares(ctx context.Context, f aplicacion.FiltroTitulare
 		args = append(args, p.Limite, p.Desplazamiento)
 	}
 
-	filas, err := s.pool.Query(ctx, sql, args...)
+	// s.ejecutorDe(ctx) y no s.pool: mismo criterio que el resto del paquete
+	// (ver declaraciones.go) para que una lectura pedida dentro de una unidad
+	// de trabajo vea lo que esa transaccion todavia no ha confirmado.
+	filas, err := s.ejecutorDe(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, traducirError(err, "buscar titulares")
 	}

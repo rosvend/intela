@@ -22,18 +22,19 @@ type catalogoFalso struct {
 	obras []aplicacion.ObraDelCatalogo
 	err   error
 
-	filtro     aplicacion.FiltroObras
-	idRecibido string
-	metadatos  repertorio.Metadatos
+	filtro        aplicacion.FiltroObras
+	idRecibido    string
+	metadatos     repertorio.Metadatos
+	actorRecibido string
 }
 
-func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos) (aplicacion.ObraDelCatalogo, error) {
-	c.idRecibido, c.metadatos = id, m
+func (c *catalogoFalso) RegistrarObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error) {
+	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
-func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos) (aplicacion.ObraDelCatalogo, error) {
-	c.idRecibido, c.metadatos = id, m
+func (c *catalogoFalso) ActualizarMetadatosObra(_ context.Context, id string, m repertorio.Metadatos, actorID string) (aplicacion.ObraDelCatalogo, error) {
+	c.idRecibido, c.metadatos, c.actorRecibido = id, m, actorID
 	return c.obra, c.err
 }
 
@@ -337,6 +338,11 @@ func TestRegistrarObraDevuelve201YLocation(t *testing.T) {
 	if cat.idRecibido != "obra-1" {
 		t.Fatalf("id recibido = %q", cat.idRecibido)
 	}
+	// Quien firma el asiento sale de la SESION y no del cuerpo (ADR 0006): un
+	// actor que llegue por la red es un actor que se puede falsificar.
+	if cat.actorRecibido != "usr-admin" {
+		t.Fatalf("actor recibido = %q, se esperaba el de la sesion", cat.actorRecibido)
+	}
 
 	// El cuerpo llego entero hasta el nucleo, coautores incluidos, y con el
 	// rol autoral tipado.
@@ -391,6 +397,28 @@ func TestRegistrarObraConCuerpoQueNoEsJSONEs400(t *testing.T) {
 	}
 }
 
+// Un cuerpo que excede maxCuerpoObra se corta ANTES de decodificarse por
+// entero: sin el limite, un array de coautores arbitrariamente grande se
+// asigna completo en memoria antes de que el dominio tenga oportunidad de
+// rechazarlo, y desde #91 cada PATCH ademas escribe esos coautores en
+// `asientos.payload`, que no se puede recortar despues (bloqueante 5).
+//
+// Es 413 y no 400, igual que la subida de reportes: el cuerpo era un JSON
+// valido, lo que sobraba era el tamano, y el mensaje tiene que decir eso o
+// manda a revisar un JSON que estaba bien.
+func TestRegistrarObraConCuerpoDemasiadoGrandeEs413(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPost, "/obras", cuerpoDemasiadoGrande(), "tok")
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if msj := decodificar(t, rec)["error"]; msj != "el cuerpo pasa de 1 MiB" {
+		t.Fatalf("error = %v, se esperaba el mensaje del tope", msj)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Correccion de metadatos
 
@@ -420,6 +448,9 @@ func TestActualizarObraIgnoraCualquierIDDelCuerpo(t *testing.T) {
 	if cat.metadatos.Titulo != "Otro titulo" || cat.metadatos.Anio != 2001 {
 		t.Fatalf("metadatos = %+v", cat.metadatos)
 	}
+	if cat.actorRecibido != "usr-admin" {
+		t.Fatalf("actor recibido = %q, se esperaba el de la sesion", cat.actorRecibido)
+	}
 }
 
 func TestActualizarObraQueNoExisteEs404(t *testing.T) {
@@ -442,6 +473,50 @@ func TestActualizarObraInvalidaEs400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400", rec.Code)
 	}
+}
+
+// El 413 del tope no se puede llevar por delante el 400 de siempre: un cuerpo
+// pequeno y mal formado sigue siendo una peticion mal formada.
+func TestActualizarObraConCuerpoQueNoEsJSONEs400(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPatch, "/obras/obra-1", "esto no es json", "tok")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// Mismo tope que en el alta (bloqueante 5): el PATCH es el camino por el que
+// #91 escribe coautores en la bitacora, y esa tabla es la que no se puede
+// recortar despues de escrita.
+func TestActualizarObraConCuerpoDemasiadoGrandeEs413(t *testing.T) {
+	h := servidorConCatalogo(t, &catalogoFalso{})
+
+	rec := pedir(t, h, http.MethodPatch, "/obras/obra-1", cuerpoDemasiadoGrande(), "tok")
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("codigo = %d, se esperaba 413. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if msj := decodificar(t, rec)["error"]; msj != "el cuerpo pasa de 1 MiB" {
+		t.Fatalf("error = %v, se esperaba el mensaje del tope", msj)
+	}
+}
+
+// cuerpoDemasiadoGrande arma un JSON valido pero mas grande que maxCuerpoObra,
+// a base de coautores: es el vector que #91 vuelve caro, porque cada uno
+// termina escrito en `asientos.payload`.
+func cuerpoDemasiadoGrande() string {
+	var b strings.Builder
+	b.WriteString(`{"id":"obra-1","titulo":"T","genero":"G","anio":1991,"tipo":"serie","coautores":[`)
+	for i := 0; i < 40_000; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{"nombre":"Coautor de relleno","ipi":"IPI-00000001","rol":"guionista"}`)
+	}
+	b.WriteString(`]}`)
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------

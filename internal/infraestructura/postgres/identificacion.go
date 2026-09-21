@@ -16,7 +16,7 @@ var _ aplicacion.RepositorioIdentificacion = (*Store)(nil)
 // garantiza como mucho una fila.
 func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, error) {
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT obra_id FROM alias_obra WHERE fuente = $1 AND tipo_id = $2 AND valor = $3`,
 		fuente, tipo, valor).Scan(&obraID)
 	if err != nil {
@@ -32,7 +32,7 @@ func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, 
 //
 // quien vacio entra como NULL: la columna es nullable y "" no es un actor.
 func (s *Store) GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO alias_obra (fuente, tipo_id, valor, obra_id, quien)
 		 VALUES ($1, $2, $3, $4, NULLIF($5, ''))
 		 ON CONFLICT (fuente, tipo_id, valor) DO NOTHING`,
@@ -55,7 +55,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 		return "", fmt.Errorf("obra por id global sin ningun identificador poblado: %w", aplicacion.ErrNoEncontrado)
 	}
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id FROM obras
 		  WHERE ($1 <> '' AND ida = $1) OR ($2 <> '' AND eidr = $2) OR ($3 <> '' AND imdb = $3)
 		  ORDER BY id LIMIT 1`,
@@ -86,7 +86,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
 // ErrNoEncontrado y la salta.
 func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos
 		    SET obra_id = NULLIF($2, ''), escalon = $3, evidencia = $4, puntaje = $5,
 		        oni = ($2 = '' AND $3 <> 'excluido')
@@ -104,10 +104,13 @@ func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r
 
 // GuardarCandidatos reemplaza la bandeja de revision de un uso (D9).
 //
-// En transaccion porque borrar y escribir son la misma operacion. `orden` va
-// explicito y no se deduce del puntaje: el desempate es regla del dominio.
+// En transaccion porque borrar y escribir son la misma operacion. Dentro de una
+// unidad de trabajo ([Store.EnUnidad]) participa en ella y no confirma por su
+// cuenta: asi el caso de uso puede atar la bandeja al match de la misma fila.
+// `orden` va explicito y no se deduce del puntaje: el desempate es regla del
+// dominio.
 func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identificacion.Candidato) error {
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM candidatos_match WHERE uso_id = $1`, usoID); err != nil {
 			return traducirError(err, "limpiar candidatos del uso %q", usoID)
 		}
@@ -126,7 +129,7 @@ func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identi
 
 // CandidatosDeUso lee la bandeja de un uso, en su orden. La consume #39.
 func (s *Store) CandidatosDeUso(ctx context.Context, usoID string) ([]identificacion.Candidato, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT obra_id, puntaje FROM candidatos_match WHERE uso_id = $1 ORDER BY orden`, usoID)
 	if err != nil {
 		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
