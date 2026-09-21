@@ -118,6 +118,45 @@ Un detalle que la transaccion deja al descubierto y que queda documentado en el 
 una unidad, el corte LOCAL dura hasta que termina **la unidad**. `ResolverUsos` consulta la
 similitud fuera de su unidad de escritura, asi que no lo sufre.
 
+## Buscador del catalogo (review de #146, S8)
+
+`GET /obras?titulo=` filtra con `o.titulo ILIKE $2 OR o.titulo_norm % titulo_normalizado($1)`: dos
+operadores de dos indices distintos (`gin_trgm_ops` sobre `titulo`, que sirve al `ILIKE`, y
+`gist_trgm_ops` sobre `titulo_norm`, que sirve a `%`). El review pregunto si un `OR` entre
+operadores de indices distintos deja al planificador sin ninguno. Se midio la consulta **entera** de
+`Buscar` (pagina con `UNION ALL`, `ORDER BY parecido DESC, id`, `LIMIT 20` y el `LATERAL` de
+coautores), sin IPI, con `titulo = 'tercer acto'`, sobre la misma tabla de 20.004 obras y
+`postgres:16.15-alpine`, como sentencia preparada:
+
+| Caso | Plan | Tiempo |
+| --- | --- | --- |
+| Plan personalizado, titulo con coincidencia | `BitmapOr` de `obras_titulo_trgm` **y** `obras_titulo_norm_gist` | **0,7 ms** |
+| Plan personalizado, titulo sin coincidencia | `BitmapOr` de los dos indices | 0,2 ms |
+| `plan_cache_mode = auto`, novena ejecucion | `BitmapOr` de los dos indices | 0,4 ms |
+| Plan **generico** forzado (`force_generic_plan`) | `Seq Scan` | 118 ms |
+
+```
+->  Bitmap Heap Scan on obras o  (actual time=0.190..0.191 rows=1 loops=1)
+      Recheck Cond: ((titulo ~~* '%tercer acto%'::text) OR (titulo_norm % 'tercer acto'::text))
+      ->  BitmapOr  (actual time=0.175..0.175 rows=0 loops=1)
+            ->  Bitmap Index Scan on obras_titulo_trgm  (actual time=0.106..0.106 rows=1 loops=1)
+            ->  Bitmap Index Scan on obras_titulo_norm_gist  (actual time=0.068..0.068 rows=1 loops=1)
+```
+
+Lo que dice:
+
+- **El `OR` si sigue los indices**: el planificador lo resuelve con un `BitmapOr`, uno por operador.
+  No hace falta reescribirlo como `UNION` de dos subconsultas. Por la regla que se fijo de antemano
+  (solo se reescribe si hace `Seq Scan` **y** tarda 100 ms o mas), se deja como esta.
+- El unico plan que barre la tabla es el **generico forzado**, y es un artificio: con `$1 = ''`
+  como parametro el planificador no puede descartar la rama del titulo vacio y el `Seq Scan` sale
+  mas caro que los planes personalizados (cerca de 6.000 frente a menos de 100), asi que en modo
+  `auto` -el de pgx con sentencias preparadas- **nunca pasa al generico**: la novena ejecucion sigue
+  con `BitmapOr`. Si algun dia se fuerza `plan_cache_mode = force_generic_plan` en el pool, esta
+  consulta es la primera que hay que volver a medir.
+- Los titulos son sinteticos (2 a 5 palabras de un vocabulario de 120): el numero sirve para
+  decidir la forma del plan, no para prometer una latencia sobre el catalogo real.
+
 ## Reproducirlo
 
 ```

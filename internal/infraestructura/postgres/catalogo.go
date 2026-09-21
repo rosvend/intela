@@ -221,6 +221,13 @@ func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 //
 // OFFSET degrada linealmente con la profundidad (KISS hoy). Cuando el
 // catalogo sea real, el paso a keyset es una decision, no un descubrimiento.
+//
+// Con titulo el orden es por parecido, y el paginado por OFFSET puede mover filas
+// entre paginas si el catalogo cambia mientras se navega: una obra nueva mas
+// parecida empuja a las demas hacia abajo, y la pagina 2 puede repetir la ultima
+// fila de la 1. Se acepta porque la respuesta no promete totales ni estabilidad
+// entre paginas (lo senalo la revision de #145). El filtro `ILIKE OR %` sigue los
+// dos indices con un BitmapOr: EXPLAIN en docs/planes/32-difuso/explain-trgm.md.
 func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]repertorio.Obra, error) {
 	p := f.ConDefecto()
 	// El titulo casa por SUBCADENA o por PARECIDO: el ILIKE no cruza tildes ni
