@@ -9,7 +9,7 @@ import (
 
 func nuevaReclamacionValida(t *testing.T) reparto.ReclamacionReserva {
 	t.Helper()
-	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", d("100.00"),
+	r, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", "error en el conteo de emisiones de enero", d("100.00"),
 		true /* afiliado antes del periodo */, false /* no es error de declaracion */)
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
@@ -18,7 +18,7 @@ func nuevaReclamacionValida(t *testing.T) reparto.ReclamacionReserva {
 }
 
 func TestNuevaReclamacionReservaRechazaAfiliacionPosterior(t *testing.T) {
-	_, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", d("100.00"),
+	_, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", "detalle", d("100.00"),
 		false, false)
 	if !errors.Is(err, reparto.ErrReclamacionAfiliacionPosterior) {
 		t.Fatalf("error = %v, se esperaba ErrReclamacionAfiliacionPosterior (RD 14.5.5)", err)
@@ -26,10 +26,20 @@ func TestNuevaReclamacionReservaRechazaAfiliacionPosterior(t *testing.T) {
 }
 
 func TestNuevaReclamacionReservaRechazaErrorDeDeclaracion(t *testing.T) {
-	_, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", d("100.00"),
+	_, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", "detalle", d("100.00"),
 		true, true)
 	if !errors.Is(err, reparto.ErrReclamacionErrorDeDeclaracion) {
 		t.Fatalf("error = %v, se esperaba ErrReclamacionErrorDeDeclaracion (RD 14.5.6)", err)
+	}
+}
+
+func TestNuevaReclamacionReservaRechazaDetalleVacio(t *testing.T) {
+	// RD 14.3 exige responder cada reclamo por escrito, individualmente: sin
+	// un detalle no hay que responder.
+	_, err := reparto.NuevaReclamacionReserva("rec-1", "titular-1", "proceso-1", "  ", d("100.00"),
+		true, false)
+	if err == nil {
+		t.Fatal("se esperaba error con detalle vacio")
 	}
 }
 

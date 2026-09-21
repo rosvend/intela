@@ -122,11 +122,11 @@ func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID s
 // llama, contra el padron de afiliacion y el motivo declarado.
 func (b BolsasAccesorias) AbrirReclamacion(
 	ctx context.Context,
-	id, titularID, procesoOrigenID string,
+	id, titularID, procesoOrigenID, detalle string,
 	montoSolicitado decimal.Decimal,
 	afiliadoAntesDelPeriodo, esErrorDeDeclaracion bool,
 ) (reparto.ReclamacionReserva, error) {
-	r, err := reparto.NuevaReclamacionReserva(id, titularID, procesoOrigenID, montoSolicitado,
+	r, err := reparto.NuevaReclamacionReserva(id, titularID, procesoOrigenID, detalle, montoSolicitado,
 		afiliadoAntesDelPeriodo, esErrorDeDeclaracion)
 	if err != nil {
 		return reparto.ReclamacionReserva{}, err

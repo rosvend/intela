@@ -3,6 +3,7 @@ package reparto
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -31,6 +32,7 @@ type ReclamacionReserva struct {
 	ID              string
 	TitularID       string
 	ProcesoOrigenID string
+	Detalle         string
 	MontoSolicitado decimal.Decimal
 	Avales          []AvalReclamacion
 }
@@ -49,7 +51,7 @@ var (
 // esErrorDeDeclaracion los resuelve la capa de aplicacion (padron de
 // afiliacion, motivo declarado): el dominio no consulta nada, solo decide.
 func NuevaReclamacionReserva(
-	id, titularID, procesoOrigenID string,
+	id, titularID, procesoOrigenID, detalle string,
 	montoSolicitado decimal.Decimal,
 	afiliadoAntesDelPeriodo, esErrorDeDeclaracion bool,
 ) (ReclamacionReserva, error) {
@@ -59,12 +61,18 @@ func NuevaReclamacionReserva(
 	if esErrorDeDeclaracion {
 		return ReclamacionReserva{}, ErrReclamacionErrorDeDeclaracion
 	}
+	// RD 14.3: cada reclamo se analiza y responde individualmente, por
+	// escrito. Sin detalle no hay que responder.
+	if strings.TrimSpace(detalle) == "" {
+		return ReclamacionReserva{}, fmt.Errorf("%w: detalle vacio", ErrRepartoInvalido)
+	}
 	if err := exigirPositivo("monto_solicitado", montoSolicitado); err != nil {
 		return ReclamacionReserva{}, err
 	}
 	return ReclamacionReserva{
 		ID:              id,
 		TitularID:       titularID,
+		Detalle:         detalle,
 		ProcesoOrigenID: procesoOrigenID,
 		MontoSolicitado: montoSolicitado,
 	}, nil

@@ -260,7 +260,7 @@ func TestAbrirYFirmarReclamacionHastaSerPagable(t *testing.T) {
 	b := BolsasAccesorias{Reclamaciones: reclamaciones}
 	ctx := context.Background()
 
-	r, err := b.AbrirReclamacion(ctx, "rec-1", "titular-1", "p1", decimal.RequireFromString("30.00"), true, false)
+	r, err := b.AbrirReclamacion(ctx, "rec-1", "titular-1", "p1", "detalle", decimal.RequireFromString("30.00"), true, false)
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestFirmarReclamacionPropagaElRechazoDelDominio(t *testing.T) {
 	b := BolsasAccesorias{Reclamaciones: reclamaciones}
 	ctx := context.Background()
 
-	if _, err := b.AbrirReclamacion(ctx, "rec-1", "titular-1", "p1", decimal.RequireFromString("30.00"), true, false); err != nil {
+	if _, err := b.AbrirReclamacion(ctx, "rec-1", "titular-1", "p1", "detalle", decimal.RequireFromString("30.00"), true, false); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	if _, err := b.FirmarReclamacion(ctx, "rec-1", reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-unico"); err != nil {
