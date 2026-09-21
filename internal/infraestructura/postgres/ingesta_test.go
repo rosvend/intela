@@ -160,7 +160,7 @@ func TestGuardarUsosPersisteLaFormaCanonica(t *testing.T) {
 	ctx := t.Context()
 
 	u := usoPendiente("uso-1", reporteEnero, "La Casa de las Dos Palmas")
-	u.IDsFuente = "ID_Ficha=1234"
+	u.IDsFuente = "id_ficha=1234"
 	u.TipoObra = "serie"
 	u.DuracionMin = decimal.RequireFromString("52.5000")
 	u.Rating = decimal.RequireFromString("3.250000")
@@ -596,7 +596,7 @@ func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	recien := aplicacion.UsoPersistido{
 		Titulo:      "La Casa de las Dos Palmas",
 		Modalidad:   reparto.TV,
-		IDsFuente:   "ID_Ficha=1234",
+		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(52),
 	}

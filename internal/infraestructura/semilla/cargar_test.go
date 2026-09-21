@@ -81,12 +81,108 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
 	}
 
+	// Contra el dataset y no contra un literal: los valores viven en
+	// dataset.go, que es la unica fuente de verdad (fixtures.md).
+	d := Construir()
+
 	var nBolsas int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM bolsas`).Scan(&nBolsas); err != nil {
 		t.Fatalf("contar bolsas: %v", err)
 	}
-	if nBolsas != 4 {
-		t.Fatalf("bolsas = %d, se esperaban 4", nBolsas)
+	if nBolsas != len(d.Bolsas) {
+		t.Fatalf("bolsas = %d, se esperaban %d", nBolsas, len(d.Bolsas))
+	}
+
+	var nCanales, nClasificaciones int
+	if err := pool.QueryRow(ctx,
+		`SELECT (SELECT COUNT(*) FROM canales), (SELECT COUNT(*) FROM canales_clasificacion)`,
+	).Scan(&nCanales, &nClasificaciones); err != nil {
+		t.Fatalf("contar canales: %v", err)
+	}
+	if nCanales != len(d.Canales) || nClasificaciones != len(d.Canales) {
+		t.Fatalf("canales = %d y clasificaciones = %d, se esperaban %d de cada",
+			nCanales, nClasificaciones, len(d.Canales))
+	}
+}
+
+// TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo es la fixture que exige
+// #119: sin dos canales en el mismo periodo, "el valor punto es por canal"
+// (`RD 9.1.1`) no se distingue de "el valor punto es por periodo".
+func TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	filas, err := pool.Query(ctx, `
+		SELECT u.canal_id, COUNT(*)
+		  FROM usos u
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE u.modalidad = 'tv' AND r.periodo = $1
+		 GROUP BY u.canal_id
+		 ORDER BY u.canal_id`, Periodo)
+	if err != nil {
+		t.Fatalf("agrupar los usos de TV por canal: %v", err)
+	}
+	defer filas.Close()
+
+	porCanal := map[string]int{}
+	for filas.Next() {
+		var canal string
+		var n int
+		if err := filas.Scan(&canal, &n); err != nil {
+			t.Fatalf("escanear: %v", err)
+		}
+		porCanal[canal] = n
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("recorrer: %v", err)
+	}
+
+	if len(porCanal) != 2 {
+		t.Fatalf("canales de TV en %s = %v, se esperaban 2", Periodo, porCanal)
+	}
+	for _, canal := range []string{FuenteTV, FuenteTVSegundo} {
+		if porCanal[canal] == 0 {
+			t.Errorf("el canal %q no tiene usos de TV en %s", canal, Periodo)
+		}
+	}
+	// Y cada uno con su bolsa: una corrida por bolsa (ADR 0019).
+	var nBolsasTV int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bolsas WHERE periodo = $1 AND usuario_id = ANY($2)`,
+		Periodo, []string{FuenteTV, FuenteTVSegundo}).Scan(&nBolsasTV); err != nil {
+		t.Fatalf("contar bolsas de TV: %v", err)
+	}
+	if nBolsasTV != 2 {
+		t.Fatalf("bolsas de los dos canales = %d, se esperaban 2", nBolsasTV)
+	}
+}
+
+// Las dos medidas que anadio la migracion 00011 tienen que llegar sembradas, o
+// `RD 9.2` y `RD 9.4` no se pueden ejercitar contra datos.
+func TestElSembradorEscribeEspectadoresYExhibiciones(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var espectadores, exhibiciones int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM usos WHERE espectadores > 0),
+		       (SELECT COUNT(*) FROM usos WHERE exhibiciones > 0)`,
+	).Scan(&espectadores, &exhibiciones); err != nil {
+		t.Fatalf("contar medidas: %v", err)
+	}
+	if espectadores == 0 {
+		t.Error("ningun uso trae espectadores (RD 9.2)")
+	}
+	if exhibiciones == 0 {
+		t.Error("ningun uso trae exhibiciones (RD 9.4)")
 	}
 }
 
@@ -278,6 +374,88 @@ func TestResetRechazaTitularesAjenos(t *testing.T) {
 	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
 	if !errors.Is(err, ErrDatosNoSinteticos) {
 		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestResetRechazaCanalAjeno y TestResetRechazaClasificacionAjena cubren
+// canales y canales_clasificacion (00011) con la misma guarda que
+// TestResetRechazaObrasAjenas: sin ella, un canal importado o una
+// clasificacion anual real se borrarian con SEED_RESET=true igual que las
+// filas sinteticas.
+func TestResetRechazaCanalAjeno(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del catalogo real, que el dataset no conoce.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales (id, nombre, grupo_estructural)
+		VALUES ('telecaribe', 'Telecaribe', 'regional_publico')`,
+	); err != nil {
+		t.Fatalf("insertar canal real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+
+	var quedan int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM canales WHERE id = 'telecaribe'`).Scan(&quedan); err != nil {
+		t.Fatalf("contar el canal real: %v", err)
+	}
+	if quedan != 1 {
+		t.Fatal("el reset borro el canal que no era del dataset")
+	}
+}
+
+func TestResetRechazaClasificacionAjena(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del dataset (caracol) pero con una clasificacion de un ano que
+	// el dataset no siembra: la clave compuesta tiene que distinguirla de las
+	// suyas propias.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+		VALUES ('caracol', 1999, 'privado_nacional')`,
+	); err != nil {
+		t.Fatalf("insertar clasificacion real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestCadaBolsaNacionalTieneUsosAtribuidos comprueba que los cuatro
+// constructores de uso fijen CanalID y no solo usoTV: sin el, UsosDeCanal
+// devolveria vacio para las bolsas de cine, OTT y transporte aunque el
+// reporte trajera filas para ese pagador.
+func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	// dago-films es el circuito internacional (RD 7.4): no valoriza por
+	// puntos y por tanto no siembra usos atribuidos a canal.
+	for _, pagador := range []string{FuenteTV, FuenteTVSegundo, PagadorCine, FuenteOTT, FuenteTransporte} {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, pagador).Scan(&n); err != nil {
+			t.Fatalf("contar usos de %q: %v", pagador, err)
+		}
+		if n == 0 {
+			t.Errorf("el pagador %q no tiene ningun uso atribuido: su bolsa quedaria "+
+				"sin nada que ponderar (UsosDeCanal devolveria vacio)", pagador)
+		}
 	}
 }
 
