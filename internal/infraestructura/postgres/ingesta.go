@@ -176,7 +176,7 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.
 //
 // # Es transaccional por contrato
 //
-// Igual que RepositorioResultados.Guardar, y por un motivo del mismo orden: un
+// Igual que RepositorioResultados.GuardarResultado, y por un motivo del mismo orden: un
 // lote guardado a medias deja una entrega cuyo recuento no cuadra con el
 // archivo, y nadie sabe cual de las dos mitades falta. La transaccion no la
 // abre el caso de uso porque no hay ningun limite que este pueda elegir: el

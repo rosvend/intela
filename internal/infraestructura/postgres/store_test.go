@@ -9,8 +9,8 @@ import (
 
 // El limite de transaccion lo fija quien llama, en aplicacion. EnTransaccion
 // existe para que los casos de uso que escriben (#18 ingesta, #23
-// declaraciones, RepositorioResultados.Guardar, que es "transaccional por
-// contrato") tengan la forma desde el primer dia.
+// declaraciones, RepositorioResultados.GuardarResultado, que es
+// "transaccional por contrato") tengan la forma desde el primer dia.
 func TestEnTransaccionConfirmaAlTerminarBien(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
