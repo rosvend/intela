@@ -43,6 +43,22 @@ var (
 
 	// ErrNetoNegativo: las deducciones no pueden superar el bruto.
 	ErrNetoNegativo = errors.New("neto negativo")
+
+	// ErrCircuitoAusente: una orden pertenece a UN circuito y hay que decir a
+	// cual.
+	//
+	// El circuito no es decorativo: desde el ADR 0019 es parte de la identidad
+	// de la orden -- hay una por (titular, periodo, circuito) -- porque el
+	// nacional y el internacional son dos recorridos distintos del mismo
+	// periodo y no se suman. Una orden sin circuito no se puede colocar en esa
+	// clave, y el UNIQUE del esquema la dejaria pasar con la cadena vacia como
+	// si fuera un tercer circuito.
+	//
+	// Cuales son los dos valores legales NO se comprueba aqui: los declara
+	// recaudo.Circuito y los hace cumplir el CHECK de `ordenes_pago.circuito`.
+	// Este paquete no importa recaudo (ver doc.go), y repetir la lista seria
+	// una segunda definicion que se puede desincronizar de la primera.
+	ErrCircuitoAusente = errors.New("circuito ausente")
 )
 
 // Deduccion es un renglon del desglose. El concepto viaja con el monto
@@ -68,16 +84,40 @@ func (d Documentos) Completos() bool {
 
 // OrdenDePago es lo que ve el titular: bruto, cada deduccion, neto.
 //
-// Neto se calcula aqui como bruto menos la suma de las deducciones, y no
-// se recibe del motor. Lo que el motor aporta es el neto por titular; la
-// capa de aplicacion reconstruye bruto y el desglose a partir de esa cifra
-// y de las deducciones de la corrida, para que si algo no cuadra, la
-// corrida mande.
+// Es UNA por (TitularID, Periodo, Circuito), no una por corrida (ADR 0019):
+// un periodo puede cerrarse con varias corridas del mismo circuito -- una por
+// bolsa de pagador -- y el umbral de menor cuantia de R-11 se mide sobre lo
+// que el titular cobra por ese periodo, no sobre cada trozo por separado.
+// Partirlo en una orden por corrida difiere saldos que juntos si pasan el 2%.
+//
+// # De donde salen las tres cifras
+//
+// El motor aporta el neto POR TITULAR; bruto y el desglose no se reciben de
+// el, se reconstruyen aqui. Neto es bruto menos la suma de las deducciones,
+// y las deducciones son las de la corrida prorrateadas contra el neto de la
+// corrida ([Prorratear]). Es esa cuenta -- y no una preferencia entre dos
+// cifras que discrepen -- la que ata la orden al cierre de la corrida: la
+// tasa que la orden muestra es la misma que la corrida aplico.
 type OrdenDePago struct {
-	ID          string
-	ProcesoID   string
-	TitularID   string
-	Periodo     string
+	ID string
+
+	// ProcesoID es la corrida de REFERENCIA, no la unica que aporto. Cuando
+	// varias corridas del mismo periodo y circuito contribuyen, es la primera
+	// por orden lexicografico; Procesos lleva la lista completa.
+	ProcesoID string
+
+	// Procesos son todas las corridas cuyas lineas entraron en esta orden,
+	// ordenadas. Existe porque sin ella una orden agregada no dice de donde
+	// salio su bruto, y el ADR 0006 pregunta justamente eso.
+	Procesos []string
+
+	TitularID string
+	Periodo   string
+
+	// Circuito es 'nacional' o 'internacional'. Texto y no un tipo de
+	// recaudo: este paquete no importa recaudo (ver doc.go).
+	Circuito string
+
 	Bruto       decimal.Decimal
 	Deducciones []Deduccion
 	Neto        decimal.Decimal
@@ -92,37 +132,68 @@ type OrdenDePago struct {
 	Arrastres []string
 }
 
+// DatosOrden es lo que hace falta para emitir una orden.
+//
+// Es un struct y no siete parametros posicionales porque seis de ellos son
+// cadenas seguidas -- id, proceso, titular, periodo, circuito, dia -- y ese es
+// exactamente el sitio donde dos argumentos intercambiados compilan sin
+// quejarse y producen una orden del circuito equivocado.
+type DatosOrden struct {
+	ID          string
+	ProcesoID   string
+	Procesos    []string
+	TitularID   string
+	Periodo     string
+	Circuito    string
+	EnviadaDia  string
+	Bruto       decimal.Decimal
+	Deducciones []Deduccion
+}
+
 // NuevaOrden construye una orden en estado enviada. Las deducciones no
 // pueden ser negativas; el neto es bruto menos su suma, y si eso queda
 // bajo cero la orden no se emite.
-func NuevaOrden(id, procesoID, titularID, periodo, enviadaDia string, bruto decimal.Decimal, deducciones []Deduccion) (OrdenDePago, error) {
-	if bruto.IsNegative() {
+func NuevaOrden(d DatosOrden) (OrdenDePago, error) {
+	if d.Circuito == "" {
+		return OrdenDePago{}, ErrCircuitoAusente
+	}
+	if d.Bruto.IsNegative() {
 		return OrdenDePago{}, ErrBrutoNegativo
 	}
+	deducciones := d.Deducciones
 	if deducciones == nil {
 		deducciones = []Deduccion{}
 	}
 	suma := decimal.Zero
-	for _, d := range deducciones {
-		if d.Monto.IsNegative() {
-			return OrdenDePago{}, fmt.Errorf("%w: %s", ErrDeduccionNegativa, d.Concepto)
+	for _, ded := range deducciones {
+		if ded.Monto.IsNegative() {
+			return OrdenDePago{}, fmt.Errorf("%w: %s", ErrDeduccionNegativa, ded.Concepto)
 		}
-		suma = suma.Add(d.Monto)
+		suma = suma.Add(ded.Monto)
 	}
-	neto := bruto.Sub(suma)
+	neto := d.Bruto.Sub(suma)
 	if neto.IsNegative() {
 		return OrdenDePago{}, ErrNetoNegativo
 	}
+	procesos := d.Procesos
+	if len(procesos) == 0 {
+		// Una sola corrida contribuyente no es un caso especial: es la lista
+		// de uno. Dejarla vacia obligaria a cada lector a saber que entonces
+		// hay que mirar ProcesoID.
+		procesos = []string{d.ProcesoID}
+	}
 	return OrdenDePago{
-		ID:          id,
-		ProcesoID:   procesoID,
-		TitularID:   titularID,
-		Periodo:     periodo,
-		Bruto:       bruto,
+		ID:          d.ID,
+		ProcesoID:   d.ProcesoID,
+		Procesos:    append([]string{}, procesos...),
+		TitularID:   d.TitularID,
+		Periodo:     d.Periodo,
+		Circuito:    d.Circuito,
+		Bruto:       d.Bruto,
 		Deducciones: deducciones,
 		Neto:        neto,
 		Estado:      EstadoEnviada,
-		EnviadaDia:  enviadaDia,
+		EnviadaDia:  d.EnviadaDia,
 		Arrastres:   []string{},
 	}, nil
 }

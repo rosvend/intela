@@ -82,8 +82,11 @@ func TestAcumulacionR11EnDosPeriodos(t *testing.T) {
 
 	// Periodo 2: 20000 propios + 1000 arrastrados = 21000, sigue bajo
 	// umbral. Se informa, y a los 15 dias se vuelve a diferir.
-	p2, err := NuevaOrden("liq-p2", "prc-2", "tit-ana", "2026-2", "2026-07-01",
-		dec("20000"), nil)
+	p2, err := NuevaOrden(DatosOrden{
+		ID: "liq-p2", ProcesoID: "prc-2", TitularID: "tit-ana",
+		Periodo: "2026-2", Circuito: "nacional", EnviadaDia: "2026-07-01",
+		Bruto: dec("20000"),
+	})
 	if err != nil {
 		t.Fatalf("NuevaOrden p2: %v", err)
 	}
@@ -102,8 +105,11 @@ func TestAcumulacionR11EnDosPeriodos(t *testing.T) {
 
 	// Periodo 3: 6000 propios + 21000 arrastrados = 27000, supera el
 	// umbral. Sin respuesta, se acepta por silencio y se puede pagar.
-	p3, err := NuevaOrden("liq-p3", "prc-3", "tit-ana", "2026-3", "2027-01-01",
-		dec("6000"), nil)
+	p3, err := NuevaOrden(DatosOrden{
+		ID: "liq-p3", ProcesoID: "prc-3", TitularID: "tit-ana",
+		Periodo: "2026-3", Circuito: "nacional", EnviadaDia: "2027-01-01",
+		Bruto: dec("6000"),
+	})
 	if err != nil {
 		t.Fatalf("NuevaOrden p3: %v", err)
 	}

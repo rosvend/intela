@@ -25,10 +25,18 @@ type deduccionJSON struct {
 }
 
 type ordenJSON struct {
-	ID          string          `json:"id"`
-	ProcesoID   string          `json:"proceso_id"`
+	ID string `json:"id"`
+
+	// ProcesoID es la corrida de REFERENCIA y Procesos la lista completa de las
+	// que aportaron: desde el ADR 0019 una orden agrega todas las corridas de su
+	// periodo y circuito, asi que `proceso_id` a secas afirmaria que todo vino
+	// de una sola.
+	ProcesoID string   `json:"proceso_id"`
+	Procesos  []string `json:"procesos"`
+
 	TitularID   string          `json:"titular_id"`
 	Periodo     string          `json:"periodo"`
+	Circuito    string          `json:"circuito"`
 	Bruto       string          `json:"bruto"`
 	Deducciones []deduccionJSON `json:"deducciones"`
 	Neto        string          `json:"neto"`
@@ -50,11 +58,19 @@ func aOrdenJSON(v aplicacion.OrdenVista) ordenJSON {
 			Monto:    d.Monto.StringFixed(2),
 		})
 	}
+	procesos := o.Procesos
+	if procesos == nil {
+		// Nil se serializa a null y el contrato dice array: un cliente que
+		// itere sobre null falla, y "no hay procesos" no es un caso posible.
+		procesos = []string{}
+	}
 	return ordenJSON{
 		ID:          o.ID,
 		ProcesoID:   o.ProcesoID,
+		Procesos:    procesos,
 		TitularID:   o.TitularID,
 		Periodo:     o.Periodo,
+		Circuito:    o.Circuito,
 		Bruto:       o.Bruto.StringFixed(2),
 		Deducciones: deducciones,
 		Neto:        o.Neto.StringFixed(2),

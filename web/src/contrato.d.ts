@@ -1217,14 +1217,34 @@ export interface components {
             monto: string;
         };
         OrdenDePago: {
-            /** @description Identificador opaco de la orden. */
+            /**
+             * @description Identificador de la orden. Es `liq-{periodo}-{circuito}-{titular}`:
+             *     hay UNA orden por esa terna (ADR 0019), no una por corrida.
+             */
             id: string;
-            /** @description Proceso de reparto del que salio la orden. */
+            /**
+             * @description Proceso de reparto de REFERENCIA. Cuando varias corridas del mismo
+             *     periodo y circuito aportan, es la primera por orden lexicografico;
+             *     la lista completa va en `procesos`.
+             */
             proceso_id: string;
+            /**
+             * @description Corridas cuyas lineas entraron en esta orden. Es lo que explica un
+             *     bruto agregado: `proceso_id` a secas afirmaria que todo vino de una
+             *     sola corrida.
+             */
+            procesos: string[];
             /** @description Titular que cobra. */
             titular_id: string;
             /** @description Periodo de la corrida, `YYYY` o `YYYY-MM`. */
             periodo: string;
+            /**
+             * @description Circuito de la orden. El nacional y el internacional del mismo
+             *     periodo son dos recorridos distintos (`RD 7.4`) y no se suman en una
+             *     sola orden.
+             * @enum {string}
+             */
+            circuito: "nacional" | "internacional";
             /** @description Monto bruto, decimal exacto con dos decimales. */
             bruto: string;
             /**
@@ -1235,9 +1255,12 @@ export interface components {
             /** @description Bruto menos la suma de las deducciones. */
             neto: string;
             /**
-             * @description Maquina de R-10 y R-11. `enviada` espera respuesta;
-             *     `aceptada_por_silencio` a los 15 dias calendario si el neto
-             *     supera el 2% SMMLV; `diferida` si no lo supera.
+             * @description Maquina de R-10 y R-11. `enviada` significa que la notificacion al
+             *     titular salio y dejo acuse, y que el plazo corre desde ese acuse;
+             *     `aceptada_por_silencio` a los 15 dias calendario si el neto supera
+             *     el 2% SMMLV; `diferida` si no lo supera, y entonces el monto se
+             *     arrastra al periodo siguiente; `acumulada` es una diferida cuyo neto
+             *     ya se incorporo a una orden posterior.
              * @enum {string}
              */
             estado: "enviada" | "aceptada" | "aceptada_por_silencio" | "diferida" | "acumulada" | "objetada";
@@ -1249,7 +1272,14 @@ export interface components {
             pagable: boolean;
             /**
              * Format: date
-             * @description Dia civil del envio, sobre el que corre el plazo de 15 dias.
+             * @description Dia civil del envio, sobre el que corre el plazo de 15 dias
+             *     calendario de `R-10` / `RD 13.2`.
+             *
+             *     El plazo corre desde el ACUSE de la notificacion registrado: la
+             *     fecha se fija cuando el aviso al titular ya salio, y el acuse queda
+             *     en el asiento de auditoria de la emision (ADR 0006). Una orden en
+             *     `enviada` con una fecha que no respalde ningun acuse le opondria al
+             *     titular un plazo que empezo sin que a el le llegara nada.
              */
             enviada: string;
         };
@@ -1525,10 +1555,14 @@ export interface operations {
                      * @example {
                      *       "liquidaciones": [
                      *         {
-                     *           "id": "liq-prc-nac-2026-tit-ana",
+                     *           "id": "liq-2026-nacional-tit-ana",
                      *           "proceso_id": "prc-nac-2026",
+                     *           "procesos": [
+                     *             "prc-nac-2026"
+                     *           ],
                      *           "titular_id": "tit-ana",
                      *           "periodo": "2026",
+                     *           "circuito": "nacional",
                      *           "bruto": "1000.00",
                      *           "deducciones": [
                      *             {
@@ -1553,6 +1587,52 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["ListadoLiquidaciones"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description No se pudieron leer las liquidaciones, o falta un parametro
+             *     normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+             *     valor por defecto).
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
@@ -1587,7 +1667,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description El rol de la sesion no alcanza para ver el listado. */
+            /** @description Autenticado, pero el rol no basta. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1622,10 +1702,14 @@ export interface operations {
                      * @example {
                      *       "liquidaciones": [
                      *         {
-                     *           "id": "liq-prc-nac-2026-tit-ana",
+                     *           "id": "liq-2026-nacional-tit-ana",
                      *           "proceso_id": "prc-nac-2026",
+                     *           "procesos": [
+                     *             "prc-nac-2026"
+                     *           ],
                      *           "titular_id": "tit-ana",
                      *           "periodo": "2026",
+                     *           "circuito": "nacional",
                      *           "bruto": "1000.00",
                      *           "deducciones": [
                      *             {
@@ -1642,6 +1726,52 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["ListadoLiquidaciones"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description No se pudieron leer las liquidaciones, o falta un parametro
+             *     normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+             *     valor por defecto).
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
@@ -1737,7 +1867,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description La sesion no es de un titular. */
+            /** @description Autenticado, pero el rol no basta. */
             403: {
                 headers: {
                     [name: string]: unknown;

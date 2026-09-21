@@ -17,7 +17,11 @@ func dec(s string) decimal.Decimal {
 
 func ordenPrueba(t *testing.T, bruto string, deducciones []Deduccion) OrdenDePago {
 	t.Helper()
-	o, err := NuevaOrden("liq-1", "prc-1", "tit-ana", "2026", "2026-01-01", dec(bruto), deducciones)
+	o, err := NuevaOrden(DatosOrden{
+		ID: "liq-1", ProcesoID: "prc-1", TitularID: "tit-ana",
+		Periodo: "2026", Circuito: "nacional", EnviadaDia: "2026-01-01",
+		Bruto: dec(bruto), Deducciones: deducciones,
+	})
 	if err != nil {
 		t.Fatalf("NuevaOrden: %v", err)
 	}
@@ -56,7 +60,11 @@ func TestNuevaOrdenSeparaBrutoDeduccionesYNeto(t *testing.T) {
 }
 
 func TestNuevaOrdenSinDeduccionesNoDejaElCorteNulo(t *testing.T) {
-	o, err := NuevaOrden("liq-1", "prc-1", "tit-ana", "2026", "2026-01-01", dec("100"), nil)
+	o, err := NuevaOrden(DatosOrden{
+		ID: "liq-1", ProcesoID: "prc-1", TitularID: "tit-ana",
+		Periodo: "2026", Circuito: "nacional", EnviadaDia: "2026-01-01",
+		Bruto: dec("100"),
+	})
 	if err != nil {
 		t.Fatalf("NuevaOrden: %v", err)
 	}
@@ -69,23 +77,35 @@ func TestNuevaOrdenSinDeduccionesNoDejaElCorteNulo(t *testing.T) {
 }
 
 func TestNuevaOrdenRechazaBrutoNegativo(t *testing.T) {
-	_, err := NuevaOrden("liq-1", "prc-1", "tit-ana", "2026", "2026-01-01", dec("-1"), nil)
+	_, err := NuevaOrden(DatosOrden{
+		ID: "liq-1", ProcesoID: "prc-1", TitularID: "tit-ana",
+		Periodo: "2026", Circuito: "nacional", EnviadaDia: "2026-01-01",
+		Bruto: dec("-1"),
+	})
 	if !errors.Is(err, ErrBrutoNegativo) {
 		t.Fatalf("se esperaba ErrBrutoNegativo, se obtuvo %v", err)
 	}
 }
 
 func TestNuevaOrdenRechazaDeduccionNegativa(t *testing.T) {
-	_, err := NuevaOrden("liq-1", "prc-1", "tit-ana", "2026", "2026-01-01",
-		dec("100"), []Deduccion{{Concepto: ConceptoAdministracion, Monto: dec("-1")}})
+	_, err := NuevaOrden(DatosOrden{
+		ID: "liq-1", ProcesoID: "prc-1", TitularID: "tit-ana",
+		Periodo: "2026", Circuito: "nacional", EnviadaDia: "2026-01-01",
+		Bruto:       dec("100"),
+		Deducciones: []Deduccion{{Concepto: ConceptoAdministracion, Monto: dec("-1")}},
+	})
 	if !errors.Is(err, ErrDeduccionNegativa) {
 		t.Fatalf("se esperaba ErrDeduccionNegativa, se obtuvo %v", err)
 	}
 }
 
 func TestNuevaOrdenRechazaNetoNegativo(t *testing.T) {
-	_, err := NuevaOrden("liq-1", "prc-1", "tit-ana", "2026", "2026-01-01",
-		dec("100"), []Deduccion{{Concepto: ConceptoAdministracion, Monto: dec("200")}})
+	_, err := NuevaOrden(DatosOrden{
+		ID: "liq-1", ProcesoID: "prc-1", TitularID: "tit-ana",
+		Periodo: "2026", Circuito: "nacional", EnviadaDia: "2026-01-01",
+		Bruto:       dec("100"),
+		Deducciones: []Deduccion{{Concepto: ConceptoAdministracion, Monto: dec("200")}},
+	})
 	if !errors.Is(err, ErrNetoNegativo) {
 		t.Fatalf("se esperaba ErrNetoNegativo, se obtuvo %v", err)
 	}
@@ -167,8 +187,11 @@ func TestIncorporarArrastreSumaElNetoSinRededucir(t *testing.T) {
 	actual := ordenPrueba(t, "1000.00", []Deduccion{
 		{Concepto: ConceptoAdministracion, Monto: dec("200.00")},
 	})
-	anterior, err := NuevaOrden("liq-prev", "prc-0", "tit-ana", "2025", "2025-01-01",
-		dec("80.00"), nil)
+	anterior, err := NuevaOrden(DatosOrden{
+		ID: "liq-prev", ProcesoID: "prc-0", TitularID: "tit-ana",
+		Periodo: "2025", Circuito: "nacional", EnviadaDia: "2025-01-01",
+		Bruto: dec("80.00"),
+	})
 	if err != nil {
 		t.Fatalf("NuevaOrden: %v", err)
 	}

@@ -1,8 +1,16 @@
 -- Ordenes de pago (R-10, R-11, R-12) y documentos del titular para cobrar.
 --
--- Bruto, cada deduccion y neto viven en tablas distintas a proposito: OE-4 y
--- OE-6 piden el desglose en cada consulta. Colapsar las deducciones en el
--- neto haria inexpresable el resumen que exige RD 13.2.
+-- Bruto y neto son COLUMNAS de `ordenes_pago`; lo que vive en una tabla aparte
+-- es solo el desglose de deducciones, que es de cardinalidad abierta -- las
+-- tres de la corrida hoy, un anticipo de R-33 manana -- y no cabe en columnas
+-- fijas. OE-4 y OE-6 piden ver los tres numeros por separado en cada consulta,
+-- y colapsar las deducciones en el neto haria inexpresable el resumen de
+-- RD 13.2.
+--
+-- UNA orden por (titular, periodo, circuito), no por corrida (ADR 0019): un
+-- periodo se cierra con tantas corridas como bolsas tenga el circuito, y el 2%
+-- de un SMMLV de R-11 se mide sobre lo que el titular cobra por el periodo.
+-- Por eso la clave unica es esa terna y no (proceso_id, titular_id).
 --
 -- COORDINACION DE NUMERO: esta migracion nacio como 00002, paso a 00003
 -- cuando el catalogo (#86) se quedo esa version, y luego a 00007 cuando
@@ -29,9 +37,29 @@
 -- +goose StatementBegin
 CREATE TABLE ordenes_pago (
   id          TEXT PRIMARY KEY,
+
+  -- La corrida de REFERENCIA, no la unica que aporto: cuando varias corridas
+  -- del periodo y circuito contribuyen, es la primera por orden lexicografico.
+  -- Se queda como clave foranea porque es lo que ata la orden a un proceso que
+  -- existe de verdad; `procesos` lleva la lista completa.
   proceso_id  TEXT NOT NULL REFERENCES procesos(id),
+
+  -- Todas las corridas cuyas lineas entraron en esta orden, ordenadas. Sin
+  -- ella una orden agregada no dice de donde salio su bruto, que es justo la
+  -- pregunta 4 del ADR 0006. Sin clave foranea -- PostgreSQL no las admite
+  -- sobre elementos de un array --, asi que es un registro de procedencia y no
+  -- una integridad que la base haga cumplir.
+  procesos    TEXT[] NOT NULL DEFAULT '{}',
+
   titular_id  TEXT NOT NULL REFERENCES titulares(id),
   periodo     TEXT NOT NULL CHECK (periodo ~ '^[0-9]{4}(-[0-9]{2})?$'),
+
+  -- El circuito es parte de la IDENTIDAD de la orden, no un adorno: el
+  -- nacional y el internacional del mismo periodo son dos recorridos distintos
+  -- (RD 7.4, ADR 0008) y no se suman en una sola orden, igual que no se suman
+  -- en una sola bolsa (ver el UNIQUE de `bolsas`).
+  circuito    TEXT NOT NULL CHECK (circuito IN ('nacional','internacional')),
+
   bruto       NUMERIC(18,2) NOT NULL CHECK (bruto >= 0),
   neto        NUMERIC(18,2) NOT NULL CHECK (neto  >= 0),
   estado      TEXT NOT NULL CHECK (estado IN (
@@ -42,14 +70,25 @@ CREATE TABLE ordenes_pago (
                 'acumulada',
                 'objetada')),
   -- Dia civil del envio. El plazo de 15 dias de R-10 / RD 13.2 se cuenta
-  -- sobre esta fecha, no sobre un timestamptz: calendario, no 15*24h.
+  -- sobre esta fecha, no sobre un timestamptz: calendario, no 15*24h. Se
+  -- escribe cuando la notificacion ya dejo acuse: el plazo corre desde el
+  -- envio, y una fecha sin acuse le opondria al titular un plazo que empezo
+  -- sin que a el le llegara nada.
   enviada     DATE NOT NULL,
   arrastres   TEXT[] NOT NULL DEFAULT '{}',
-  UNIQUE (proceso_id, titular_id),
+
+  -- La clave del ADR 0019. Es lo que hace idempotente la generacion: dos
+  -- corridas del mismo periodo y circuito producen el mismo id de orden para
+  -- el mismo titular, asi que la segunda choca aqui en vez de abrir una orden
+  -- paralela que partiria el umbral de R-11 en dos mitades.
+  UNIQUE (titular_id, periodo, circuito),
   CONSTRAINT orden_neto_no_supera_bruto CHECK (neto <= bruto)
 );
 CREATE INDEX ordenes_pago_titular ON ordenes_pago (titular_id);
 CREATE INDEX ordenes_pago_estado  ON ordenes_pago (estado);
+-- La lectura por la que se decide si un periodo ya se liquido, y la que
+-- responde el listado de administracion.
+CREATE INDEX ordenes_pago_periodo_circuito ON ordenes_pago (periodo, circuito);
 -- +goose StatementEnd
 
 -- +goose StatementBegin

@@ -92,9 +92,5 @@ resource "aws_ssm_parameter" "database_url" {
   name        = "/${var.name_prefix}/database_url"
   description = "PostgreSQL DSN for Intela, including the pgxpool sizing parameters."
   type        = "SecureString"
-  # Explicit: AWS stores `text` and data_type is ForceNew. Leaving it unset
-  # lets a refresh see `text` against a null in config and replace the
-  # parameter on every plan, which the destroy guard then refuses.
-  data_type = "text"
-  value     = local.database_url
+  value       = local.database_url
 }

@@ -39,10 +39,12 @@ func servidorConLiq(t *testing.T, auth Autenticacion, liq ConsultaLiquidaciones)
 func ordenVistaPrueba() aplicacion.OrdenVista {
 	return aplicacion.OrdenVista{
 		Orden: liquidacion.OrdenDePago{
-			ID:        "liq-prc-1-tit-ana",
+			ID:        "liq-2026-nacional-tit-ana",
 			ProcesoID: "prc-1",
+			Procesos:  []string{"prc-1", "prc-2"},
 			TitularID: "tit-ana",
 			Periodo:   "2026",
+			Circuito:  "nacional",
 			Bruto:     decimal.RequireFromString("1000.00"),
 			Deducciones: []liquidacion.Deduccion{
 				{Concepto: liquidacion.ConceptoAdministracion, Monto: decimal.RequireFromString("200.00")},
@@ -90,6 +92,14 @@ func TestGetLiquidacionesAdmin(t *testing.T) {
 	}
 	if o.Estado != string(liquidacion.EstadoAceptadaPorSilencio) {
 		t.Fatalf("estado = %q", o.Estado)
+	}
+	// El circuito es parte de la identidad de la orden desde el ADR 0019, y las
+	// corridas que aportaron son lo que explica un bruto agregado.
+	if o.Circuito != "nacional" {
+		t.Fatalf("circuito = %q", o.Circuito)
+	}
+	if len(o.Procesos) != 2 {
+		t.Fatalf("procesos = %v, tienen que viajar las dos corridas", o.Procesos)
 	}
 	if !o.Pagable {
 		t.Fatal("pagable tiene que viajar en el JSON")

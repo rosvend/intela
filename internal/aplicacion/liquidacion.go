@@ -2,8 +2,11 @@ package aplicacion
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -13,6 +16,49 @@ import (
 )
 
 const claveSMMLV = "smmlv"
+
+// RefOrdenDePago es el tipo de referencia de los asientos de liquidacion: es
+// la mitad con la que [BitacoraAuditoria.De] recupera la historia de una orden
+// -- emision, silencio, arrastre -- en el orden en que ocurrio.
+const RefOrdenDePago = "orden_pago"
+
+// Hechos que la liquidacion asienta en la bitacora (ADR 0006).
+//
+// Constantes y no literales en la llamada por lo mismo que en el catalogo: el
+// hecho es la clave por la que se consulta el libro, y una errata en el
+// literal no rompe nada hoy, deja un asiento que ninguna consulta encuentra
+// dentro de diez anos.
+const (
+	// HechoLiquidacionEmitida es la orden de pago recien enviada al titular.
+	// Su payload lleva el acuse de la notificacion: es lo que prueba desde
+	// cuando corre el plazo de R-10.
+	HechoLiquidacionEmitida = "liquidacion.emitida"
+	// HechoLiquidacionAceptadaPorSilencio es R-10 consumado: 15 dias
+	// calendario sin respuesta con el neto sobre el umbral.
+	HechoLiquidacionAceptadaPorSilencio = "liquidacion.aceptada_por_silencio"
+	// HechoLiquidacionDiferida es R-11: 15 dias sin respuesta y el neto no
+	// llega al 2% de un SMMLV, asi que el monto espera al periodo siguiente.
+	HechoLiquidacionDiferida = "liquidacion.diferida"
+	// HechoLiquidacionAcumulada cierra una diferida cuyo neto ya se incorporo
+	// a una orden posterior, para que no se arrastre dos veces.
+	HechoLiquidacionAcumulada = "liquidacion.acumulada"
+)
+
+// actorSistema es el actor de los asientos que NO nacen de una decision de una
+// persona.
+//
+// Generar una liquidacion y las transiciones de R-10 y R-11 las produce el
+// sistema: el silencio del titular no es una accion que nadie firme, y el
+// plazo lo consuma el calendario. El ADR 0006 pide el actor "en ese ultimo
+// caso", el de la decision manual, y `asientos.actor_id` es nullable
+// precisamente para esto (el adaptador lo escribe con NULLIF sobre la cadena
+// vacia).
+//
+// Tiene que ser la cadena VACIA y no un "sistema" literal: `asientos.actor_id`
+// referencia `usuarios(id)`, asi que un id inventado no pasa la clave foranea.
+// Por eso estos asientos no pasan por [exigirActor], que es la guarda de los
+// casos de uso que SI reciben un actor de la sesion.
+const actorSistema = ""
 
 // OrdenVista es la orden mas lo que solo se sabe en esta capa: si se
 // puede pagar (R-12) y el dia civil con el que se evaluo el plazo.
@@ -25,92 +71,314 @@ type OrdenVista struct {
 // de una corrida, y las sirve al admin y al titular.
 //
 // El reloj entra aqui, no en dominio: EvaluarPlazo recibe un YYYY-MM-DD.
+//
+// # Por que sostiene cinco puertos y no uno
+//
+// Igual que [Catalogo], y por la misma razon del ADR 0003: la trazabilidad
+// entra por [BitacoraAuditoria] y no por el contrato del repositorio, asi que
+// el limite de transaccion hay que declararlo, y eso es [UnidadDeTrabajo].
+// Emitir una orden son cuatro escrituras que son UN hecho -- la orden, el
+// cierre de las diferidas que absorbe, el asiento de cada una y la
+// notificacion que arranca el plazo -- y ninguna de ellas tiene sentido sin
+// las otras.
+//
+// [Notificador] esta aqui y no en el adaptador porque R-10 cuenta 15 dias
+// "desde el envio": sin un envio que haya ocurrido de verdad, `EnviadaDia` es
+// una fecha que nadie puede oponer al titular.
 type Liquidaciones struct {
-	Ordenes RepositorioLiquidacion
-	Reloj   Reloj
+	Ordenes     RepositorioLiquidacion
+	Reloj       Reloj
+	Notificador Notificador
+	Bitacora    BitacoraAuditoria
+	Unidad      UnidadDeTrabajo
 }
 
-// GenerarLiquidacion convierte las lineas persistidas de un proceso en
-// ordenes de pago, una por titular. Idempotente: si el proceso ya tiene
-// ordenes, las devuelve (con el plazo reevaluado) en vez de emitir otras.
+// GenerarLiquidacion emite las ordenes de pago de un periodo y circuito.
+//
+// # Una orden por (titular, periodo, circuito), no por corrida
+//
+// Es el ADR 0019 (ver tambien la nota de [liquidacion.OrdenDePago]): un
+// periodo se cierra con tantas corridas como bolsas tenga el circuito, y lo
+// que R-11 mide contra el 2% de un SMMLV es lo que el titular cobra POR EL
+// PERIODO. Emitir una orden por corrida diferiria como menor cuantia saldos
+// que juntos si pasan el umbral, y le mandaria al titular tres avisos con tres
+// plazos distintos por el mismo periodo.
+//
+// Asi que procesoID es el DISPARADOR, no el alcance: de el se sacan periodo y
+// circuito, y se agregan las lineas de TODAS las corridas de ese periodo y
+// circuito que ya pasaron la compuerta del RD 13.5.
+//
+// # Decision abierta: las corridas que cierran tarde
+//
+// Una corrida del mismo periodo y circuito que pase la compuerta DESPUES de
+// que las ordenes ya se emitieron NO se incorpora a ellas, y hoy no emite
+// ordenes propias: la guarda de idempotencia ve que ya hay ordenes para ese
+// (periodo, circuito) y las devuelve tal cual. Es deliberado y es lo
+// conservador: doblar el bruto de una orden ya enviada reabriria un plazo de
+// R-10 que puede estar corriendo o ya vencido, y emitir una segunda orden del
+// mismo periodo choca con el UNIQUE (titular_id, periodo, circuito) que
+// sostiene todo lo de arriba.
+//
+// Lo que queda sin resolver es como se paga ese dinero, y no se resuelve aqui
+// porque la respuesta es normativa y no tecnica: puede ser una corrida de
+// ajuste del periodo siguiente (el camino de R-11, que ya existe) o una
+// reapertura del periodo, y eso lo decide el Consejo Directivo. Mientras no
+// este decidido, el orden de operaciones es el control: no se liquida un
+// periodo hasta que sus corridas estan firmadas.
+//
+// # Idempotente
+//
+// Volver a llamarla sobre el mismo periodo y circuito NO regenera: devuelve lo
+// que hay, con el plazo reevaluado. Es lo que hace que un reintento -- de la
+// cola, de un operador, de dos peticiones a la vez -- no duplique dinero, y lo
+// que impide el defecto peor de todos: que una orden ya diferida se incorpore
+// a si misma como arrastre y aparezca acumulada de su propio neto.
 func (l Liquidaciones) GenerarLiquidacion(ctx context.Context, procesoID string) ([]OrdenVista, error) {
-	existentes, err := l.Ordenes.DeProceso(ctx, procesoID)
-	if err != nil {
-		return nil, fmt.Errorf("ordenes del proceso %s: %w", procesoID, err)
-	}
-	if len(existentes) > 0 {
-		return l.conPlazoYDocumentos(ctx, existentes)
+	if err := l.cableadoParaEmitir(); err != nil {
+		return nil, err
 	}
 
-	insumo, err := l.Ordenes.InsumoDeProceso(ctx, procesoID)
+	meta, err := l.Ordenes.MetaDeProceso(ctx, procesoID)
 	if err != nil {
-		return nil, fmt.Errorf("insumo del proceso %s: %w", procesoID, err)
+		return nil, fmt.Errorf("meta del proceso %s: %w", procesoID, err)
+	}
+	if err := meta.ExigirListoParaLiquidar(); err != nil {
+		return nil, err
 	}
 
 	ahora := l.Reloj.Ahora().UTC()
-	smmlv, err := l.Ordenes.SMMLVVigente(ctx, ahora)
+
+	// El SMMLV se resuelve ANTES de tocar nada. No se usa para emitir -- el
+	// umbral decide el silencio, no la emision -- pero sin el no se puede
+	// servir lo emitido, y fallar despues de haber insertado y notificado
+	// dejaria al titular con un aviso de una orden que la respuesta no puede
+	// mostrar (ADR 0004: se falla, no se inventa un valor).
+	if _, err := l.umbralVigente(ctx, ahora); err != nil {
+		return nil, err
+	}
+
+	var emitidas []liquidacion.OrdenDePago
+	err = l.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		// Lo PRIMERO, y dentro de la unidad: todo lo que sigue es un
+		// leer-modificar-escribir sobre el mismo (periodo, circuito), y hasta
+		// que la primera orden exista no hay ninguna fila que sirva de cerrojo.
+		if err := l.Ordenes.BloquearPeriodo(ctx, meta.Periodo, meta.Circuito); err != nil {
+			return fmt.Errorf("bloquear %s: %w", meta.donde(), err)
+		}
+
+		existentes, err := l.Ordenes.DePeriodoCircuito(ctx, meta.Periodo, meta.Circuito)
+		if err != nil {
+			return fmt.Errorf("ordenes de %s: %w", meta.donde(), err)
+		}
+		if len(existentes) > 0 {
+			emitidas = existentes
+			return nil
+		}
+
+		procesos, err := l.Ordenes.ProcesosListos(ctx, meta.Periodo, meta.Circuito)
+		if err != nil {
+			return fmt.Errorf("corridas listas de %s: %w", meta.donde(), err)
+		}
+		// El disparador acaba de pasar la compuerta, asi que tiene que estar en
+		// la lista. Si no esta, el adaptador y el gate no estan mirando lo
+		// mismo, y emitir con un alcance que no incluye la corrida que se pidio
+		// liquidar seria peor que no emitir.
+		if !slices.Contains(procesos, procesoID) {
+			return fmt.Errorf(
+				"%w: %s paso la compuerta pero no aparece entre las corridas listas de %s",
+				ErrCorridaNoCuadra, procesoID, meta.donde())
+		}
+
+		ag, err := l.agregar(ctx, procesos)
+		if err != nil {
+			return err
+		}
+		if err := l.emitir(ctx, meta, ag, ahora); err != nil {
+			return err
+		}
+
+		// Se relee en vez de devolver lo que se construyo: EmitirOrdenes no
+		// pisa lo que ya existiera bajo el mismo id, asi que lo unico que de
+		// verdad describe el estado del periodo es la base.
+		emitidas, err = l.Ordenes.DePeriodoCircuito(ctx, meta.Periodo, meta.Circuito)
+		return err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("smmlv: %w", err)
+		return nil, err
 	}
-	if smmlv.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf("%w: %s", ErrParametroAusente, claveSMMLV)
+	return l.conPlazoYDocumentos(ctx, emitidas)
+}
+
+// agregado es el insumo de TODAS las corridas listas de un periodo y circuito,
+// sumado. Es lo unico que ve el prorrateo: una orden agregada no tiene una
+// corrida a la que pertenecer.
+type agregado struct {
+	// Procesos son las corridas que contribuyeron, ordenadas. La primera es la
+	// de referencia.
+	Procesos []string
+
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+
+	// PorTitular es el neto de cada titular, ya sumado sobre obras y corridas.
+	PorTitular map[string]decimal.Decimal
+
+	// Distribuido es la suma de las lineas. Puede ser MENOR que el neto de la
+	// corrida -- eso es el retenido -- pero nunca mayor; ver
+	// [ErrCorridaNoCuadra].
+	Distribuido decimal.Decimal
+}
+
+// Neto es el denominador del prorrateo: lo que las corridas dejaron para
+// repartir. Ver [liquidacion.Prorratear] para por que no es Distribuido.
+func (a agregado) Neto() decimal.Decimal {
+	return liquidacion.NetoDeCorrida(a.Bruto, a.Admin, a.Social, a.Reserva)
+}
+
+func (l Liquidaciones) agregar(ctx context.Context, procesos []string) (agregado, error) {
+	ag := agregado{
+		Procesos:    procesos,
+		Bruto:       decimal.Zero,
+		Admin:       decimal.Zero,
+		Social:      decimal.Zero,
+		Reserva:     decimal.Zero,
+		PorTitular:  map[string]decimal.Decimal{},
+		Distribuido: decimal.Zero,
+	}
+	for _, procesoID := range procesos {
+		insumo, err := l.Ordenes.InsumoDeProceso(ctx, procesoID)
+		if err != nil {
+			return agregado{}, fmt.Errorf("insumo del proceso %s: %w", procesoID, err)
+		}
+		ag.Bruto = ag.Bruto.Add(insumo.Bruto)
+		ag.Admin = ag.Admin.Add(insumo.Admin)
+		ag.Social = ag.Social.Add(insumo.Social)
+		ag.Reserva = ag.Reserva.Add(insumo.Reserva)
+		for _, linea := range insumo.Titulares {
+			ag.PorTitular[linea.TitularID] = ag.PorTitular[linea.TitularID].Add(linea.Importe)
+			ag.Distribuido = ag.Distribuido.Add(linea.Importe)
+		}
 	}
 
-	porTitular := agruparPorTitular(insumo.Titulares)
-	distribuido := decimal.Zero
-	for _, neto := range porTitular {
-		distribuido = distribuido.Add(neto)
+	neto := ag.Neto()
+	if neto.IsNegative() {
+		return agregado{}, fmt.Errorf(
+			"%w: las corridas %v deducen %s de un bruto de %s",
+			ErrCorridaNoCuadra, procesos,
+			ag.Admin.Add(ag.Social).Add(ag.Reserva), ag.Bruto)
 	}
-
-	ids := make([]string, 0, len(porTitular))
-	for id := range porTitular {
-		ids = append(ids, id)
+	if ag.Distribuido.GreaterThan(neto) {
+		return agregado{}, fmt.Errorf(
+			"%w: las corridas %v reparten %s sobre un neto de %s",
+			ErrCorridaNoCuadra, procesos, ag.Distribuido, neto)
 	}
-	sort.Strings(ids)
+	return ag, nil
+}
 
+// emitir arma y persiste una orden por titular, cierra las diferidas que
+// absorbe y asienta las dos cosas. Corre DENTRO de la unidad de
+// [Liquidaciones.GenerarLiquidacion] y con su cerrojo ya tomado.
+func (l Liquidaciones) emitir(
+	ctx context.Context, meta MetaProceso, ag agregado, ahora time.Time,
+) error {
+	netoProc := ag.Neto()
 	enviadaDia := diaCivil(ahora)
-	ordenes := make([]liquidacion.OrdenDePago, 0, len(ids))
+
+	titulares := make([]string, 0, len(ag.PorTitular))
+	for titularID := range ag.PorTitular {
+		titulares = append(titulares, titularID)
+	}
+	slices.Sort(titulares)
+
+	nuevas := make([]liquidacion.OrdenDePago, 0, len(titulares))
+	acuses := make(map[string]string, len(titulares))
 	acumuladas := make([]liquidacion.OrdenDePago, 0)
-	for _, titularID := range ids {
-		neto := porTitular[titularID]
-		deducciones := prorratearDeducciones(neto, distribuido, insumo)
+
+	for _, titularID := range titulares {
+		neto := ag.PorTitular[titularID]
+		deducciones := liquidacion.Prorratear(neto, ag.Admin, ag.Social, ag.Reserva, netoProc)
 		bruto := neto
 		for _, d := range deducciones {
 			bruto = bruto.Add(d.Monto)
 		}
-		o, err := liquidacion.NuevaOrden(
-			idOrden(procesoID, titularID),
-			procesoID,
-			titularID,
-			insumo.Periodo,
-			enviadaDia,
-			bruto,
-			deducciones,
-		)
+
+		id := idOrden(meta.Periodo, meta.Circuito, titularID)
+
+		// Se notifica ANTES de fijar el dia del envio, y el acuse queda en el
+		// asiento. R-10 cuenta 15 dias "desde el envio": una orden en `enviada`
+		// con una fecha que no respalda ningun acuse le opondria al titular un
+		// plazo que empezo a correr sin que a el le llegara nada.
+		//
+		// Que la notificacion sea un efecto que no se revierte -- si la unidad
+		// falla despues, el aviso ya salio -- es el mismo reparto que la boveda
+		// de la ingesta: de un envio no se hace rollback. El resto que deja es
+		// un aviso sin orden, que es inerte; el contrario, una orden sin aviso,
+		// es el que corre un plazo contra alguien que no sabe nada.
+		acuse, err := l.Notificador.Notificar(ctx, titularID,
+			asuntoLiquidacion(meta), cuerpoLiquidacion(meta, bruto, neto, enviadaDia))
 		if err != nil {
-			return nil, fmt.Errorf("armar orden de %s: %w", titularID, err)
+			return fmt.Errorf("notificar la liquidacion %s: %w", id, err)
+		}
+		acuses[id] = acuse
+
+		o, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
+			ID:          id,
+			ProcesoID:   ag.Procesos[0],
+			Procesos:    ag.Procesos,
+			TitularID:   titularID,
+			Periodo:     meta.Periodo,
+			Circuito:    string(meta.Circuito),
+			EnviadaDia:  enviadaDia,
+			Bruto:       bruto,
+			Deducciones: deducciones,
+		})
+		if err != nil {
+			return fmt.Errorf("armar la orden de %s: %w", titularID, err)
 		}
 
-		previas, err := l.Ordenes.DeTitular(ctx, titularID)
+		// Con la fila bloqueada: ver [RepositorioLiquidacion.DiferidasDeTitular].
+		diferidas, err := l.Ordenes.DiferidasDeTitular(ctx, titularID)
 		if err != nil {
-			return nil, fmt.Errorf("ordenes previas de %s: %w", titularID, err)
+			return fmt.Errorf("diferidas de %s: %w", titularID, err)
 		}
-		for _, prev := range previas {
-			if prev.Estado != liquidacion.EstadoDiferida {
+		for _, prev := range diferidas {
+			// Una orden no se arrastra a si misma. No puede pasar con la guarda
+			// de idempotencia por delante -- si existiera ya, no estariamos
+			// emitiendo -- y se comprueba igual porque el id es estable y el
+			// coste de equivocarse es una orden acumulada de su propio neto.
+			if prev.ID == o.ID {
 				continue
 			}
 			o = o.IncorporarArrastre(prev)
 			acumuladas = append(acumuladas, prev.MarcarAcumulada())
 		}
-		ordenes = append(ordenes, o)
+		nuevas = append(nuevas, o)
 	}
 
-	aGuardar := append([]liquidacion.OrdenDePago{}, ordenes...)
-	aGuardar = append(aGuardar, acumuladas...)
-	if err := l.Ordenes.GuardarOrdenes(ctx, aGuardar); err != nil {
-		return nil, fmt.Errorf("guardar liquidacion del proceso %s: %w", procesoID, err)
+	if err := l.Ordenes.EmitirOrdenes(ctx, nuevas); err != nil {
+		return fmt.Errorf("emitir las ordenes de %s: %w", meta.donde(), err)
 	}
-	return l.conDocumentos(ctx, ordenes)
+	for _, o := range nuevas {
+		if err := l.asentar(ctx, HechoLiquidacionEmitida, o, "", acuses[o.ID]); err != nil {
+			return err
+		}
+	}
+
+	if len(acumuladas) == 0 {
+		return nil
+	}
+	aplicadas, err := l.Ordenes.TransicionarOrdenes(ctx, acumuladas, liquidacion.EstadoDiferida)
+	if err != nil {
+		return fmt.Errorf("cerrar las diferidas arrastradas a %s: %w", meta.donde(), err)
+	}
+	for _, o := range aplicadas {
+		if err := l.asentar(ctx, HechoLiquidacionAcumulada, o, liquidacion.EstadoDiferida, ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Listar es el listado de administracion. Un titular no lo ve: el suyo
@@ -139,32 +407,64 @@ func (l Liquidaciones) DeTitular(ctx context.Context, actor Usuario) ([]OrdenVis
 	return l.conPlazoYDocumentos(ctx, ordenes)
 }
 
+// conPlazoYDocumentos evalua R-10 y R-11 contra el dia de hoy y persiste las
+// transiciones que salgan, cada una con su asiento y en la misma transaccion
+// (ADR 0006).
+//
+// La transicion es CONDICIONAL -- solo se aplica si la orden sigue en
+// `enviada` -- y lo que se devuelve refleja lo que de verdad quedo escrito, no
+// lo que este proceso calculo: dos lecturas concurrentes del dia 15 evaluan lo
+// mismo y solo una escribe, y la que llega tarde no puede informar un estado
+// que ella no consiguio poner.
 func (l Liquidaciones) conPlazoYDocumentos(ctx context.Context, ordenes []liquidacion.OrdenDePago) ([]OrdenVista, error) {
 	if len(ordenes) == 0 {
 		return []OrdenVista{}, nil
 	}
 	ahora := l.Reloj.Ahora().UTC()
-	smmlv, err := l.Ordenes.SMMLVVigente(ctx, ahora)
+	umbral, err := l.umbralVigente(ctx, ahora)
 	if err != nil {
-		return nil, fmt.Errorf("smmlv: %w", err)
+		return nil, err
 	}
-	if smmlv.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf("%w: %s", ErrParametroAusente, claveSMMLV)
-	}
-	umbral := liquidacion.UmbralMenorCuantia(smmlv)
 	hoy := diaCivil(ahora)
 
 	cambiadas := make([]liquidacion.OrdenDePago, 0)
-	for i, o := range ordenes {
-		nueva := o.EvaluarPlazo(hoy, umbral)
-		if nueva.Estado != o.Estado {
+	for _, o := range ordenes {
+		if nueva := o.EvaluarPlazo(hoy, umbral); nueva.Estado != o.Estado {
 			cambiadas = append(cambiadas, nueva)
-			ordenes[i] = nueva
 		}
 	}
-	if len(cambiadas) > 0 {
-		if err := l.Ordenes.GuardarOrdenes(ctx, cambiadas); err != nil {
-			return nil, fmt.Errorf("persistir transicion de silencio: %w", err)
+	if len(cambiadas) == 0 {
+		return l.conDocumentos(ctx, ordenes)
+	}
+
+	if err := l.cableadoParaEscribir(); err != nil {
+		return nil, err
+	}
+	var aplicadas []liquidacion.OrdenDePago
+	err = l.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		var err error
+		aplicadas, err = l.Ordenes.TransicionarOrdenes(ctx, cambiadas, liquidacion.EstadoEnviada)
+		if err != nil {
+			return fmt.Errorf("persistir transicion de silencio: %w", err)
+		}
+		for _, o := range aplicadas {
+			if err := l.asentar(ctx, hechoDeSilencio(o.Estado), o, liquidacion.EstadoEnviada, ""); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	nuevoEstado := make(map[string]liquidacion.Estado, len(aplicadas))
+	for _, o := range aplicadas {
+		nuevoEstado[o.ID] = o.Estado
+	}
+	for i := range ordenes {
+		if estado, cambio := nuevoEstado[ordenes[i].ID]; cambio {
+			ordenes[i].Estado = estado
 		}
 	}
 	return l.conDocumentos(ctx, ordenes)
@@ -188,6 +488,131 @@ func (l Liquidaciones) conDocumentos(ctx context.Context, ordenes []liquidacion.
 	return vistas, nil
 }
 
+// umbralVigente resuelve el 2% de un SMMLV en una fecha. Un SMMLV ausente o no
+// positivo es [ErrParametroAusente] y no un umbral de cero: con umbral cero
+// TODA orden pasaria de enviada a aceptada_por_silencio a los 15 dias, y R-11
+// dejaria de existir sin que nada lo dijera (ADR 0004).
+func (l Liquidaciones) umbralVigente(ctx context.Context, ahora time.Time) (decimal.Decimal, error) {
+	smmlv, err := l.Ordenes.SMMLVVigente(ctx, ahora)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("smmlv: %w", err)
+	}
+	if smmlv.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, fmt.Errorf("%w: %s", ErrParametroAusente, claveSMMLV)
+	}
+	return liquidacion.UmbralMenorCuantia(smmlv), nil
+}
+
+// asentar escribe el asiento de un hecho de liquidacion. El error NO se
+// descarta en ningun camino: el ADR 0006 declara el asiento "parte de la
+// definicion de hecho de cada caso de uso", asi que devolverlo es lo que
+// revierte la unidad y con ella la orden que el asiento explicaba.
+//
+// Sin [exigirActor]: estos hechos los produce el sistema, no una persona. Ver
+// [actorSistema].
+func (l Liquidaciones) asentar(
+	ctx context.Context, hecho string, o liquidacion.OrdenDePago,
+	anterior liquidacion.Estado, acuse string,
+) error {
+	payload, err := json.Marshal(asientoDeOrden(o, anterior, acuse))
+	if err != nil {
+		return fmt.Errorf("serializar el asiento de la orden %q: %w", o.ID, err)
+	}
+	if err := l.Bitacora.Asentar(ctx, Asiento{
+		Hecho:   hecho,
+		RefTipo: RefOrdenDePago,
+		RefID:   o.ID,
+		ActorID: actorSistema,
+		Payload: payload,
+		Cuando:  l.Reloj.Ahora(),
+	}); err != nil {
+		return fmt.Errorf("asentar %q sobre la orden %q: %w", hecho, o.ID, err)
+	}
+	return nil
+}
+
+// cableadoParaEscribir comprueba las cuatro dependencias de cualquier camino
+// que escriba. Es la misma guarda que [Catalogo.enUnidad] y existe por lo
+// mismo: un servicio cableado a medias tiene que fallar con un mensaje que
+// nombre la dependencia que falta, y no con un nil pointer dereference dentro
+// de una transaccion ya abierta.
+func (l Liquidaciones) cableadoParaEscribir() error {
+	switch {
+	case l.Ordenes == nil:
+		return errors.New("liquidaciones mal cableadas: falta RepositorioLiquidacion")
+	case l.Reloj == nil:
+		return errors.New("liquidaciones mal cableadas: falta Reloj")
+	case l.Unidad == nil:
+		return errors.New("liquidaciones mal cableadas: falta UnidadDeTrabajo")
+	case l.Bitacora == nil:
+		return errors.New("liquidaciones mal cableadas: falta BitacoraAuditoria")
+	}
+	return nil
+}
+
+// cableadoParaEmitir anade el Notificador, que solo hace falta al emitir: una
+// transicion de silencio no avisa a nadie, la produce el calendario.
+func (l Liquidaciones) cableadoParaEmitir() error {
+	if err := l.cableadoParaEscribir(); err != nil {
+		return err
+	}
+	if l.Notificador == nil {
+		return errors.New("liquidaciones mal cableadas: falta Notificador")
+	}
+	return nil
+}
+
+// ExigirListoParaLiquidar es la compuerta del RD 13.5 sobre una corrida: etapa
+// `liquidacion_final` y las firmas de distribucion y contabilidad SOBRE LA
+// REVISION VIGENTE.
+//
+// Las dos condiciones se comprueban aqui y no en el adaptador porque son la
+// regla, no una consulta: dejarlas en el SQL las volveria improbables sin una
+// base de datos, y son justo lo que impide que una llamada a
+// [Liquidaciones.GenerarLiquidacion] pague una corrida a medio verificar.
+//
+// El error nombra la etapa que se encontro y los roles que faltan. Quien lo
+// recibe es distribucion, y "el proceso no esta listo" a secas no le dice si
+// tiene que avanzar la etapa o pedir una firma.
+func (m MetaProceso) ExigirListoParaLiquidar() error {
+	if m.Etapa != reparto.EtapaLiquidacionFinal {
+		return fmt.Errorf("%w: %s esta en etapa %q y liquidar exige %q",
+			ErrProcesoNoListo, m.ID, m.Etapa, reparto.EtapaLiquidacionFinal)
+	}
+	faltan := m.rolesSinFirma()
+	if len(faltan) > 0 {
+		return fmt.Errorf("%w: a %s le faltan las firmas de %s sobre la revision %d",
+			ErrProcesoNoListo, m.ID, strings.Join(faltan, " y "), m.Revision)
+	}
+	return nil
+}
+
+// rolesSinFirma son los roles de la compuerta que no han firmado la revision
+// vigente, en orden fijo. Vacio -- y no nil -- no se distingue aqui porque
+// quien llama solo mira la longitud.
+func (m MetaProceso) rolesSinFirma() []string {
+	firmados := make(map[string]bool, len(m.Firmas))
+	for _, f := range m.Firmas {
+		if f.SobreRev == m.Revision {
+			firmados[f.Rol] = true
+		}
+	}
+	faltan := make([]string, 0, 2)
+	for _, rol := range []string{string(RolDistribucion), string(RolContabilidad)} {
+		if !firmados[rol] {
+			faltan = append(faltan, rol)
+		}
+	}
+	return faltan
+}
+
+// donde nombra el par (periodo, circuito) para los mensajes de error: es el
+// alcance real de una generacion, y decir solo el proceso disparador mandaria
+// a mirar la corrida equivocada.
+func (m MetaProceso) donde() string {
+	return m.Periodo + "/" + string(m.Circuito)
+}
+
 func esStaff(r Rol) bool {
 	switch r {
 	case RolAdministrador, RolDistribucion, RolContabilidad, RolAuditor:
@@ -197,30 +622,108 @@ func esStaff(r Rol) bool {
 	}
 }
 
-func idOrden(procesoID, titularID string) string {
-	return "liq-" + procesoID + "-" + titularID
+// idOrden es la clave de la orden hecha identificador: (periodo, circuito,
+// titular), los mismos tres campos del UNIQUE de `ordenes_pago`.
+//
+// NO lleva el proceso, y es lo que hace la generacion idempotente entre
+// corridas: dos corridas del mismo periodo y circuito producen el MISMO id
+// para el mismo titular, asi que la segunda choca con la primera en vez de
+// abrir una orden paralela. Con el proceso dentro, cada corrida abriria la
+// suya y el UNIQUE lo rechazaria con un error de esquema en vez de con la
+// idempotencia que se busca.
+func idOrden(periodo string, circuito reparto.Circuito, titularID string) string {
+	return "liq-" + periodo + "-" + string(circuito) + "-" + titularID
 }
 
-func agruparPorTitular(lineas []reparto.LineaTitular) map[string]decimal.Decimal {
-	porTitular := make(map[string]decimal.Decimal, len(lineas))
-	for _, linea := range lineas {
-		porTitular[linea.TitularID] = porTitular[linea.TitularID].Add(linea.Importe)
+func hechoDeSilencio(estado liquidacion.Estado) string {
+	if estado == liquidacion.EstadoDiferida {
+		return HechoLiquidacionDiferida
 	}
-	return porTitular
+	return HechoLiquidacionAceptadaPorSilencio
 }
 
-// prorratearDeducciones reparte admin, social y reserva de la bolsa en
-// proporcion al neto de cada titular. El neto no se toca: viene de la
-// corrida. Bruto = neto + suma(deducciones).
-func prorratearDeducciones(netoTitular, distribuido decimal.Decimal, insumo InsumoLiquidacion) []liquidacion.Deduccion {
-	if distribuido.IsZero() || netoTitular.IsZero() {
-		return []liquidacion.Deduccion{}
+// asuntoLiquidacion y cuerpoLiquidacion arman el aviso de R-10. El texto vive
+// en esta capa y no en el adaptador porque el plazo que anuncia es una regla:
+// quince dias CALENDARIO desde el envio, no habiles (R-22 usa habiles y no se
+// unifican).
+func asuntoLiquidacion(m MetaProceso) string {
+	return fmt.Sprintf("Liquidacion del periodo %s (%s)", m.Periodo, m.Circuito)
+}
+
+func cuerpoLiquidacion(m MetaProceso, bruto, neto decimal.Decimal, enviadaDia string) string {
+	return fmt.Sprintf(
+		"Liquidacion del periodo %s, circuito %s, enviada el %s.\n"+
+			"Bruto %s, neto %s.\n"+
+			"Sin respuesta en %d dias calendario se entiende aceptada (R-10, RD 13.2).",
+		m.Periodo, m.Circuito, enviadaDia,
+		bruto.StringFixed(2), neto.StringFixed(2), liquidacion.PlazoAceptacionDias)
+}
+
+// AsientoOrden es el payload JSONB de los asientos de liquidacion.
+//
+// Tipo propio y no [liquidacion.OrdenDePago] serializada: los modelos del
+// dominio no llevan etiquetas json a proposito, asi que marshalearlos
+// escribiria los nombres de los campos de Go en un libro que el ADR 0006
+// manda conservar diez anos y que tiene que seguir siendo legible por una
+// persona al final de ese plazo.
+//
+// Los montos van como cadena por la misma razon que en la forma de red: un
+// JSON number es IEEE-754 y no puede representar dinero (ADR 0010).
+type AsientoOrden struct {
+	Periodo  string `json:"periodo"`
+	Circuito string `json:"circuito"`
+
+	// Procesos son las corridas que aportaron a la orden. Es lo que permite
+	// reconstruir de donde salio un bruto agregado; sin ella, `proceso_id` a
+	// secas afirmaria que todo vino de una sola corrida.
+	Procesos []string `json:"procesos"`
+
+	TitularID   string              `json:"titular_id"`
+	Bruto       string              `json:"bruto"`
+	Deducciones []DeduccionAsentada `json:"deducciones"`
+	Neto        string              `json:"neto"`
+	Estado      string              `json:"estado"`
+
+	// EstadoAnterior va vacio en la emision -- no habia nada antes -- y con el
+	// estado que esta transicion sustituyo en las demas.
+	EstadoAnterior string `json:"estado_anterior,omitempty"`
+
+	Enviada   string   `json:"enviada"`
+	Arrastres []string `json:"arrastres,omitempty"`
+
+	// Acuse es la prueba de la notificacion, y es lo que fecha el arranque del
+	// plazo de R-10: `enviada` es un dia civil, y sin acuse no hay nada que
+	// respalde que ese dia salio algo.
+	Acuse string `json:"acuse,omitempty"`
+}
+
+// DeduccionAsentada es un renglon del desglose en el libro.
+type DeduccionAsentada struct {
+	Concepto string `json:"concepto"`
+	Monto    string `json:"monto"`
+}
+
+func asientoDeOrden(o liquidacion.OrdenDePago, anterior liquidacion.Estado, acuse string) AsientoOrden {
+	deducciones := make([]DeduccionAsentada, 0, len(o.Deducciones))
+	for _, d := range o.Deducciones {
+		deducciones = append(deducciones, DeduccionAsentada{
+			Concepto: d.Concepto,
+			Monto:    d.Monto.StringFixed(2),
+		})
 	}
-	prop := netoTitular.Div(distribuido)
-	return []liquidacion.Deduccion{
-		{Concepto: liquidacion.ConceptoAdministracion, Monto: insumo.Admin.Mul(prop).Round(2)},
-		{Concepto: liquidacion.ConceptoSocial, Monto: insumo.Social.Mul(prop).Round(2)},
-		{Concepto: liquidacion.ConceptoReserva, Monto: insumo.Reserva.Mul(prop).Round(2)},
+	return AsientoOrden{
+		Periodo:        o.Periodo,
+		Circuito:       o.Circuito,
+		Procesos:       o.Procesos,
+		TitularID:      o.TitularID,
+		Bruto:          o.Bruto.StringFixed(2),
+		Deducciones:    deducciones,
+		Neto:           o.Neto.StringFixed(2),
+		Estado:         string(o.Estado),
+		EstadoAnterior: string(anterior),
+		Enviada:        o.EnviadaDia,
+		Arrastres:      o.Arrastres,
+		Acuse:          acuse,
 	}
 }
 
