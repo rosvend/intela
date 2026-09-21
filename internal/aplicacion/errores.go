@@ -255,6 +255,15 @@ var (
 	// profundidad: el filtro real vive en el SQL de UsosDeCanal, esto es lo
 	// que impide que un adaptador futuro que lo olvide pase desapercibido.
 	ErrUsoSinObra = errors.New("el uso no tiene obra identificada")
+
+	// ErrReservaYaRegistrada: ya existe una reserva para ese proceso.
+	//
+	// CrearReserva es de una sola vez por corrida: un segundo alta con otra
+	// tasa u otro monto no puede pisar la fila en silencio -- una reserva
+	// registrada dos veces con valores distintos es exactamente el tipo de
+	// discrepancia que una auditoria de RD 16 encuentra y que nadie puede
+	// explicar despues.
+	ErrReservaYaRegistrada = errors.New("ya existe una reserva registrada para ese proceso")
 )
 
 // ErrorParametroAusente nombra las clausulas normativas que no tienen valor
