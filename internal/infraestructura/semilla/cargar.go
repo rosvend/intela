@@ -190,10 +190,27 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 	for i, t := range d.Titulares {
 		idsTitulares[i] = t.ID
 	}
+	idsCanales := make([]string, len(d.Canales))
+	claves := make([]string, len(d.Canales))
+	for i, c := range d.Canales {
+		idsCanales[i] = c.ID
+		claves[i] = clasificacionClave(c.ID, c.AnioAudiencia)
+	}
+
 	if err := soloDelDataset(ctx, pool, "obras", idsObras); err != nil {
 		return err
 	}
 	if err := soloDelDataset(ctx, pool, "titulares", idsTitulares); err != nil {
+		return err
+	}
+	// La 00011 anadio dos tablas mas que un SEED_RESET puede arrasar: un canal
+	// importado o una clasificacion anual real no las conoce este dataset, y
+	// sin esta comprobacion DELETE las borra igual que a las sinteticas.
+	if err := soloDelDataset(ctx, pool, "canales", idsCanales); err != nil {
+		return err
+	}
+	if err := soloClaveDelDataset(ctx, pool, "canales_clasificacion",
+		"canal_id || ':' || anio_audiencia", claves); err != nil {
 		return err
 	}
 
@@ -237,6 +254,8 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"obra_coautores",
 		"declaraciones",
 		"bolsas",
+		"canales_clasificacion",
+		"canales",
 		"usuarios_recaudo",
 		"parametros",
 		"sesiones",
@@ -257,14 +276,22 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 // soloDelDataset falla si en la tabla hay algun id que el dataset no conoce.
 //
 // El nombre de la tabla se concatena porque un identificador no puede viajar
-// como parametro; los dos valores posibles son literales de este fichero.
+// como parametro; los valores posibles son literales de este fichero.
 func soloDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla string, ids []string) error {
+	return soloClaveDelDataset(ctx, pool, tabla, "id", ids)
+}
+
+// soloClaveDelDataset es soloDelDataset con una expresion de clave distinta a
+// "id". La usa canales_clasificacion, cuya clave es compuesta
+// (canal_id, anio_audiencia) y no tiene una sola columna que comparar contra
+// el dataset.
+func soloClaveDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla, expr string, claves []string) error {
 	var (
 		ajenas  int
 		ejemplo string
 	)
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*), COALESCE(MIN(id), '') FROM `+tabla+` WHERE id <> ALL($1)`, ids,
+		`SELECT COUNT(*), COALESCE(MIN(`+expr+`), '') FROM `+tabla+` WHERE `+expr+` <> ALL($1)`, claves,
 	).Scan(&ajenas, &ejemplo); err != nil {
 		return fmt.Errorf("comprobar la procedencia de %s: %w", tabla, err)
 	}
@@ -273,6 +300,16 @@ func soloDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla string, ids [
 			ErrDatosNoSinteticos, ajenas, tabla, ejemplo)
 	}
 	return nil
+}
+
+// clasificacionClave compone la clave de canales_clasificacion como una sola
+// cadena comparable con ANY($1).
+//
+// El separador es ':' y no otra cosa porque los ids de canal de este dataset
+// son slugs en minuscula sin ':' (caracol, rcn, ...); un id que lo llevara
+// haria ambigua la clave, pero eso no ocurre con datos de este fichero.
+func clasificacionClave(canalID string, anio int) string {
+	return fmt.Sprintf("%s:%d", canalID, anio)
 }
 
 func hashear(hasher aplicacion.Hasher, c Claves) (map[string]string, error) {
@@ -400,6 +437,24 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 			VALUES ($1, $2, $3, $4)`,
 			usuario.ID(), datos.Nombre, datos.NIT, string(datos.Categoria)); err != nil {
 			return fmt.Errorf("insertar usuario de recaudo %s: %w", u.ID, err)
+		}
+	}
+
+	// Los canales van por SQL directo como las bolsas: no hay adaptador para
+	// `canales` todavia, y el registro es dato de demostracion, no un hecho de
+	// negocio que deba asentarse.
+	for _, c := range d.Canales {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales (id, nombre, grupo_estructural)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.Nombre, c.GrupoEstructural); err != nil {
+			return fmt.Errorf("insertar canal %s: %w", c.ID, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.AnioAudiencia, c.GrupoEfectivo); err != nil {
+			return fmt.Errorf("clasificar canal %s: %w", c.ID, err)
 		}
 	}
 

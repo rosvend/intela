@@ -28,7 +28,7 @@ func filaTV() Fila {
 		Fuente:    "caracol",
 		Modalidad: ModalidadTV,
 		Titulo:    "Serie Y",
-		IDsFuente: "ID_Ficha=29",
+		IDsFuente: "id_ficha=29",
 		TipoObra:  "serie",
 		Fecha:     "20241231",
 		Hora:      "20:00:00",
@@ -419,7 +419,7 @@ func TestFuentesDistintasCompartenElEsquemaCanonico(t *testing.T) {
 		t.Fatalf("tv: %s", rev.Motivo())
 	}
 	cine, rev := Normalizar(Fila{
-		ID: "c-1", Fuente: "procinal", Modalidad: ModalidadCine,
+		ID: "c-1", Fuente: "cine", Modalidad: ModalidadCine,
 		Titulo: "Pelicula X", Taquilla: "100", Moneda: "COP", Fecha: "2024-06-01",
 	}, params())
 	if rev != nil {
