@@ -116,9 +116,9 @@ func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identi
 		}
 		for i, c := range cs {
 			_, err := tx.Exec(ctx,
-				`INSERT INTO candidatos_match (uso_id, obra_id, puntaje, orden)
-				 VALUES ($1, $2, $3, $4)`,
-				usoID, c.ObraID, c.Puntaje, i)
+				`INSERT INTO candidatos_match (uso_id, obra_id, puntaje, orden, titulo_consultado)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				usoID, c.ObraID, c.Puntaje, i, c.TituloConsultado)
 			if err != nil {
 				return traducirError(err, "guardar candidato %q del uso %q", c.ObraID, usoID)
 			}
@@ -130,7 +130,7 @@ func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identi
 // CandidatosDeUso lee la bandeja de un uso, en su orden. La consume #39.
 func (s *Store) CandidatosDeUso(ctx context.Context, usoID string) ([]identificacion.Candidato, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx,
-		`SELECT obra_id, puntaje FROM candidatos_match WHERE uso_id = $1 ORDER BY orden`, usoID)
+		`SELECT obra_id, puntaje, titulo_consultado FROM candidatos_match WHERE uso_id = $1 ORDER BY orden`, usoID)
 	if err != nil {
 		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
 	}
@@ -139,7 +139,7 @@ func (s *Store) CandidatosDeUso(ctx context.Context, usoID string) ([]identifica
 	var cs []identificacion.Candidato
 	for filas.Next() {
 		var c identificacion.Candidato
-		if err := filas.Scan(&c.ObraID, &c.Puntaje); err != nil {
+		if err := filas.Scan(&c.ObraID, &c.Puntaje, &c.TituloConsultado); err != nil {
 			return nil, traducirError(err, "leer candidatos del uso %q", usoID)
 		}
 		cs = append(cs, c)

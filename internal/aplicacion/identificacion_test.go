@@ -149,8 +149,11 @@ func (f *identificacionFalsa) GuardarCandidatos(_ context.Context, usoID string,
 type similitudFalsa struct {
 	porTitulo map[string][]identificacion.Candidato
 	err       error
-	llamadas  []string
-	pisos     []decimal.Decimal
+	// errPorTitulo hace fallar solo la consulta de un titulo: la fila con dos
+	// titulos tiene que abortar aunque el primero haya ido bien (D8).
+	errPorTitulo map[string]error
+	llamadas     []string
+	pisos        []decimal.Decimal
 }
 
 func (s *similitudFalsa) Candidatos(_ context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error) {
@@ -158,6 +161,9 @@ func (s *similitudFalsa) Candidatos(_ context.Context, titulo string, piso decim
 	s.pisos = append(s.pisos, piso)
 	if s.err != nil {
 		return nil, s.err
+	}
+	if err := s.errPorTitulo[titulo]; err != nil {
+		return nil, err
 	}
 	return s.porTitulo[titulo], nil
 }
@@ -796,6 +802,176 @@ func conCandidatos(cs ...identificacion.Candidato) *similitudFalsa {
 
 func cand(obraID, puntaje string) identificacion.Candidato {
 	return identificacion.Candidato{ObraID: obraID, Puntaje: decimal.RequireFromString(puntaje)}
+}
+
+// ---------------------------------------------------------------------------
+// D11: el titulo original tambien se consulta (review de PR #146, B1)
+
+// usoConOriginal es una fila pendiente con titulo emitido y original.
+func usoConOriginal(emitido, original string) UsoPersistido {
+	u := usoPendiente("u-1", "caracol", "id_ficha=871732")
+	u.Titulo = emitido
+	u.TituloOrig = original
+	return u
+}
+
+func TestEntradaDesdeUsoLlevaElTituloOriginal(t *testing.T) {
+	e := entradaDesdeUso(usoConOriginal("Sin Tetas No Hay Paraiso", "Without Breasts There Is No Paradise"))
+	if e.Titulo != "Sin Tetas No Hay Paraiso" || e.TituloOrig != "Without Breasts There Is No Paradise" {
+		t.Fatalf("la entrada perdio un titulo: %+v", e)
+	}
+}
+
+func TestResolverUsosConsultaElEmitidoYElOriginalYUneLosCandidatos(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{porTitulo: map[string][]identificacion.Candidato{
+		"Sin Tetas": {cand("obra-2", "0.50"), cand("obra-1", "0.40")},
+		"Without":   {cand("obra-1", "0.52"), cand("obra-3", "0.46")},
+	}}
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil, usoConOriginal("Sin Tetas", "Without"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n = %d: nadie llega al umbral 0.60", n)
+	}
+	// Las dos consultas, el emitido primero, las dos con el piso de la banda.
+	if !slices.Equal(sim.llamadas, []string{"Sin Tetas", "Without"}) {
+		t.Fatalf("consultas = %v, se esperaba [Sin Tetas Without]", sim.llamadas)
+	}
+	for _, p := range sim.pisos {
+		if !p.Equal(decimal.RequireFromString("0.45")) {
+			t.Fatalf("piso = %s, se esperaba el de la banda 0.45", p)
+		}
+	}
+
+	// Union por obra con el mejor puntaje, en orden total: obra-1 gana con 0.52
+	// (venia del original), obra-2 con 0.50, obra-3 con 0.46.
+	if len(idf.guardadosCandidatos) != 1 {
+		t.Fatalf("se esperaba una bandeja, hubo %+v", idf.guardadosCandidatos)
+	}
+	quiero := []identificacion.Candidato{
+		{ObraID: "obra-1", Puntaje: decimal.RequireFromString("0.52"), TituloConsultado: "Without"},
+		{ObraID: "obra-2", Puntaje: decimal.RequireFromString("0.50"), TituloConsultado: "Sin Tetas"},
+		{ObraID: "obra-3", Puntaje: decimal.RequireFromString("0.46"), TituloConsultado: "Without"},
+	}
+	tengo := idf.guardadosCandidatos[0].Candidatos
+	if len(tengo) != len(quiero) {
+		t.Fatalf("candidatos = %+v, se esperaba %+v", tengo, quiero)
+	}
+	for i := range quiero {
+		if tengo[i].ObraID != quiero[i].ObraID || !tengo[i].Puntaje.Equal(quiero[i].Puntaje) ||
+			tengo[i].TituloConsultado != quiero[i].TituloConsultado {
+			t.Fatalf("candidato %d = %+v, se esperaba %+v", i, tengo[i], quiero[i])
+		}
+	}
+}
+
+// El mismo titulo dos veces es una consulta de mas en el bucle caro.
+func TestResolverUsosNoConsultaElOriginalSiEsElMismoTitulo(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		emitido  string
+		original string
+	}{
+		{"igual", "El Tercer Acto", "El Tercer Acto"},
+		{"otras mayusculas", "El Tercer Acto", "EL TERCER ACTO"},
+		{"espacios de mas", "El Tercer Acto", "  el   tercer acto "},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			sim := &similitudFalsa{}
+			_, err := correrCon(t, &ingestaFalsa{}, &identificacionFalsa{}, sim, umbralesPorDefecto(), nil,
+				usoConOriginal(c.emitido, c.original))
+			if err != nil {
+				t.Fatalf("ResolverUsos: %v", err)
+			}
+			if len(sim.llamadas) != 1 || sim.llamadas[0] != "El Tercer Acto" {
+				t.Fatalf("consultas = %v, se esperaba una sola, la del emitido", sim.llamadas)
+			}
+		})
+	}
+}
+
+// El caso que motivo el review: el titulo localizado no se parece a nada y el
+// original si. Sin consultar los dos, esta fila iba a ONI.
+func TestResolverUsosIdentificaPorElOriginalYLaEvidenciaLoDice(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{porTitulo: map[string][]identificacion.Candidato{
+		"Sin Tetas No Hay Paraiso":             {cand("obra-9", "0.10")},
+		"Without Breasts There Is No Paradise": {cand("obra-45", "0.88")},
+	}}
+
+	n, err := correrCon(t, ing, idf, sim, umbralesPorDefecto(), nil,
+		usoConOriginal("Sin Tetas No Hay Paraiso", "Without Breasts There Is No Paradise"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("n = %d, se esperaba 1", n)
+	}
+	m := idf.guardadosMatch[0]
+	if m.R.Escalon != identificacion.EscalonDifuso || m.R.ObraID != "obra-45" {
+		t.Fatalf("match mal armado: %+v", m)
+	}
+	if !strings.Contains(m.R.Evidencia, "Without Breasts There Is No Paradise") {
+		t.Fatalf("la evidencia no dice que caso por el original: %q", m.R.Evidencia)
+	}
+	if strings.Contains(m.R.Evidencia, "Sin Tetas") {
+		t.Fatalf("la evidencia nombra el titulo que NO caso: %q", m.R.Evidencia)
+	}
+}
+
+// D8: si la segunda consulta falla la corrida aborta, aunque la primera haya ido
+// bien, y el error dice que titulo fue.
+func TestResolverUsosAbortaSiFallaLaConsultaDelOriginal(t *testing.T) {
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{
+		porTitulo:    map[string][]identificacion.Candidato{"Sin Tetas": {cand("obra-45", "0.90")}},
+		errPorTitulo: map[string]error{"Without": errors.New("base caida")},
+	}
+
+	n, err := correrCon(t, &ingestaFalsa{}, idf, sim, umbralesPorDefecto(), nil, usoConOriginal("Sin Tetas", "Without"))
+	if err == nil {
+		t.Fatal("se esperaba un error")
+	}
+	if n != 0 || len(idf.guardadosMatch) != 0 {
+		t.Fatalf("una fila a medias no se escribe: n=%d %+v", n, idf.guardadosMatch)
+	}
+	if !strings.Contains(err.Error(), `"Without"`) || !strings.Contains(err.Error(), "escalon 3") {
+		t.Fatalf("el error no nombra el titulo que fallo: %v", err)
+	}
+}
+
+func TestResolverUsosSinTituloNiOriginalNoConsultaYVaAONI(t *testing.T) {
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{}
+
+	if _, err := correrCon(t, &ingestaFalsa{}, idf, sim, umbralesPorDefecto(), nil, usoConOriginal("  ", "")); err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if len(sim.llamadas) != 0 {
+		t.Fatalf("se consulto con la cadena vacia: %v", sim.llamadas)
+	}
+	soloONI(t, idf, "u-1")
+}
+
+// Solo el original: una fuente que trae el emitido vacio y el original poblado
+// se identifica igual.
+func TestResolverUsosConsultaSoloElOriginalSiElEmitidoEstaVacio(t *testing.T) {
+	idf := &identificacionFalsa{}
+	sim := &similitudFalsa{porTitulo: map[string][]identificacion.Candidato{"Rebelde": {cand("obra-7", "0.95")}}}
+
+	n, err := correrCon(t, &ingestaFalsa{}, idf, sim, umbralesPorDefecto(), nil, usoConOriginal("", "Rebelde"))
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 || !slices.Equal(sim.llamadas, []string{"Rebelde"}) {
+		t.Fatalf("n=%d consultas=%v", n, sim.llamadas)
+	}
 }
 
 func TestResolverUsosResuelvePorDifusoYAprendeAlias(t *testing.T) {

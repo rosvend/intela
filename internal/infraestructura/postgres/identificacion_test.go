@@ -67,10 +67,10 @@ func insertarUsoSQL(t *testing.T, pool *pgxpool.Pool, u aplicacion.UsoPersistido
 		modalidad = reparto.TV
 	}
 	_, err := pool.Exec(t.Context(),
-		`INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, modalidad,
+		`INSERT INTO usos (id, reporte_id, fuente, titulo, titulo_original, ids_fuente, modalidad,
 		                    escalon, oni, puntaje, emisiones)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'pendiente', TRUE, 0, 1)`,
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(modalidad))
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pendiente', TRUE, 0, 1)`,
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.TituloOrig, u.IDsFuente, string(modalidad))
 	if err != nil {
 		t.Fatalf("insertar uso %q: %v", u.ID, err)
 	}
@@ -621,7 +621,7 @@ func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.Car
 
 func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion.UsoPersistido, error) {
 	filas, err := i.pool.Query(ctx,
-		`SELECT u.id, u.reporte_id, u.fuente, u.titulo, u.ids_fuente, COALESCE(u.obra_id, ''),
+		`SELECT u.id, u.reporte_id, u.fuente, u.titulo, u.titulo_original, u.ids_fuente, COALESCE(u.obra_id, ''),
 		        u.escalon, u.evidencia, u.oni, u.modalidad
 		   FROM usos u
 		   JOIN reportes r ON r.id = u.reporte_id
@@ -636,7 +636,7 @@ func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]a
 	for filas.Next() {
 		var u aplicacion.UsoPersistido
 		var modalidad string
-		if err := filas.Scan(&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
+		if err := filas.Scan(&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.TituloOrig, &u.IDsFuente, &u.ObraID,
 			&u.Escalon, &u.Evidencia, &u.ONI, &modalidad); err != nil {
 			return nil, err
 		}

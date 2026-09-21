@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 )
@@ -293,17 +296,64 @@ func (r ResolverUsos) resolverFila(ctx context.Context, u UsoPersistido, e ident
 	}
 
 	// Escalon 3, solo si los exactos fallaron: es la parte cara de la cascada.
-	// Sin titulo no se sondea: seria comparar la cadena vacia con el catalogo.
-	if c.AliasObraID == "" && c.IDGlobalObraID == "" && e.Titulo != "" {
-		candidatos, err := r.Similitud.Candidatos(ctx, e.Titulo, umbrales.Banda)
+	if c.AliasObraID == "" && c.IDGlobalObraID == "" {
+		candidatos, err := r.candidatosDifusos(ctx, u, e, umbrales.Banda)
 		if err != nil {
-			// Un fallo del motor NO es "no hay match" (D8).
-			return identificacion.Resultado{}, fmt.Errorf("escalon 3 de %q (%q): %w", u.ID, e.Titulo, err)
+			return identificacion.Resultado{}, err
 		}
 		c.Candidatos = candidatos
 	}
 
 	return identificacion.Resolver(e, c, r.FueraDeRepertorio, umbrales), nil
+}
+
+// candidatosDifusos puntua cada titulo distinto de la fila y los une (D11). El
+// original se prueba solo si difiere del emitido, sin distinguir mayusculas ni
+// espacios: el mismo titulo dos veces es una consulta de mas en el bucle caro.
+//
+// Sin ningun titulo no se sondea: seria comparar la cadena vacia con el
+// catalogo. Un fallo del motor NO es "no hay match" (D8): aborta la corrida y
+// nombra el titulo que fallo.
+func (r ResolverUsos) candidatosDifusos(ctx context.Context, u UsoPersistido, e identificacion.Entrada, piso decimal.Decimal) ([]identificacion.Candidato, error) {
+	titulos := titulosParaDifuso(e)
+	listas := make([][]identificacion.Candidato, 0, len(titulos))
+
+	for _, titulo := range titulos {
+		candidatos, err := r.Similitud.Candidatos(ctx, titulo, piso)
+		if err != nil {
+			return nil, fmt.Errorf("escalon 3 de %q (%q): %w", u.ID, titulo, err)
+		}
+		// Copia y no marca in situ: la lista es del motor, y de un doble de
+		// prueba puede ser la misma en dos llamadas.
+		marcados := make([]identificacion.Candidato, len(candidatos))
+		for i, c := range candidatos {
+			c.TituloConsultado = titulo
+			marcados[i] = c
+		}
+		listas = append(listas, marcados)
+	}
+	return identificacion.UnirCandidatos(listas...), nil
+}
+
+// titulosParaDifuso son los titulos que se puntuan, en el orden en que se
+// prueban: el emitido primero, porque en un empate gana la primera lista.
+func titulosParaDifuso(e identificacion.Entrada) []string {
+	emitido := strings.TrimSpace(e.Titulo)
+	original := strings.TrimSpace(e.TituloOrig)
+
+	var titulos []string
+	if emitido != "" {
+		titulos = append(titulos, emitido)
+	}
+	if original != "" && !mismoTitulo(emitido, original) {
+		titulos = append(titulos, original)
+	}
+	return titulos
+}
+
+// mismoTitulo compara sin distinguir mayusculas ni espacios de mas.
+func mismoTitulo(a, b string) bool {
+	return strings.EqualFold(strings.Join(strings.Fields(a), " "), strings.Join(strings.Fields(b), " "))
 }
 
 // valorGlobal devuelve el identificador de e que corresponde a g.
@@ -341,8 +391,9 @@ func idaEidrImdb(e identificacion.Entrada, g identificacion.IDGlobal) (ida, eidr
 // elige el par local canonico (D2).
 func entradaDesdeUso(u UsoPersistido) identificacion.Entrada {
 	e := identificacion.Entrada{
-		Fuente: u.Fuente,
-		Titulo: u.Titulo,
+		Fuente:     u.Fuente,
+		Titulo:     u.Titulo,
+		TituloOrig: u.TituloOrig,
 	}
 
 	locales := map[string]string{}

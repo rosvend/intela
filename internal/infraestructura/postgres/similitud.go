@@ -12,10 +12,6 @@ import (
 
 var _ aplicacion.Similitud = (*Store)(nil)
 
-// maxCandidatos: una bandeja de revision con veinte filas parecidas no se
-// revisa, se cierra.
-const maxCandidatos = 5
-
 // Candidatos implementa el escalon 3 con pg_trgm sobre el titulo normalizado.
 // Ver D1 de docs/planes/32-difuso/diseno.md y explain-trgm.md para el indice.
 //
@@ -38,7 +34,7 @@ func (s *Store) Candidatos(ctx context.Context, titulo string, piso decimal.Deci
 			  FROM obras
 			 WHERE titulo_norm % titulo_normalizado($1)
 			 ORDER BY similarity(titulo_norm, titulo_normalizado($1)) DESC, id ASC
-			 LIMIT $2`, titulo, maxCandidatos)
+			 LIMIT $2`, titulo, identificacion.MaxCandidatos)
 		if err != nil {
 			return traducirError(err, "buscar candidatos para %q", titulo)
 		}

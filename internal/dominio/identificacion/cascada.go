@@ -3,6 +3,7 @@ package identificacion
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -116,7 +117,7 @@ func difuso(e Entrada, candidatos []Candidato, u Umbrales) Resultado {
 			Escalon: EscalonDifuso,
 			Puntaje: mejor.Puntaje,
 			Evidencia: fmt.Sprintf("difuso %q ~ %s (%s)",
-				e.Titulo, mejor.ObraID, puntajeLegible(mejor.Puntaje)),
+				tituloConsultado(e, mejor), mejor.ObraID, puntajeLegible(mejor.Puntaje)),
 		}
 
 	// Banda ambigua: no asigna, pero adjunta lo que un humano puede revisar.
@@ -124,8 +125,9 @@ func difuso(e Entrada, candidatos []Candidato, u Umbrales) Resultado {
 		return Resultado{
 			Escalon: EscalonONI,
 			ONI:     true,
-			Evidencia: fmt.Sprintf("banda ambigua: %d candidatos, mejor %s (%s) bajo umbral %s",
-				len(candidatos), mejor.ObraID, puntajeLegible(mejor.Puntaje), puntajeLegible(u.Match)),
+			Evidencia: fmt.Sprintf("banda ambigua: %d candidatos, mejor %s (%s) para %q bajo umbral %s",
+				len(candidatos), mejor.ObraID, puntajeLegible(mejor.Puntaje),
+				tituloConsultado(e, mejor), puntajeLegible(u.Match)),
 			Candidatos: candidatos,
 		}
 
@@ -137,6 +139,48 @@ func difuso(e Entrada, candidatos []Candidato, u Umbrales) Resultado {
 			Evidencia: fmt.Sprintf("sin candidato sobre %s", puntajeLegible(u.Banda)),
 		}
 	}
+}
+
+// tituloConsultado es el titulo que la evidencia nombra: aquel contra el que se
+// puntuo el candidato y, si el motor no lo dijo, el titulo emitido de la fila.
+func tituloConsultado(e Entrada, c Candidato) string {
+	if c.TituloConsultado != "" {
+		return c.TituloConsultado
+	}
+	return e.Titulo
+}
+
+// UnirCandidatos junta los candidatos de varios titulos de la MISMA fila. Por
+// obra se queda el mejor puntaje; si empatan, gana la lista anterior (el titulo
+// emitido va primero). Orden total: puntaje descendente y ObraID ascendente
+// (ADR 0005). Recorta a [MaxCandidatos].
+//
+// Sin candidatos devuelve una lista vacia: para el llamador, nil y vacia son lo
+// mismo.
+func UnirCandidatos(listas ...[]Candidato) []Candidato {
+	var unidos []Candidato
+	posicion := map[string]int{} // solo para buscar; el orden final sale del sort
+
+	for _, lista := range listas {
+		for _, c := range lista {
+			i, visto := posicion[c.ObraID]
+			switch {
+			case !visto:
+				posicion[c.ObraID] = len(unidos)
+				unidos = append(unidos, c)
+			case c.Puntaje.GreaterThan(unidos[i].Puntaje):
+				unidos[i] = c
+			}
+		}
+	}
+
+	slices.SortStableFunc(unidos, func(a, b Candidato) int {
+		if p := b.Puntaje.Cmp(a.Puntaje); p != 0 {
+			return p
+		}
+		return strings.Compare(a.ObraID, b.ObraID)
+	})
+	return unidos[:min(len(unidos), MaxCandidatos)]
 }
 
 // mejorCandidato elige por puntaje y desempata por ObraID ascendente: sin

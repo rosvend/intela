@@ -164,8 +164,8 @@ func TestCandidatosNoDevuelveMasDeLTope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Candidatos: %v", err)
 	}
-	if len(cs) > maxCandidatos {
-		t.Fatalf("se propusieron %d candidatos, el tope es %d", len(cs), maxCandidatos)
+	if len(cs) > identificacion.MaxCandidatos {
+		t.Fatalf("se propusieron %d candidatos, el tope es %d", len(cs), identificacion.MaxCandidatos)
 	}
 }
 

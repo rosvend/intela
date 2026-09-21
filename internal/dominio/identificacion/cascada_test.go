@@ -199,7 +199,7 @@ func TestResolver(t *testing.T) {
 			quiero: Resultado{
 				Escalon:   EscalonONI,
 				ONI:       true,
-				Evidencia: "banda ambigua: 2 candidatos, mejor obra-45 (0.52000) bajo umbral 0.60000",
+				Evidencia: `banda ambigua: 2 candidatos, mejor obra-45 (0.52000) para "La Casa de las Dos Palmas" bajo umbral 0.60000`,
 				Candidatos: []Candidato{
 					{ObraID: obraQuince, Puntaje: punt("0.52")},
 					{ObraID: "obra-99", Puntaje: punt("0.47")},
@@ -215,7 +215,7 @@ func TestResolver(t *testing.T) {
 			quiero: Resultado{
 				Escalon:   EscalonONI,
 				ONI:       true,
-				Evidencia: "banda ambigua: 1 candidatos, mejor obra-45 (0.45000) bajo umbral 0.60000",
+				Evidencia: `banda ambigua: 1 candidatos, mejor obra-45 (0.45000) para "La Casa de las Dos Palmas" bajo umbral 0.60000`,
 				Candidatos: []Candidato{
 					{ObraID: obraQuince, Puntaje: punt("0.45")},
 				},
@@ -231,6 +231,34 @@ func TestResolver(t *testing.T) {
 				Escalon:   EscalonONI,
 				ONI:       true,
 				Evidencia: "sin candidato sobre 0.45000",
+			},
+		},
+		{
+			nombre:  "la evidencia nombra el titulo original cuando el candidato salio de el",
+			entrada: Entrada{Fuente: "caracol", Titulo: "Sin Tetas No Hay Paraiso", TituloOrig: "Without Breasts There Is No Paradise"},
+			consulta: Consulta{Candidatos: []Candidato{
+				{ObraID: obraQuince, Puntaje: punt("0.88"), TituloConsultado: "Without Breasts There Is No Paradise"},
+			}},
+			quiero: Resultado{
+				ObraID:    obraQuince,
+				Escalon:   EscalonDifuso,
+				Puntaje:   punt("0.88"),
+				Evidencia: `difuso "Without Breasts There Is No Paradise" ~ obra-45 (0.88000)`,
+			},
+		},
+		{
+			nombre:  "la banda tambien nombra el titulo original",
+			entrada: Entrada{Fuente: "caracol", Titulo: "Sin Tetas No Hay Paraiso", TituloOrig: "Without Breasts There Is No Paradise"},
+			consulta: Consulta{Candidatos: []Candidato{
+				{ObraID: obraQuince, Puntaje: punt("0.50"), TituloConsultado: "Without Breasts There Is No Paradise"},
+			}},
+			quiero: Resultado{
+				Escalon:   EscalonONI,
+				ONI:       true,
+				Evidencia: `banda ambigua: 1 candidatos, mejor obra-45 (0.50000) para "Without Breasts There Is No Paradise" bajo umbral 0.60000`,
+				Candidatos: []Candidato{
+					{ObraID: obraQuince, Puntaje: punt("0.50"), TituloConsultado: "Without Breasts There Is No Paradise"},
+				},
 			},
 		},
 		{
@@ -348,5 +376,108 @@ func TestResolverDifusoNoDependeDelOrdenDeCandidatos(t *testing.T) {
 	}
 	if r1.Evidencia != r2.Evidencia {
 		t.Fatalf("el orden de los candidatos cambio la evidencia: %q vs %q", r1.Evidencia, r2.Evidencia)
+	}
+}
+
+// UnirCandidatos junta lo que devolvio cada titulo de la MISMA fila. Es la
+// funcion que decide, asi que el orden tiene que ser total (ADR 0005).
+func TestUnirCandidatos(t *testing.T) {
+	cand := func(obra, puntaje, titulo string) Candidato {
+		return Candidato{ObraID: obra, Puntaje: punt(puntaje), TituloConsultado: titulo}
+	}
+
+	casos := []struct {
+		nombre string
+		listas [][]Candidato
+		quiero []Candidato
+	}{
+		{
+			nombre: "por obra se queda con el mejor puntaje, venga de la lista que venga",
+			listas: [][]Candidato{
+				{cand("obra-1", "0.50", "emitido"), cand("obra-2", "0.80", "emitido")},
+				{cand("obra-1", "0.90", "original"), cand("obra-2", "0.40", "original")},
+			},
+			quiero: []Candidato{cand("obra-1", "0.90", "original"), cand("obra-2", "0.80", "emitido")},
+		},
+		{
+			nombre: "un empate entre listas lo gana la primera: el titulo emitido va antes",
+			listas: [][]Candidato{
+				{cand("obra-1", "0.70", "emitido")},
+				{cand("obra-1", "0.70", "original")},
+			},
+			quiero: []Candidato{cand("obra-1", "0.70", "emitido")},
+		},
+		{
+			nombre: "el orden es total: puntaje descendente y a igual puntaje obra_id ascendente",
+			listas: [][]Candidato{
+				{cand("obra-9", "0.60", "a"), cand("obra-3", "0.60", "a"), cand("obra-5", "0.75", "a")},
+				{cand("obra-1", "0.60", "b")},
+			},
+			quiero: []Candidato{
+				cand("obra-5", "0.75", "a"),
+				cand("obra-1", "0.60", "b"),
+				cand("obra-3", "0.60", "a"),
+				cand("obra-9", "0.60", "a"),
+			},
+		},
+		{
+			nombre: "recorta a MaxCandidatos y conserva los mejores",
+			listas: [][]Candidato{
+				{
+					cand("obra-1", "0.61", "a"), cand("obra-2", "0.62", "a"), cand("obra-3", "0.63", "a"),
+					cand("obra-4", "0.64", "a"),
+				},
+				{cand("obra-5", "0.65", "b"), cand("obra-6", "0.66", "b"), cand("obra-7", "0.60", "b")},
+			},
+			quiero: []Candidato{
+				cand("obra-6", "0.66", "b"), cand("obra-5", "0.65", "b"), cand("obra-4", "0.64", "a"),
+				cand("obra-3", "0.63", "a"), cand("obra-2", "0.62", "a"),
+			},
+		},
+		{
+			nombre: "sin listas no hay candidatos",
+			listas: nil,
+			quiero: nil,
+		},
+		{
+			nombre: "listas vacias tampoco",
+			listas: [][]Candidato{{}, nil},
+			quiero: nil,
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			tengo := UnirCandidatos(c.listas...)
+			if len(tengo) != len(c.quiero) {
+				t.Fatalf("UnirCandidatos() = %+v, se esperaba %+v", tengo, c.quiero)
+			}
+			for i := range c.quiero {
+				if tengo[i].ObraID != c.quiero[i].ObraID ||
+					!tengo[i].Puntaje.Equal(c.quiero[i].Puntaje) ||
+					tengo[i].TituloConsultado != c.quiero[i].TituloConsultado {
+					t.Fatalf("UnirCandidatos()[%d] = %+v, se esperaba %+v", i, tengo[i], c.quiero[i])
+				}
+			}
+		})
+	}
+}
+
+// Dos corridas no pueden pagar distinto por el orden en que llegaron las
+// listas cuando NO hay empate entre ellas: el resultado es el mismo.
+func TestUnirCandidatosNoDependeDelOrdenDeLasListasSinEmpates(t *testing.T) {
+	a := []Candidato{{ObraID: "obra-1", Puntaje: punt("0.55")}, {ObraID: "obra-2", Puntaje: punt("0.80")}}
+	b := []Candidato{{ObraID: "obra-1", Puntaje: punt("0.90")}, {ObraID: "obra-3", Puntaje: punt("0.30")}}
+
+	ab := UnirCandidatos(a, b)
+	ba := UnirCandidatos(b, a)
+
+	if len(ab) != len(ba) {
+		t.Fatalf("largos distintos: %+v vs %+v", ab, ba)
+	}
+	for i := range ab {
+		if ab[i].ObraID != ba[i].ObraID || !ab[i].Puntaje.Equal(ba[i].Puntaje) {
+			t.Fatalf("el orden de las listas cambio el resultado: %+v vs %+v", ab, ba)
+		}
 	}
 }

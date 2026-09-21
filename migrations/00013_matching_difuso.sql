@@ -52,6 +52,9 @@ CREATE TABLE candidatos_match (
   obra_id TEXT NOT NULL REFERENCES obras(id) ON DELETE CASCADE,
   puntaje NUMERIC(6,5) NOT NULL CHECK (puntaje >= 0 AND puntaje <= 1),
   orden   INT NOT NULL CHECK (orden >= 0),
+  -- Contra que titulo de la fila se puntuo (el emitido o el original): sin esto
+  -- la bandeja muestra un puntaje sin decir de donde sale (RD 16).
+  titulo_consultado TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (uso_id, obra_id)
 );
 
