@@ -97,7 +97,16 @@ func ejecutar(log *slog.Logger) error {
 	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): PorID ya
 	// es el de la bitacora. Declaraciones se lee aparte para componer el
 	// estado de cada obra. El nucleo sigue viendo puertos separados.
-	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
+	//
+	// El asiento del alta comparte transaccion con la obra (ADR 0006, #91):
+	// por eso van tambien Bitacora, Unidad y Reloj, igual que en origin/main.
+	catalogo := aplicacion.Catalogo{
+		Obras:         store.CatalogoObras(),
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
+	}
 
 	// El padron de titulares, que es de donde el editor de splits saca las
 	// partes de una declaracion. La satisface el mismo *Store, y con esto es

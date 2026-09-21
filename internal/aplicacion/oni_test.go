@@ -101,7 +101,7 @@ func (b *bitacoraMem) AsientoPorID(_ context.Context, _ string) (Asiento, error)
 
 type txPassthrough struct{}
 
-func (txPassthrough) Ejecutar(ctx context.Context, fn func(context.Context) error) error {
+func (txPassthrough) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
 

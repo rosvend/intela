@@ -66,6 +66,8 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Lint (workflows)` | `actionlint` con shellcheck sobre cada `run:` | El PR toca `.github/` |
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
+| `Perf (10k batch)` | KR-1: el lote de 10.000 registros en menos de 5 min, sin `-race` | Hay `go.mod` y el PR toca Go |
+| `Reproducibility (engine re-run)` | ADR 0005: los dorados del Canal Z dos veces, byte a byte, con `-race` | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
 | `Migration versions` | Versiones goose unicas, nombres parseables, ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
@@ -73,6 +75,7 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
+| `Smoke (compose bring-up)` | `docker compose --profile demo up --build` y despues [`deploy/smoke.sh`](../deploy/smoke.sh) contra nginx | Hay `docker-compose.yml` y `deploy/smoke.sh`, y el PR toca algo de lo que depende el arranque |
 | `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` o `api/openapi.yaml` |
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
@@ -104,6 +107,28 @@ tipos lo tiene que reportar el check de lint, en segundos, no el final de un bui
 separados: la segunda usa `--enable-only=depguard`. Es deliberado. Cuando un check se
 pone en rojo, su nombre tiene que decir si se rompio la **frontera** (`0002`, `0003`) o si sobra un
 espacio. Mezclarlos convierte una violacion de arquitectura en un item mas de una lista de estilo.
+
+### Por que hay una etapa que levanta el sistema
+
+Todas las demas etapas verifican una capa aislada: `Test (Go)` corre la suite, `Docker build` dice
+que la imagen se construye, `Frontend build` que el bundle sale. Las tres pueden estar en verde con
+el sistema sin arrancar — un DSN que apunta a un host de otro compose, una migracion que no aplica,
+el `proxy_pass` sin barra final que hace que nginx mande `/api/obras` a la API como `/api/obras` y
+devuelva `404` al tablero entero. Nada de eso se ve hasta que alguien abre el navegador, y hasta
+esta etapa el primer alguien era quien revisaba el PR.
+
+`Smoke (compose bring-up)` corre **la misma orden que documenta el quickstart**,
+`docker compose --profile demo up --build`, y no un compose propio de CI. Un smoke test contra un
+stack montado de otra forma verifica un sistema que nadie ejecuta, y deja libre de pudrirse al que
+si se ejecuta. Las comprobaciones viven en [`deploy/smoke.sh`](../deploy/smoke.sh) por la misma
+razon: quien desarrolla tiene que poder correr exactamente lo que corre CI.
+
+Su patron de rutas es el mas ancho del fichero a proposito. Es la unica etapa que responde "el
+sistema sigue levantando", y las formas de romper eso estan repartidas por todas las capas;
+estrecharlo dejaria la etapa en verde justo en los PR que rompen el arranque.
+
+Es tambien lo unico que pasa `shellcheck` sobre `deploy/smoke.sh`: `actionlint` ya lo corre sobre
+cada bloque `run:`, pero no ve los scripts sueltos.
 
 ## El filtrado por ruta va en el job, nunca en el disparador
 
@@ -188,6 +213,9 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 - **El `plan` de infraestructura necesita AWS.** `Infrastructure` valida siempre, pero su job de
   `plan` solo corre si el secreto del rol esta cargado; sin el, la etapa reporta y no bloquea.
   Detalle en [`docs/cd.md`](cd.md).
-- **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
-  corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
-  ejemplos resueltos de los propios reglamentos.
+- **Golden files y reejecucion del reparto.** Los dorados viven en
+  `internal/dominio/reparto` (Canal Z, RD 9.1.1) y la etapa `Reproducibility`
+  los corre dos veces comparando byte a byte (ADR 0005). La etapa `Perf`
+  cronometra el lote de 10.000 registros contra la KR-1 (menos de 5 min):
+  medido en decenas de ms en local, cuatro ordenes de magnitud por debajo,
+  sin cambios de indices ni de tamano de lote.

@@ -142,22 +142,36 @@ export function puedeGuardarBorrador(estado: EstadoBorrador): boolean {
 }
 
 /**
- * Un porcentaje como se muestra en pantalla: 4 decimales, que es la precision
- * de la columna (`NUMERIC(8,4)`) y la del prototipo.
+ * Un porcentaje como se muestra en pantalla: hasta 4 decimales -la precision de
+ * la columna (`NUMERIC(8,4)` y la del prototipo)-, sin ceros sobrantes: `20%`,
+ * `74.5%`, `33.3333%`.
  *
- * Se formatea con `toFixed` y no con `Intl` en es-CO a proposito: la misma
- * cifra aparece en el mensaje del 400 del backend, que la escribe asi
- * -`suma.StringFixed(4)`-, y dos formas de escribir el mismo numero en la
- * misma pantalla se leen como dos numeros distintos. Ademas `toFixed(4)` no
- * redondea un 4-decimal por debajo de 100 hasta "100.0000": el mayor de ellos
- * es 99.9999 y se pinta 99.9999, asi que la pantalla no puede contradecir el
- * estado que acaba de recibir.
+ * Se formatea con `toFixed(4)` y despues se recortan los ceros finales, y no con
+ * `Intl` en es-CO: el punto decimal es el mismo de los campos de la pantalla, y
+ * no se recorta sobre `String(valor)` porque expondria el ruido de la coma
+ * flotante (`99.99999999999`). Nunca se redondea mas alla de `toFixed(4)`: el
+ * mayor de los valores por debajo de 100 es 99.9999 y se pinta 99.9999, asi que
+ * una declaracion incompleta no se pinta como 100. Un 99.99996 si pasa a `100%`,
+ * que es el comportamiento de `toFixed`.
  *
  * Quien llama garantiza que el valor es un numero finito: `esObra` lo exige
  * para `suma_porcentajes` y `totalDeclarado` nunca devuelve `NaN`.
  */
 export function formatearPorcentaje(valor: number): string {
-  return `${valor.toFixed(4)}%`;
+  const fijo = valor.toFixed(4);
+  const recortado = fijo.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `${recortado}%`;
+}
+
+/**
+ * Un valor enumerado del sistema -el `tipo` de una obra- tal como se muestra:
+ * el valor no se traduce, solo se le pone mayuscula inicial. No se usa CSS
+ * `text-transform: capitalize`, que pone en mayuscula cada palabra y no cambia
+ * el DOM. No se aplica al genero: es texto libre y el filtro es de coincidencia
+ * exacta, y mostrarlo distinto de como se filtra confunde.
+ */
+export function formatearTipo(tipo: string): string {
+  return tipo.charAt(0).toLocaleUpperCase("es-CO") + tipo.slice(1);
 }
 
 /**

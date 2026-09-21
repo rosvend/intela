@@ -74,7 +74,7 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 		Obras:                obras,
 	}
 
-	err = c.Tx.Ejecutar(ctx, func(ctx context.Context) error {
+	err = c.Tx.EnUnidad(ctx, func(ctx context.Context) error {
 		guardada, err := c.ONI.GuardarPublicacion(ctx, pub)
 		if err != nil {
 			return err

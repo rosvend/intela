@@ -143,44 +143,33 @@ export function TablaDePartes({
   nombres: NombresDeTitulares;
 }) {
   return (
-    <>
-      <div className="catalogo-caja">
-        <table className="tabla-partes" aria-label={titulo}>
-          <thead>
-            <tr>
-              <th scope="col">Titular</th>
-              <th scope="col">IPI</th>
-              <th scope="col">{ROTULO_NOMBRE_EN_PADRON_ACTUAL}</th>
-              <th scope="col" className="tabla-partes-numero">
-                Porcentaje
-              </th>
+    <div className="catalogo-caja">
+      <table className="tabla-partes" aria-label={titulo}>
+        <thead>
+          <tr>
+            <th scope="col">Titular</th>
+            <th scope="col">IPI</th>
+            <th scope="col">{ROTULO_NOMBRE_EN_PADRON_ACTUAL}</th>
+            <th scope="col" className="tabla-partes-numero">
+              Porcentaje
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {partes.map((parte) => (
+            // El `titular_id` como clave: el backend rechaza una declaracion
+            // con un titular repetido, asi que no hay dos filas con el mismo.
+            <tr key={parte.titular_id}>
+              <td className="detalle-identificador">{parte.titular_id}</td>
+              <td className="detalle-identificador">{parte.ipi}</td>
+              <td className="muted">{nombres.get(parte.titular_id) ?? "—"}</td>
+              <td className="tabla-partes-numero">
+                {formatearPorcentaje(parte.porcentaje)}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {partes.map((parte) => (
-              // El `titular_id` como clave: el backend rechaza una declaracion
-              // con un titular repetido, asi que no hay dos filas con el mismo.
-              <tr key={parte.titular_id}>
-                <td className="detalle-identificador">{parte.titular_id}</td>
-                <td className="detalle-identificador">{parte.ipi}</td>
-                <td className="muted">
-                  {nombres.get(parte.titular_id) ?? "—"}
-                </td>
-                <td className="tabla-partes-numero">
-                  {formatearPorcentaje(parte.porcentaje)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="muted detalle-nota">
-        Los nombres se piden al padrón en una sola consulta, por los
-        identificadores que muestra esta tabla, y son los de HOY: un titular
-        renombrado aparece con su nombre nuevo hasta en las versiones antiguas
-        (D-006). Una fila sin nombre se pinta con un guion, y ese guion no
-        significa que el titular falte: significa que su nombre no se conoce.
-      </p>
-    </>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

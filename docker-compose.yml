@@ -1,4 +1,7 @@
-# Entorno de desarrollo. `docker compose up --build` levanta el sistema entero.
+# Entorno de desarrollo. `docker compose up --build` levanta el sistema entero,
+# migrado y vacio; `docker compose --profile demo up --build` lo levanta ademas
+# sembrado, que es el arranque de una sola orden que documenta docs/QUICKSTART.md
+# y el que verifica deploy/smoke.sh.
 #
 # MinIO no esta aqui. Estaba, pero sin cablear: la aplicacion escribe en disco
 # local y ningun adaptador habla S3, asi que el servicio solo servia para
@@ -25,6 +28,16 @@ x-backend: &backend
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
+    # Opcional: solo cuenta si el perfil `seed` o `demo` esta activo. Sin
+    # esto, `migrate` y `seed` corrian en paralelo con la API, y con
+    # SEED_RESET=true el seed podia borrar 21 tablas con la API ya conectada
+    # (ver docs/QUICKSTART.md). `required: false` es lo que permite un `up`
+    # pelado -sin `seed` en el proyecto-: Compose omite la arista del grafo
+    # de dependencias cuando el servicio esta deshabilitado por perfil, en
+    # vez de fallar porque no existe.
+    seed:
+      condition: service_completed_successfully
+      required: false
   restart: unless-stopped
 
 services:
@@ -34,7 +47,9 @@ services:
       POSTGRES_USER: intela
       POSTGRES_PASSWORD: intela
       POSTGRES_DB: intela
-    ports: ["5432:5432"]
+    # Solo loopback: la contrasena es fija y de desarrollo, y publicar en
+    # 0.0.0.0 la expone a toda la red del host, no solo a esta maquina.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U intela -d intela"]
@@ -63,9 +78,21 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Paso opcional, a mano. No entra en `up`.
-  #   docker compose run --rm seed
-  # SEED_RESET=true recarga. Cada rol tiene su clave (ARRANQUE.md).
+  # Paso opcional. Nunca entra en un `up` pelado; entra por perfil.
+  #
+  #   docker compose run --rm seed            a mano, contra un stack ya arriba
+  #   docker compose --profile demo up        arranque de una orden, ya sembrado
+  #
+  # Los dos perfiles nombran la misma pieza desde dos sitios: `seed` es "quiero
+  # el sembrador" y `demo` es "quiero un sistema que se pueda ensenar". Que
+  # `demo` exista es lo que hace que el arranque documentado sea UNA orden: sin
+  # el, `up` deja la base migrada y vacia, el tablero pinta cero obras y la
+  # siguiente instruccion del quickstart es un segundo comando que todo el mundo
+  # olvida. Ver docs/QUICKSTART.md.
+  #
+  # Es seguro dejarlo dentro de `up`: con la base ya sembrada el binario detecta
+  # el dataset completo y sale con exito sin tocar nada (semilla.Cargar), asi que
+  # repetir el `up` no duplica datos ni rompe el arranque.
   #
   # `target: seed` es una IMAGEN DISTINTA de la de la API, no un entrypoint
   # distinto de la misma. El binario borra 21 tablas con SEED_RESET=true y
@@ -73,7 +100,7 @@ services:
   # atiende produccion. Aqui es un servicio mas porque este compose es el
   # entorno de desarrollo.
   seed:
-    profiles: ["seed"]
+    profiles: ["seed", "demo"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -83,7 +110,34 @@ services:
       DATABASE_URL: postgres://intela:intela@postgres:5432/intela?sslmode=disable
       OBJECT_DIR: /objetos
       LOG_FORMATO: texto
-      SEED_RESET: "false"
+      # Interpolado, no fijo. Con `"false"` a secas la unica forma de recargar
+      # era repetir el valor en la linea de comandos (`run --rm -e SEED_RESET=true`),
+      # y eso no existe para `up`: `SEED_RESET=true docker compose --profile demo up`
+      # levantaba el stack y NO recargaba, en silencio.
+      SEED_RESET: "${SEED_RESET:-false}"
+      # Interpoladas igual que SEED_RESET, y por la misma razon: sin esto el
+      # binario siempre cae a los defaults de cmd/seed/main.go, aunque quien
+      # levante el stack exporte las variables -y entonces deploy/smoke.sh,
+      # que si lee SEED_CLAVE_ADMIN del host, intenta iniciar sesion con una
+      # clave que el seed nunca uso.
+      #
+      # Estan las CINCO, no solo la del admin. Con solo ADMIN aqui, las otras
+      # cuatro se quedaban en el host: docs/ARRANQUE.md prometia
+      # "sobreescribibles con SEED_CLAVE_*" y por el camino documentado
+      # -docker compose- cuatro de las cinco no se podian sobreescribir. Eso
+      # dejaba sin ejercer la guarda que mas importa de las cinco: el seed
+      # RECHAZA dos roles con la misma clave, porque una clave compartida
+      # entre `distribucion` y `contabilidad` anula el control de doble firma
+      # (ADR 0008, RD 13.5). Una guarda que no se puede disparar por el camino
+      # documentado no esta verificada.
+      #
+      # Vacio equivale a no puesta: config.Cadena descarta el valor en blanco
+      # y aplica el default del binario.
+      SEED_CLAVE_ADMIN: "${SEED_CLAVE_ADMIN:-}"
+      SEED_CLAVE_DISTRIBUCION: "${SEED_CLAVE_DISTRIBUCION:-}"
+      SEED_CLAVE_CONTABILIDAD: "${SEED_CLAVE_CONTABILIDAD:-}"
+      SEED_CLAVE_AUDITOR: "${SEED_CLAVE_AUDITOR:-}"
+      SEED_CLAVE_TITULAR: "${SEED_CLAVE_TITULAR:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,8 +184,16 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    # El `:z` no es decoracion. En un host con SELinux -Fedora, RHEL, y por
+    # tanto tambien podman de serie- un fichero del arbol de trabajo entra al
+    # contenedor con la etiqueta que tenga en disco, que no es una que los
+    # contenedores puedan leer: nginx arrancaba y moria en bucle con
+    #   [emerg] open() "/etc/nginx/conf.d/default.conf" failed (13: Permission denied)
+    # y el resto del stack quedaba en pie, asi que parecia un fallo de nginx y
+    # no del montaje. `z` reetiqueta el fichero como contenido compartido de
+    # contenedor; donde no hay SELinux, Docker y podman lo ignoran.
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro,z
     ports: ["80:80"]
     depends_on: [api, web]
     restart: unless-stopped

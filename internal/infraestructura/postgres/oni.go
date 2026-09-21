@@ -18,7 +18,7 @@ const columnasItemPublico = `uso_id, titulo, fuente, ids_fuente, modalidad`
 // PendientesDePeriodo lee la cola viva, no el listado publicado. Resolver un
 // ONI despues no tiene que cambiar lo que ya se congelo.
 func (s *Store) PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.DatosIdentificatorios, error) {
-	filas, err := s.q(ctx).Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT u.id, u.titulo, u.fuente, u.ids_fuente, u.modalidad, r.periodo
 		  FROM usos u
 		  JOIN reportes r ON r.id = u.reporte_id
@@ -44,7 +44,7 @@ func (s *Store) PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.
 }
 
 func (s *Store) GuardarPublicacion(ctx context.Context, p aplicacion.PublicacionONI) (aplicacion.PublicacionONI, error) {
-	err := s.q(ctx).QueryRow(ctx, `
+	err := s.ejecutorDe(ctx).QueryRow(ctx, `
 		INSERT INTO oni_publicaciones (periodo, fecha_proceso, direccion_fisica, direccion_electronica)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id::text`,
@@ -59,7 +59,7 @@ func (s *Store) GuardarPublicacion(ctx context.Context, p aplicacion.Publicacion
 	}
 
 	for _, o := range p.Obras {
-		if _, err := s.q(ctx).Exec(ctx, `
+		if _, err := s.ejecutorDe(ctx).Exec(ctx, `
 			INSERT INTO oni_publicacion_items
 			  (publicacion_id, uso_id, titulo, fuente, ids_fuente, modalidad)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -77,7 +77,7 @@ func (s *Store) AnclarPrescripcion(ctx context.Context, usoIDs []string, cuando 
 	if len(usoIDs) == 0 {
 		return nil
 	}
-	_, err := s.q(ctx).Exec(ctx, `
+	_, err := s.ejecutorDe(ctx).Exec(ctx, `
 		UPDATE usos
 		   SET publicado_en = $1
 		 WHERE id = ANY($2) AND publicado_en IS NULL`, cuando, usoIDs)
@@ -109,7 +109,7 @@ func (s *Store) PublicacionDePeriodo(ctx context.Context, periodo string) (aplic
 
 func (s *Store) escanearPublicacion(ctx context.Context, sql, que string, args ...any) (aplicacion.PublicacionONI, error) {
 	var p aplicacion.PublicacionONI
-	err := s.q(ctx).QueryRow(ctx, sql, args...).
+	err := s.ejecutorDe(ctx).QueryRow(ctx, sql, args...).
 		Scan(&p.ID, &p.Periodo, &p.FechaProceso, &p.DireccionFisica, &p.DireccionElectronica)
 	if err != nil {
 		return aplicacion.PublicacionONI{}, traducirError(err, "%s", que)
@@ -118,7 +118,7 @@ func (s *Store) escanearPublicacion(ctx context.Context, sql, que string, args .
 }
 
 func (s *Store) conItems(ctx context.Context, p aplicacion.PublicacionONI) (aplicacion.PublicacionONI, error) {
-	filas, err := s.q(ctx).Query(ctx, `
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT `+columnasItemPublico+`
 		  FROM oni_publicacion_items
 		 WHERE publicacion_id = $1

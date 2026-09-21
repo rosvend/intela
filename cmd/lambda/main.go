@@ -145,7 +145,16 @@ func construir() (http.Handler, error) {
 	// BitacoraAuditoria aparte-, ver puertos.go. Mismo cableado que
 	// cmd/api: este binario es un adaptador primario mas y comparte el
 	// Router().
-	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
+	//
+	// El asiento del alta del catalogo comparte transaccion con la obra
+	// (ADR 0006, #91): por eso van tambien Bitacora, Unidad y Reloj.
+	catalogo := aplicacion.Catalogo{
+		Obras:         store.CatalogoObras(),
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
+	}
 
 	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
 	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
