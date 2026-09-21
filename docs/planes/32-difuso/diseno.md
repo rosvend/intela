@@ -34,6 +34,25 @@ Alternativas descartadas, con el motivo:
   bucle de la cascada. El puerto existe para poder hacerlo el dia que haya datos con los que
   entrenar; hoy seria coste sin beneficio.
 
+### Recuperar sin una transaccion por titulo: medido, no se puede (review de #146, S2)
+
+`Similitud.Candidatos` abre una transaccion por titulo para fijar `pg_trgm.similarity_threshold`
+con `SET LOCAL`, porque `%` -el operador que usa el indice- toma su corte del GUC y no de un
+argumento. El review propuso una consulta KNN (`ORDER BY titulo_norm <-> $1, id LIMIT n` con el
+piso como filtro) que no lo necesitara. **No sirve**, con la misma tabla de 20.004 obras:
+
+| | Plan | Tiempo |
+| --- | --- | --- |
+| `%` + `set_config(..., true)` (la actual) | `Index Scan` sobre `obras_titulo_norm_gist` | 0,6 ms |
+| KNN con desempate por `id` | `Seq Scan` + `top-N heapsort` | 217 ms |
+| KNN sin desempate | `Index Scan`, pero empates a la suerte | 6,2 ms |
+
+El desempate por `id` es lo que da orden total (ADR 0005) y con el el planificador no usa el
+indice. Sin el, dos corridas podrian elegir obras distintas ante un empate en el limite del
+`LIMIT`. Fijar el GUC una vez por corrida tampoco: es de sesion y el pool reparte conexiones. Se
+conserva `%` en una transaccion, abierta con `enTransaccionDe`: dentro de una unidad de trabajo
+corre en ella. Planes completos en [`explain-trgm.md`](explain-trgm.md).
+
 ## D2. Dos umbrales, no uno
 
 Hay **tres** desenlaces, no dos:
@@ -48,6 +67,13 @@ Con un solo corte, "no llego al umbral" mezclaria un 0.58 —que una persona res
 segundos— con un 0.02, que no tiene nada que mirar.
 
 Las dos ultimas son ONI. Lo que las distingue es si hay filas en `candidatos_match`.
+
+Los dos cortes tienen que cumplir `0 < banda < umbral <= 1` (`Umbrales.Validar`, review de #146,
+S4), y una corrida con parametros que no lo cumplan **no empieza** y nombra las dos claves. Con
+`banda == umbral` la banda no tiene ancho: nada llega a la bandeja y lo que casi casa se va a ONI a
+ciegas. Una banda en cero es "ausente" (ADR 0004), no un piso: con el corte en cero el motor
+propondria cualquier obra. `cmd/metricas-matching` aplica la misma comprobacion, porque medir contra
+umbrales que la cascada rechazaria es medir otra cosa.
 
 Los dos valores son parametros normativos con vigencia (ADR 0004), sembrados sinteticos:
 `matching.umbral = 0.60`, `matching.umbral_banda = 0.45`. **No estan calibrados**, y con la
@@ -67,6 +93,28 @@ maquinaria de congelar un snapshot.
 
 Un parametro ausente es un error que **nombra la clave**, nunca un cero: un umbral en cero
 asignaria la primera obra que se pareciera en algo a cualquier titulo.
+
+### Convive con `SnapshotEnFecha` (#118, ya en main)
+
+#118 aterrizo antes que este PR y trae `SnapshotEnFecha`, que resuelve **todas** las clausulas del
+reparto contra una fecha y las **congela** con un id direccionado por contenido. `ParametroVigente`
+no se absorbe en el, por tres razones:
+
+- **No congela nada.** Identificar no mueve dinero (ADR 0003): no hay corrida de reparto que
+  reproducir, y escribir un snapshot por cada resolucion de usos seria ruido en
+  `snapshots_parametros`.
+- **No exige las diecinueve clausulas.** `SnapshotEnFecha` falla si falta cualquiera de ellas, con
+  razon, porque un reparto a medias es un error. Identificar solo necesita dos filas, y no tiene
+  por que caerse porque falte, por ejemplo, `ott.wb`.
+- **`matching.umbral_banda` no entra en el snapshot** y `matching.umbral` si. Este ultimo asigna
+  obras y por eso el reparto lo congela; el piso de la banda no asigna nada, solo decide que se
+  muestra en la bandeja (#39), y meterlo en el snapshot cambiaria el id de todos los repartos por
+  un parametro que no los afecta. Los dos leen la **misma fila** de `matching.umbral` porque los
+  dos resuelven contra la fecha del periodo y la `EXCLUDE` deja una sola respuesta.
+
+Ambos comparan por **dia UTC** y no por instante: comparar un `timestamptz` con una `DATE` dejaria
+que la zona de la sesion decidiera la vigencia. `ParametroVigente` pide su ejecutor (`ejecutorDe`)
+como el resto del paquete, asi que participa en la unidad de trabajo del contexto.
 
 ## D4. El difuso aprende alias
 
@@ -129,6 +177,23 @@ cuando se decidio. Un auditor de `RD 16` pregunta por lo segundo.
 Se reemplaza entera por uso, no se acumula: son el resultado de una corrida contra el catalogo tal
 como estaba.
 
+**Una lista vacia tambien reemplaza.** Una fila que en una corrida quedo en la banda y en la
+siguiente cae por debajo del piso se queda con la bandeja **vacia**, no con los candidatos viejos:
+`ResolverUsos` llama al puerto aunque no haya candidatos, y el adaptador (que ya borra y luego
+inserta) solo borra.
+
+**Y es una sola unidad con el match.** La bandeja y el `GuardarMatch` de una ONI se escriben dentro
+de `UnidadDeTrabajo` (review de #146, S3): si el match no se escribe porque la fila ya es de otro
+-una resolucion manual concurrente, `GuardarMatch` responde `ErrNoEncontrado`-, la unidad recibe
+`errFilaCambiada`, revierte la bandeja con el y la corrida sigue. Sin la unidad, la bandeja de la
+decision perdida quedaba puesta sobre una fila que esa decision ya no considera ONI. El orden
+dentro de la unidad sigue siendo el de D5.
+
+**Y dice contra que titulo se puntuo.** `candidatos_match.titulo_consultado` guarda cual de los
+titulos de la fila -el emitido o el original, ver D11- produjo cada puntaje. Sin esa columna la
+bandeja muestra un `0.52` sin decir de donde sale, que es exactamente la pregunta de un auditor de
+`RD 16`.
+
 ## D10. La busqueda del catalogo comparte el indice, no el umbral
 
 `GET /obras?titulo=` casa por subcadena (`ILIKE`) **o** por parecido, y ordena por parecido. Eso
@@ -137,6 +202,34 @@ es lo que hace que el buscador tolere tildes, mayusculas y orden de palabras.
 Su corte es `pg_trgm.similarity_threshold` en su valor de fabrica (0.3). Es una caja de busqueda:
 lo que sale de ella no decide a quien se le paga. El corte que si decide es el del escalon 3, y
 ese es un parametro con vigencia.
+
+## D11. Titulo original: se consultan los dos y se unen por el mejor puntaje
+
+Caracol entrega `Titulo` (el emitido en Colombia) y `Titulo_original`, y difieren en 16 de 59
+filas. Los catalogos de las fuentes no comparten ni idioma: buscar solo por el emitido pierde
+justo las filas donde el nombre local no se parece al del catalogo. Hasta el review de #146 el
+original **ni siquiera se guardaba**: `usos` no tenia columna, la ingesta no lo mapeaba y
+`Entrada.TituloOrig` viajaba siempre vacio.
+
+- **Persistencia.** `usos.titulo_original` (migracion 00014, `NOT NULL DEFAULT ''`: vacio = la
+  fuente no lo trae) y `Titulo_original` en `MapaCaracol`, **no requerida**: una entrega sin esa
+  columna se lee igual y solo pierde ese recall. Netflix y cine no lo traen.
+- **Se consultan los dos titulos**, cada uno con el piso de la banda, y se **unen por obra**
+  (`identificacion.UnirCandidatos`): por obra gana el mejor puntaje, y se recorta a
+  `MaxCandidatos`. El original se prueba solo si difiere del emitido sin distinguir mayusculas ni
+  espacios: el mismo titulo dos veces es una consulta de mas en el bucle caro (D6).
+- **Regla de empate.** Si una obra puntua igual con los dos titulos, gana la lista anterior: el
+  emitido va primero, que es el que la cascada ya usaba, y asi un empate no cambia lo que se
+  escribia antes de este cambio. El orden final es total: puntaje descendente y `ObraID`
+  ascendente (ADR 0005), sin depender del orden en que se recorran mapas.
+- **Evidencia.** `Candidato.TituloConsultado` viaja hasta la evidencia del match
+  (`difuso "Without Breasts There Is No Paradise" ~ obra-45 (0.88000)`) y hasta la bandeja (D9): se
+  sabe si la fila caso por el emitido o por el original. No entra en el orden ni en la decision.
+- **Un fallo de la segunda consulta aborta la corrida** (D8) y el error nombra el titulo que
+  fallo; una fila a medias no se escribe.
+
+Los creditos (`Autor*`, `Guionista*`) siguen sin puntuar (D7): `TituloOrig` es un titulo, no un
+credito.
 
 ## Ver tambien
 

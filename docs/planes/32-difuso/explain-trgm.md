@@ -1,6 +1,6 @@
 ---
 actualizado: 2026-09-21
-evidencia: postgres:16-alpine, 20.004 filas en `obras`, EXPLAIN (ANALYZE, BUFFERS)
+evidencia: postgres:16-alpine (16.15 en las medidas del review de #146), 20.004 filas en `obras`, EXPLAIN (ANALYZE, BUFFERS)
 ---
 
 # Por que el escalon 3 indexa con GiST y no con GIN
@@ -108,7 +108,7 @@ Lo que decide:
 - Las 10.000 filas de KR-1 (#46) a 217 ms son **treinta y seis minutos**. Con `%`, seis segundos.
 
 Por eso el adaptador **conserva** `%` con `set_config('pg_trgm.similarity_threshold', ..., true)`
-dentro de una transaccion, y solo cambia a [`enTransaccionDe`]: si el contexto ya trae la unidad
+dentro de una transaccion, y solo cambia a `enTransaccionDe`: si el contexto ya trae la unidad
 de trabajo de otro puerto, corre en ella en vez de abrir la suya. La otra salida del review,
 fijar el GUC una vez por corrida, esta descartada: un GUC de sesion no sobrevive al pool, que
 reparte conexiones distintas a cada consulta. `WHERE similarity(...) >= piso` sin `%` tampoco:
