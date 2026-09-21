@@ -85,6 +85,29 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 			hay.obras, len(d.Obras), hay.reportes, len(d.Reportes), hay.usosSinIdentificar)
 	}
 
+	return escribir(ctx, store, almacen, hasher, claves, d, log)
+}
+
+// CargarAditivo escribe el dataset sin mirar el estado previo de la base: no
+// borra nada y no exige que obras/reportes esten vacios o en la forma
+// completa que pide Cargar. Pensada para una base con datos ajenos al
+// dataset que hay que conservar -Cargar los rechazaria con "semilla a
+// medias"- (#155).
+//
+// Tan segura como Cargar porque insertarPadron ya usa ON CONFLICT DO NOTHING
+// en titulares/usuarios, y registrarObras falla alto si un id del dataset ya
+// existe en vez de pisarlo: no hay escritura silenciosa sobre lo que ya haya.
+func CargarAditivo(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, hasher aplicacion.Hasher, claves Claves, log *slog.Logger) error {
+	if log == nil {
+		log = slog.Default()
+	}
+	return escribir(ctx, store, almacen, hasher, claves, Construir(), log)
+}
+
+// escribir es el camino que de verdad persiste el dataset. Cargar y
+// CargarAditivo comparten esta funcion; lo que cambia entre ellas es solo la
+// comprobacion previa.
+func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, hasher aplicacion.Hasher, claves Claves, d Dataset, log *slog.Logger) error {
 	hashes, err := hashear(hasher, claves)
 	if err != nil {
 		return err
@@ -366,10 +389,17 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// ON CONFLICT DO NOTHING: en produccion la instalacion ya tiene el primer
+	// administrador (orden primer-administrador) y a veces el padron demo
+	// (sembrar-titulares-demo). Sin esto, Cargar fallaba al chocar con esas
+	// filas aunque obras y reportes estuvieran vacios (hay.vacio() mira solo
+	// esas dos tablas). La clave del admin provisionado se conserva: no se
+	// reescribe el hash.
 	for _, tit := range d.Titulares {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			tit.ID, tit.Nombre, tit.IPI, tit.PersonaNatural, tit.Clase, tit.Email); err != nil {
 			return fmt.Errorf("insertar titular %s: %w", tit.ID, err)
 		}
@@ -386,7 +416,8 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO usuarios (id, email, nombre, rol, titular_id, password_hash)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			u.ID, u.Email, u.Nombre, string(u.Rol), titular, hash); err != nil {
 			return fmt.Errorf("insertar usuario %s: %w", u.ID, err)
 		}
