@@ -86,10 +86,10 @@
 // misma unidad sera la que escriba `procesos.snapshot_id` --; y el resto
 // (afiliacion.go, calendario.go, cola.go, declaraciones.go,
 // identificacion.go, ingesta.go, provision.go, recaudo.go, reparto.go,
-// repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
-// metodo que NO puede participar en la unidad de otro puerto el dia que
-// alguien lo necesite, y ese dia no avisa con un fallo de compilacion: avisa
-// con una escritura que se confirma sola (ver
+// repertorio.go, sesiones.go, similitud.go). Un metodo que se queda en
+// `s.pool` es un metodo que NO puede participar en la unidad de otro puerto el
+// dia que alguien lo necesite, y ese dia no avisa con un fallo de
+// compilacion: avisa con una escritura que se confirma sola (ver
 // TestRegistrarBolsaDentroDeUnaUnidadRevierteConLaDeFuera en
 // recaudo_test.go) o con un interbloqueo por agotamiento del pool si la
 // unidad de fuera ya tiene su conexion y la de dentro pide otra (ver
