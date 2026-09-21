@@ -270,7 +270,7 @@ func TestAbrirYFirmarReclamacionHastaSerPagable(t *testing.T) {
 		t.Fatal("recien abierta no deberia ser pagable")
 	}
 
-	r, err = b.FirmarReclamacion(ctx, "rec-1", reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-1")
+	_, err = b.FirmarReclamacion(ctx, "rec-1", reparto.RolRevisoriaFiscalOAuditoriaInterna, "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
