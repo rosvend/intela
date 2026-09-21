@@ -534,7 +534,16 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 //
 // El resto del padron sigue por Store.Pool(). `titulares`, `usuarios` y
 // `parametros` no tienen todavia adaptador de escritura, e inventarle un puerto
-// al sembrador para taparlo seria indireccion sin requisito. `declaraciones`,
+// al sembrador para taparlo seria indireccion sin requisito.
+//
+// Lo de `parametros` sigue siendo cierto despues de la #118, aunque
+// aplicacion.ParametrosNormativos ya no sea un puerto de solo lectura: lo que
+// ese puerto escribe es `snapshots_parametros` -- el corte congelado de una
+// corrida --, nunca la tabla de vigencias. Sembrar una vigencia y congelar un
+// corte no son la misma operacion, y la primera necesita organo, acto y
+// asiento; ver el comentario de postgres.Store.Pool.
+//
+// `declaraciones`,
 // `bolsas` y `usuarios_recaudo` SI lo tienen ya, y aun asi van por SQL: sus
 // adaptadores asientan en bitacora dentro de la misma transaccion, y el seed
 // tiene que terminar con la bitacora vacia para que SEED_RESET siga siendo
