@@ -38,11 +38,14 @@ func sembrarCorridaBase(t *testing.T) *Store {
 			t.Fatalf("sembrar %q: %v", obraID, err)
 		}
 	}
-	for _, titularID := range []string{"titular-a", "titular-b"} {
+	for _, tt := range []struct{ id, ipi string }{
+		{"titular-a", "111"},
+		{"titular-b", "222"},
+	} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO titulares (id, nombre, ipi, clase) VALUES ($1, $2, '111', 'socio')`,
-			titularID, "Titular "+titularID); err != nil {
-			t.Fatalf("sembrar %q: %v", titularID, err)
+			`INSERT INTO titulares (id, nombre, ipi, clase) VALUES ($1, $2, $3, 'socio')`,
+			tt.id, "Titular "+tt.id, tt.ipi); err != nil {
+			t.Fatalf("sembrar %q: %v", tt.id, err)
 		}
 	}
 	return s
