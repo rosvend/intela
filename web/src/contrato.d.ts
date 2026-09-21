@@ -3085,7 +3085,7 @@ export interface operations {
                     "application/json": components["schemas"]["Carga"][];
                 };
             };
-            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe. */
+            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe, o el limite y el desplazamiento no son enteros validos. */
             400: {
                 headers: {
                     [name: string]: unknown;
