@@ -68,6 +68,31 @@ func TestDistribuirSobreProporcionesNoRevaloriza(t *testing.T) {
 	}
 }
 
+func TestDistribuirSobreProporcionesPesaPorImporteNoPorPorcentaje(t *testing.T) {
+	// Los dos titulares declaran el mismo Porcentaje (100, cada uno de su
+	// propia obra), pero importes muy distintos. Si el peso fuera Porcentaje,
+	// el reparto saldria 30/30; el reglamento pide repartir como se distribuyo
+	// el recaudo original, que es lo que dice Importe.
+	original := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: d("100"), Importe: d("100.00")},
+		{ObraID: "obra-2", TitularID: "titular-b", IPI: "222", Porcentaje: d("100"), Importe: d("500.00")},
+	}
+
+	nuevas, residuo, err := reparto.DistribuirSobreProporciones(d("60.00"), original)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if !nuevas[0].Importe.Equal(d("10.00")) || !nuevas[1].Importe.Equal(d("50.00")) {
+		t.Fatalf("importes = %s, %s; se esperaba 10.00/50.00 (proporcion 100/500 del Importe original), "+
+			"no 30.00/30.00 (lo que saldria ponderando por el Porcentaje declarado, igual en los dos)",
+			nuevas[0].Importe, nuevas[1].Importe)
+	}
+	if !residuo.IsZero() {
+		t.Fatalf("residuo = %s, se esperaba cero", residuo)
+	}
+}
+
 func TestDistribuirSobreProporcionesMontoNegativoEsError(t *testing.T) {
 	original := []reparto.LineaTitular{
 		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: d("100"), Importe: d("100.00")},
