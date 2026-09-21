@@ -355,6 +355,37 @@ type RepositorioIdentificacion interface {
 	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
 }
 
+// RepositorioUsosDeReparto entrega los usos que ponderan la bolsa de un canal.
+//
+// El filtro es el par (periodo, canal) y no el periodo suelto: el valor punto
+// de `RD 9.1.1` se calcula por canal, y una corrida es una bolsa (ADR 0019).
+// Mezclar dos pagadores en una consulta produciria un valor punto que el
+// reglamento no reconoce.
+//
+// anioClasificacion llega resuelto desde el nucleo y no se deduce aqui: la
+// regla de que es el ano INMEDIATAMENTE ANTERIOR al periodo es `RD 9.5.4`, y
+// dejarla en el adaptador la volveria improbable sin una base de datos.
+//
+// Un canal sin filas devuelve la lista vacia, no ErrNoEncontrado. UsosDeCanal
+// solo devuelve filas con obra identificada (`obra_id IS NOT NULL`): una fila
+// pendiente, ONI o excluida (R-27) nunca llega al motor con un `ObraID`
+// vacio. [ResumenUsosDeCanal] cuenta cuantas se quedaron fuera y por que --
+// pero SOLO cuenta: no reserva su importe. Ver la advertencia en
+// [ResumenUsosDeCanal] antes de pasar el resultado de UsosDeCanal a
+// [reparto.Reparto].
+type RepositorioUsosDeReparto interface {
+	UsosDeCanal(
+		ctx context.Context, periodo, canalID string, anioClasificacion int,
+	) ([]UsoDeReparto, ResumenUsosDeCanal, error)
+
+	// UsosSinCanal cuenta los usos de un periodo -- de cualquier pagador -- que
+	// llegaron con `canal_id` vacio. Mientras ningun adaptador de ingesta
+	// (`internal/infraestructura/ingesta`) mapee la columna real de canal, esto
+	// es lo unico que distingue "el canal no emitio" (cero filas SUYAS) de "la
+	// fuente no dijo de que canal eran" (filas ajenas a todos los canales).
+	UsosSinCanal(ctx context.Context, periodo string) (int, error)
+}
+
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
 	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error

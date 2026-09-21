@@ -190,4 +190,20 @@ var (
 	// filas para el mismo canal partirian su recaudo en dos y cada mitad se
 	// repartiria como si fuera el total de un usuario distinto.
 	ErrUsuarioDeRecaudoDuplicado = errors.New("ya existe un usuario de recaudo con ese identificador")
+
+	// ErrCanalVacio: UsosDeCanal necesita saber contra que bolsa pondera cada
+	// fila, y el canal es esa identidad (ADR 0019). Un canal vacio no es "dame
+	// todo lo que no tiene canal": eso mezclaria las filas sin atribuir de
+	// TODOS los pagadores en una sola corrida, un valor punto que el
+	// reglamento no reconoce. Ver UsosSinCanal para detectar ese hueco.
+	ErrCanalVacio = errors.New("el canal no puede quedar vacio")
+
+	// ErrUsoSinObra: un uso sin obra identificada (`obra_id` NULL: pendiente,
+	// ONI o excluido) nunca puede llegar a [reparto.Reparto]. Sin este
+	// guardian, COALESCE(obra_id, '') convierte las tres en una obra fantasma
+	// de id "" que suma puntos e importe de verdad y que ningun `resultados_obra`
+	// puede persistir (`obra_id NOT NULL REFERENCES obras(id)`). Es defensa en
+	// profundidad: el filtro real vive en el SQL de UsosDeCanal, esto es lo
+	// que impide que un adaptador futuro que lo olvide pase desapercibido.
+	ErrUsoSinObra = errors.New("el uso no tiene obra identificada")
 )
