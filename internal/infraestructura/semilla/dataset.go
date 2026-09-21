@@ -543,6 +543,10 @@ func (d *Dataset) parametros() {
 		// (identificadores.md), calibrable, y por tanto no es normativo.
 		sintetico("matching.umbral", "0.60"),
 
+		// Piso de la banda ambigua: por debajo sale a ONI sin candidatos.
+		// Generoso CONTRA la cola a proposito: en la duda, que alguien mire.
+		sintetico("matching.umbral_banda", "0.45"),
+
 		// Wa/Wb/Wc no estan publicados (RD 9.7, ADR 0004). Cifras redondas a
 		// proposito: nadie las confunde con un valor aprobado. Suman 1.
 		sintetico("ott.wa", "0.50"),
