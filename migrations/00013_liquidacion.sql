@@ -18,10 +18,10 @@
 -- antes de aplicar nada, y el despliegue condiciona el rollout a que
 -- goose termine bien. Por eso no se rellena el hueco 00003/00004.
 --
--- Se toma el 00012: main mergeo `00011_usos_modalidades_y_canales.sql`,
--- y goose aborta con `duplicate version 11` si dos archivos llevan el mismo
--- numero. El 2026-09-18 el mayor en `main` es 00011. Un ADR admite huecos;
--- una migracion no. Las ramas #87/#88 reclaman 00013/00014.
+-- Se toma el 00013: main mergeo `00012_snapshots_de_parametros.sql`,
+-- y goose aborta con `duplicate version 12` si dos archivos llevan el mismo
+-- numero. El mayor en `main` es 00012. Un ADR admite huecos; una migracion
+-- no. No rellenar huecos por debajo de la version ya aplicada.
 
 -- +goose Up
 
