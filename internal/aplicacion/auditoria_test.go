@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-// bitacoraFalsa registra lo que le llego y devuelve lo que le pongan. Es lo
-// que hace comprobable que el defecto de la paginacion y la referencia de
-// obra ocurren ANTES de tocar la base.
+// bitacoraFalsa registra lo que le llego y devuelve lo que le pongan. Sirve
+// tanto a los tests de Auditoria (paginacion / referencia de obra antes de
+// tocar la base) como a los de Catalogo (ADR 0006: si Asentar falla, el caso
+// de uso falla).
 type bitacoraFalsa struct {
 	asientos        []Asiento
 	err             error
@@ -18,15 +19,35 @@ type bitacoraFalsa struct {
 	refIDRecibido   string
 }
 
-func (b *bitacoraFalsa) Asentar(context.Context, Asiento) error { return nil }
+func (b *bitacoraFalsa) Asentar(_ context.Context, a Asiento) error {
+	if b.err != nil {
+		return b.err
+	}
+	b.asientos = append(b.asientos, a)
+	return nil
+}
 
 func (b *bitacoraFalsa) De(_ context.Context, refTipo, refID string) ([]Asiento, error) {
 	b.refTipoRecibido = refTipo
 	b.refIDRecibido = refID
-	return b.asientos, b.err
+	if b.err != nil {
+		return nil, b.err
+	}
+	var out []Asiento
+	for _, a := range b.asientos {
+		if a.RefTipo == refTipo && a.RefID == refID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
-func (b *bitacoraFalsa) AsientoPorID(context.Context, string) (Asiento, error) {
+func (b *bitacoraFalsa) AsientoPorID(_ context.Context, id string) (Asiento, error) {
+	for _, a := range b.asientos {
+		if a.ID == id {
+			return a, nil
+		}
+	}
 	return Asiento{}, ErrNoEncontrado
 }
 
