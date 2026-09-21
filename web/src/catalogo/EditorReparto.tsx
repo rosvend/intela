@@ -569,7 +569,9 @@ function FormularioDeReparto({
 }
 
 /**
- * El aviso de la version, en sus tres formas. Ver `AvisoDeVersion`.
+ * El aviso de la version: la primera version y los casos en que no se sabe
+ * cual esta abierta. Con una version abierta conocida no hay aviso. Ver
+ * `AvisoDeVersion`.
  *
  * Va arriba, antes del formulario, porque es lo que hay que entender ANTES de
  * tocar nada: quien crea que esta corrigiendo el reparto vigente va a descubrir
@@ -582,16 +584,9 @@ function AvisoDeVersionVisible({
   aviso: AvisoDeVersion;
   mensaje: string;
 }) {
-  if (aviso.tipo === "cierraYabre") {
-    return (
-      <p className="editor-aviso-version" role="status">
-        Al guardar, el servidor cerrará la versión {aviso.seCierra} y abrirá la
-        versión {aviso.seAbre} con este reparto. La versión {aviso.seCierra} no
-        se borra ni se modifica: queda en el historial con los porcentajes que
-        regían hasta ahora.
-      </p>
-    );
-  }
+  // Hay una version abierta y se conoce: no se avisa. Quien edita ya sabe que
+  // guardar abre una version nueva, y el aviso era ruido.
+  if (aviso.tipo === "cierraYabre") return null;
 
   if (aviso.tipo === "abreLaPrimera") {
     return (
