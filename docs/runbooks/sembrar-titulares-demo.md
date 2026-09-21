@@ -1,50 +1,42 @@
-# Runbook: sembrar el padron demo en produccion
+# Runbook: sembrar el dataset demo en produccion
 
-Carga Ana, Beto y Carla en `titulares` para poder declarar splits en una
-instalacion que **no** corre `cmd/seed` (la imagen de produccion no lo
-incluye).
+Carga el dataset sintetico completo (`cmd/seed` /
+`internal/infraestructura/semilla`) en una instalacion cuya base esta en
+subred privada: titulares, obras, declaraciones, bolsas, reportes, usos
+identificados y parametros.
 
-Misma razon que [primer-administrador](primer-administrador.md): la base esta
-en subred privada y solo la alcanza la Lambda de migraciones.
+Misma razon que [primer-administrador](primer-administrador.md): solo la
+Lambda de migraciones alcanza Postgres.
 
 ## Cuando se usa
 
-Cuando el catalogo ya tiene obras (via `POST /api/obras`) y
-`estado_declaracion` queda en `incompleta` / `suma_porcentajes: 0` porque el
-padron esta vacio: `POST /obras/{id}/declaracion` responde 400
-("uno de los titulares indicados no existe").
-
-**No siembra obras ni declaraciones.** Solo el padron. Los splits se dan de
-alta despues por la API.
+Cuando Amplify / la API estan arriba pero el catalogo esta vacio o sin
+declaraciones, y hace falta el mismo juego que `docker compose --profile demo`
+deja en local.
 
 ## Antes de empezar
 
-- El codigo con la orden `sembrar-titulares-demo` ya desplegado en
-  `intela-migrate` (push a `main` + Deploy, o `make aplicar` local).
-- Credenciales AWS del entorno y permiso `lambda:InvokeFunction` sobre
-  `intela-migrate`.
+- El codigo con la orden `sembrar-dataset` ya desplegado en `intela-migrate`
+  (merge a `main` + Deploy, o `make aplicar`).
+- Credenciales AWS y permiso `lambda:InvokeFunction` sobre `intela-migrate`.
+- La base **sin obras ajenas al dataset**. Si ya hay obras creadas por la API
+  con otros ids, el seed responde error (`semilla a medias` o
+  `ErrDatosNoSinteticos` con `reset:true`). En ese caso hace falta una base
+  limpia (nuevo entorno / recrear RDS), no un reset a medias.
+
+El admin provisionado (`primer-administrador`) **se conserva**: el seed no
+pisa su hash. Las otras cuentas demo se crean con las claves por defecto de
+[`ARRANQUE.md`](../ARRANQUE.md).
 
 ## Pasos
 
-### 1. Confirmar que el padron esta vacio (opcional)
-
-```bash
-TOKEN=$(curl -s -X POST https://<url>/api/auth/session \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@redes.co","clave":"<clave>"}' \
-  | jq -r .token)
-
-curl -s https://<url>/api/titulares -H "Authorization: Bearer $TOKEN"
-# []
-```
-
-### 2. Invocar la orden
+### 1. Invocar
 
 ```bash
 aws lambda invoke \
   --function-name intela-migrate \
   --profile <perfil> \
-  --payload '{"orden":"sembrar-titulares-demo"}' \
+  --payload '{"orden":"sembrar-dataset"}' \
   --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
@@ -52,41 +44,40 @@ aws lambda invoke \
 Respuesta esperada:
 
 ```json
-{"orden":"sembrar-titulares-demo","estado":"creados"}
+{"orden":"sembrar-dataset","estado":"cargado"}
 ```
 
-Un reintento responde `{"estado":"ya sembrados"}` y no duplica filas.
+Un reintento responde `{"estado":"ya sembrado"}`.
 
-### 3. Declarar splits por la API
+El alias `sembrar-titulares-demo` hace lo mismo (compatibilidad con el nombre
+anterior).
+
+### 2. Comprobar
 
 ```bash
-curl -s -X POST https://<url>/api/obras/<obra-id>/declaracion \
-  -H "Authorization: Bearer $TOKEN" \
+TOKEN=$(curl -s -X POST https://<url>/api/auth/session \
   -H 'Content-Type: application/json' \
-  -d '[
-    {"titular_id":"tit-ana","ipi":"IPI-00000001","porcentaje":60},
-    {"titular_id":"tit-beto","ipi":"IPI-00000002","porcentaje":40}
-  ]'
+  -d '{"email":"admin@redes.co","clave":"<tu-clave-provisionada>"}' \
+  | jq -r .token)
+
+curl -s https://<url>/api/obras -H "Authorization: Bearer $TOKEN" | jq .
+# 4 obras; Pelicula X y Minuto Comico con suma_porcentajes 100;
+# Serie Y con 60 (incompleta a proposito, R-04).
 ```
-
-Titulares sembrados:
-
-| id | nombre | IPI |
-| --- | --- | --- |
-| `tit-ana` | Ana Escritora | `IPI-00000001` |
-| `tit-beto` | Beto Libretista | `IPI-00000002` |
-| `tit-carla` | Carla Guionista | `IPI-00000003` |
 
 ## Respuestas posibles
 
 | Respuesta | Que significa | Que hacer |
 | --- | --- | --- |
-| `{"estado":"creados"}` | Habia huecos; se insertaron. | Declarar por la API. |
-| `{"estado":"ya sembrados"}` | Los tres ids ya estaban. | Nada, o declarar. |
-| `orden "…" no permitida` | La Lambda desplegada es anterior a esta orden. | Desplegar `main` y reintentar. |
+| `{"estado":"cargado"}` | Dataset escrito. | Entrar al tablero. |
+| `{"estado":"ya sembrado"}` | Ya estaba completo. | Nada. |
+| `semilla a medias (...): pase SEED_RESET=true` | Hay obras/reportes a medias o ajenos. | Base limpia, o `{"orden":"sembrar-dataset","reset":true}` solo si **todo** lo que hay es del dataset. |
+| `SEED_RESET rechazado: hay datos que no son del dataset sintetico` | Hay obras/titulares reales. | No uses reset; recrea el entorno. |
+| `orden "…" no permitida` | Lambda vieja. | Desplegar `main` y reintentar. |
 
 ## Lo que este runbook NO cubre
 
-El dataset completo del seed (obras, reportes, bolsas, parametros sinteticos,
-usuarios de demo). Eso sigue siendo solo local:
-`docker compose --profile demo up`.
+- Correr el seed en cada `terraform apply` automaticamente (sigue siendo
+  invocacion manual, como `primer-administrador`).
+- Los bytes crudos de los reportes en S3: en Lambda caen en `/tmp` y no los
+  comparte la API. El metadato y los usos en Postgres si quedan.

@@ -225,18 +225,19 @@ func TestProvisionRechazaUnHashTruncado(t *testing.T) {
 	}
 }
 
-// El padron demo llega a la base y un reintento no duplica. Es el cableado que
-// se invoca en produccion para poder declarar splits sin correr cmd/seed.
-func TestSembrarTitularesDemoDeExtremoAExtremo(t *testing.T) {
+// El dataset completo llega a la base via semilla.Cargar, y un reintento no
+// duplica. Es el cableado que se invoca en produccion en lugar de cmd/seed.
+func TestSembrarDatasetDeExtremoAExtremo(t *testing.T) {
 	cadena := testhelp.DSN(t)
 	t.Setenv("DATABASE_URL", cadena)
+	t.Setenv("OBJECT_DIR", t.TempDir())
 
-	r, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarTitularesDemo})
+	r, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarDataset})
 	if err != nil {
 		t.Fatalf("primera invocacion: %v", err)
 	}
-	if r.Estado != "creados" {
-		t.Fatalf("estado = %q, se esperaba \"creados\"", r.Estado)
+	if r.Estado != "cargado" {
+		t.Fatalf("estado = %q, se esperaba \"cargado\"", r.Estado)
 	}
 
 	pool, err := pgxpool.New(t.Context(), cadena)
@@ -245,37 +246,133 @@ func TestSembrarTitularesDemoDeExtremoAExtremo(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	var total int
-	if err := pool.QueryRow(t.Context(),
-		`SELECT count(*) FROM titulares WHERE id IN ('tit-ana','tit-beto','tit-carla')`).
-		Scan(&total); err != nil {
-		t.Fatalf("contar: %v", err)
+	var titulares, obras, reportes, declaraciones int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM titulares`).Scan(&titulares); err != nil {
+		t.Fatalf("contar titulares: %v", err)
 	}
-	if total != 3 {
-		t.Fatalf("titulares demo = %d, se esperaban 3", total)
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM obras`).Scan(&obras); err != nil {
+		t.Fatalf("contar obras: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM reportes`).Scan(&reportes); err != nil {
+		t.Fatalf("contar reportes: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM declaraciones`).Scan(&declaraciones); err != nil {
+		t.Fatalf("contar declaraciones: %v", err)
+	}
+	if titulares != 3 {
+		t.Errorf("titulares = %d, se esperaban 3", titulares)
+	}
+	if obras != 4 {
+		t.Errorf("obras = %d, se esperaban 4", obras)
+	}
+	if reportes < 1 {
+		t.Errorf("reportes = %d, se esperaba al menos 1", reportes)
+	}
+	if declaraciones < 1 {
+		t.Errorf("declaraciones = %d, se esperaba al menos 1", declaraciones)
 	}
 
-	var ipi string
+	var suma float64
 	if err := pool.QueryRow(t.Context(),
-		`SELECT ipi FROM titulares WHERE id = 'tit-ana'`).Scan(&ipi); err != nil {
-		t.Fatalf("leer Ana: %v", err)
+		`SELECT COALESCE(SUM(porcentaje),0) FROM declaraciones WHERE obra_id = 'obra-cine'`).
+		Scan(&suma); err != nil {
+		t.Fatalf("suma cine: %v", err)
 	}
-	if ipi != "IPI-00000001" {
-		t.Errorf("ipi de Ana = %q, se esperaba IPI-00000001", ipi)
+	if suma != 100 {
+		t.Errorf("suma Pelicula X = %v, se esperaba 100", suma)
 	}
 
-	r2, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarTitularesDemo})
+	r2, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarDataset})
 	if err != nil {
 		t.Fatalf("segunda invocacion: %v", err)
 	}
-	if r2.Estado != "ya sembrados" {
-		t.Errorf("estado = %q, se esperaba \"ya sembrados\"", r2.Estado)
+	if r2.Estado != "ya sembrado" {
+		t.Errorf("estado = %q, se esperaba \"ya sembrado\"", r2.Estado)
+	}
+}
+
+// El alias del PR anterior sigue disparando el dataset completo.
+func TestSembrarTitularesDemoEsAliasDeSembrarDataset(t *testing.T) {
+	cadena := testhelp.DSN(t)
+	t.Setenv("DATABASE_URL", cadena)
+	t.Setenv("OBJECT_DIR", t.TempDir())
+
+	r, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarTitularesDemo})
+	if err != nil {
+		t.Fatalf("invocacion: %v", err)
+	}
+	if r.Orden != ordenSembrarDataset {
+		t.Errorf("orden = %q, se esperaba %q", r.Orden, ordenSembrarDataset)
+	}
+	if r.Estado != "cargado" {
+		t.Fatalf("estado = %q, se esperaba \"cargado\"", r.Estado)
 	}
 
-	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM titulares`).Scan(&total); err != nil {
-		t.Fatalf("recontar: %v", err)
+	pool, err := pgxpool.New(t.Context(), cadena)
+	if err != nil {
+		t.Fatalf("abrir pool: %v", err)
 	}
-	if total != 3 {
-		t.Errorf("tras reintento titulares = %d, se esperaban 3", total)
+	t.Cleanup(pool.Close)
+
+	var obras int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM obras`).Scan(&obras); err != nil {
+		t.Fatalf("contar obras: %v", err)
+	}
+	if obras != 4 {
+		t.Fatalf("obras = %d, se esperaban 4 (alias tiene que sembrar el dataset entero)", obras)
+	}
+}
+
+// Tras provisionar el admin, el seed no pisa su clave y aun asi carga el resto.
+func TestSembrarDatasetTrasProvisionConservaElAdmin(t *testing.T) {
+	const clave = "clave-del-operador-en-prod"
+
+	cadena := testhelp.DSN(t)
+	t.Setenv("DATABASE_URL", cadena)
+	t.Setenv("OBJECT_DIR", t.TempDir())
+
+	hasher := cripto.Bcrypt{}
+	hash, err := hasher.Hash(clave)
+	if err != nil {
+		t.Fatalf("hashear: %v", err)
+	}
+
+	if _, err := atender(mudo())(t.Context(), peticion{
+		Orden:  ordenPrimerAdministrador,
+		ID:     "usr-admin",
+		Email:  "admin@redes.co",
+		Nombre: "Administrador",
+		Hash:   hash,
+	}); err != nil {
+		t.Fatalf("provisionar: %v", err)
+	}
+
+	r, err := atender(mudo())(t.Context(), peticion{Orden: ordenSembrarDataset})
+	if err != nil {
+		t.Fatalf("sembrar: %v", err)
+	}
+	if r.Estado != "cargado" {
+		t.Fatalf("estado = %q, se esperaba \"cargado\"", r.Estado)
+	}
+
+	store, err := postgres.Abrir(t.Context(), cadena)
+	if err != nil {
+		t.Fatalf("abrir store: %v", err)
+	}
+	t.Cleanup(store.CerrarPool)
+
+	autenticacion := aplicacion.Autenticacion{
+		Usuarios: store,
+		Claves:   hasher,
+		Sesiones: store,
+		Reloj:    reloj.Sistema{},
+		Tokens:   cripto.TokensAleatorios{},
+		TTL:      time.Hour,
+	}
+	if _, err := autenticacion.IniciarSesion(t.Context(), "admin@redes.co", clave); err != nil {
+		t.Fatalf("la clave provisionada tiene que seguir valiendo: %v", err)
+	}
+	if _, err := autenticacion.IniciarSesion(t.Context(), "admin@redes.co", "admin-local"); err == nil {
+		t.Fatal("el seed no debe haber reemplazado el hash del admin por admin-local")
 	}
 }

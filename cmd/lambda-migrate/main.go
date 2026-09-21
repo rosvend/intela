@@ -9,7 +9,7 @@
 // La mecanica es la misma: internal/infraestructura/migraciones. Este fichero
 // traduce un evento de invocacion en una orden de goose.
 //
-// Y dos que NO son de goose: `primer-administrador` y `sembrar-titulares-demo`.
+// Y dos que NO son de goose: `primer-administrador` y `sembrar-dataset`.
 // Estan aqui porque el problema que resuelven es el mismo -- hay que ejecutar
 // algo DENTRO de la VPC contra una base sin endpoint publico -- y esta es la
 // unica funcion que ya vive ahi con DATABASE_URL. Levantar una Lambda propia
@@ -41,6 +41,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
+	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/semilla"
 )
@@ -65,14 +66,22 @@ var ordenesPermitidas = []string{"up", "up-by-one", "status", "version"}
 // de ordenesPermitidas: no es una orden de goose y no debe llegar a Aplicar.
 const ordenPrimerAdministrador = "primer-administrador"
 
-// ordenSembrarTitularesDemo carga el padron sintetico de demo (Ana, Beto,
-// Carla) para poder declarar splits en una instalacion que no corre seed.
-// Misma razon que primer-administrador: la base no tiene endpoint publico.
+// ordenSembrarDataset carga el dataset sintetico completo (cmd/seed /
+// semilla.Cargar): titulares, obras, declaraciones, bolsas, reportes, usos
+// identificados y parametros. Misma razon que primer-administrador: la base no
+// tiene endpoint publico y cmd/seed no viaja en la imagen de la API.
 //
-// NO es el dataset completo: no toca obras, declaraciones, usuarios ni bolsas.
-// Es solo el padron que el editor de splits necesita para que
-// POST /obras/{id}/declaracion deje de responder 400.
-const ordenSembrarTitularesDemo = "sembrar-titulares-demo"
+// Alias: `sembrar-titulares-demo` sigue aceptandose y hace lo mismo -- el
+// nombre viejo del PR que solo sembraba el padron.
+const ordenSembrarDataset = "sembrar-dataset"
+
+const ordenSembrarTitularesDemo = "sembrar-titulares-demo" // alias de sembrar-dataset
+
+// dirObjetosLambda es donde caen los bytes de los reportes del seed. /tmp es lo
+// unico escribible en provided.al2023; la API no los relee desde aqui (solo el
+// metadato en Postgres). Cuando exista el adaptador S3, se cablea igual que en
+// cmd/lambda.
+const dirObjetosLambda = "/tmp/objetos"
 
 // peticion es lo que manda Terraform: {"orden":"up"}.
 //
@@ -84,6 +93,9 @@ const ordenSembrarTitularesDemo = "sembrar-titulares-demo"
 // Hash y no la clave en claro. La calcula quien invoca, en su terminal, asi que
 // la credencial no viaja en el evento, no queda en el registro de la plataforma
 // y este proceso no la ve nunca.
+//
+// Reset solo lo usa `sembrar-dataset`: equivale a SEED_RESET=true. Se niega si
+// hay asientos o datos que no son del dataset (mismas guardas que cmd/seed).
 type peticion struct {
 	Orden string `json:"orden"`
 
@@ -91,6 +103,8 @@ type peticion struct {
 	Email  string `json:"email,omitempty"`
 	Nombre string `json:"nombre,omitempty"`
 	Hash   string `json:"hash,omitempty"`
+
+	Reset bool `json:"reset,omitempty"`
 }
 
 type respuesta struct {
@@ -112,8 +126,8 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 		if orden == ordenPrimerAdministrador {
 			return provisionar(ctx, p, log)
 		}
-		if orden == ordenSembrarTitularesDemo {
-			return sembrarTitularesDemo(ctx, log)
+		if orden == ordenSembrarDataset || orden == ordenSembrarTitularesDemo {
+			return sembrarDataset(ctx, p, log)
 		}
 
 		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
@@ -193,12 +207,15 @@ func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, 
 	return respuesta{Orden: ordenPrimerAdministrador, Estado: "creado"}, nil
 }
 
-// sembrarTitularesDemo inserta el padron sintetico de demo.
+// sembrarDataset persiste el dataset sintetico via semilla.Cargar.
 //
-// Idempotente: ON CONFLICT DO NOTHING. Un reintento inocuo responde
-// "ya sembrados" sin error, igual que primer-administrador con
-// "ya provisionada". No toca obras ni declaraciones: eso lo hace la API.
-func sembrarTitularesDemo(ctx context.Context, log *slog.Logger) (respuesta, error) {
+// Idempotente sin reset: si el juego ya esta completo, responde "ya sembrado".
+// Con reset:true aplica las mismas guardas que SEED_RESET en cmd/seed.
+//
+// El admin provisionado se conserva (ON CONFLICT en usuarios). Las otras
+// cuentas demo (distribucion, contabilidad, auditor, titular) se crean con las
+// SEED_CLAVE_* del entorno, defaults de docs/ARRANQUE.md.
+func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuesta, error) {
 	ctx, cancelar := context.WithTimeout(ctx,
 		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
 	defer cancelar()
@@ -210,28 +227,31 @@ func sembrarTitularesDemo(ctx context.Context, log *slog.Logger) (respuesta, err
 	}
 	defer store.CerrarPool()
 
-	titulares := semilla.Construir().Titulares
-	insertados := 0
-	for _, tit := range titulares {
-		tag, err := store.Pool().Exec(ctx, `
-			INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (id) DO NOTHING`,
-			tit.ID, tit.Nombre, tit.IPI, tit.PersonaNatural, tit.Clase, tit.Email)
-		if err != nil {
-			log.Error("insertar titular demo", slog.String("id", tit.ID), slog.Any("error", err))
-			return respuesta{}, fmt.Errorf("insertar titular %s: %w", tit.ID, err)
-		}
-		insertados += int(tag.RowsAffected())
+	esperado := len(semilla.Construir().Obras)
+	var obrasAntes int
+	if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&obrasAntes); err != nil {
+		log.Error("contar obras", slog.Any("error", err))
+		return respuesta{}, fmt.Errorf("contar obras: %w", err)
 	}
 
-	estado := "creados"
-	if insertados == 0 {
-		estado = "ya sembrados"
+	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosLambda)}
+	claves := semilla.Claves{
+		Admin:        config.Cadena("SEED_CLAVE_ADMIN", "admin-local"),
+		Distribucion: config.Cadena("SEED_CLAVE_DISTRIBUCION", "distribucion-local"),
+		Contabilidad: config.Cadena("SEED_CLAVE_CONTABILIDAD", "contabilidad-local"),
+		Auditor:      config.Cadena("SEED_CLAVE_AUDITOR", "auditor-local"),
+		Titular:      config.Cadena("SEED_CLAVE_TITULAR", "ana-local"),
 	}
-	log.Info("padron demo",
-		slog.String("estado", estado),
-		slog.Int("insertados", insertados),
-		slog.Int("total", len(titulares)))
-	return respuesta{Orden: ordenSembrarTitularesDemo, Estado: estado}, nil
+
+	if err := semilla.Cargar(ctx, store, almacen, cripto.Bcrypt{}, claves, p.Reset, log); err != nil {
+		log.Error("semilla fallida", slog.Any("error", err))
+		return respuesta{}, err
+	}
+
+	estado := "cargado"
+	if !p.Reset && obrasAntes == esperado {
+		estado = "ya sembrado"
+	}
+	log.Info("dataset sintetico", slog.String("estado", estado), slog.Bool("reset", p.Reset))
+	return respuesta{Orden: ordenSembrarDataset, Estado: estado}, nil
 }

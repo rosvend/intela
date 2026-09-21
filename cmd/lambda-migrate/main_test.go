@@ -123,11 +123,13 @@ func TestPrimerAdministradorNoEsUnaOrdenDeGoose(t *testing.T) {
 	}
 }
 
-// Misma guarda que primer-administrador: sembrar-titulares-demo no es goose.
-func TestSembrarTitularesDemoNoEsUnaOrdenDeGoose(t *testing.T) {
-	for _, orden := range ordenesPermitidas {
-		if orden == ordenSembrarTitularesDemo {
-			t.Fatalf("%q no debe estar en ordenesPermitidas", ordenSembrarTitularesDemo)
+// Misma guarda que primer-administrador: sembrar-dataset no es goose.
+func TestSembrarDatasetNoEsUnaOrdenDeGoose(t *testing.T) {
+	for _, orden := range []string{ordenSembrarDataset, ordenSembrarTitularesDemo} {
+		for _, permitida := range ordenesPermitidas {
+			if permitida == orden {
+				t.Fatalf("%q no debe estar en ordenesPermitidas", orden)
+			}
 		}
 	}
 }
