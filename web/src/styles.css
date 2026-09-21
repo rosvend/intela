@@ -204,7 +204,7 @@ a {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.5rem 0.6rem;
-  border-radius: var(--radio);
+  border-radius: var(--radio-boton);
   color: var(--texto);
   text-decoration: none;
   font-size: 0.92rem;
@@ -212,6 +212,17 @@ a {
 
 .sidebar-item:hover {
   background: var(--fondo);
+}
+
+/* Icono Heroicons de cada modulo; el texto absorbe el hueco y el badge queda a la derecha. */
+.sidebar-item-icono {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+}
+
+.sidebar-item-texto {
+  flex: 1;
 }
 
 .sidebar-item-activo,
@@ -232,6 +243,7 @@ a {
 }
 
 .sidebar-pie {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -240,6 +252,7 @@ a {
   margin-top: 1rem;
 }
 
+/* Aro vinotinto: sobre el blanco del sidebar el rosa palido se pierde sin borde. */
 .avatar {
   width: 2rem;
   height: 2rem;
@@ -247,6 +260,7 @@ a {
   display: grid;
   place-items: center;
   border-radius: 50%;
+  border: 1.5px solid var(--acento);
   background: var(--acento-activo);
   color: var(--acento);
   font-size: 0.8rem;
@@ -273,17 +287,113 @@ a {
   color: var(--texto-suave);
 }
 
-.sidebar-salir {
-  background: none;
-  border: none;
-  color: var(--texto-suave);
-  cursor: pointer;
-  font: inherit;
+/* El perfil entero es el boton que abre el menu de usuario. */
+.sidebar-perfil {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   padding: 0.25rem;
+  border: none;
+  border-radius: var(--radio);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.sidebar-salir:hover {
+.sidebar-perfil:hover {
+  background: var(--fondo);
+}
+
+.sidebar-perfil:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* Caret del perfil: gira al abrir para decir que el bloque se despliega. */
+.sidebar-caret {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: var(--texto-suave);
+  transition: transform 140ms ease-out;
+}
+
+.sidebar-caret-abierto {
+  transform: rotate(180deg);
+}
+
+/* Menu del perfil: flota sobre el pie del sidebar. */
+.sidebar-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  box-shadow: 0 8px 24px rgba(28, 29, 33, 0.12);
+  z-index: 10;
+  transform-origin: bottom left;
+  animation: menu-aparecer 140ms ease-out;
+}
+
+@keyframes menu-aparecer {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sidebar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-radius: var(--radio);
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.sidebar-menu-item:hover {
+  background: var(--acento-activo);
   color: var(--acento);
+}
+
+.sidebar-menu-item:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: -2px;
+}
+
+.sidebar-menu-icono {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-menu {
+    animation: none;
+  }
+  .sidebar-caret {
+    transition: none;
+  }
 }
 
 .contenido {
@@ -306,6 +416,28 @@ a {
   background: var(--acento);
   color: white;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+/* El plus gira una vuelta al pasar el cursor; sin movimiento reducido. */
+.boton-primario-icono {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  transition: transform 300ms ease-out;
+}
+
+.boton-primario:hover .boton-primario-icono {
+  transform: rotate(360deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boton-primario-icono {
+    transition: none;
+  }
 }
 
 .boton-primario:disabled {

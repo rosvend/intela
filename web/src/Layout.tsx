@@ -1,4 +1,20 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import type { ComponentType, SVGProps } from "react";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+  ArrowRightOnRectangleIcon,
+  ArrowUpTrayIcon,
+  BookOpenIcon,
+  ChartPieIcon,
+  ChevronDownIcon,
+  Cog6ToothIcon,
+  DocumentChartBarIcon,
+  ExclamationTriangleIcon,
+  HomeIcon,
+  ReceiptPercentIcon,
+  ShieldCheckIcon,
+  UsersIcon,
+} from "@heroicons/react/24/outline";
 import logo from "./logo-intela.png";
 import { RUTAS, Seccion, itemsDeNav } from "./navegacion";
 import { Rol, useSesion } from "./sesion";
@@ -18,6 +34,21 @@ const TITULO_SECCION: Record<Seccion, string> = {
 
 const SECCIONES: readonly Seccion[] = ["principal", "configuracion"];
 
+type Icono = ComponentType<SVGProps<SVGSVGElement>>;
+
+// Icono Heroicons por ruta del sidebar.
+const ICONOS_NAV: Record<string, Icono> = {
+  "/": HomeIcon,
+  "/ingesta": ArrowUpTrayIcon,
+  "/catalogo": BookOpenIcon,
+  "/titulares": UsersIcon,
+  "/distribucion": ChartPieIcon,
+  "/anomalias": ExclamationTriangleIcon,
+  "/reportes": DocumentChartBarIcon,
+  "/deducciones": ReceiptPercentIcon,
+  "/auditoria": ShieldCheckIcon,
+};
+
 function iniciales(nombre: string): string {
   return nombre
     .trim()
@@ -27,31 +58,44 @@ function iniciales(nombre: string): string {
     .join("");
 }
 
-/**
- * Sin topbar: el mockup lo elimino por completo, todo el chrome vive en el
- * sidebar (issue #19, seccion "Pase visual"). El guard de `autorizado` es
- * cosmetico -evita mostrar una pantalla inutil cuando la URL no esta en la
- * nav del rol actual- y no reemplaza la autorizacion real, que es el
- * `requiereRol` de #17 en el servidor: ocultar un link no protege nada.
- */
+// Todo el chrome vive en el sidebar; el guard es cosmetico, la autorizacion real es `requiereRol` en el servidor.
 export default function Layout() {
   const { usuario, salir } = useSesion();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  // RutaProtegida garantiza sesion antes de montar Layout; esto solo evita
-  // que TypeScript trate a `usuario` como nulable de aqui en adelante.
+  // El `if (!usuario)` va tras todos los hooks: un retorno entre hooks rompe las reglas de React.
+  const items = usuario ? itemsDeNav(usuario.rol) : [];
+
+  // "Configuración" lleva al primer modulo visible de esa seccion, o a Inicio.
+  const destinoConfiguracion =
+    items.find((item) => item.seccion === "configuracion")?.to ?? "/";
+
+  // El menu se cierra con Escape o con clic fuera.
+  useEffect(() => {
+    if (!menuAbierto) return;
+    function alPulsarFuera(evento: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(evento.target as Node)) {
+        setMenuAbierto(false);
+      }
+    }
+    function alTeclar(evento: KeyboardEvent) {
+      if (evento.key === "Escape") setMenuAbierto(false);
+    }
+    document.addEventListener("mousedown", alPulsarFuera);
+    document.addEventListener("keydown", alTeclar);
+    return () => {
+      document.removeEventListener("mousedown", alPulsarFuera);
+      document.removeEventListener("keydown", alTeclar);
+    };
+  }, [menuAbierto]);
+
+  // RutaProtegida garantiza sesion; esto solo estrecha el tipo para TypeScript.
   if (!usuario) return null;
 
-  const items = itemsDeNav(usuario.rol);
-
-  // El guard solo se aplica a rutas que SON un modulo del mockup (RUTAS): una
-  // pagina fuera de ese modelo -como /estado, un utilitario de diagnostico
-  // que no aparece en la nav de nadie- no es competencia del guard y se deja
-  // pasar. La comparacion tambien reconoce pantallas de detalle bajo un
-  // modulo (/catalogo/:id, /distribucion/:corrida): sin esto, en cuanto
-  // Sprint 3-5 agregue la primera, `esModuloDelMockup` daria false, el guard
-  // quedaria en "true" por el `||`, y un titular veria el detalle de una obra
-  // que no le corresponde -la comparacion exacta no la cubre, un prefijo si-.
+  // El guard solo cubre modulos de RUTAS (por prefijo, incluyendo detalles); las utilidades como /estado pasan.
   const modulo = RUTAS.find(
     (r) =>
       r.to === location.pathname ||
@@ -79,49 +123,91 @@ export default function Layout() {
                 <p className="sidebar-titulo-seccion">
                   {TITULO_SECCION[seccion]}
                 </p>
-                {deLaSeccion.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.to === "/"}
-                    className={({ isActive }) =>
-                      isActive
-                        ? "sidebar-item sidebar-item-activo"
-                        : "sidebar-item"
-                    }
-                  >
-                    <span>{item.label}</span>
-                    {item.contador !== undefined && (
-                      <span className="sidebar-badge">{item.contador}</span>
-                    )}
-                  </NavLink>
-                ))}
+                {deLaSeccion.map((item) => {
+                  const IconoNav = ICONOS_NAV[item.to] ?? HomeIcon;
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === "/"}
+                      className={({ isActive }) =>
+                        isActive
+                          ? "sidebar-item sidebar-item-activo"
+                          : "sidebar-item"
+                      }
+                    >
+                      <IconoNav
+                        className="sidebar-item-icono"
+                        aria-hidden="true"
+                      />
+                      <span className="sidebar-item-texto">{item.label}</span>
+                      {item.contador !== undefined && (
+                        <span className="sidebar-badge">{item.contador}</span>
+                      )}
+                    </NavLink>
+                  );
+                })}
               </div>
             );
           })}
         </nav>
-        <div className="sidebar-pie">
-          <span className="avatar" aria-hidden="true">
-            {iniciales(usuario.nombre)}
-          </span>
-          <div className="sidebar-usuario">
-            <p className="sidebar-nombre">{usuario.nombre}</p>
-            <p className="sidebar-rol">{ETIQUETA_ROL[usuario.rol]}</p>
-          </div>
-          {/*
-            El aviso de "el servidor no revoco" NO se pinta aqui: al salir,
-            `usuario` pasa a null y este Layout se desmonta entero, asi que
-            nadie alcanzaria a leerlo. Vive en el contexto y lo muestra Login,
-            que es donde se aterriza.
-          */}
+        <div className="sidebar-pie" ref={menuRef}>
+          {/* El aviso de salida sin revocar lo muestra Login: al salir este Layout se desmonta. */}
           <button
             type="button"
-            className="sidebar-salir"
-            onClick={() => void salir()}
-            aria-label="Cerrar sesión"
+            className="sidebar-perfil"
+            onClick={() => setMenuAbierto((abierto) => !abierto)}
+            aria-haspopup="menu"
+            aria-expanded={menuAbierto}
+            aria-label="Abrir menú de usuario"
           >
-            Salir
+            <span className="avatar" aria-hidden="true">
+              {iniciales(usuario.nombre)}
+            </span>
+            <div className="sidebar-usuario">
+              <p className="sidebar-nombre">{usuario.nombre}</p>
+              <p className="sidebar-rol">{ETIQUETA_ROL[usuario.rol]}</p>
+            </div>
+            <ChevronDownIcon
+              className={
+                menuAbierto
+                  ? "sidebar-caret sidebar-caret-abierto"
+                  : "sidebar-caret"
+              }
+              aria-hidden="true"
+            />
           </button>
+          {menuAbierto && (
+            <div className="sidebar-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-menu-item"
+                onClick={() => {
+                  setMenuAbierto(false);
+                  navigate(destinoConfiguracion);
+                }}
+              >
+                <Cog6ToothIcon
+                  className="sidebar-menu-icono"
+                  aria-hidden="true"
+                />
+                Configuración
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-menu-item"
+                onClick={() => void salir()}
+              >
+                <ArrowRightOnRectangleIcon
+                  className="sidebar-menu-icono"
+                  aria-hidden="true"
+                />
+                Salir
+              </button>
+            </div>
+          )}
         </div>
       </aside>
       <main className="contenido">

@@ -1,0 +1,47 @@
+# Reusable stage: KR-1 — a batch of 10.000 records processes in under 5 min.
+#
+# Runs the timed pipeline test in `internal/infraestructura/ingesta` WITHOUT
+# `-race`: the KR is about uninstrumented wall time, and the race detector
+# slows the run down several-fold. Race correctness of the very same test is
+# covered by `test-go`, which executes the whole suite — this test included —
+# with `-race`.
+#
+# Inert until `go.mod` exists, like every other Go stage. Kept separate from
+# `test-go.yml` on purpose: when the check goes red, its name has to say
+# whether the batch got slow or behavior broke.
+
+name: Perf 10k
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lote-10k:
+    name: 10k-record batch < 5 min
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # go test shares the runner; do not leave the contents token in
+          # git-credentials for test code to read (fork PRs included).
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # `-timeout 7m` sits below the job timeout on purpose: past the KR
+      # budget the test itself fails, and past 7 minutes `go test` panics
+      # with a goroutine dump instead of the runner killing it silently.
+      - name: Timed 10k batch
+        run: |
+          set -euo pipefail
+          go test -count=1 -timeout 7m -run 'TestLote10kEnMenosDe5Min' -v ./internal/infraestructura/ingesta/
