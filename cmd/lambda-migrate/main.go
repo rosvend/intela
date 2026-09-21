@@ -104,6 +104,10 @@ const dirObjetosLambda = "/tmp/objetos"
 //
 // Reset solo lo usa `sembrar-dataset`: equivale a SEED_RESET=true. Se niega si
 // hay asientos o datos que no son del dataset (mismas guardas que cmd/seed).
+//
+// Aditivo tambien lo usa solo `sembrar-dataset`: escribe sin mirar el estado
+// previo, para una base con datos ajenos al dataset que hay que conservar
+// (#155). No es compatible con Reset: si los dos vienen en true, gana Reset.
 type peticion struct {
 	Orden string `json:"orden"`
 
@@ -112,7 +116,8 @@ type peticion struct {
 	Nombre string `json:"nombre,omitempty"`
 	Hash   string `json:"hash,omitempty"`
 
-	Reset bool `json:"reset,omitempty"`
+	Reset   bool `json:"reset,omitempty"`
+	Aditivo bool `json:"aditivo,omitempty"`
 }
 
 type respuesta struct {
@@ -229,6 +234,10 @@ func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, 
 // El admin provisionado se conserva (ON CONFLICT en usuarios). Las otras
 // cuentas demo (distribucion, contabilidad, auditor, titular) se crean con las
 // SEED_CLAVE_* del entorno, defaults de docs/ARRANQUE.md.
+//
+// Con aditivo:true salta la comprobacion de estado y escribe encima de lo que
+// haya (semilla.CargarAditivo): pensado para una base con obras ajenas al
+// dataset que sembrar-dataset (con o sin reset) rechazaria (#155).
 func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuesta, error) {
 	ctx, cancelar := context.WithTimeout(ctx,
 		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
@@ -241,13 +250,6 @@ func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuest
 	}
 	defer store.CerrarPool()
 
-	esperado := len(semilla.Construir().Obras)
-	var obrasAntes int
-	if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&obrasAntes); err != nil {
-		log.Error("contar obras", slog.Any("error", err))
-		return respuesta{}, fmt.Errorf("contar obras: %w", err)
-	}
-
 	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosLambda)}
 	claves := semilla.Claves{
 		Admin:        config.Cadena("SEED_CLAVE_ADMIN", "admin-local"),
@@ -255,6 +257,22 @@ func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuest
 		Contabilidad: config.Cadena("SEED_CLAVE_CONTABILIDAD", "contabilidad-local"),
 		Auditor:      config.Cadena("SEED_CLAVE_AUDITOR", "auditor-local"),
 		Titular:      config.Cadena("SEED_CLAVE_TITULAR", "ana-local"),
+	}
+
+	if p.Aditivo {
+		if err := semilla.CargarAditivo(ctx, store, almacen, cripto.Bcrypt{}, claves, log); err != nil {
+			log.Error("semilla aditiva fallida", slog.Any("error", err))
+			return respuesta{}, err
+		}
+		log.Info("dataset sintetico cargado de forma aditiva")
+		return respuesta{Orden: ordenSembrarDataset, Estado: "cargado"}, nil
+	}
+
+	esperado := len(semilla.Construir().Obras)
+	var obrasAntes int
+	if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&obrasAntes); err != nil {
+		log.Error("contar obras", slog.Any("error", err))
+		return respuesta{}, fmt.Errorf("contar obras: %w", err)
 	}
 
 	if err := semilla.Cargar(ctx, store, almacen, cripto.Bcrypt{}, claves, p.Reset, log); err != nil {
