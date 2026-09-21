@@ -1,26 +1,30 @@
 -- La bandeja de anomalias de un periodo (#37, OE-5 / KR-4).
 --
--- COORDINACION DE NUMERO: en `origin/main` (7948910) existen 00001, 00002 y
--- 00005 a 00014; 00003 y 00004 nunca existieron. 00014 lo tomo #32 (titulo
--- original). Numero: 00015, el primero libre por encima de 00014. Nunca un
--- hueco por debajo de la version ya aplicada (goose allowMissing=false, ver
--- 00006).
+-- COORDINACION DE NUMERO: en `origin/main` (09034e24) existen 00001, 00002 y
+-- 00005 a 00015; 00003 y 00004 nunca existieron. Numero: 00016, el primero
+-- libre por encima de 00015, que es la version ya aplicada. Nunca un hueco
+-- por debajo de ella (goose allowMissing=false, ver 00006).
 --
--- OJO, 00015 ESTA MUY DISPUTADO. Al abrir esta rama ya lo reclamaban otras
--- cuatro, y ninguna esta mergeada:
+-- ESTE FICHERO NACIO COMO 00015 Y SE MOVIO. Mientras esta PR estaba abierta,
+-- `00015_bolsas_accesorias.sql` mergeo a main en la PR #144 (rama
+-- feature/121-bolsas-accesorios, commit de merge af029b5) y se quedo con el
+-- numero. La regla del repo es que RENUMERA EL QUE MERGEE SEGUNDO, y aqui el
+-- segundo somos nosotros; la etapa `Migration versions` de CI (#110) es la
+-- que cazo el choque.
 --
---   feature/121-bolsas-accesorios  -> 00015_bolsas_accesorias.sql
---   feature/36-...liquidacion      -> 00015_liquidacion.sql
---   feature/50-...afiliaciones     -> 00015_afiliaciones.sql
---   feature/52-...oni-publicacion  -> 00015_oni_publicacion.sql
+-- 00016 TAMBIEN ESTA DISPUTADO. Al renumerar lo reclaman otras tres ramas, y
+-- ninguna esta mergeada:
 --
--- No se renumera aqui, y no es dejadez: renumerar en la rama sin saber quien
--- entra primero cambia el numero dos veces y deja el segundo cambio sin
--- revisar. La regla del repo es que RENUMERA EL QUE MERGEE SEGUNDO, y la
--- etapa `Migration versions` de CI (#110) es la que lo caza. Renumerar esta
--- migracion es un `git mv` y nada mas: no la referencia ningun codigo
--- (`migrations/embed.go` usa `//go:embed *.sql`) y no depende de ninguna
--- migracion posterior a 00002.
+--   feature/36-...liquidacion      -> 00016_liquidacion.sql
+--   feature/50-...afiliaciones     -> 00016_afiliaciones.sql
+--   feature/52-...oni-publicacion  -> 00016_oni_publicacion.sql
+--
+-- No se renumera por encima de ellas para adelantarse: renumerar sin saber
+-- quien entra primero cambia el numero dos veces y deja el segundo cambio sin
+-- revisar. Vuelve a mandar la misma regla — el segundo en mergear se mueve.
+-- Renumerar esta migracion es un `git mv` y nada mas: no la referencia ningun
+-- codigo (`migrations/embed.go` usa `//go:embed *.sql`) y no depende de
+-- ninguna migracion posterior a 00002.
 --
 -- EL CUERPO DEL ISSUE SE EQUIVOCA. Dice que "the `alertas` table exists"; no
 -- existe. `grep -ri alerta migrations/` sobre main no devuelve una sola
