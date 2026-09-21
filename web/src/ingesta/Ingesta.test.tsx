@@ -655,9 +655,12 @@ function elegirAnno(valor: string) {
 const botonSubir = () => screen.getByRole("button", { name: /^Subir/ });
 
 const VACIO_2026_01 = "No hay cargas registradas para el periodo 2026-01.";
-// El aviso pide elegir el periodo; el mes imposible lo contesta el servidor.
-const FALTA_PERIODO =
-  "Elige el periodo para poder subir el reporte: un mes o un año.";
+// Errores de validacion al intentar subir con algo sin elegir. Literales para
+// que un cambio de copy se note.
+const ERROR_SIN_PERIODO =
+  "Falta el periodo: elige un mes o un año para subir el reporte.";
+const ERROR_SIN_FUENTE = "Falta la fuente: elige de dónde viene el reporte.";
+const ERROR_SIN_ARCHIVO = "Falta el archivo: suelta o elige el reporte a subir.";
 
 // El fallo no clasificable del panel: lo que se ve cuando un 2xx no trae una
 // `Entrega` legible. Textos propios de `PanelResultado`, repetidos aqui como
@@ -1028,19 +1031,30 @@ describe("pantalla de ingesta (integracion con App)", () => {
     },
   );
 
-  it("sin fuente o sin archivo no se puede subir", async () => {
+  it("sin periodo, fuente o archivo la subida no sale: avisa que falta sin llamar al servidor", async () => {
     simularServidor({ rol: "administrador" });
 
     montarApp("/ingesta?periodo=2026-01");
     await screen.findByText(VACIO_2026_01);
 
-    expect(botonSubir()).toHaveProperty("disabled", true);
+    // El boton siempre se puede pulsar; lo que falta se dice con un error.
+    fireEvent.click(botonSubir());
+    expect(screen.getByText(ERROR_SIN_FUENTE)).toBeTruthy();
+    expect(subidas()).toHaveLength(0);
+
+    // Al corregirse el error se apaga solo, sin reintentar.
     elegirFuente("caracol");
-    expect(botonSubir()).toHaveProperty("disabled", true);
+    expect(screen.queryByText(ERROR_SIN_FUENTE)).toBeNull();
+
+    fireEvent.click(botonSubir());
+    expect(screen.getByText(ERROR_SIN_ARCHIVO)).toBeTruthy();
+    expect(subidas()).toHaveLength(0);
+
     elegirArchivo(archivoCaracol());
-    expect(botonSubir()).toHaveProperty("disabled", false);
-    elegirFuente("");
-    expect(botonSubir()).toHaveProperty("disabled", true);
+    expect(screen.queryByText(ERROR_SIN_ARCHIVO)).toBeNull();
+
+    fireEvent.click(botonSubir());
+    expect(subidas()).toHaveLength(1);
   });
 
   it("el periodo se elige con el selector: pasa a la URL, filtra el listado y habilita la subida", async () => {
@@ -1052,19 +1066,24 @@ describe("pantalla de ingesta (integracion con App)", () => {
 
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
-    expect(botonSubir()).toHaveProperty("disabled", true);
-    expect(screen.getByText(FALTA_PERIODO)).toBeTruthy();
 
-    // El calendario no deja estados a medias: elegir aplica de una vez.
+    // Sin periodo el boton se puede pulsar, pero la subida no sale: dice que
+    // falta y no llama al servidor.
+    fireEvent.click(botonSubir());
+    expect(screen.getByText(ERROR_SIN_PERIODO)).toBeTruthy();
+    expect(subidas()).toHaveLength(0);
+    expect(getsDelListado()).toHaveLength(1);
+
+    // El calendario no deja estados a medias: elegir aplica de una vez y el
+    // error se apaga solo.
     elegirMes("2026-01");
     expect(ubicacion()).toBe("/ingesta?periodo=2026-01");
+    expect(screen.queryByText(ERROR_SIN_PERIODO)).toBeNull();
     await screen.findByText(VACIO_2026_01);
     expect(getsDelListado()).toEqual([
       "/api/reportes",
       "/api/reportes?periodo=2026-01",
     ]);
-    expect(botonSubir()).toHaveProperty("disabled", false);
-    expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
 
     // Vaciarlo lo quita de la URL y el listado vuelve a traer todo.
     elegirMes("");
@@ -1091,7 +1110,6 @@ describe("pantalla de ingesta (integracion con App)", () => {
     ]);
     expect(botonSubir().textContent).toBe("Subir a 2026");
     expect(botonSubir()).toHaveProperty("disabled", false);
-    expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
   });
 
   it("el boton nombra el periodo destino cuando hay uno utilizable, y no cuando no lo hay", async () => {
@@ -1104,13 +1122,14 @@ describe("pantalla de ingesta (integracion con App)", () => {
     elegirArchivo(archivoCaracol());
     // El boton dice a donde va el archivo, no solo que sube.
     expect(botonSubir().textContent).toBe("Subir a 2026-01");
-    expect(botonSubir()).toHaveProperty("disabled", false);
 
-    // Sin periodo utilizable vuelve al texto neutro.
+    // Sin periodo vuelve al texto neutro, y al pulsarlo dice que falta.
     elegirMes("");
     await screen.findByText("Aún no hay cargas registradas.");
     expect(botonSubir().textContent).toBe("Subir reporte");
-    expect(botonSubir()).toHaveProperty("disabled", true);
+    fireEvent.click(botonSubir());
+    expect(screen.getByText(ERROR_SIN_PERIODO)).toBeTruthy();
+    expect(subidas()).toHaveLength(0);
   });
 
   it.each(["2026-13", "2026-00"])(
@@ -1154,7 +1173,6 @@ describe("pantalla de ingesta (integracion con App)", () => {
       // quien decide sobre el mes es el servidor.
       expect(botonSubir()).toHaveProperty("disabled", false);
       expect(botonSubir().textContent).toBe(`Subir a ${periodo}`);
-      expect(screen.queryByText(FALTA_PERIODO)).toBeNull();
 
       fireEvent.click(botonSubir());
 

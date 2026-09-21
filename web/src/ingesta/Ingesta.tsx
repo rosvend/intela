@@ -151,7 +151,7 @@ export default function Ingesta() {
   const idAnno = useId();
   const idFuente = useId();
   const idArchivo = useId();
-  const idAvisoPeriodo = useId();
+  const idErrorValidacion = useId();
 
   // El selector no deja estados a medias: cada eleccion aplica de una vez y el
   // borrador siempre dice lo mismo que la URL, salvo que esta cambie por fuera.
@@ -164,8 +164,24 @@ export default function Ingesta() {
   // Cada control muestra su rebanada del borrador; lo demas se ve vacio.
   const mesElegido = /^\d{4}-\d{2}$/.test(textoPeriodo) ? textoPeriodo : "";
   const annoElegido = /^\d{4}$/.test(textoPeriodo) ? textoPeriodo : "";
-  const puedeSubir =
-    !enviando && periodoListo && fuente !== "" && archivo !== null;
+  // Lo que falta por elegir. Se dice solo tras intentar subir, y se apaga solo
+  // al corregirse: no hay estado de error que limpiar.
+  const [intento, setIntento] = useState(false);
+  const faltaPeriodo = periodoAplicado === "";
+  const faltaFuente = fuente === "";
+
+  /** Lo que falta por elegir, dicho solo tras intentar subir. */
+  function errorDeValidacion(): string | null {
+    if (!intento) return null;
+    if (faltaPeriodo)
+      return "Falta el periodo: elige un mes o un año para subir el reporte.";
+    if (faltaFuente) return "Falta la fuente: elige de dónde viene el reporte.";
+    if (archivo === null)
+      return "Falta el archivo: suelta o elige el reporte a subir.";
+    return null;
+  }
+
+  const errorValidacion = errorDeValidacion();
 
   /** El texto del boton, que nombra el periodo al que subiria el archivo. */
   function etiquetaSubir(): string {
@@ -202,7 +218,11 @@ export default function Ingesta() {
 
   async function subir(evento: FormEvent) {
     evento.preventDefault();
-    if (enVuelo.current || !puedeSubir || !archivo) return;
+    if (enVuelo.current || enviando) return;
+    // Marca el intento antes de validar: el error se muestra sin llamar al
+    // servidor, y se apaga solo al corregirse.
+    setIntento(true);
+    if (faltaPeriodo || faltaFuente || !archivo) return;
     enVuelo.current = true;
     setEnviando(true);
     setResultado(null);
@@ -363,16 +383,14 @@ export default function Ingesta() {
           <button
             type="submit"
             className="boton-primario"
-            disabled={!puedeSubir}
-            aria-describedby={periodoListo ? undefined : idAvisoPeriodo}
+            disabled={enviando}
+            aria-describedby={errorValidacion ? idErrorValidacion : undefined}
           >
             {etiquetaSubir()}
           </button>
-          {/* El aviso pide elegir el periodo; el mes imposible lo contesta el
-              servidor con su 400. */}
-          {!periodoListo && (
-            <p id={idAvisoPeriodo} className="ingesta-ayuda">
-              Elige el periodo para poder subir el reporte: un mes o un año.
+          {errorValidacion && (
+            <p id={idErrorValidacion} className="ingesta-error" role="alert">
+              {errorValidacion}
             </p>
           )}
         </div>
