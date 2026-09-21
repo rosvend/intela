@@ -84,7 +84,7 @@
 // abre un proceso -- el corte y el `procesos.snapshot_id` que lo referencia
 // son un solo hecho --; y el resto (afiliacion.go, calendario.go, cola.go,
 // declaraciones.go, identificacion.go, ingesta.go, provision.go, recaudo.go,
-// repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
+// reparto.go, repertorio.go, sesiones.go). Un metodo que se queda en `s.pool` es un
 // metodo que NO puede participar en la unidad de otro puerto el dia que
 // alguien lo necesite, y ese dia no avisa con un fallo de compilacion: avisa
 // con una escritura que se confirma sola (ver
