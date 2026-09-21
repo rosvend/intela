@@ -40,6 +40,13 @@ type Recaudo struct {
 // Devuelve ErrBolsaDuplicada si ya hay una bolsa de ese usuario, periodo y
 // circuito, y ErrUsuarioRecaudoInexistente si cita un pagador que no esta.
 func (r Recaudo) Registrar(ctx context.Context, b BolsaPersistida, actorID string) (BolsaPersistida, error) {
+	// Antes de cualquier escritura: [GestionRecaudo.RegistrarBolsa] asienta
+	// dentro de su propia transaccion, y un actor vacio dejaria ahi un asiento
+	// sin firmar -- la fila es valida para la base y no para el ADR 0006.
+	if err := exigirActor(actorID, fmt.Sprintf("registrar la bolsa %q", strings.TrimSpace(b.ID))); err != nil {
+		return BolsaPersistida{}, err
+	}
+
 	// El id no lo valida el dominio -- al motor de reparto la bolsa le llega
 	// como valor y no necesita saber de que fila salio-, pero sin el no se
 	// puede referenciar desde `procesos` ni desde un asiento de la bitacora.
@@ -134,6 +141,12 @@ func (r Recaudo) PorID(ctx context.Context, id string) (BolsaPersistida, error) 
 // categoria -- que compila, y escribirlo dejaria que el CHECK de la tabla
 // devolviera un 500 generico donde lo que hay es un dato mal formado.
 func (r Recaudo) RegistrarUsuario(ctx context.Context, u recaudo.Usuario, actorID string) (recaudo.Usuario, error) {
+	// Mismo motivo que en Registrar: el alta y su asiento son una transaccion
+	// del adaptador, y esta es la ultima linea donde todavia no se escribio.
+	if err := exigirActor(actorID, fmt.Sprintf("dar de alta el usuario de recaudo %q", u.ID())); err != nil {
+		return recaudo.Usuario{}, err
+	}
+
 	usuario, err := recaudo.NuevoUsuario(u.ID(), u.Datos())
 	if err != nil {
 		return recaudo.Usuario{}, err

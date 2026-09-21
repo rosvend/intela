@@ -364,12 +364,16 @@ function nodoVivo(rotulo: string): HTMLElement {
   return vivo;
 }
 
-/** El aviso de la version, que es un parrafo con su propia clase. */
+/** El aviso de version que hay en pantalla: primera version, historial ilegible o guardado incierto. */
 function avisoDeVersion(): HTMLElement {
   const aviso = document.querySelector(".editor-aviso-version");
   if (!aviso) throw new Error("no hay ningun aviso de version en pantalla");
   return aviso as HTMLElement;
 }
+
+/** Si hay algun aviso de version en pantalla. Con una version abierta conocida no hay ninguno. */
+const hayAvisoDeVersion = () =>
+  document.querySelector(".editor-aviso-version") !== null;
 
 const botonGuardar = () =>
   screen.getByRole("button", { name: /^Guardar la declaración$/ });
@@ -463,7 +467,7 @@ describe("editor de reparto (integracion con App)", () => {
     localStorage.clear();
   });
 
-  it("el borrador arranca con el reparto vigente y con el aviso de que version se cierra", async () => {
+  it("el borrador arranca con el reparto vigente y sin aviso de version", async () => {
     simularServidor();
 
     await abrirElEditorConPadron();
@@ -485,11 +489,8 @@ describe("editor de reparto (integracion con App)", () => {
     ).toBeTruthy();
     expect(screen.getByText(/La Casa de las Dos Palmas/)).toBeTruthy();
 
-    // El aviso nombra las dos versiones, y las saca del historial: la que esta
-    // abierta es la que se cierra.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    // Con una version abierta conocida no hay aviso de version.
+    expect(hayAvisoDeVersion()).toBe(false);
 
     // El borrador viene con el reparto de la version ABIERTA (75/25), no con el
     // de la cerrada (60/40): son las partes de la que rige hoy.
@@ -501,12 +502,13 @@ describe("editor de reparto (integracion con App)", () => {
     // El total va ROTULADO como lo que es -una cuenta de esta pantalla- y el
     // estado del borrador no es el de la version guardada.
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "100.0000%",
+      "100%",
     );
     expect(dato("Estado del borrador")).toContain("Completa");
-    expect(texto()).toMatch(
-      /El estado de la declaración guardada lo calcula el servidor/,
-    );
+    // Sin prosa bajo las cifras: ni la nota del servidor ni la explicacion del
+    // estado del borrador.
+    expect(texto()).not.toMatch(/lo calcula el servidor/);
+    expect(texto()).not.toMatch(/El borrador suma 100/);
     expect(botonGuardar()).toHaveProperty("disabled", false);
     expect(guardados()).toHaveLength(0);
   });
@@ -523,7 +525,7 @@ describe("editor de reparto (integracion con App)", () => {
 
     expect(dato("Estado del borrador")).toContain("Sin nada declarado");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "0.0000%",
+      "0%",
     );
     expect(botonGuardar()).toHaveProperty("disabled", true);
     expect(
@@ -545,11 +547,16 @@ describe("editor de reparto (integracion con App)", () => {
 
     expect(dato("Estado del borrador")).toContain("Pasa de 100");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "145.0000%",
+      "145%",
     );
     // La razon que se da NO es que la pantalla lo bloquee: es que el servidor
-    // rechaza esa suma con un 400.
-    expect(texto()).toMatch(/el servidor rechaza con un 400/);
+    // rechaza esa suma con un 400. Es el motivo del guardado bloqueado
+    // (`editor-aviso`), no prosa.
+    expect(
+      screen.getByText(
+        "El total pasa de 100, y el servidor rechaza esa suma con un 400.",
+      ),
+    ).toBeTruthy();
     expect(botonGuardar()).toHaveProperty("disabled", true);
 
     guardar();
@@ -568,13 +575,13 @@ describe("editor de reparto (integracion con App)", () => {
     // lo que es -un cero que alguien tecleo-, no como una fila sin rellenar.
     expect(dato("Estado del borrador")).toContain("Incompleta");
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "60.0000%",
+      "60%",
     );
-    // La consecuencia de R-04, no el defecto: se retiene el importe entero.
-    expect(texto()).toMatch(/no es un error/);
-    expect(texto()).toMatch(/R-04 \(RD 13.1.3\)/);
-    expect(texto()).toMatch(/en reserva/);
-    expect(texto()).toMatch(/nunca se prorratea/);
+    // El estado lo dice la etiqueta; la explicacion de R-04 ya no va en un
+    // parrafo, y no hay ningun motivo de bloqueo (se puede guardar).
+    expect(texto()).not.toMatch(/R-04 \(RD 13.1.3\)/);
+    expect(texto()).not.toMatch(/en reserva/);
+    expect(screen.queryByText(/no puede guardar|pasa de 100, y/)).toBeNull();
     // Ni "inválida" -que el backend no puede persistir- ni un tono de fallo.
     expect(texto()).not.toMatch(/inv[aá]lida/i);
     expect(botonGuardar()).toHaveProperty("disabled", false);
@@ -588,7 +595,7 @@ describe("editor de reparto (integracion con App)", () => {
     await abrirElEditor();
 
     expect(dato("Total del borrador (calculado en esta pantalla)")).toContain(
-      "100.0000%",
+      "100%",
     );
     expect(dato("Estado del borrador")).toContain("Completa");
     expect(botonGuardar()).toHaveProperty("disabled", false);
@@ -788,11 +795,8 @@ describe("editor de reparto (integracion con App)", () => {
     simularServidor({ guardado: () => json({ version: "cuatro" }) });
     await abrirElEditor();
 
-    // Antes de guardar el aviso si nombra la version que rige, y la saca del
-    // historial: eso no cambia.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    // Antes de guardar no hay aviso de version: eso no cambia.
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
@@ -878,9 +882,7 @@ describe("editor de reparto (integracion con App)", () => {
     guardar();
 
     await screen.findByRole("alert");
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
   });
 
   // Concern 26 de la pasada 3, y el WARNING del reviewer: el status de un 4xx SI
@@ -893,26 +895,20 @@ describe("editor de reparto (integracion con App)", () => {
     simularServidor({ guardado: () => respuestaConCuerpoCortado(400) });
     await abrirElEditor();
 
-    // La guarda contra el verde por vacio, la misma de los tests vecinos: antes
-    // de guardar el aviso SI numera, y los numeros los saca del historial.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
     // El panel del desenlace, que es el que se pinta cuando la respuesta llega.
     await screen.findByRole("alert");
 
-    // La asercion lee el ELEMENTO del aviso y no el documento: el panel de abajo
-    // habla del mismo guardado, y una asercion sobre todo el DOM pasaria por su
-    // texto.
-    const aviso = avisoDeVersion().textContent ?? "";
-    expect(aviso).not.toMatch(/No se sabe si el guardado abrió una versión/);
-    // Y la mitad positiva, que es la que no deja pasar un aviso mudo: sin cuerpo
-    // legible el rechazo sigue siendo un rechazo, asi que el historial vuelve a
-    // ser la autoridad y el aviso sigue numerando.
-    expect(aviso).toMatch(/cerrará la versión 3 y abrirá la versión 4/);
+    // Sin cuerpo legible el rechazo sigue siendo un rechazo, no una duda: el
+    // historial vuelve a ser la autoridad y no aparece ningun aviso de version
+    // (ni el de "no se sabe si el guardado abrio una version").
+    expect(hayAvisoDeVersion()).toBe(false);
+    expect(document.body.textContent).not.toMatch(
+      /No se sabe si el guardado abrió una versión/,
+    );
 
     // Y el panel, que es el que dice la consecuencia del rechazo: no se escribio
     // nada, asi que reintentar es seguro.
@@ -950,9 +946,7 @@ describe("editor de reparto (integracion con App)", () => {
     // El aviso SI nombra los numeros despues del primer guardado, y esto no es
     // decoracion: es lo que impide que el test pase por vacio, porque si el
     // aviso no nombrara numeros nunca la negativa de abajo pasaria sola.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 4 y abrirá la versión 5/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
@@ -986,9 +980,7 @@ describe("editor de reparto (integracion con App)", () => {
     });
 
     // La misma guarda contra el verde por vacio que en el test de arriba.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 4 y abrirá la versión 5/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
@@ -1019,12 +1011,8 @@ describe("editor de reparto (integracion con App)", () => {
     });
     await abrirElEditor();
 
-    // La guarda contra el verde por vacio: antes de guardar el aviso SI numera,
-    // y los numeros los saca del historial. Sin esto, un aviso que no numerara
-    // nunca haria pasar sola la negativa de abajo.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    // Antes de guardar no hay aviso de version.
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
@@ -1105,9 +1093,7 @@ describe("editor de reparto (integracion con App)", () => {
     await abrirElEditor();
 
     // La misma guarda contra el verde por vacio que en los tests de arriba.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 3 y abrirá la versión 4/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
 
@@ -1148,9 +1134,7 @@ describe("editor de reparto (integracion con App)", () => {
     });
     // La guarda contra el verde por vacio, con los dos numeros que el aviso sabe
     // en ese momento.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 4 y abrirá la versión 5/,
-    );
+    expect(hayAvisoDeVersion()).toBe(false);
 
     guardar();
     await screen.findByRole("alert");
@@ -1227,10 +1211,9 @@ describe("editor de reparto (integracion con App)", () => {
     ).toBeTruthy();
   });
 
-  it("el aviso nombra las versiones del historial y nunca las del mockup", async () => {
-    // Una obra por la version 7: el copy fijo "se cerrara la version 2 y se
-    // abrira una version 3" del mockup seria falso aqui, y es exactamente el
-    // defecto que D-009 cierra.
+  it("con una version abierta no hay aviso de version, ni con la del mockup ni con otra", async () => {
+    // Una obra por la version 7: ni el copy fijo del mockup ni un "cerrara la 7
+    // y abrira la 8" aparecen; quien edita ya sabe que guardar abre una nueva.
     simularServidor({
       obra: () => json(obraAvanzada),
       historial: () => json([versionSeisCerrada, versionSieteAbierta]),
@@ -1238,11 +1221,9 @@ describe("editor de reparto (integracion con App)", () => {
 
     await abrirElEditor("/catalogo/obra-7/declaracion");
 
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 7 y abrirá la versión 8/,
-    );
-    expect(avisoDeVersion().textContent).not.toContain("versión 2");
-    expect(avisoDeVersion().textContent).not.toContain("versión 3");
+    expect(hayAvisoDeVersion()).toBe(false);
+    expect(screen.queryByText(/cerrará la versión/)).toBeNull();
+    expect(screen.queryByText(/abrirá la versión/)).toBeNull();
   });
 
   it("un historial sin ninguna version abierta no deja afirmar cual se cierra", async () => {
@@ -1298,23 +1279,24 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
-  // El padron SI admite filtrar por identificador: `GET /titulares?ids=` es la
-  // consulta acotada que documenta el contrato y que usa el detalle para pedir
-  // los nombres. Esta nota decia lo contrario -era verdad cuando se escribio- y
-  // era la unica copia del hecho, y la unica que lee quien escribe el reparto,
-  // que nadie actualizo cuando el contrato cambio.
-  it("la nota del padron no afirma que no se pueda filtrar por identificador", async () => {
+  it("el padron no lleva prosa: ni introduccion, ni nota final, ni ayuda bajo el buscador", async () => {
     simularServidor();
     await abrirElEditorConPadron();
 
-    // Se busca la nota por lo que SI dice y que sigue siendo verdad: una pagina
-    // que no trae al titular no prueba que no exista. Si esa frase se quita, la
-    // prueba falla aqui y no pasa en silencio por no tener nada que mirar.
-    const nota = screen.getByText(/una página que no traiga al titular/);
+    const padron = screen
+      .getByRole("heading", { name: "Padrón de titulares" })
+      .closest("section") as HTMLElement;
 
-    expect(nota.textContent).not.toMatch(/no admite filtrar/i);
-    expect(nota.textContent).not.toMatch(/no se puede filtrar/i);
-    expect(nota.textContent).not.toMatch(/sin filtro por identificador/i);
+    // Solo el rotulo, el buscador y la tabla con su paginador.
+    expect(padron.querySelector("p")).toBeNull();
+    expect(padron.querySelector(".catalogo-ayuda")).toBeNull();
+    expect(
+      screen
+        .getByLabelText("Buscar por nombre")
+        .getAttribute("aria-describedby"),
+    ).toBeNull();
+    expect(padron.textContent).not.toMatch(/se sirve por páginas/);
+    expect(padron.textContent).not.toMatch(/Se listan las dos clases/);
   });
 
   it("anadir un titular del padron crea su fila con el IPI y sin porcentaje inventado", async () => {
@@ -1414,12 +1396,8 @@ describe("editor de reparto (integracion con App)", () => {
       within(caja).getByText(/La versión anterior no se borra ni se modifica/),
     ).toBeTruthy();
 
-    // El aviso queda al dia SIN releer el historial: la version que el servidor
-    // acaba de abrir es la que se cerrara la proxima vez. Con el historial
-    // viejo diria que se cierra la 3, que ya no rige.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 4 y abrirá la versión 5/,
-    );
+    // Tras un guardado legible sigue sin haber aviso de version.
+    expect(hayAvisoDeVersion()).toBe(false);
 
     // Y el enlace al historial lleva a la version anterior, que sigue ahi.
     fireEvent.click(
@@ -1433,7 +1411,7 @@ describe("editor de reparto (integracion con App)", () => {
     // El reparto de la version 2 -60 y 40- sigue visible tal como se declaro
     // entonces: un periodo pasado tiene que poder reproducirse con el split que
     // estaba vigente entonces.
-    expect(screen.getAllByText("60.0000%").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("60%").length).toBeGreaterThan(0);
   });
 
   // WARNING de la revision adversarial: el parrafo del exito prometia, sin
@@ -1483,11 +1461,8 @@ describe("editor de reparto (integracion con App)", () => {
     expect(caja.textContent).not.toMatch(
       /sigue en el historial con los porcentajes que regían hasta ahora/,
     );
-    // El aviso de arriba si queda al dia con la version que el servidor abrio:
-    // la que se cerrara la proxima vez es esta.
-    expect(avisoDeVersion().textContent).toMatch(
-      /cerrará la versión 1 y abrirá la versión 2/,
-    );
+    // Tras la primera version guardada tampoco aparece aviso de version.
+    expect(hayAvisoDeVersion()).toBe(false);
   });
 
   it("un 404 al guardar dice que la obra ya no esta, con el mensaje del servidor", async () => {
@@ -1752,7 +1727,7 @@ describe("editor de reparto (integracion con App)", () => {
     );
   });
 
-  it("el total, el estado y el aviso de la version se anuncian", async () => {
+  it("el total y el estado del borrador se anuncian, y tambien el aviso de la primera version", async () => {
     // El item 8a. Sin `role="status"`, cambiar un porcentaje mueve dos cifras
     // que un lector de pantalla no anuncia: quien no ve la pantalla no se
     // entera de que su reparto ya no suma 100.
@@ -1769,9 +1744,14 @@ describe("editor de reparto (integracion con App)", () => {
     escribirPorcentaje("tit-1", "60");
     expect(total.textContent).not.toBe(antesDelTotal);
     expect(estado.textContent).not.toBe(antesDelEstado);
+  });
 
-    // Y el aviso de la version tambien: es lo que hay que entender ANTES de
-    // tocar nada, y aparece sin que nadie haya movido el foco.
+  it("el aviso de la primera version se anuncia sin mover el foco", async () => {
+    // El unico aviso de version que queda cuando el historial se leyo: con una
+    // version abierta ya no se avisa nada.
+    simularServidor({ historial: () => json([]) });
+    await abrirElEditor();
+
     expect(avisoDeVersion().getAttribute("role")).toBe("status");
   });
 
@@ -1886,9 +1866,13 @@ describe("editor de reparto (integracion con App)", () => {
     const boton = within(filaDelBorrador("tit-1")).getByRole("button", {
       name: "Quitar a tit-1 del reparto",
     });
-    // Y el texto visible no cambia de significado: sigue diciendo la accion y el
-    // titular que ya estaban escritos.
-    expect(boton.textContent?.trim()).toBe("Quitar de tit-1");
+    // Es un boton redondo con icono: sin texto visible, con el mismo nombre
+    // accesible en `title`, y el SVG es decorativo.
+    expect(boton.textContent?.trim()).toBe("");
+    expect(boton.getAttribute("title")).toBe("Quitar a tit-1 del reparto");
+    expect(boton.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
   });
 
   it("un historial con una entrada ilegible se lee como no leido, sin numeros inventados", async () => {
@@ -2156,7 +2140,7 @@ describe("el Enter de un campo de texto no guarda (el 🟠)", () => {
     vi.useFakeTimers();
     try {
       const antes = delPadron().length;
-      fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+      fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
 
       expect(delPadron().length).toBe(antes + 1);
       expect(delPadron().at(-1)?.url).toBe(

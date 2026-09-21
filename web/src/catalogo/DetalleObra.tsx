@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
-import { formatearPorcentaje } from "./declaracion";
+import { formatearPorcentaje, formatearTipo } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { TablaDePartes, useNombresDeTitulares } from "./TablaDePartes";
 import { esVersionDeclaracion, type Obra, type Parte } from "./tipos";
@@ -57,7 +57,6 @@ export default function DetalleObra() {
         id={estado.id}
         volver={destinoDeVuelta}
         className="detalle-obra"
-        explicacion=". Si has llegado desde el catálogo, la lista y esta pantalla son dos consultas distintas: la de aquí es la que acaba de responder, y con ese identificador no encontró nada."
       />
     );
   }
@@ -98,10 +97,7 @@ export default function DetalleObra() {
  * editor-, que hasta el item 13 tenian su copia con la misma cabecera, el mismo
  * enlace y la misma `<section>`: tres textos que podian divergir y tres sitios
  * donde arreglar el mismo defecto. Lo que cambia entre las tres no es el aviso,
- * es el PORQUE -"la lista y esta pantalla son dos consultas distintas", "no hay
- * historial que mostrar", "no hay declaracion que abrir"-, y por eso entra como
- * `explicacion` en vez de duplicarse: el hecho es el mismo y quien lo lee
- * necesita su caso.
+ * es el PORQUE, y ese ya no se dice: el aviso se queda en el hecho.
  *
  * Vive en este modulo y no en `useObra.ts` porque ese es un modulo de hook
  * (`.ts`) y el plan del paso 13 autoriza cinco ficheros: la alternativa era una
@@ -116,19 +112,17 @@ export function ObraAusente({
   id,
   volver,
   className,
-  explicacion,
 }: {
   id: string;
   volver: string;
   className: string;
-  explicacion: string;
 }) {
   return (
     <section className={className}>
       <h1>Esa obra no está en el catálogo</h1>
       <p className="muted">
         El servidor no tiene ninguna obra con el identificador <code>{id}</code>
-        {explicacion}
+        .
       </p>
       <p className="detalle-volver">
         <Link to={volver}>Volver al catálogo</Link>
@@ -148,8 +142,7 @@ export function ObraAusente({
  * el-. Dos copias del texto serian dos sitios donde se puede quedar mintiendo
  * una de las dos, que es el defecto que este paso existe para no repetir.
  */
-const SIN_DECLARACION =
-  "La obra no tiene ninguna declaración registrada, así que no hay porcentajes declarados que repartir: bajo R-04 (RD 13.1.3) el importe completo de la obra queda en reserva y nunca se prorratea.";
+const SIN_DECLARACION = "Esta obra no tiene ninguna declaración.";
 
 /**
  * La obra ya legible: sus metadatos y su declaracion vigente.
@@ -199,9 +192,10 @@ function FichaDeObra({
           </div>
           <div>
             <dt>Tipo</dt>
-            {/* El valor del enum, tal cual: es la clasificacion del reglamento
-                y no hay traduccion de la casa que no invente. */}
-            <dd>{obra.tipo}</dd>
+            {/* El valor del enum, sin traducir: es la clasificacion del
+                reglamento y no hay traduccion de la casa que no invente. Solo
+                se le pone mayuscula inicial al mostrarlo. */}
+            <dd>{formatearTipo(obra.tipo)}</dd>
           </div>
           <div>
             <dt>IDA</dt>
@@ -218,10 +212,6 @@ function FichaDeObra({
 
       <section className="detalle-declaracion">
         <h2>Declaración vigente</h2>
-        <p className="muted detalle-nota">
-          El estado y la suma los calcula el servidor; esta pantalla los muestra
-          tal como llegan, sin recalcularlos a partir de las partes.
-        </p>
 
         <dl className="detalle-ficha">
           <div>
@@ -251,20 +241,6 @@ function FichaDeObra({
           <p className="muted detalle-nota">{SIN_DECLARACION}</p>
         ) : (
           <>
-            {obra.estado_declaracion === "incompleta" && (
-              <p className="muted detalle-nota">
-                {/* Un total por debajo de 100 es un estado valido del negocio,
-                    no un error de quien declaro: por eso va en ambar y no en
-                    rojo, y por eso se explica la consecuencia en vez del
-                    defecto. Y el texto NO dice "no suma 100": `incompleta` es
-                    tambien una parte sin IPI o con un porcentaje no positivo,
-                    asi que el estado no prueba nada sobre la suma -por eso el
-                    contrato manda los dos campos y no uno-. */}
-                Una declaración incompleta no es un error: bajo R-04 (RD 13.1.3)
-                no se reparte nada de esta obra y el importe completo queda en
-                reserva, nunca se prorratea.
-              </p>
-            )}
             <PartesDeLaVersionVigente obra={obra} />
             <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
           </>
