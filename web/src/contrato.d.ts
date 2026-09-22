@@ -528,10 +528,19 @@ export interface paths {
          * @description Congela el snapshot de parametros normativos vigente a la fecha del
          *     periodo (`ADR 0004`) y abre el proceso en `recaudo`, revision 1.
          *
-         *     Idempotente por `id`: reabrir un proceso que ya existe devuelve el
-         *     que hay, sin tocarlo. Es lo que hace seguro reintentar -un trabajo de
-         *     `TrabajoEjecutarReparto` que se retoma no reinicia una corrida que un
-         *     humano ya avanzo.
+         *     Idempotente por `id`, pero solo cuando `periodo`/`circuito`/`bolsa_id`
+         *     son LOS MISMOS que abrieron esa corrida: reabrir con esos tres datos
+         *     sin cambiar devuelve el proceso que ya hay, sin tocarlo. Es lo que
+         *     hace seguro reintentar -un trabajo de `TrabajoEjecutarReparto` que se
+         *     retoma no reinicia una corrida que un humano ya avanzo-. Un `id` que
+         *     colisiona con un proceso de OTROS datos es 409, no una devolucion en
+         *     silencio: el cliente no podria distinguir "se creo" de "se devolvio
+         *     otra cosa con este mismo id".
+         *
+         *     El `circuito` y el `periodo` declarados tienen que coincidir con los
+         *     de la bolsa referenciada -si no, la corrida valorizaria con las
+         *     reglas de otro circuito, o contra los usos de otro periodo- y eso
+         *     tambien es 409.
          *
          *     `ADR 0019`: una corrida es una bolsa y un proceso. Un periodo con dos
          *     canales abre dos procesos, uno por bolsa -ver
@@ -3391,6 +3400,19 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /**
+             * @description El `id` ya existe con otro `periodo`/`circuito`/`bolsa_id`, o el
+             *     `circuito`/`periodo` declarados no coinciden con los de la bolsa
+             *     referenciada.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     procesoPorID: {
@@ -3526,6 +3548,10 @@ export interface operations {
              *     compuerta sin las dos firmas de la revision actual, o una etapa
              *     terminal. El cuerpo de la peticion era correcto; lo que no cuadra
              *     es el estado contra `RD 13.5`.
+             *
+             *     Tambien 409 si otra transicion escribio la fila entre que este
+             *     request la leyo y la escribio (control de concurrencia
+             *     optimista): releer el proceso y reintentar resuelve esto.
              */
             409: {
                 headers: {
@@ -3602,7 +3628,10 @@ export interface operations {
             };
             /**
              * @description La etapa actual no tiene compuerta, el rol de la sesion ya firmo
-             *     esta revision, o el actor ya cubre el otro rol.
+             *     esta revision, o el actor ya cubre el otro rol. Firmar no toca la
+             *     revision de `procesos` -solo agrega una fila a `firmas`-, asi que
+             *     esta ruta no tiene el conflicto de concurrencia de avanzar o
+             *     rechazar.
              */
             409: {
                 headers: {
@@ -3695,7 +3724,12 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description La etapa actual no tiene compuerta que rechazar. */
+            /**
+             * @description La etapa actual no tiene compuerta que rechazar, o otra
+             *     transicion escribio la fila entre que este request la leyo y la
+             *     escribio (control de concurrencia optimista): releer el proceso
+             *     y reintentar resuelve esto ultimo.
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

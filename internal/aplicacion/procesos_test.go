@@ -55,9 +55,17 @@ func (r *repositorioRecaudoFalso) BolsasDePeriodo(_ context.Context, periodo str
 	}
 	return r.bolsasPeriodo, nil
 }
-func (r *repositorioRecaudoFalso) BolsaPorID(_ context.Context, _ string) (BolsaPersistida, error) {
+func (r *repositorioRecaudoFalso) BolsaPorID(_ context.Context, id string) (BolsaPersistida, error) {
 	if r.err != nil {
 		return BolsaPersistida{}, r.err
+	}
+	if r.bolsa.ID == id {
+		return r.bolsa, nil
+	}
+	for _, b := range r.bolsasPeriodo {
+		if b.ID == id {
+			return b, nil
+		}
 	}
 	return r.bolsa, nil
 }
@@ -122,9 +130,12 @@ func nuevoRepositorioProcesosFalso() *repositorioProcesosFalso {
 	return &repositorioProcesosFalso{procesos: map[string]ProcesoVista{}}
 }
 
-func (r *repositorioProcesosFalso) GuardarProceso(_ context.Context, p ProcesoVista) error {
+func (r *repositorioProcesosFalso) GuardarProceso(_ context.Context, p ProcesoVista, revisionAnterior int) error {
 	if r.errGuardar != nil {
 		return r.errGuardar
+	}
+	if existente, ok := r.procesos[p.ID]; ok && existente.Revision != revisionAnterior {
+		return ErrProcesoConflictoDeConcurrencia
 	}
 	r.guardados = append(r.guardados, p)
 	r.procesos[p.ID] = p
@@ -186,7 +197,8 @@ func TestIniciarProcesoResuelveElSnapshotYAbreElProceso(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1", snap: reparto.Snapshot{Reglamento: "IX"}}
-	uc := Procesos{Repo: repo, Parametros: params}
+	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
 
 	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
 	if err != nil {
@@ -225,7 +237,7 @@ func TestIniciarProcesoEsIdempotentePorID(t *testing.T) {
 	}
 	ya.Etapa = reparto.EtapaLiquidacionParcial
 	ya.Revision = 3
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(ya)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(ya), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	params := &parametrosNormativosFalso{id: "snap-nuevo"}
@@ -251,7 +263,8 @@ func TestIniciarProcesoPropagaElErrorDeParametroAusente(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{err: ErrParametroAusente}
-	uc := Procesos{Repo: repo, Parametros: params}
+	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
 
 	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
 	if !errors.Is(err, ErrParametroAusente) {
@@ -267,14 +280,84 @@ func TestIniciarProcesoRechazaPeriodoInvalido(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1"}
-	uc := Procesos{Repo: repo, Parametros: params}
+	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
 
 	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-13", reparto.Nacional, "bolsa-1")
-	if err == nil {
-		t.Fatal("se esperaba error con un periodo invalido")
+	if !errors.Is(err, reparto.ErrProcesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un periodo mal formado es un dato mal formado, no un 500", err)
 	}
 	if len(params.pedido) != 0 {
 		t.Error("no debio resolverse un snapshot contra un periodo invalido")
+	}
+}
+
+// TestIniciarProcesoRechazaSiElCircuitoNoCoincideConLaBolsa reproduce el
+// hallazgo #2 de la revision de #159: sin esta comprobacion, una bolsa
+// nacional se podia abrir como proceso internacional (o al reves) y
+// valorizar con las reglas del circuito equivocado sin ningun error.
+func TestIniciarProcesoRechazaSiElCircuitoNoCoincideConLaBolsa(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	params := &parametrosNormativosFalso{id: "snap-1"}
+	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Internacional, "bolsa-1")
+	if !errors.Is(err, ErrProcesoBolsaNoCoincide) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoBolsaNoCoincide", err)
+	}
+	if len(repo.guardados) != 0 {
+		t.Fatal("no debio abrirse un proceso con el circuito de la bolsa equivocado")
+	}
+}
+
+// TestIniciarProcesoRechazaSiElPeriodoNoCoincideConLaBolsa es el mismo
+// hallazgo #2, para el periodo: valorizaria con los usos de un periodo que
+// no son los de esa bolsa.
+func TestIniciarProcesoRechazaSiElPeriodoNoCoincideConLaBolsa(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	params := &parametrosNormativosFalso{id: "snap-1"}
+	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
+	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-02", reparto.Nacional, "bolsa-1")
+	if !errors.Is(err, ErrProcesoBolsaNoCoincide) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoBolsaNoCoincide", err)
+	}
+	if len(repo.guardados) != 0 {
+		t.Fatal("no debio abrirse un proceso con el periodo de la bolsa equivocado")
+	}
+}
+
+// TestIniciarProcesoIDReutilizadoConDatosDistintosEsConflicto reproduce el
+// hallazgo #3 de la revision de #159: reintentar POST /procesos con un id ya
+// usado pero periodo/circuito/bolsa DISTINTOS no puede devolver el proceso
+// existente en silencio -- el cliente no podria distinguir "se creo" de "se
+// devolvio otra cosa con este mismo id".
+func TestIniciarProcesoIDReutilizadoConDatosDistintosEsConflicto(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	ya, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Nacional, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(ya), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	params := &parametrosNormativosFalso{id: "snap-nuevo"}
+	uc := Procesos{Repo: repo, Parametros: params}
+
+	_, err = uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-2")
+	if !errors.Is(err, ErrProcesoIDReutilizado) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoIDReutilizado", err)
+	}
+	if len(params.pedido) != 0 {
+		t.Fatal("no debio resolverse un snapshot nuevo para un id en conflicto")
 	}
 }
 
@@ -285,7 +368,7 @@ func procesoNacionalEnVerificacionGuardado(t *testing.T, repo *repositorioProces
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaVerificacion
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 }
@@ -317,7 +400,7 @@ func TestFirmarPropagaElRechazoDelDominio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	uc := Procesos{Repo: repo}
@@ -350,6 +433,56 @@ func TestRechazarGatePersisteElRetroceso(t *testing.T) {
 	}
 }
 
+// TestAvanzarEtapaRechazaConflictoDeConcurrencia reproduce el hallazgo #4 de
+// la revision de #159: dos transiciones concurrentes sobre el mismo proceso
+// (aqui, un RechazarGate que se cuela entre la lectura y la escritura de un
+// AvanzarEtapa) no pueden pisarse -- la segunda en escribir tiene que fallar
+// y obligar a releer, no sobreescribir a ciegas.
+func TestAvanzarEtapaRechazaConflictoDeConcurrencia(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Nacional, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = reparto.EtapaVerificacion
+	p, err = p.Firmar(reparto.RolDistribucion, "actor-dist")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p, err = p.Firmar(reparto.RolContabilidad, "actor-conta")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	uc := Procesos{Repo: repo}
+
+	// Otro actor rechaza la compuerta DESPUES de que este AvanzarEtapa ya
+	// leyo el proceso (revision 1) pero ANTES de que escriba: la revision en
+	// la base subio a 2 por debajo de sus pies.
+	if _, err := uc.RechazarGate(t.Context(), "proc-1", "faltan soportes"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	// Simula que AvanzarEtapa ya habia leido la revision 1 antes del
+	// rechazo: fuerza la escritura contra esa revision vieja.
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 1); !errors.Is(err, ErrProcesoConflictoDeConcurrencia) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoConflictoDeConcurrencia", err)
+	}
+
+	// Y el rechazo del otro actor sigue en pie: no lo piso.
+	leido, err := uc.ConsultarEstadoProceso(t.Context(), "proc-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if leido.Etapa != reparto.EtapaLiquidacionParcial || leido.RechazoMotivo != "faltan soportes" {
+		t.Fatalf("el rechazo del otro actor no debio perderse: %+v", leido)
+	}
+}
+
 func TestAvanzarEtapaFueraDeValorizacionSoloPersisteLaEtapa(t *testing.T) {
 	t.Parallel()
 
@@ -358,7 +491,7 @@ func TestAvanzarEtapaFueraDeValorizacionSoloPersisteLaEtapa(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
@@ -385,7 +518,7 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 
@@ -435,7 +568,7 @@ func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	uc := Procesos{Repo: repo} // sin Unidad
@@ -455,7 +588,7 @@ func TestAvanzarEtapaInternacionalNuncaValoriza(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	p.Etapa = reparto.EtapaDeducciones
-	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p)); err != nil {
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
@@ -521,7 +654,7 @@ func TestAbrirCorridaDelPeriodoEsIdempotenteReintentandoElMismoTrabajo(t *testin
 	if err := repo.GuardarProceso(t.Context(), ProcesoVista{
 		ID: repo.guardados[0].ID, Circuito: reparto.Nacional, Etapa: reparto.EtapaLiquidacionParcial,
 		Periodo: "2026-01", BolsaID: "bolsa-1", SnapshotID: "snap-1", Revision: 1,
-	}); err != nil {
+	}, 1); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 

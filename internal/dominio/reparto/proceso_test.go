@@ -1,6 +1,7 @@
 package reparto_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -38,16 +39,16 @@ func TestFirmarRechazaFueraDeCompuerta(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	_, err = p.Firmar(reparto.RolDistribucion, "actor-1")
-	if err == nil {
-		t.Fatal("se esperaba error: recaudo no es una etapa con compuerta")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: recaudo no es una etapa con compuerta, es un conflicto de estado, no un dato mal formado", err)
 	}
 }
 
 func TestFirmarRechazaRolDesconocido(t *testing.T) {
 	p := procesoEnVerificacion(t)
 	_, err := p.Firmar(reparto.RolAcompuerta("gerencia"), "actor-1")
-	if err == nil {
-		t.Fatal("se esperaba error: RD 13.5 solo admite distribucion y contabilidad")
+	if !errors.Is(err, reparto.ErrProcesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un rol que no existe es un dato mal formado, no un conflicto de estado", err)
 	}
 }
 
@@ -72,8 +73,8 @@ func TestFirmarRechazaMismoRolDosVeces(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	_, err = p.Firmar(reparto.RolDistribucion, "actor-b")
-	if err == nil {
-		t.Fatal("se esperaba error: el rol ya firmo esta revision")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: el rol ya firmo esta revision es un conflicto de estado", err)
 	}
 }
 
@@ -84,8 +85,8 @@ func TestFirmarRechazaMismoActorParaLosDosRoles(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	_, err = p.Firmar(reparto.RolContabilidad, "actor-unico")
-	if err == nil {
-		t.Fatal("se esperaba error: el mismo actor no puede cubrir los dos roles")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: el mismo actor no puede cubrir los dos roles es un conflicto de estado", err)
 	}
 }
 
@@ -129,8 +130,8 @@ func TestAvanzarEtapaSiguePorTodaLaSecuenciaNacional(t *testing.T) {
 func TestAvanzarEtapaEnCompuertaSinFirmasFalla(t *testing.T) {
 	p := procesoEnVerificacion(t)
 	_, err := p.AvanzarEtapa()
-	if err == nil {
-		t.Fatal("se esperaba error: verificacion sin firmas no avanza")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: verificacion sin firmas es un conflicto de estado", err)
 	}
 }
 
@@ -141,8 +142,8 @@ func TestAvanzarEtapaEnCompuertaConUnaFirmaFalla(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	_, err = p.AvanzarEtapa()
-	if err == nil {
-		t.Fatal("se esperaba error: una sola firma no basta")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: una sola firma no basta es un conflicto de estado", err)
 	}
 }
 
@@ -187,8 +188,8 @@ func TestAvanzarEtapaTerminaEnAuditoria(t *testing.T) {
 		}
 	}
 	_, err = p.AvanzarEtapa()
-	if err == nil {
-		t.Fatal("se esperaba error: auditoria es terminal")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: auditoria terminal es un conflicto de estado", err)
 	}
 }
 
@@ -216,8 +217,8 @@ func TestRechazarGateRechazaFueraDeCompuerta(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	_, err = p.RechazarGate("no cuadra")
-	if err == nil {
-		t.Fatal("se esperaba error: recaudo no es una etapa con compuerta")
+	if !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: recaudo no es una etapa con compuerta es un conflicto de estado", err)
 	}
 }
 
@@ -249,8 +250,8 @@ func TestRechazarGateRetrocedeUnaEtapaYSubeRevision(t *testing.T) {
 func TestRechazarGateExigeMotivo(t *testing.T) {
 	p := procesoEnVerificacion(t)
 	_, err := p.RechazarGate("  ")
-	if err == nil {
-		t.Fatal("se esperaba error: un rechazo sin motivo no es explicable")
+	if !errors.Is(err, reparto.ErrProcesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un motivo vacio es un dato mal formado, no un conflicto de estado", err)
 	}
 }
 
@@ -265,8 +266,15 @@ func TestAbrirProcesoRechazaCamposVacios(t *testing.T) {
 	}
 	for _, c := range casos {
 		_, err := reparto.AbrirProceso(c.id, c.periodo, reparto.Nacional, c.bolsaID, c.snapshotID, c.reglamento)
-		if err == nil {
-			t.Fatalf("%s: se esperaba error", c.nombre)
+		if !errors.Is(err, reparto.ErrProcesoInvalido) {
+			t.Fatalf("%s: error = %v, se esperaba ErrProcesoInvalido: un campo vacio es un dato mal formado", c.nombre, err)
 		}
+	}
+}
+
+func TestAbrirProcesoRechazaCircuitoDesconocido(t *testing.T) {
+	_, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Circuito("europeo"), "bolsa-1", "snap-1", "IX")
+	if !errors.Is(err, reparto.ErrProcesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un circuito desconocido es un dato mal formado", err)
 	}
 }

@@ -78,7 +78,15 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	// tomar el MISMO trabajo (Intentos, no Corrida) y llamaria aqui otra vez.
 	// Sin esta guarda, reabrir un proceso que un humano ya avanzo lo
 	// reiniciaria a EtapaRecaudo revision 1 y borraria el progreso.
+	//
+	// Pero solo es un reintento legitimo si periodo/circuito/bolsa son LOS
+	// MISMOS: un id que colisiona con un proceso de otros datos no se
+	// devuelve en silencio, porque el cliente no podria distinguir "se creo"
+	// de "se devolvio otra cosa con este mismo id" (revision de PR #159).
 	if existente, err := uc.Repo.ProcesoPorID(ctx, id); err == nil {
+		if existente.Periodo != periodo || existente.Circuito != circuito || existente.BolsaID != bolsaID {
+			return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoIDReutilizado)
+		}
 		return existente, nil
 	} else if !errors.Is(err, ErrNoEncontrado) {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
@@ -86,8 +94,20 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 
 	fecha, err := fechaDePeriodo(strings.TrimSpace(periodo))
 	if err != nil {
+		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w: %w", id, reparto.ErrProcesoInvalido, err)
+	}
+
+	// El circuito y el periodo declarados tienen que ser los de la bolsa
+	// referenciada: si no, la corrida valorizaria con las reglas de otro
+	// circuito, o contra los usos de otro periodo (hallazgo de PR #159).
+	bp, err := uc.Bolsas.BolsaPorID(ctx, bolsaID)
+	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
+	if bp.Circuito != circuito || bp.Periodo != periodo {
+		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoBolsaNoCoincide)
+	}
+
 	snapshotID, snap, err := uc.Parametros.SnapshotEnFecha(ctx, fecha)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
@@ -96,7 +116,9 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
+	// revisionAnterior no importa aqui: es un alta nueva, nunca hay fila
+	// previa con la que competir.
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), p.Revision); err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
 	return aProcesoVista(p), nil
@@ -152,7 +174,7 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 			if err := uc.valorizar(ctx, p); err != nil {
 				return err
 			}
-			return uc.Repo.GuardarProceso(ctx, aProcesoVista(p))
+			return uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision)
 		})
 		if err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -160,7 +182,7 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 		return aProcesoVista(p), nil
 	}
 
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
@@ -255,7 +277,7 @@ func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p)); err != nil {
+	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 		return ProcesoVista{}, fmt.Errorf("rechazar compuerta de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil

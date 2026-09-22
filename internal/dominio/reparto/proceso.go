@@ -67,7 +67,7 @@ func (p ProcesoDeReparto) Firmar(rol RolAcompuerta, actorID string) (ProcesoDeRe
 		return p, fmt.Errorf("%w: %q no es una etapa con compuerta (RD 13.5)", ErrRepartoInvalido, p.Etapa)
 	}
 	if rol != RolDistribucion && rol != RolContabilidad {
-		return p, fmt.Errorf("%w: rol de firma desconocido %q (RD 13.5)", ErrRepartoInvalido, rol)
+		return p, fmt.Errorf("%w: rol de firma desconocido %q (RD 13.5)", ErrProcesoInvalido, rol)
 	}
 	for _, f := range p.Firmas {
 		if f.SobreRev != p.Revision {
@@ -143,7 +143,7 @@ func (p ProcesoDeReparto) RechazarGate(motivo string) (ProcesoDeReparto, error) 
 		return p, fmt.Errorf("%w: %q no es una etapa con compuerta (RD 13.5)", ErrRepartoInvalido, p.Etapa)
 	}
 	if strings.TrimSpace(motivo) == "" {
-		return p, fmt.Errorf("%w: un rechazo exige motivo, para que la cifra siga siendo explicable", ErrRepartoInvalido)
+		return p, fmt.Errorf("%w: un rechazo exige motivo, para que la cifra siga siendo explicable", ErrProcesoInvalido)
 	}
 	secuencia := secuenciaEtapas(p.Circuito)
 	idx := -1
@@ -165,10 +165,10 @@ func (p ProcesoDeReparto) RechazarGate(motivo string) (ProcesoDeReparto, error) 
 // llega ya resuelto (ADR 0004/0005): abrir no lo resuelve, lo recibe.
 func AbrirProceso(id, periodo string, circuito Circuito, bolsaID, snapshotID, reglamento string) (ProcesoDeReparto, error) {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(periodo) == "" || strings.TrimSpace(bolsaID) == "" {
-		return ProcesoDeReparto{}, fmt.Errorf("%w: id, periodo y bolsaID no pueden quedar vacios", ErrRepartoInvalido)
+		return ProcesoDeReparto{}, fmt.Errorf("%w: id, periodo y bolsaID no pueden quedar vacios", ErrProcesoInvalido)
 	}
 	if circuito != Nacional && circuito != Internacional {
-		return ProcesoDeReparto{}, fmt.Errorf("%w: circuito desconocido %q", ErrRepartoInvalido, circuito)
+		return ProcesoDeReparto{}, fmt.Errorf("%w: circuito desconocido %q", ErrProcesoInvalido, circuito)
 	}
 	return ProcesoDeReparto{
 		ID:         id,

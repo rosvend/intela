@@ -195,6 +195,59 @@ func TestAvanzarEtapaViolacionDeDominioEs409(t *testing.T) {
 	}
 }
 
+// TestAbrirProcesoDatoMalFormadoEs400 y TestRechazarGateMotivoVacioEs400
+// reproducen el hallazgo #6 de la revision de #159: un dato de entrada mal
+// formado -campo vacio, motivo en blanco- no es un conflicto de estado ni
+// un fallo del servidor, es un 400.
+func TestAbrirProcesoDatoMalFormadoEs400(t *testing.T) {
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: reparto.ErrProcesoInvalido})
+	rec := pedir(t, h, http.MethodPost, "/procesos", cuerpoAbrirProceso, "tok")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRechazarGateMotivoVacioEs400(t *testing.T) {
+	h := servidorConProcesos(t, aplicacion.RolDistribucion, &procesosFalso{err: reparto.ErrProcesoInvalido})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/rechazar", `{"motivo":""}`, "tok")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestAbrirProcesoBolsaNoCoincideEs409 y TestAbrirProcesoIDReutilizadoEs409
+// son el mismo hallazgo #2/#3: el dato en si esta bien formado, lo que
+// conflictua es contra otro recurso (la bolsa) o contra un proceso que ya
+// existe con otros datos.
+func TestAbrirProcesoBolsaNoCoincideEs409(t *testing.T) {
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: aplicacion.ErrProcesoBolsaNoCoincide})
+	rec := pedir(t, h, http.MethodPost, "/procesos", cuerpoAbrirProceso, "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAbrirProcesoIDReutilizadoEs409(t *testing.T) {
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: aplicacion.ErrProcesoIDReutilizado})
+	rec := pedir(t, h, http.MethodPost, "/procesos", cuerpoAbrirProceso, "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestAvanzarEtapaConflictoDeConcurrenciaEs409 es el hallazgo #4: otra
+// transicion cambio la fila entre que se leyo y que se escribio. Tambien es
+// 409 -conflicto contra el estado actual-, pero el cliente tiene que poder
+// distinguirlo (releer y reintentar) de un ErrRepartoInvalido real, asi que
+// el mensaje lo dice.
+func TestAvanzarEtapaConflictoDeConcurrenciaEs409(t *testing.T) {
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: aplicacion.ErrProcesoConflictoDeConcurrencia})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestListarProcesosSinFilasDevuelveListaVaciaNoNull(t *testing.T) {
 	h := servidorConProcesos(t, aplicacion.RolAuditor, &procesosFalso{})
 	rec := pedir(t, h, http.MethodGet, "/procesos", "", "tok")

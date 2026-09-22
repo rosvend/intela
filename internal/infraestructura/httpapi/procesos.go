@@ -197,6 +197,23 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		return nil
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "ese proceso no existe")
+	case errors.Is(err, reparto.ErrProcesoInvalido):
+		// 400: el dato en si esta mal formado -un campo vacio, un periodo sin
+		// forma AAAA-MM, un motivo de rechazo en blanco- y no depende de en
+		// que etapa esta el proceso. Comprobado ANTES que ErrRepartoInvalido:
+		// los dos envuelven mensajes de dominio, pero son clases distintas
+		// (ver el comentario del sentinel en tipos.go).
+		escribirError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, aplicacion.ErrProcesoBolsaNoCoincide), errors.Is(err, aplicacion.ErrProcesoIDReutilizado):
+		// 409: el dato esta bien formado, lo que conflictua es contra otro
+		// recurso -la bolsa referenciada, o un proceso que ya existe con
+		// otros datos bajo el mismo id.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
+		// 409 tambien, pero es control de concurrencia optimista, no un
+		// conflicto de negocio: otra transicion escribio primero. El mensaje
+		// del sentinel ya le dice al cliente que reintente.
+		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, reparto.ErrRepartoInvalido):
 		// 409 y no 400: el cuerpo de la peticion es correcto, lo que no
 		// cuadra es el estado del proceso contra RD 13.5 -una compuerta sin
