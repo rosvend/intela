@@ -214,7 +214,7 @@ func TestProcesoVerificacionRechazadaRetrocedeYSubeRevision(t *testing.T) {
 
 	p := procesoDePrueba()
 	p.Etapa = reparto.EtapaVerificacion
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("sembrar proceso en verificacion: %v", err)
 	}
 
@@ -252,12 +252,12 @@ type repoProcesosQueFallaUnaVez struct {
 	fallar bool
 }
 
-func (r *repoProcesosQueFallaUnaVez) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista) error {
+func (r *repoProcesosQueFallaUnaVez) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista, revisionAnterior int) error {
 	if r.fallar {
 		r.fallar = false
 		return errors.New("fallo simulado de infraestructura, DESPUES de que el motor ya valorizo")
 	}
-	return r.Store.GuardarProceso(ctx, p)
+	return r.Store.GuardarProceso(ctx, p, revisionAnterior)
 }
 
 // TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento es la

@@ -644,7 +644,17 @@ type FilaParametro struct {
 // PorID), y dos metodos con el mismo nombre y distinta firma no caben en un
 // solo tipo.
 type RepositorioProcesos interface {
-	GuardarProceso(ctx context.Context, p ProcesoVista) error
+	// GuardarProceso inserta un proceso nuevo, o actualiza uno existente con
+	// control de concurrencia optimista: revisionAnterior es la revision que
+	// el llamador leyo antes de calcular la transicion, y el UPDATE solo
+	// aplica si la fila sigue en esa revision. Sin esto, dos transiciones
+	// concurrentes sobre el mismo proceso -dos AvanzarEtapa, o un
+	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
+	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
+	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
+	// la escritura; no aplica a un alta nueva, que nunca tiene fila previa
+	// que comparar.
+	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
 	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
 	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error

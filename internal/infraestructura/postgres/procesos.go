@@ -14,14 +14,32 @@ var _ aplicacion.RepositorioProcesos = (*Store)(nil)
 // snapshot_id y reglamento se fijan al abrir y no cambian despues -- el
 // UPDATE solo toca lo que una transicion de RD 13.5 mueve: etapa, revision
 // y rechazo.
-func (s *Store) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista) error {
-	_, err := s.ejecutorDe(ctx).Exec(ctx,
+//
+// El UPDATE lleva WHERE procesos.revision = revisionAnterior: es control de
+// concurrencia optimista (revision de PR #159). Sin el, dos transiciones que
+// parten de la misma lectura -dos AvanzarEtapa, o un AvanzarEtapa y un
+// RechazarGate corriendo a la vez- podrian valorizar dos veces o pisar un
+// rechazo sin que nadie se entere. Con ON CONFLICT ... DO UPDATE ... WHERE,
+// si la condicion no cuadra Postgres no inserta ni actualiza nada -ni
+// siquiera dispara un error-, asi que el conflicto se detecta mirando
+// RowsAffected: 0 filas afectadas es la fila que cambio bajo los pies de
+// quien escribia.
+func (s *Store) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista, revisionAnterior int) error {
+	ct, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento, revision, rechazo)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		 ON CONFLICT (id) DO UPDATE SET etapa = EXCLUDED.etapa, revision = EXCLUDED.revision, rechazo = EXCLUDED.rechazo`,
+		 ON CONFLICT (id) DO UPDATE SET etapa = EXCLUDED.etapa, revision = EXCLUDED.revision, rechazo = EXCLUDED.rechazo
+		 WHERE procesos.revision = $10`,
 		p.ID, string(p.Circuito), string(p.Etapa), p.Periodo, p.BolsaID, p.SnapshotID, p.Reglamento, p.Revision, p.RechazoMotivo,
+		revisionAnterior,
 	)
-	return traducirError(err, "guardar proceso %q", p.ID)
+	if err != nil {
+		return traducirError(err, "guardar proceso %q", p.ID)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("guardar proceso %q: %w", p.ID, aplicacion.ErrProcesoConflictoDeConcurrencia)
+	}
+	return nil
 }
 
 // ProcesoPorID relee un proceso con TODAS sus firmas, de cualquier revision:

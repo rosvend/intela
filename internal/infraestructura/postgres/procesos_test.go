@@ -57,7 +57,7 @@ func TestProcesosGuardarYPorIDRedondaLaFila(t *testing.T) {
 	ctx := t.Context()
 	p := procesoDePrueba()
 
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("guardar proceso: %v", err)
 	}
 
@@ -76,14 +76,15 @@ func TestProcesosGuardarActualizaEtapaRevisionYRechazo(t *testing.T) {
 	s := sembrarBolsaParaProceso(t)
 	ctx := t.Context()
 	p := procesoDePrueba()
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("guardar proceso: %v", err)
 	}
 
+	revisionSembrada := p.Revision
 	p.Etapa = reparto.EtapaDeducciones
 	p.Revision = 2
 	p.RechazoMotivo = "faltan soportes"
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, revisionSembrada); err != nil {
 		t.Fatalf("actualizar proceso: %v", err)
 	}
 
@@ -115,10 +116,10 @@ func TestProcesosListarDevuelveTodos(t *testing.T) {
 	p2 := procesoDePrueba()
 	p2.ID = "proc-2"
 	p2.Circuito = reparto.Internacional
-	if err := s.GuardarProceso(ctx, p1); err != nil {
+	if err := s.GuardarProceso(ctx, p1, 0); err != nil {
 		t.Fatalf("guardar proc-1: %v", err)
 	}
-	if err := s.GuardarProceso(ctx, p2); err != nil {
+	if err := s.GuardarProceso(ctx, p2, 0); err != nil {
 		t.Fatalf("guardar proc-2: %v", err)
 	}
 
@@ -136,7 +137,7 @@ func TestProcesosGuardarFirmaYPorIDTraeLasFirmas(t *testing.T) {
 	ctx := t.Context()
 	p := procesoDePrueba()
 	p.Etapa = reparto.EtapaVerificacion
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("guardar proceso: %v", err)
 	}
 
@@ -159,7 +160,7 @@ func TestProcesosGuardarFirmaRechazaElMismoRolDosVecesEnLaMismaRevision(t *testi
 	ctx := t.Context()
 	p := procesoDePrueba()
 	p.Etapa = reparto.EtapaVerificacion
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("guardar proceso: %v", err)
 	}
 
@@ -182,6 +183,50 @@ func TestProcesosGuardarFirmaRechazaProcesoInexistente(t *testing.T) {
 	}
 }
 
+// TestGuardarProcesoRechazaRevisionDesactualizada reproduce el hallazgo #4
+// de la revision de #159 contra Postgres real: dos escrituras que parten de
+// la misma revision leida no pueden pasar las dos. La segunda tiene que
+// fallar con ErrProcesoConflictoDeConcurrencia, y la fila se queda con lo
+// que escribio la primera.
+func TestGuardarProcesoRechazaRevisionDesactualizada(t *testing.T) {
+	s := sembrarBolsaParaProceso(t)
+	ctx := t.Context()
+	p := procesoDePrueba() // Revision: 1
+
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
+		t.Fatalf("crear proceso: %v", err)
+	}
+
+	// Primera escritura: parte de la revision 1 que se sembro, avanza a
+	// deducciones Y sube la revision a 2 -como una transicion real que cruza
+	// una compuerta-. Dice que la revision anterior era 1 y tiene exito.
+	primera := p
+	primera.Etapa = reparto.EtapaDeducciones
+	primera.Revision = 2
+	if err := s.GuardarProceso(ctx, primera, 1); err != nil {
+		t.Fatalf("primera escritura: %v", err)
+	}
+
+	// Segunda escritura: TAMBIEN parte de creer que la revision anterior era
+	// 1 -como si hubiera leido el proceso ANTES de la primera escritura- y
+	// llega tarde: en la base ya es 2.
+	segunda := p
+	segunda.Etapa = reparto.EtapaVerificacion
+	segunda.Revision = 2
+	err := s.GuardarProceso(ctx, segunda, 1)
+	if !errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia) {
+		t.Fatalf("error = %v, se esperaba ErrProcesoConflictoDeConcurrencia", err)
+	}
+
+	leido, err := s.ProcesoPorID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("leer proceso: %v", err)
+	}
+	if leido.Etapa != reparto.EtapaDeducciones || leido.Revision != 2 {
+		t.Fatalf("leido = %+v, se esperaba que ganara la primera escritura (deducciones, revision 2)", leido)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // La unidad de trabajo
 
@@ -198,7 +243,7 @@ func TestGuardarProcesoParticipaEnLaUnidadAmbiente(t *testing.T) {
 	fallo := errors.New("el caso de uso de fuera se arrepintio")
 
 	err := s.EnUnidad(ctx, func(ctx context.Context) error {
-		if err := s.GuardarProceso(ctx, p); err != nil {
+		if err := s.GuardarProceso(ctx, p, 0); err != nil {
 			return err
 		}
 		return fallo
@@ -220,7 +265,7 @@ func TestGuardarFirmaParticipaEnLaUnidadAmbiente(t *testing.T) {
 	ctx := t.Context()
 	p := procesoDePrueba()
 	p.Etapa = reparto.EtapaVerificacion
-	if err := s.GuardarProceso(ctx, p); err != nil {
+	if err := s.GuardarProceso(ctx, p, 0); err != nil {
 		t.Fatalf("sembrar proceso: %v", err)
 	}
 	fallo := errors.New("el caso de uso de fuera se arrepintio")
