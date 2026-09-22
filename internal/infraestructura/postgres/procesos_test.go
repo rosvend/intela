@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -178,5 +179,68 @@ func TestProcesosGuardarFirmaRechazaProcesoInexistente(t *testing.T) {
 	err := s.GuardarFirma(t.Context(), "proc-que-no-existe", f)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("error = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// La unidad de trabajo
+
+// TestGuardarProcesoParticipaEnLaUnidadAmbiente reproduce el hallazgo de
+// revision de #159: GuardarProceso escribia con s.pool directo, sin mirar si
+// ctx ya traia una transaccion de EnUnidad. Un rollback de la unidad de
+// fuera -por ejemplo porque GuardarResultado fallo despues- dejaba el
+// proceso escrito de todos modos: la "atomicidad" de
+// aplicacion.Procesos.AvanzarEtapa era decorativa.
+func TestGuardarProcesoParticipaEnLaUnidadAmbiente(t *testing.T) {
+	s := sembrarBolsaParaProceso(t)
+	ctx := t.Context()
+	p := procesoDePrueba()
+	fallo := errors.New("el caso de uso de fuera se arrepintio")
+
+	err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := s.GuardarProceso(ctx, p); err != nil {
+			return err
+		}
+		return fallo
+	})
+	if !errors.Is(err, fallo) {
+		t.Fatalf("se esperaba el error de fuera, se obtuvo %v", err)
+	}
+
+	if _, err := s.ProcesoPorID(ctx, p.ID); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("el proceso sobrevivio al rollback de la unidad de fuera: %v", err)
+	}
+}
+
+// TestGuardarFirmaParticipaEnLaUnidadAmbiente es el mismo hallazgo, para la
+// firma: sin ejecutorDe, una firma quedaba persistida aunque la unidad que
+// la envolvia revirtiera.
+func TestGuardarFirmaParticipaEnLaUnidadAmbiente(t *testing.T) {
+	s := sembrarBolsaParaProceso(t)
+	ctx := t.Context()
+	p := procesoDePrueba()
+	p.Etapa = reparto.EtapaVerificacion
+	if err := s.GuardarProceso(ctx, p); err != nil {
+		t.Fatalf("sembrar proceso: %v", err)
+	}
+	fallo := errors.New("el caso de uso de fuera se arrepintio")
+
+	err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		f := reparto.Firma{Rol: string(reparto.RolDistribucion), ActorID: "actor-dist", SobreRev: 1}
+		if err := s.GuardarFirma(ctx, p.ID, f); err != nil {
+			return err
+		}
+		return fallo
+	})
+	if !errors.Is(err, fallo) {
+		t.Fatalf("se esperaba el error de fuera, se obtuvo %v", err)
+	}
+
+	leido, err := s.ProcesoPorID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("leer proceso: %v", err)
+	}
+	if len(leido.Firmas) != 0 {
+		t.Fatalf("la firma sobrevivio al rollback de la unidad de fuera: %v", leido.Firmas)
 	}
 }

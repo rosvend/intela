@@ -15,7 +15,7 @@ var _ aplicacion.RepositorioProcesos = (*Store)(nil)
 // UPDATE solo toca lo que una transicion de RD 13.5 mueve: etapa, revision
 // y rechazo.
 func (s *Store) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento, revision, rechazo)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		 ON CONFLICT (id) DO UPDATE SET etapa = EXCLUDED.etapa, revision = EXCLUDED.revision, rechazo = EXCLUDED.rechazo`,
@@ -32,7 +32,7 @@ func (s *Store) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista) e
 func (s *Store) ProcesoPorID(ctx context.Context, id string) (aplicacion.ProcesoVista, error) {
 	var v aplicacion.ProcesoVista
 	var circuito, etapa string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento, revision, rechazo
 		   FROM procesos WHERE id = $1`,
 		id,
@@ -43,7 +43,7 @@ func (s *Store) ProcesoPorID(ctx context.Context, id string) (aplicacion.Proceso
 	v.Circuito = reparto.Circuito(circuito)
 	v.Etapa = reparto.Etapa(etapa)
 
-	firmas, err := firmasDe(ctx, s.pool, id)
+	firmas, err := firmasDe(ctx, s.ejecutorDe(ctx), id)
 	if err != nil {
 		return aplicacion.ProcesoVista{}, err
 	}
@@ -55,7 +55,7 @@ func (s *Store) ProcesoPorID(ctx context.Context, id string) (aplicacion.Proceso
 // N+1: una por proceso y otra para las firmas de todos, agrupadas en
 // memoria.
 func (s *Store) ListarProcesos(ctx context.Context) ([]aplicacion.ProcesoVista, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento, revision, rechazo
 		   FROM procesos ORDER BY periodo, id`)
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *Store) ListarProcesos(ctx context.Context) ([]aplicacion.ProcesoVista, 
 		return nil, traducirError(err, "listar procesos")
 	}
 
-	firmasPorProceso, err := todasLasFirmas(ctx, s.pool)
+	firmasPorProceso, err := todasLasFirmas(ctx, s.ejecutorDe(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (s *Store) ListarProcesos(ctx context.Context) ([]aplicacion.ProcesoVista, 
 // [reparto.ProcesoDeReparto.Firmar] en el dominio; aqui es el respaldo de la
 // base, no la primera linea de defensa.
 func (s *Store) GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO firmas (proceso_id, rol, revision, actor_id) VALUES ($1,$2,$3,$4)`,
 		procesoID, f.Rol, f.SobreRev, f.ActorID,
 	)

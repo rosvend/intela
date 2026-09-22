@@ -1,21 +1,26 @@
 package postgres
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
-// TestProcesoNacionalDePuntaAPunta es la prueba de verificacion manual del
-// plan de #34: abre una corrida Nacional contra Postgres real, la avanza
-// hasta que el motor de #33 valoriza de verdad y el resultado queda en
-// resultados_*, la firma en su compuerta con los dos roles, y confirma que
-// llega a Auditoria. No usa ningun doble: [aplicacion.Procesos] entero,
-// resuelto contra *Store, igual que lo cablea cmd/api.
-func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
+// sembrarProcesoNacionalListoParaValorizar deja una bolsa, un uso
+// identificado (el ejemplo de la Serie Y de RD 9.1.1: 10 emisiones de 48
+// min, rating 9), su declaracion al 100%, los parametros normativos y los
+// actores de firma -- todo lo que [aplicacion.Procesos.IniciarProceso] y
+// [aplicacion.Procesos.AvanzarEtapa] necesitan para valorizar de verdad
+// contra Postgres real.
+func sembrarProcesoNacionalListoParaValorizar(t *testing.T) (*Store, *pgxpool.Pool) {
+	t.Helper()
 	s, pool := sembrarReportes(t) // reporteEnero: fuente caracol, periodo 2026-01
 	ctx := t.Context()
 
@@ -36,7 +41,6 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		`INSERT INTO obras (id, titulo, genero, anio, tipo) VALUES ('obra-y', 'Obra Y', 'Drama', 2020, 'serie')`); err != nil {
 		t.Fatalf("sembrar obra: %v", err)
 	}
-	// El ejemplo de la Serie Y de RD 9.1.1: 10 emisiones de 48 min, rating 9.
 	uso := usoPendiente("uso-y", reporteEnero, "Obra Y")
 	uso.CanalID = "caracol"
 	uso.TipoObra = "serie"
@@ -74,6 +78,18 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 	}
 
 	sembrarParametros(t, pool, "2026-01-01")
+	return s, pool
+}
+
+// TestProcesoNacionalDePuntaAPunta es la prueba de verificacion manual del
+// plan de #34: abre una corrida Nacional contra Postgres real, la avanza
+// hasta que el motor de #33 valoriza de verdad y el resultado queda en
+// resultados_*, la firma en su compuerta con los dos roles, y confirma que
+// llega a Auditoria. No usa ningun doble: [aplicacion.Procesos] entero,
+// resuelto contra *Store, igual que lo cablea cmd/api.
+func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
+	s, _ := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
 
 	uc := aplicacion.Procesos{
 		Repo:          s,
@@ -225,5 +241,92 @@ func TestProcesoVerificacionRechazadaRetrocedeYSubeRevision(t *testing.T) {
 	}
 	if releido.Revision != 2 || releido.Etapa != reparto.EtapaLiquidacionParcial || releido.RechazoMotivo != "faltan soportes" {
 		t.Fatalf("releido = %+v", releido)
+	}
+}
+
+// repoProcesosQueFallaUnaVez envuelve un *Store real y hace fallar
+// GuardarProceso la primera vez que se llama, para forzar el camino de
+// rollback de AvanzarEtapa sin tocar SQL a mano.
+type repoProcesosQueFallaUnaVez struct {
+	*Store
+	fallar bool
+}
+
+func (r *repoProcesosQueFallaUnaVez) GuardarProceso(ctx context.Context, p aplicacion.ProcesoVista) error {
+	if r.fallar {
+		r.fallar = false
+		return errors.New("fallo simulado de infraestructura, DESPUES de que el motor ya valorizo")
+	}
+	return r.Store.GuardarProceso(ctx, p)
+}
+
+// TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento es la
+// reproduccion exacta del hallazgo bloqueante de la revision de #159: si
+// GuardarProceso falla DESPUES de que valorizar ya escribio en
+// resultados_*, sin que las dos escrituras compartan una transaccion real,
+// (a) resultados_proceso queda con una fila huerfana para una corrida que
+// nunca avanzo, y (b) reintentar AvanzarEtapa revienta con una violacion de
+// la PK de resultados_proceso en vez de reintentar limpio.
+//
+// Con GuardarResultado y GuardarProceso participando de verdad en la
+// UnidadDeTrabajo (via enTransaccionDe/ejecutorDe), el fallo de
+// GuardarProceso revierte TAMBIEN el INSERT de resultados_proceso -- asi que
+// no hay huerfano, y el reintento vuelve a valorizar y guardar limpio.
+func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
+	s, _ := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+
+	repoQueFalla := &repoProcesosQueFallaUnaVez{Store: s}
+	uc := aplicacion.Procesos{
+		Repo:          repoQueFalla,
+		Parametros:    s,
+		Bolsas:        s,
+		Declaraciones: s,
+		Usos:          s,
+		Resultados:    s,
+		Unidad:        s,
+	}
+
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
+		t.Fatalf("iniciar proceso: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err != nil {
+		t.Fatalf("avanzar a deducciones: %v", err)
+	}
+
+	// Solo a partir de aqui falla: este AvanzarEtapa entra a importe_obra,
+	// valorizar corre de verdad, y GuardarProceso falla justo despues.
+	repoQueFalla.fallar = true
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err == nil {
+		t.Fatal("se esperaba el fallo simulado de GuardarProceso")
+	}
+
+	if _, err := s.ResultadoPorProceso(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("resultados_proceso quedo con una fila huerfana tras el rollback: %v", err)
+	}
+	p, err := s.ProcesoPorID(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("leer proceso: %v", err)
+	}
+	if p.Etapa != reparto.EtapaDeducciones {
+		t.Fatalf("etapa = %q, se esperaba que el fallo dejara el proceso donde estaba (deducciones)", p.Etapa)
+	}
+
+	// El reintento -- el mismo AvanzarEtapa, ahora con GuardarProceso sin
+	// fallar -- tiene que valorizar y guardar limpio, no reventar con
+	// "duplicate key value violates unique constraint resultados_proceso_pkey".
+	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("el reintento de avanzar a importe_obra fallo: %v", err)
+	}
+	if p.Etapa != reparto.EtapaImporteObra {
+		t.Fatalf("etapa = %q, se esperaba importe_obra tras el reintento", p.Etapa)
+	}
+	resultado, err := s.ResultadoPorProceso(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("leer el resultado tras el reintento: %v", err)
+	}
+	if len(resultado.Titulares) != 1 || resultado.Titulares[0].Importe.IsZero() {
+		t.Fatalf("resultado tras el reintento = %+v, se esperaba una linea de titular con importe", resultado)
 	}
 }
