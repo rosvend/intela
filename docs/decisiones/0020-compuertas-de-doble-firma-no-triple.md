@@ -68,5 +68,4 @@ una brecha de cumplimiento conocida, no un bug oculto.
 modelar `RD 13.6.3` (documentacion, distribucion y contabilidad para pagos a
 sociedades extranjeras, que hoy no tiene ni etapa en el esquema)- son
 trabajo pendiente, coordinado con quien termine #104 para no volver a
-divergir del contrato que el frontend consume. Sin issue de seguimiento
-todavia; se abre antes de retomar este trabajo.
+divergir del contrato que el frontend consume. Issue de seguimiento: #160.
