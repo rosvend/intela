@@ -616,6 +616,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/procesos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar los procesos
+         * @description El panel de corridas: etapa, circuito, periodo y firmas de cada
+         *     proceso. Sin procesos devuelve una lista vacia, no un 404.
+         */
+        get: operations["listarProcesos"];
+        put?: never;
+        /**
+         * Abrir una corrida
+         * @description Congela el snapshot de parametros normativos vigente a la fecha del
+         *     periodo (`ADR 0004`) y abre el proceso en `recaudo`, revision 1.
+         *
+         *     Idempotente por `id`, pero solo cuando `periodo`/`circuito`/`bolsa_id`
+         *     son LOS MISMOS que abrieron esa corrida: reabrir con esos tres datos
+         *     sin cambiar devuelve el proceso que ya hay, sin tocarlo. Es lo que
+         *     hace seguro reintentar -un trabajo de `TrabajoEjecutarReparto` que se
+         *     retoma no reinicia una corrida que un humano ya avanzo-. Un `id` que
+         *     colisiona con un proceso de OTROS datos es 409, no una devolucion en
+         *     silencio: el cliente no podria distinguir "se creo" de "se devolvio
+         *     otra cosa con este mismo id".
+         *
+         *     El `circuito` y el `periodo` declarados tienen que coincidir con los
+         *     de la bolsa referenciada -si no, la corrida valorizaria con las
+         *     reglas de otro circuito, o contra los usos de otro periodo- y eso
+         *     tambien es 409.
+         *
+         *     `ADR 0019`: una corrida es una bolsa y un proceso. Un periodo con dos
+         *     canales abre dos procesos, uno por bolsa -ver
+         *     `AbrirCorridaDelPeriodo`, que es lo que el calendario dispara para
+         *     cada bolsa del periodo.
+         */
+        post: operations["abrirProceso"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/procesos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Leer un proceso
+         * @description Consulta de solo lectura: en que etapa esta una corrida, sin
+         *     avanzarla ni firmarla. Es la lectura que #69 (agente de staff)
+         *     necesitaba y que la issue original no traia.
+         */
+        get: operations["procesoPorID"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/procesos/{id}/avanzar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Avanzar el proceso a la siguiente etapa
+         * @description En una compuerta (`verificacion`, `pago_registro`) exige las firmas
+         *     de `distribucion` y `contabilidad` sobre la revision actual antes de
+         *     dejar pasar. Al entrar a `importe_obra` del circuito nacional invoca
+         *     el motor puro de valorizacion; el internacional nunca la alcanza
+         *     (`RD 7.4`).
+         */
+        post: operations["avanzarEtapaProceso"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/procesos/{id}/firmar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Firmar la compuerta actual
+         * @description Agrega la firma del actor autenticado a la compuerta actual del
+         *     proceso, sobre su revision vigente.
+         *
+         *     El rol con el que se firma es el de la SESION, nunca uno que elija el
+         *     cliente: si pudiera elegirse, un actor de `contabilidad` podria
+         *     firmar "como `distribucion`" y la doble firma de `RD 13.5` dejaria de
+         *     separar a dos personas. No hay cuerpo que mandar.
+         */
+        post: operations["firmarProceso"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/procesos/{id}/rechazar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rechazar la compuerta actual
+         * @description Retrocede el proceso una etapa -nunca a un estado terminal- y sube la
+         *     revision: las firmas de la revision anterior dejan de contar. Un
+         *     rechazo RETROCEDE, no aborta (`ADR 0008`).
+         */
+        post: operations["rechazarGateProceso"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reportes": {
         parameters: {
             query?: never;
@@ -1249,6 +1388,109 @@ export interface components {
              * @example FE-1024
              */
             factura?: string;
+        };
+        /**
+         * @description Una firma sobre una compuerta, sobre una revision concreta del
+         *     proceso. Sin `cuando`: el agregado de dominio no la guarda -el
+         *     dominio no importa `time` (`ADR 0002`)-, y la fecha exacta no es lo
+         *     que decide si la compuerta esta completa.
+         */
+        Firma: {
+            /**
+             * @example distribucion
+             * @enum {string}
+             */
+            rol: "distribucion" | "contabilidad";
+            /** @example usr-dist-1 */
+            actor_id: string;
+            /**
+             * @description Revision del proceso sobre la que se firmo. Un rechazo sube la
+             *     revision del proceso; las firmas de la anterior dejan de contar.
+             * @example 1
+             */
+            revision: number;
+        };
+        /**
+         * @description Una corrida de `RD 13.5`. Nacional e internacional son dos maquinas
+         *     de estado distintas (`ADR 0008`): el internacional no valoriza por
+         *     puntos (`RD 7.4`), asi que nunca pasa por `importe_obra` ni
+         *     `importe_titular`, y `fees_in_error` es solo suyo (`R-16`).
+         */
+        Proceso: {
+            /** @example proc-caracol-2026-01-1 */
+            id: string;
+            /**
+             * @example nacional
+             * @enum {string}
+             */
+            circuito: "nacional" | "internacional";
+            /**
+             * @description `verificacion` y `pago_registro` son compuertas: no se avanza sin
+             *     las firmas de `distribucion` y `contabilidad` sobre la revision
+             *     actual.
+             * @example verificacion
+             * @enum {string}
+             */
+            etapa: "recaudo" | "deducciones" | "importe_obra" | "importe_titular" | "liquidacion_parcial" | "verificacion" | "liquidacion_final" | "pago_registro" | "fees_in_error" | "auditoria";
+            /** @example 2026-01 */
+            periodo: string;
+            /**
+             * @description La bolsa de la que sale esta corrida. `ADR 0019`: una corrida es
+             *     una bolsa, asi que un periodo con dos canales abre dos procesos.
+             * @example bolsa-caracol-2026-01-nacional
+             */
+            bolsa_id: string;
+            /**
+             * @description El snapshot de parametros normativos congelado al abrir la
+             *     corrida (`ADR 0004`, `ADR 0005`). No se vuelve a resolver en un
+             *     reproceso.
+             * @example snap-2026-01-a1b2c3
+             */
+            snapshot_id: string;
+            /**
+             * @description Version del reglamento vigente al abrir la corrida.
+             * @example IX
+             */
+            reglamento?: string;
+            /**
+             * @description Sube en cada rechazo de compuerta, y tambien al pasar una:
+             *     `firmas` solo tiene clave (`proceso_id`, `rol`, `revision`), sin
+             *     etapa, asi que las firmas de una compuerta no bastan tambien para
+             *     la siguiente.
+             * @example 1
+             */
+            revision: number;
+            firmas?: components["schemas"]["Firma"][];
+            /**
+             * @description Motivo del ultimo rechazo, si lo hay.
+             * @example faltan soportes de la liquidacion parcial
+             */
+            rechazo_motivo?: string;
+        };
+        AbrirProceso: {
+            /**
+             * @description Lo trae el cliente, igual que el de una bolsa. Reabrir un proceso
+             *     con el mismo id devuelve el que ya existe, sin tocarlo.
+             * @example proc-caracol-2026-01-1
+             */
+            id: string;
+            /** @example 2026-01 */
+            periodo: string;
+            /**
+             * @example nacional
+             * @enum {string}
+             */
+            circuito: "nacional" | "internacional";
+            /** @example bolsa-caracol-2026-01-nacional */
+            bolsa_id: string;
+        };
+        RechazarProceso: {
+            /**
+             * @description Por que se rechaza la compuerta. Un rechazo sin motivo no es
+             *     explicable ante una auditoria (`RD 16`).
+             * @example faltan soportes de la liquidacion parcial
+             */
+            motivo: string;
         };
         Error: {
             /**
@@ -3620,6 +3862,463 @@ export interface operations {
                      *       "error": "esa bolsa no existe"
                      *     }
                      */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listarProcesos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Los procesos. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"][];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    abrirProceso: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "id": "proc-caracol-2026-01-1",
+                 *       "periodo": "2026-01",
+                 *       "circuito": "nacional",
+                 *       "bolsa_id": "bolsa-caracol-2026-01-nacional"
+                 *     }
+                 */
+                "application/json": components["schemas"]["AbrirProceso"];
+            };
+        };
+        responses: {
+            /** @description El proceso, recien abierto (o el que ya existia con ese id). */
+            201: {
+                headers: {
+                    /** @example /procesos/proc-caracol-2026-01-1 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"];
+                };
+            };
+            /** @description El cuerpo no es un proceso valido. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description El `id` ya existe con otro `periodo`/`circuito`/`bolsa_id`, o el
+             *     `circuito`/`periodo` declarados no coinciden con los de la bolsa
+             *     referenciada.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    procesoPorID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example proc-caracol-2026-01-1 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description El proceso. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ningun proceso con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "ese proceso no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    avanzarEtapaProceso: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example proc-caracol-2026-01-1 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description El proceso, en su nueva etapa. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ningun proceso con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "ese proceso no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description El estado del proceso no permite avanzar -por ejemplo, una
+             *     compuerta sin las dos firmas de la revision actual, o una etapa
+             *     terminal. El cuerpo de la peticion era correcto; lo que no cuadra
+             *     es el estado contra `RD 13.5`.
+             *
+             *     Tambien 409 si otra transicion escribio la fila entre que este
+             *     request la leyo y la escribio (control de concurrencia
+             *     optimista): releer el proceso y reintentar resuelve esto.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    firmarProceso: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example proc-caracol-2026-01-1 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description El proceso, con la firma agregada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ningun proceso con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "ese proceso no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description La etapa actual no tiene compuerta, el rol de la sesion ya firmo
+             *     esta revision, o el actor ya cubre el otro rol. Firmar no toca la
+             *     revision de `procesos` -solo agrega una fila a `firmas`-, asi que
+             *     esta ruta no tiene el conflicto de concurrencia de avanzar o
+             *     rechazar.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rechazarGateProceso: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example proc-caracol-2026-01-1 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "motivo": "faltan soportes de la liquidacion parcial"
+                 *     }
+                 */
+                "application/json": components["schemas"]["RechazarProceso"];
+            };
+        };
+        responses: {
+            /** @description El proceso, retrocedido una etapa. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proceso"];
+                };
+            };
+            /** @description Falta el motivo del rechazo. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ningun proceso con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "ese proceso no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description La etapa actual no tiene compuerta que rechazar, o otra
+             *     transicion escribio la fila entre que este request la leyo y la
+             *     escribio (control de concurrencia optimista): releer el proceso
+             *     y reintentar resuelve esto ultimo.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["Error"];
                 };
             };

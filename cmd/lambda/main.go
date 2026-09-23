@@ -186,6 +186,19 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
+	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
+	// cablear aqui abajo.
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+	}
+
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
 	//
 	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
@@ -203,6 +216,7 @@ func construir() (http.Handler, error) {
 		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
+		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),

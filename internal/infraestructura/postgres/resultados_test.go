@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -125,5 +126,33 @@ func TestResultadosPorProcesoSinCorridaEsNoEncontrado(t *testing.T) {
 	}
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("error = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+// TestGuardarResultadoParticipaEnLaUnidadAmbiente reproduce el hallazgo de
+// revision de #159: GuardarResultado usaba s.EnTransaccion, que SIEMPRE abre
+// una transaccion nueva contra el pool sin mirar ctx. Envuelto en un
+// aplicacion.Procesos.AvanzarEtapa que ata valorizar+GuardarProceso a una
+// UnidadDeTrabajo, el resultado quedaba committeado de todos modos aunque el
+// resto de la unidad revirtiera -- exactamente el bug que ese commit decia
+// haber corregido.
+func TestGuardarResultadoParticipaEnLaUnidadAmbiente(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+	r := resultadoDeCorridaBase()
+	fallo := errors.New("el caso de uso de fuera se arrepintio")
+
+	err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := s.GuardarResultado(ctx, "proceso-1", r); err != nil {
+			return err
+		}
+		return fallo
+	})
+	if !errors.Is(err, fallo) {
+		t.Fatalf("se esperaba el error de fuera, se obtuvo %v", err)
+	}
+
+	if _, err := s.ResultadoPorProceso(ctx, "proceso-1"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("el resultado sobrevivio al rollback de la unidad de fuera: %v", err)
 	}
 }

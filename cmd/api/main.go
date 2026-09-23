@@ -156,6 +156,19 @@ func ejecutar(log *slog.Logger) error {
 		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 
+	// El flujo de aprobaciones de RD 13.5 (#34). Seis puertos, un solo
+	// *Store: es el mismo patron que declaraciones/recaudo de mas arriba,
+	// aplicado a un agregado con mas costuras.
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+	}
+
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
@@ -165,6 +178,7 @@ func ejecutar(log *slog.Logger) error {
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
+		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
