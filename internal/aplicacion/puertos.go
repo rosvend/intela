@@ -773,6 +773,17 @@ type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
 	AsientoPorID(ctx context.Context, id string) (Asiento, error)
+
+	// Listar devuelve una pagina de asientos en orden de timeline: lo mas
+	// reciente primero (`cuando DESC, id DESC`). Es lo que lee el Portal de
+	// Auditoria; el orden de cadena -el que necesita ExplicarCifra para
+	// reconstruir- lo da [BitacoraAuditoria.De], no este metodo.
+	//
+	// Sin filtros de servidor, a proposito: los filtros de la vista (tipo,
+	// fecha, actor) se aplican en el cliente sobre la pagina. El dia que la
+	// bitacora tenga volumen para que eso no baste, los filtros entran aqui
+	// como un struct, no como mas metodos.
+	Listar(ctx context.Context, pag Paginacion) ([]Asiento, error)
 }
 
 // UnidadDeTrabajo es el limite de transaccion cuando un caso de uso escribe
