@@ -1,6 +1,30 @@
 package liquidacion
 
-import "github.com/shopspring/decimal"
+import (
+	"slices"
+
+	"github.com/shopspring/decimal"
+)
+
+// ResiduoProrrateo es lo que de cada concepto de deduccion NO quedo asignado
+// a ninguna orden tras redondear a dos decimales (ADR 0005).
+//
+// Es exactamente `concepto - suma(asignado)`. Incluye el residuo puro de
+// redondeo y, cuando hay RETENIDO, la parte de las deducciones que
+// corresponderia al neto no distribuido: esa parte no se reparte a los
+// pagados (ver [Prorratear]), y sin este campo desapareceria sin rastro.
+//
+// Quien liquida lo registra: no se absorbe en la ultima orden ni se pierde.
+type ResiduoProrrateo struct {
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+}
+
+// Total es la suma de los tres conceptos no asignados.
+func (r ResiduoProrrateo) Total() decimal.Decimal {
+	return r.Admin.Add(r.Social).Add(r.Reserva)
+}
 
 // Prorratear reparte las deducciones de la corrida entre los titulares, en
 // proporcion a lo que cada uno se lleva.
@@ -27,20 +51,61 @@ import "github.com/shopspring/decimal"
 //
 // # Lo que devuelve
 //
-// Los tres conceptos que RD 13.2 obliga a itemizar, en orden fijo. Una lista
-// VACIA -- nunca nil -- cuando no hay nada que prorratear: netoProc en cero o
-// negativo (una corrida que no dejo nada) o un titular con neto cero. Redondea
-// a dos decimales, que es la escala de `ordenes_pago`; el residuo de redondeo
-// se queda en la corrida y no se reparte, igual que en reparto/redondeo.go.
-func Prorratear(netoTitular, admin, social, reserva, netoProc decimal.Decimal) []Deduccion {
-	if netoProc.LessThanOrEqual(decimal.Zero) || netoTitular.IsZero() {
-		return []Deduccion{}
+// Por cada titular, los tres conceptos que RD 13.2 obliga a itemizar, en
+// orden fijo. Una lista VACIA -- nunca nil -- cuando no hay nada que
+// prorratear para ese titular: netoProc en cero o negativo, o neto del
+// titular en cero.
+//
+// Redondea a dos decimales (escala de `ordenes_pago`). El residuo es
+// explicito, igual que en `reparto/redondeo.go` (ADR 0005): no se absorbe en
+// la ultima linea ni se descarta. Quien llama lo registra.
+//
+// Recorre los titulares en orden lexicografico para que el mismo input
+// produzca el mismo residuo bit a bit (ADR 0005).
+func Prorratear(
+	netos map[string]decimal.Decimal,
+	admin, social, reserva, netoProc decimal.Decimal,
+) (map[string][]Deduccion, ResiduoProrrateo) {
+	out := make(map[string][]Deduccion, len(netos))
+	claves := make([]string, 0, len(netos))
+	for id := range netos {
+		claves = append(claves, id)
 	}
-	prop := netoTitular.Div(netoProc)
-	return []Deduccion{
-		{Concepto: ConceptoAdministracion, Monto: admin.Mul(prop).Round(2)},
-		{Concepto: ConceptoSocial, Monto: social.Mul(prop).Round(2)},
-		{Concepto: ConceptoReserva, Monto: reserva.Mul(prop).Round(2)},
+	slices.Sort(claves)
+
+	if netoProc.LessThanOrEqual(decimal.Zero) {
+		for _, id := range claves {
+			out[id] = []Deduccion{}
+		}
+		// Nada se asigno: el residuo es el total de cada concepto.
+		return out, ResiduoProrrateo{Admin: admin, Social: social, Reserva: reserva}
+	}
+
+	adminAsig := decimal.Zero
+	socialAsig := decimal.Zero
+	reservaAsig := decimal.Zero
+	for _, id := range claves {
+		neto := netos[id]
+		if neto.IsZero() {
+			out[id] = []Deduccion{}
+			continue
+		}
+		a := admin.Mul(neto).Div(netoProc).Round(2)
+		s := social.Mul(neto).Div(netoProc).Round(2)
+		r := reserva.Mul(neto).Div(netoProc).Round(2)
+		out[id] = []Deduccion{
+			{Concepto: ConceptoAdministracion, Monto: a},
+			{Concepto: ConceptoSocial, Monto: s},
+			{Concepto: ConceptoReserva, Monto: r},
+		}
+		adminAsig = adminAsig.Add(a)
+		socialAsig = socialAsig.Add(s)
+		reservaAsig = reservaAsig.Add(r)
+	}
+	return out, ResiduoProrrateo{
+		Admin:   admin.Sub(adminAsig),
+		Social:  social.Sub(socialAsig),
+		Reserva: reserva.Sub(reservaAsig),
 	}
 }
 

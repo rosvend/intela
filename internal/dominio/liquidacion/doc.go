@@ -8,6 +8,8 @@
 // llega el neto POR TITULAR, y de la corrida el bruto y las tres deducciones;
 // bruto y desglose de cada orden se reconstruyen de ahi con [Prorratear], asi
 // que no hay dos cifras que puedan discrepar y entre las que haya que elegir.
+// El residuo de redondeo del prorrateo es explicito ([ResiduoProrrateo],
+// ADR 0005) y quien liquida lo registra en el asiento de emision.
 // Por eso este paquete no importa recaudo (la bolsa ya se resolvio) ni
 // identificacion (las obras ya estan identificadas).
 //

@@ -95,6 +95,15 @@ type Liquidaciones struct {
 
 // GenerarLiquidacion emite las ordenes de pago de un periodo y circuito.
 //
+// # Quien la invoca en produccion
+//
+// Este PR (#36) NO expone un POST HTTP: el contrato de la issue son las
+// lecturas (`GET /liquidaciones`, `GET /mis-liquidaciones`). El motor queda
+// cableado en `cmd/api` y `cmd/lambda` listo para que el orquestador de
+// corridas (#34 / ProcesoDeReparto) lo dispare al cerrar la compuerta del
+// RD 13.5. Sin ese disparador, `ordenes_pago` solo se poblaria desde tests o
+// una llamada directa al caso de uso — es deliberado, no un olvido.
+//
 // # Una orden por (titular, periodo, circuito), no por corrida
 //
 // Es el ADR 0019 (ver tambien la nota de [liquidacion.OrdenDePago]): un
@@ -292,13 +301,17 @@ func (l Liquidaciones) emitir(
 	}
 	slices.Sort(titulares)
 
+	deduccionesPorTitular, residuoProrrateo := liquidacion.Prorratear(
+		ag.PorTitular, ag.Admin, ag.Social, ag.Reserva, netoProc,
+	)
+
 	nuevas := make([]liquidacion.OrdenDePago, 0, len(titulares))
 	acuses := make(map[string]string, len(titulares))
 	acumuladas := make([]liquidacion.OrdenDePago, 0)
 
 	for _, titularID := range titulares {
 		neto := ag.PorTitular[titularID]
-		deducciones := liquidacion.Prorratear(neto, ag.Admin, ag.Social, ag.Reserva, netoProc)
+		deducciones := deduccionesPorTitular[titularID]
 		bruto := neto
 		for _, d := range deducciones {
 			bruto = bruto.Add(d.Monto)
@@ -360,8 +373,9 @@ func (l Liquidaciones) emitir(
 	if err := l.Ordenes.EmitirOrdenes(ctx, nuevas); err != nil {
 		return fmt.Errorf("emitir las ordenes de %s: %w", meta.donde(), err)
 	}
+	residuoAsentado := residuoAsentadoDe(residuoProrrateo)
 	for _, o := range nuevas {
-		if err := l.asentar(ctx, HechoLiquidacionEmitida, o, "", acuses[o.ID]); err != nil {
+		if err := l.asentar(ctx, HechoLiquidacionEmitida, o, "", acuses[o.ID], residuoAsentado); err != nil {
 			return err
 		}
 	}
@@ -374,7 +388,7 @@ func (l Liquidaciones) emitir(
 		return fmt.Errorf("cerrar las diferidas arrastradas a %s: %w", meta.donde(), err)
 	}
 	for _, o := range aplicadas {
-		if err := l.asentar(ctx, HechoLiquidacionAcumulada, o, liquidacion.EstadoDiferida, ""); err != nil {
+		if err := l.asentar(ctx, HechoLiquidacionAcumulada, o, liquidacion.EstadoDiferida, "", nil); err != nil {
 			return err
 		}
 	}
@@ -448,7 +462,7 @@ func (l Liquidaciones) conPlazoYDocumentos(ctx context.Context, ordenes []liquid
 			return fmt.Errorf("persistir transicion de silencio: %w", err)
 		}
 		for _, o := range aplicadas {
-			if err := l.asentar(ctx, hechoDeSilencio(o.Estado), o, liquidacion.EstadoEnviada, ""); err != nil {
+			if err := l.asentar(ctx, hechoDeSilencio(o.Estado), o, liquidacion.EstadoEnviada, "", nil); err != nil {
 				return err
 			}
 		}
@@ -510,11 +524,14 @@ func (l Liquidaciones) umbralVigente(ctx context.Context, ahora time.Time) (deci
 //
 // Sin [exigirActor]: estos hechos los produce el sistema, no una persona. Ver
 // [actorSistema].
+//
+// residuo solo viaja en la emision: es el centavaje de [liquidacion.Prorratear]
+// que no quedo en ninguna orden (ADR 0005). En las demas transiciones va nil.
 func (l Liquidaciones) asentar(
 	ctx context.Context, hecho string, o liquidacion.OrdenDePago,
-	anterior liquidacion.Estado, acuse string,
+	anterior liquidacion.Estado, acuse string, residuo *ResiduoProrrateoAsentado,
 ) error {
-	payload, err := json.Marshal(asientoDeOrden(o, anterior, acuse))
+	payload, err := json.Marshal(asientoDeOrden(o, anterior, acuse, residuo))
 	if err != nil {
 		return fmt.Errorf("serializar el asiento de la orden %q: %w", o.ID, err)
 	}
@@ -695,6 +712,20 @@ type AsientoOrden struct {
 	// plazo de R-10: `enviada` es un dia civil, y sin acuse no hay nada que
 	// respalde que ese dia salio algo.
 	Acuse string `json:"acuse,omitempty"`
+
+	// ResiduoProrrateo es el centavaje de cada deduccion que el redondeo no
+	// asigno a ninguna orden (ADR 0005). Viaja en los asientos de emision del
+	// lote — el mismo valor en cada uno — para que no desaparezca sin rastro.
+	// Nil en las demas transiciones.
+	ResiduoProrrateo *ResiduoProrrateoAsentado `json:"residuo_prorrateo,omitempty"`
+}
+
+// ResiduoProrrateoAsentado es [liquidacion.ResiduoProrrateo] en el libro:
+// montos como cadena (ADR 0010).
+type ResiduoProrrateoAsentado struct {
+	Admin   string `json:"admin"`
+	Social  string `json:"social"`
+	Reserva string `json:"reserva"`
 }
 
 // DeduccionAsentada es un renglon del desglose en el libro.
@@ -703,7 +734,18 @@ type DeduccionAsentada struct {
 	Monto    string `json:"monto"`
 }
 
-func asientoDeOrden(o liquidacion.OrdenDePago, anterior liquidacion.Estado, acuse string) AsientoOrden {
+func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) *ResiduoProrrateoAsentado {
+	return &ResiduoProrrateoAsentado{
+		Admin:   r.Admin.StringFixed(2),
+		Social:  r.Social.StringFixed(2),
+		Reserva: r.Reserva.StringFixed(2),
+	}
+}
+
+func asientoDeOrden(
+	o liquidacion.OrdenDePago, anterior liquidacion.Estado, acuse string,
+	residuo *ResiduoProrrateoAsentado,
+) AsientoOrden {
 	deducciones := make([]DeduccionAsentada, 0, len(o.Deducciones))
 	for _, d := range o.Deducciones {
 		deducciones = append(deducciones, DeduccionAsentada{
@@ -712,18 +754,19 @@ func asientoDeOrden(o liquidacion.OrdenDePago, anterior liquidacion.Estado, acus
 		})
 	}
 	return AsientoOrden{
-		Periodo:        o.Periodo,
-		Circuito:       o.Circuito,
-		Procesos:       o.Procesos,
-		TitularID:      o.TitularID,
-		Bruto:          o.Bruto.StringFixed(2),
-		Deducciones:    deducciones,
-		Neto:           o.Neto.StringFixed(2),
-		Estado:         string(o.Estado),
-		EstadoAnterior: string(anterior),
-		Enviada:        o.EnviadaDia,
-		Arrastres:      o.Arrastres,
-		Acuse:          acuse,
+		Periodo:          o.Periodo,
+		Circuito:         o.Circuito,
+		Procesos:         o.Procesos,
+		TitularID:        o.TitularID,
+		Bruto:            o.Bruto.StringFixed(2),
+		Deducciones:      deducciones,
+		Neto:             o.Neto.StringFixed(2),
+		Estado:           string(o.Estado),
+		EstadoAnterior:   string(anterior),
+		Enviada:          o.EnviadaDia,
+		Arrastres:        o.Arrastres,
+		Acuse:            acuse,
+		ResiduoProrrateo: residuo,
 	}
 }
 
