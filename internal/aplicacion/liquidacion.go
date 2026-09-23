@@ -111,7 +111,7 @@ func pesosConCubetaResidual(netos []decimal.Decimal, netoProc decimal.Decimal) (
 		suma = suma.Add(n)
 	}
 	if suma.GreaterThan(netoProc) {
-		return nil, fmt.Errorf("Σ netos titulares %s > neto del proceso %s", suma, netoProc)
+		return nil, fmt.Errorf("suma de netos titulares %s > neto del proceso %s", suma, netoProc)
 	}
 	pesos := make([]decimal.Decimal, len(netos), len(netos)+1)
 	copy(pesos, netos)
