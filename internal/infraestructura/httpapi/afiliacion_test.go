@@ -334,3 +334,98 @@ func TestErrorCuerpoAfiliacionDistingueTamanoDeMultipart(t *testing.T) {
 		t.Fatalf("el 400 tiene que pedir multipart: %q", msg)
 	}
 }
+
+func TestLasRutasDeAfiliacionSon503SiElBinarioNoCableaLaAdmision(t *testing.T) {
+	// cmd/lambda arranca asi a proposito: sin adaptador S3 no hay boveda
+	// durable para RUT/certificacion bancaria. Sin conAdmision seria 404
+	// (ruta no registrada) o 500 (nil pointer).
+	auth := &autenticacionFalsa{
+		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
+	}
+	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/afiliaciones", nil)
+	req.RemoteAddr = "203.0.113.50:1"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST alta: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+
+	if rec := pedir(t, h, http.MethodPatch, "/afiliaciones/afil-1/ipi", `{"ipi":"IPI-1"}`, ""); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("PATCH ipi: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if rec := pedir(t, h, http.MethodPost, "/afiliaciones/afil-1/aprobar", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST aprobar: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if rec := pedir(t, h, http.MethodPost, "/afiliaciones/afil-1/rechazar", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST rechazar: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSolicitarAfiliacionAceptaTresDocumentosDe5MiB(t *testing.T) {
+	// R-28: RUT + certificacion + renuncia, cada uno hasta 5 MiB. El tope
+	// del cuerpo (18 MiB) tiene que caberlos; bajarlo a 12 MiB rompe este caso.
+	adm := &admisionFalsa{vista: aplicacion.AfiliacionVista{
+		ID: "afil-pesada", Estado: "pendiente", Subtipo: "socio",
+	}}
+	h := servidorAdmision(t, &autenticacionFalsa{}, adm)
+
+	cincoMiB := bytes.Repeat([]byte("x"), maxArchivoAfiliacion)
+	cuerpo, ctype := multipartSolicitud(t, map[string]string{
+		"nombre": "Ana", "email": "ana@redes.co", "documento_identidad": "1",
+		"subtipo": "socio", "clave": "secret12",
+		"pertenece_otra_sgc": "true",
+	}, map[string][]byte{
+		"rut":                    cincoMiB,
+		"certificacion_bancaria": cincoMiB,
+		"renuncia":               cincoMiB,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/afiliaciones", cuerpo)
+	req.Header.Set("Content-Type", ctype)
+	req.RemoteAddr = "203.0.113.60:1"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if len(adm.recibida.RUT) != maxArchivoAfiliacion {
+		t.Fatalf("RUT = %d bytes", len(adm.recibida.RUT))
+	}
+	if len(adm.recibida.CertBancaria) != maxArchivoAfiliacion {
+		t.Fatalf("cert = %d bytes", len(adm.recibida.CertBancaria))
+	}
+	if len(adm.recibida.Renuncia) != maxArchivoAfiliacion {
+		t.Fatalf("renuncia = %d bytes", len(adm.recibida.Renuncia))
+	}
+}
+
+func TestElAltaMontaElRateLimitPorIP(t *testing.T) {
+	// limite_test.go cubre el middleware aislado; esto cubre que server.go
+	// lo enganche en las rutas publicas. Sin alta.Use(limitarPorIP(...))
+	// las once peticiones pasarían al handler.
+	adm := &admisionFalsa{err: afiliacion.ErrDocumentosPago}
+	h := servidorAdmision(t, &autenticacionFalsa{}, adm)
+
+	pedirAlta := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/afiliaciones", strings.NewReader("no-es-multipart"))
+		req.Header.Set("Content-Type", "text/plain")
+		req.RemoteAddr = "203.0.113.70:1234"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	var vistos []int
+	for i := 0; i < 11; i++ {
+		vistos = append(vistos, pedirAlta())
+	}
+	if vistos[10] != http.StatusTooManyRequests {
+		t.Fatalf("la 11ª tenia que ser 429; got %v", vistos)
+	}
+	for i, c := range vistos[:10] {
+		if c == http.StatusTooManyRequests {
+			t.Fatalf("la peticion %d ya fue 429; el cupo es 10/min", i+1)
+		}
+	}
+}

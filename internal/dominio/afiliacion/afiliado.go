@@ -115,6 +115,11 @@ func (a Afiliado) Admitir(titularID string) (Afiliado, error) {
 // Solo desde pendiente: una vez admitido el IPI ya esta en el padron, y una
 // vez rechazado el aspirante tiene que volver a presentarse. El recorte va
 // aqui para que una cadena de espacios no pase por "ya lo complete".
+//
+// Si la solicitud pendiente ya tenia IPI, lo reemplaza. Es deliberado: el
+// aspirante aun no tiene sesion y el id es un token de 256 bits; permitir
+// corregir un typo antes de la admision evita que quede atrapado con un IPI
+// erroneo. No es un "completar una sola vez".
 func (a Afiliado) CompletarIPI(ipi string) (Afiliado, error) {
 	if a.Estado != EstadoPendiente {
 		return Afiliado{}, ErrEstadoInvalido

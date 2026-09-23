@@ -190,6 +190,21 @@ func TestCompletarIPISoloDesdePendiente(t *testing.T) {
 	}
 }
 
+func TestCompletarIPIReemplazaUnoYaInformadoMientrasPendiente(t *testing.T) {
+	t.Parallel()
+	a := solicitudValida()
+	if a.IPI == "" {
+		t.Fatal("la solicitud de prueba tiene que partir con IPI para probar el reemplazo")
+	}
+	got, err := a.CompletarIPI("IPI-corregido")
+	if err != nil {
+		t.Fatalf("CompletarIPI: %v", err)
+	}
+	if got.IPI != "IPI-corregido" {
+		t.Fatalf("IPI = %q, se esperaba el reemplazo", got.IPI)
+	}
+}
+
 func TestRechazarSoloDesdePendiente(t *testing.T) {
 	t.Parallel()
 	got, err := solicitudValida().Rechazar()

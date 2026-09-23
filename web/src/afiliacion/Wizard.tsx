@@ -469,7 +469,7 @@ function FormularioIPI({
     setEnviando(true);
     setError("");
     try {
-      const r = (await api(`/api/afiliaciones/${idSolicitud}/ipi`, {
+      const r = (await api(`/api/afiliaciones/${encodeURIComponent(idSolicitud)}/ipi`, {
         method: "PATCH",
         body: JSON.stringify({ ipi: ipi.trim() }),
         anonima: true,

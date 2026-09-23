@@ -76,11 +76,6 @@ const SUBRUTAS_AUDITORIA: readonly { path: string; element: ReactElement }[] = [
  * recarga la pagina entera y pierde el estado; y sin `try_files` en nginx
  * -que hasta ahora tampoco estaba- devuelve 404 directamente.
  *
- * Las rutas de `RUTAS` (Sprint 3-5) entran aqui como placeholder: la pantalla
- * real llega con su propio PR, y esta tabla es lo unico que ese PR toca para
- * pasar de <EnConstruccion> al componente de verdad (issue #19: "so the
- * feature screens are pure additions").
- *
  * /afiliacion va FUERA de RutaProtegida: el alta la rellena quien todavia no
  * es afiliado, igual que el POST /afiliaciones del backend va sin sesion.
  * Las rutas de `RUTAS` (Sprint 3-5) salen de `PANTALLAS`, o de

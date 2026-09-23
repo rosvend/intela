@@ -192,3 +192,37 @@ func TestSolicitudInexistenteEsNoEncontrado(t *testing.T) {
 		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
 }
+
+func TestActualizarPendienteNoPisaUnaAdmitida(t *testing.T) {
+	// El WHERE estado = 'pendiente' cierra la carrera con AdmitirSolicitud:
+	// sin el, CompletarIPI/Rechazar podrian escribir sobre una fila ya
+	// admitida y dejar el padron inconsistente.
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	a := solicitudDePrueba("afil-carrera")
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
+		t.Fatalf("GuardarSolicitud: %v", err)
+	}
+	admitida, err := a.Admitir("tit-carrera")
+	if err != nil {
+		t.Fatalf("Admitir: %v", err)
+	}
+	if err := s.AdmitirSolicitud(ctx, admitida); err != nil {
+		t.Fatalf("AdmitirSolicitud: %v", err)
+	}
+
+	a.IPI = "IPI-tarde"
+	if err := s.ActualizarPendiente(ctx, a); !errors.Is(err, afiliacion.ErrEstadoInvalido) {
+		t.Fatalf("se esperaba ErrEstadoInvalido, se obtuvo %v", err)
+	}
+	got, err := s.SolicitudPorID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("SolicitudPorID: %v", err)
+	}
+	if got.Estado != afiliacion.EstadoAdmitido {
+		t.Fatalf("Estado = %q, la carrera no debia cambiarlo", got.Estado)
+	}
+	if got.IPI == "IPI-tarde" {
+		t.Fatal("ActualizarPendiente piso el IPI de una solicitud ya admitida")
+	}
+}

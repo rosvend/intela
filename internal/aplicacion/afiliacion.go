@@ -124,6 +124,9 @@ func (s Admision) Solicitar(ctx context.Context, in SolicitudAfiliacion) (vista 
 // de la solicitud es un token opaco de 256 bits. Es el "despues" que el
 // asistente promete, y sin el una persona natural queda pendiente para
 // siempre porque Admitir exige IPI.
+//
+// Tambien reemplaza un IPI ya informado mientras la solicitud sigue
+// pendiente: ver [afiliacion.Afiliado.CompletarIPI].
 func (s Admision) CompletarIPI(ctx context.Context, id, ipi string) (AfiliacionVista, error) {
 	actual, err := s.Solicitudes.SolicitudPorID(ctx, id)
 	if err != nil {

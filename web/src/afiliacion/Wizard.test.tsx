@@ -158,9 +158,46 @@ describe("WizardAfiliacion", () => {
       expect(screen.getByText(/IPI informado/i).textContent).toMatch(/IPI-42/);
     });
 
-    const [, init] = vi.mocked(fetch).mock.calls[1];
+    const [url, init] = vi.mocked(fetch).mock.calls[1];
+    expect(url).toBe("/api/afiliaciones/afil-1/ipi");
     expect(init?.method).toBe("PATCH");
     expect(JSON.parse(String(init?.body))).toEqual({ ipi: "IPI-42" });
+  });
+
+  it("escapa la referencia manual al completar IPI", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: "afil/con espacios",
+          estado: "pendiente",
+          subtipo: "socio",
+          ipi: "IPI-9",
+          elegible_anticipo: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    render(<WizardAfiliacion />);
+    fireEvent.click(
+      screen.getByText(/Ya envié una solicitud y quiero completar el IPI/i),
+    );
+    fireEvent.change(screen.getByLabelText(/Referencia de la solicitud/i), {
+      target: { value: "afil/con espacios" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Continuar/i }));
+    fireEvent.change(screen.getByLabelText(/^IPI$/i), {
+      target: { value: "IPI-9" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar ipi/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.length).toBe(1);
+    });
+    const [url] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe(
+      `/api/afiliaciones/${encodeURIComponent("afil/con espacios")}/ipi`,
+    );
   });
 
   it("muestra la explicacion del servidor ante un 409 de exclusividad", async () => {
