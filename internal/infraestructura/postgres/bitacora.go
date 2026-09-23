@@ -96,3 +96,41 @@ func (s *Store) AsientoPorID(ctx context.Context, id string) (aplicacion.Asiento
 	}
 	return a, nil
 }
+
+// Listar devuelve una pagina de asientos en orden de timeline: lo mas
+// reciente primero. ORDER BY explicito por lo mismo que en [Store.De]:
+// reproducible (ADR 0005), con el id como desempate para los asientos que
+// comparten instante.
+//
+// `pag` sigue la misma convencion que el resto de listados: el repositorio
+// aplica el defecto, el adaptador HTTP rechaza lo ilegal.
+func (s *Store) Listar(ctx context.Context, pag aplicacion.Paginacion) ([]aplicacion.Asiento, error) {
+	pag = pag.ConDefecto()
+	// LIMIT NULL es "sin limite" en PostgreSQL: misma convencion que
+	// [Store.Historial] en declaraciones.go.
+	var limite *int
+	if pag.Limite != aplicacion.LimiteSinTope {
+		limite = &pag.Limite
+	}
+	filas, err := s.pool.Query(ctx,
+		`SELECT `+columnasAsiento+` FROM asientos
+		  ORDER BY cuando DESC, id DESC LIMIT $1 OFFSET $2`,
+		limite, pag.Desplazamiento)
+	if err != nil {
+		return nil, traducirError(err, "listar asientos")
+	}
+	defer filas.Close()
+
+	asientos := make([]aplicacion.Asiento, 0)
+	for filas.Next() {
+		var a aplicacion.Asiento
+		if err := filas.Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.Payload, &a.Cuando); err != nil {
+			return nil, traducirError(err, "escanear asientos")
+		}
+		asientos = append(asientos, a)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar asientos")
+	}
+	return asientos, nil
+}

@@ -8,6 +8,8 @@ import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import ListadoONI from "./pages/ListadoONI";
 import RutaProtegida from "./RutaProtegida";
+import Auditoria from "./auditoria/Auditoria";
+import HistoriaObra from "./auditoria/HistoriaObra";
 import Catalogo from "./catalogo/Catalogo";
 import DetalleObra from "./catalogo/DetalleObra";
 import EditorReparto from "./catalogo/EditorReparto";
@@ -24,6 +26,7 @@ import { RUTAS } from "./navegacion";
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
   "/catalogo": <Catalogo />,
+  "/auditoria": <Auditoria />,
 };
 
 /**
@@ -57,6 +60,16 @@ const SUBRUTAS_DEL_DETALLE: readonly { path: string; element: ReactElement }[] =
   ];
 
 /**
+ * La historia de una obra, anidada a mano y NO como entrada de `RUTAS`
+ * (D-007, igual que el detalle del catalogo): no es un modulo del mockup,
+ * es la vista de detalle de la auditoria. Se abre desde la linea de tiempo
+ * o desde el buscador de la pantalla.
+ */
+const SUBRUTAS_AUDITORIA: readonly { path: string; element: ReactElement }[] = [
+  { path: "/auditoria/obra/:id", element: <HistoriaObra /> },
+];
+
+/**
  * Shell del tablero.
  *
  * La navegacion usa <Link>/<NavLink>, no <a href>. Con <a href> cada clic
@@ -65,7 +78,8 @@ const SUBRUTAS_DEL_DETALLE: readonly { path: string; element: ReactElement }[] =
  *
  * Las rutas de `RUTAS` (Sprint 3-5) salen de `PANTALLAS`, o de
  * <EnConstruccion> mientras su pantalla no exista. Las tres sub-rutas del
- * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`.
+ * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`, y la historia de una obra
+ * en `SUBRUTAS_AUDITORIA`.
  *
  * `/publico/oni` queda FUERA de `RutaProtegida`: R-18 es publicacion en la
  * web, no un informe interno. Montarla detras del login convertiria la
@@ -90,6 +104,13 @@ export default function App() {
             />
           ))}
           {SUBRUTAS_DEL_DETALLE.map((subruta) => (
+            <Route
+              key={subruta.path}
+              path={subruta.path}
+              element={subruta.element}
+            />
+          ))}
+          {SUBRUTAS_AUDITORIA.map((subruta) => (
             <Route
               key={subruta.path}
               path={subruta.path}
