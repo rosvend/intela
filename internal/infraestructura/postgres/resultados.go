@@ -15,7 +15,7 @@ var _ aplicacion.RepositorioResultados = (*Store)(nil)
 // GuardarResultado persiste una corrida completa en una transaccion. bruto se reconstruye para el CHECK deducciones_cuadran; NoDistribuido/PartesNoDistribuidas/PorGrupo no tienen columna todavia (hueco de esquema anterior a #121, fuera de su alcance).
 func (s *Store) GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error {
 	bruto := r.Neto.Add(r.Admin).Add(r.Social).Add(r.Reserva)
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO resultados_proceso
 			   (proceso_id, bruto, admin, social, reserva, neto, retenido, residuo, valor_punto, snapshot_id, reglamento)
@@ -61,7 +61,8 @@ func (s *Store) GuardarResultado(ctx context.Context, procesoID string, r repart
 // ResultadoPorProceso relee una corrida, ordenada de forma estable (ADR 0005).
 func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error) {
 	var r reparto.Resultado
-	err := s.pool.QueryRow(ctx,
+	ejecutor := s.ejecutorDe(ctx)
+	err := ejecutor.QueryRow(ctx,
 		`SELECT admin, social, reserva, neto, retenido, residuo, valor_punto, snapshot_id, reglamento
 		   FROM resultados_proceso WHERE proceso_id = $1`,
 		procesoID,
@@ -70,7 +71,7 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 		return reparto.Resultado{}, traducirError(err, "leer resultados_proceso de %q", procesoID)
 	}
 
-	obraFilas, err := s.pool.Query(ctx,
+	obraFilas, err := ejecutor.Query(ctx,
 		`SELECT obra_id, puntos, importe, retenida, motivo FROM resultados_obra
 		  WHERE proceso_id = $1 ORDER BY obra_id`, procesoID)
 	if err != nil {
@@ -88,7 +89,7 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 		return reparto.Resultado{}, traducirError(err, "leer resultados_obra de %q", procesoID)
 	}
 
-	titularFilas, err := s.pool.Query(ctx,
+	titularFilas, err := ejecutor.Query(ctx,
 		`SELECT obra_id, titular_id, ipi, porcentaje, importe FROM resultados_titular
 		  WHERE proceso_id = $1 ORDER BY obra_id, titular_id`, procesoID)
 	if err != nil {

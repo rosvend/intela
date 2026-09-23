@@ -67,7 +67,7 @@ func ejecutar(log *slog.Logger) error {
 		Cola:        store,
 		Reloj:       reloj.Sistema{},
 		Reintentos:  reintentos(),
-		Manejadores: manejadores(log),
+		Manejadores: manejadores(store, log),
 	}
 
 	intervalo := config.Duracion("WORKER_INTERVALO", 5*time.Second)
@@ -111,26 +111,44 @@ func reintentos() aplicacion.Reintentos {
 
 // manejadores es la tabla de despacho: un manejador por tipo de trabajo.
 //
-// # Los dos son stubs, a proposito
+// # TrabajoResolverUsos sigue siendo un stub, a proposito
 //
 // El mecanismo de cola -reclamo exclusivo, idempotencia, reintentos, apagado
-// limpio- es el alcance del issue #35. Los manejadores de verdad son otros
-// issues: la cascada de identificacion es #37 y el motor de reparto son #33 y
-// #34. Escribir aqui una version provisional de cualquiera de los dos seria
-// inventar logica de negocio que este PR no puede defender ante el reglamento.
+// limpio- es el alcance del issue #35. La cascada de identificacion es el
+// issue #37, todavia sin escribir. Un stub que devolviera nil seria peor que
+// no tenerlo: dejaria el trabajo en `hecho`, y la clave natural impide
+// volver a encolarlo. Por eso falla como ErrPermanente: la fila queda en
+// `fallido` con el numero del issue que lo va a implementar en `error`.
 //
-// Un stub que devolviera nil seria peor que no tenerlo: dejaria el trabajo en
-// `hecho`, y la clave natural impide volver a encolarlo. El periodo quedaria
-// marcado como repartido sin haberse repartido -que es exactamente el fallo
-// silencioso que la idempotencia existe para evitar, solo que al reves-. Por
-// eso fallan, y fallan como ErrPermanente: reintentar no va a hacer que
-// aparezca el manejador, y la fila queda en `fallido` con el numero del issue
-// que lo va a implementar escrito en la columna `error`.
-func manejadores(log *slog.Logger) map[aplicacion.TipoTrabajo]aplicacion.Manejador {
+// # TrabajoEjecutarReparto ya no lo es
+//
+// ABRE, no ejecuta (ADR 0008): AbrirCorridaDelPeriodo abre un
+// ProcesoDeReparto por bolsa del periodo y de ahi en adelante el proceso
+// avanza por firma humana o por AvanzarEtapa, nunca por este manejador.
+func manejadores(store *postgres.Store, log *slog.Logger) map[aplicacion.TipoTrabajo]aplicacion.Manejador {
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+	}
 	return map[aplicacion.TipoTrabajo]aplicacion.Manejador{
 		aplicacion.TrabajoResolverUsos:    pendiente("#37", log),
-		aplicacion.TrabajoEjecutarReparto: pendiente("#33 y #34", log),
+		aplicacion.TrabajoEjecutarReparto: ejecutarReparto(procesos),
 	}
+}
+
+// ejecutarReparto adapta [aplicacion.Procesos.AbrirCorridaDelPeriodo] al
+// puerto Manejador: la clave del trabajo ya trae periodo y corrida, y el
+// payload de TrabajoEjecutarReparto siempre es nil (lo encola
+// [aplicacion.Planificador.Disparar]).
+func ejecutarReparto(uc aplicacion.Procesos) aplicacion.Manejador {
+	return aplicacion.ManejadorFunc(func(ctx context.Context, t aplicacion.Trabajo) error {
+		return uc.AbrirCorridaDelPeriodo(ctx, t.Clave.Periodo, t.Clave.Corrida)
+	})
 }
 
 func pendiente(issues string, log *slog.Logger) aplicacion.Manejador {
