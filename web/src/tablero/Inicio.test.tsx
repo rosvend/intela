@@ -121,9 +121,7 @@ describe("Inicio — seleccion de tablero por rol", () => {
     expect(screen.getByText("Ana Escritora")).toBeTruthy();
     expect(screen.getByText("Mis obras")).toBeTruthy();
     expect(screen.getByText("Última liquidación")).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "Mis ingresos" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Mis ingresos" })).toBeTruthy();
     expect(
       await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" }),
     ).toBeTruthy();
