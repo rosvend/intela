@@ -149,15 +149,48 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Superficie de la bitacora
-         * @description Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
-         *     `administrador`. Los asientos aterrizan con el PR de bitacora;
-         *     hoy el grupo existe para que el rol se haga cumplir en un solo
-         *     sitio.
+         * Pagina de la bitacora
+         * @description Devuelve una pagina de asientos en orden de timeline: lo mas reciente
+         *     primero. Sin filtros de servidor, a proposito: los filtros de la vista
+         *     (tipo, fecha, actor) se aplican en el cliente sobre la pagina.
          *
-         *     Sin sesion responde 401. Con sesion de otro rol responde 403.
+         *     Solo lectura: no hay POST, PUT ni DELETE bajo `/auditoria/*`, y la
+         *     tabla ademas los rechaza por trigger (`asientos_inmutables`, ADR 0006).
+         *
+         *     Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
+         *     `administrador`. Sin sesion responde 401. Con sesion de otro rol
+         *     responde 403.
          */
         get: operations["auditoriaAsientos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auditoria/obra/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Historial de una obra
+         * @description Devuelve los asientos que referencian a una obra, en orden de cadena:
+         *     del mas antiguo al mas nuevo, que es el orden en que ocurrieron los
+         *     hechos y el que espera `ExplicarCifra` para reconstruir.
+         *
+         *     Una obra sin asientos devuelve una lista vacia, no un 404: "sin
+         *     hechos" no es "la obra no existe".
+         *
+         *     Solo lectura, igual que `/auditoria/asientos`. Sin sesion responde
+         *     401. Con sesion de otro rol que `auditor` o `administrador` responde
+         *     403.
+         */
+        get: operations["auditoriaHistorialDeObra"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1553,6 +1586,59 @@ export interface components {
             monto: string;
         };
         /**
+         * @description Un asiento de la bitacora (ADR 0006): quien hizo que, sobre que
+         *     referencia, cuando, y el detalle del hecho en `payload`. El payload
+         *     viaja tal cual lo guardo el modulo que asento -es su evidencia, no
+         *     una proyeccion-: `declaracion.guardada` trae version, estado y
+         *     partes; `recaudo.registrado` trae periodo, circuito, bruto, convenio,
+         *     tarifa y factura. Append-only: no hay escritura ni borrado que
+         *     documentar.
+         */
+        Asiento: {
+            /**
+             * @description Identificador opaco del asiento, asignado por la base.
+             * @example 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+             */
+            id: string;
+            /**
+             * @description Que ocurrio, en forma `modulo.evento` (`declaracion.guardada`,
+             *     `recaudo.registrado`, `matching.cascada`).
+             * @example declaracion.guardada
+             */
+            hecho: string;
+            /**
+             * @description Tipo de la referencia (`obra`, `bolsa`, `uso`).
+             * @example obra
+             */
+            ref_tipo: string;
+            /**
+             * @description Identificador de la referencia dentro de su tipo.
+             * @example obra-1
+             */
+            ref_id: string;
+            /**
+             * @description Quien actuo. Vacio cuando el hecho no tiene un usuario detras
+             *     (una corrida automatica).
+             * @example usr-admin
+             */
+            actor: string;
+            /**
+             * @description Detalle del hecho, tal cual lo guardo el modulo que asento:
+             *     cualquier JSON. `declaracion.guardada` trae version, estado y
+             *     partes; `recaudo.registrado` trae periodo, circuito, bruto,
+             *     convenio, tarifa y factura.
+             */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: date-time
+             * @description Instante del hecho.
+             * @example 2026-04-02T10:30:00Z
+             */
+            cuando: string;
+        };
+        /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
          *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
          *     y a las anomalias (OE-5 / #37): `tipo` dice de cual detector salio,
@@ -1911,19 +1997,154 @@ export interface operations {
     };
     auditoriaAsientos: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos asientos saltarse desde lo mas reciente. Cero o ausente
+                 *     es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Autorizado. Sin cuerpo; la superficie aun no tiene payload. */
-            204: {
+            /**
+             * @description Los asientos de la pagina, lo mas reciente primero. Bitacora
+             *     vacia devuelve una lista vacia, no un 404.
+             */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f",
+                     *         "hecho": "declaracion.guardada",
+                     *         "ref_tipo": "obra",
+                     *         "ref_id": "obra-1",
+                     *         "actor": "usr-admin",
+                     *         "payload": {
+                     *           "version": 2,
+                     *           "estado": "completa",
+                     *           "partes": [
+                     *             {
+                     *               "TitularID": "t1",
+                     *               "IPI": "IPI-00000001",
+                     *               "Porcentaje": 60
+                     *             }
+                     *           ]
+                     *         },
+                     *         "cuando": "2026-04-02T10:30:00Z"
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Asiento"][];
+                };
+            };
+            /** @description Un parametro de paginacion esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "limite tiene que ser un entero positivo"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    auditoriaHistorialDeObra: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identificador de la obra en el catalogo.
+                 * @example obra-1
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description Los asientos de la obra en orden de cadena. Sin asientos,
+             *     lista vacia.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f",
+                     *         "hecho": "declaracion.guardada",
+                     *         "ref_tipo": "obra",
+                     *         "ref_id": "obra-1",
+                     *         "actor": "usr-admin",
+                     *         "payload": {
+                     *           "version": 2,
+                     *           "estado": "completa",
+                     *           "partes": [
+                     *             {
+                     *               "TitularID": "t1",
+                     *               "IPI": "IPI-00000001",
+                     *               "Porcentaje": 60
+                     *             }
+                     *           ]
+                     *         },
+                     *         "cuando": "2026-04-02T10:30:00Z"
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Asiento"][];
+                };
             };
             /** @description Falta el token, o esta caducado o revocado. */
             401: {
