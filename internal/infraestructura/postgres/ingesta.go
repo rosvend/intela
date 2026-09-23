@@ -160,10 +160,10 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 	var filas pgx.Rows
 	var err error
 	if periodo == "" {
-		filas, err = s.pool.Query(ctx, proyeccion+`
+		filas, err = s.ejecutorDe(ctx).Query(ctx, proyeccion+`
 			 ORDER BY r.creado DESC, r.id LIMIT $1 OFFSET $2`, limite, pag.Desplazamiento)
 	} else {
-		filas, err = s.pool.Query(ctx, proyeccion+`
+		filas, err = s.ejecutorDe(ctx).Query(ctx, proyeccion+`
 			 WHERE r.periodo = $1
 			 ORDER BY r.creado DESC, r.id LIMIT $2 OFFSET $3`, periodo, limite, pag.Desplazamiento)
 	}

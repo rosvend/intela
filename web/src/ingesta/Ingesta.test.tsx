@@ -139,11 +139,15 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="" />);
     await screen.findByText("Cargas 1 a 100", {}, { timeout: 3000 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Adelante" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de cargas" }),
+    );
     await screen.findByText("No hay más cargas.");
     expect(pedido(1)).toBe("/api/reportes?limite=100&desplazamiento=100");
 
-    fireEvent.click(screen.getByRole("button", { name: "Atrás" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página anterior de cargas" }),
+    );
     await screen.findByText("Cargas 1 a 100");
     expect(pedido(2)).toBe("/api/reportes?limite=100&desplazamiento=0");
   });
@@ -156,10 +160,9 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="" />);
     await screen.findByText("Cargas 1 a 1");
 
-    expect(screen.getByRole("button", { name: "Adelante" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de cargas" }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("en la primera pagina el boton Atras esta deshabilitado", async () => {
@@ -170,10 +173,9 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="" />);
     await screen.findByText("Cargas 1 a 1");
 
-    expect(screen.getByRole("button", { name: "Atrás" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página anterior de cargas" }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("pide las cargas del periodo en la query", async () => {
@@ -447,14 +449,12 @@ describe("ListaCargas", () => {
     // que casualmente llegaron".
     expect(screen.getByText("Rechazos 1 a 3 de 3")).toBeTruthy();
     // En la ultima pagina no hay a donde seguir, y hacia atras no hay nada.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    expect(screen.getByRole("button", { name: "Anterior" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.getByRole("button", { name: "Página anterior de rechazos" }),
+    ).toHaveProperty("disabled", true);
     // La columna "Id" pinta el id entero, con sus 64 hex de huella: es la
     // unica vista que lo muestra a su ancho real (~70 caracteres).
     expect(within(log).getByText(rechazos[0].id)).toBeTruthy();
@@ -507,30 +507,34 @@ describe("ListaCargas", () => {
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=0`,
     );
     // Hay mas, asi que se puede seguir.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    );
     await screen.findByText("Rechazos 101 a 200 de 250");
     expect(pedido(2)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    );
     await screen.findByText("Rechazos 201 a 250 de 250");
     expect(pedido(3)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=200`,
     );
     // Ultima pagina: se apaga el siguiente y se puede volver.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", true);
     // Volver atras pide la pagina anterior otra vez: no hay cache.
     vi.mocked(fetch).mockResolvedValueOnce(json(pagina(100, 100)));
-    fireEvent.click(screen.getByRole("button", { name: "Anterior" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página anterior de rechazos" }),
+    );
     await screen.findByText("Rechazos 101 a 200 de 250");
     expect(pedido(4)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,

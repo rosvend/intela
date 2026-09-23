@@ -9,10 +9,14 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -465,6 +469,99 @@ func TestSubirReporteTruncadoConTemporalRotoSigueEn400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// Un ECONNRESET del cliente llega como *net.OpError → *os.SyscallError y NO
+// es incidente del servidor: TMPDIR/disco fallan como *os.PathError. Sin este
+// borde, cada subida abortada (red movil, pestana cerrada) contaba como 5xx
+// con log a Error -justo la alerta que #114 reservo para fallos del servidor-.
+func TestEsFalloTemporalSoloPathError(t *testing.T) {
+	pathErr := &os.PathError{Op: "open", Path: "/tmp/x", Err: syscall.ENOENT}
+	if !esFalloTemporal(pathErr) {
+		t.Error("PathError tenia que ser fallo temporal")
+	}
+	if !esFalloTemporal(fmt.Errorf("multipart: %w", pathErr)) {
+		t.Error("PathError envuelto tenia que ser fallo temporal")
+	}
+
+	reset := &net.OpError{
+		Op:  "read",
+		Net: "tcp",
+		Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET},
+	}
+	if esFalloTemporal(reset) {
+		t.Error("ECONNRESET del cliente no puede ser fallo temporal")
+	}
+	if esFalloTemporal(fmt.Errorf("multipart: %w", reset)) {
+		t.Error("ECONNRESET envuelto no puede ser fallo temporal")
+	}
+	if esFalloTemporal(&os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}) {
+		t.Error("SyscallError solo no puede ser fallo temporal")
+	}
+	if esFalloTemporal(syscall.ECONNRESET) {
+		t.Error("Errno solo no puede ser fallo temporal")
+	}
+}
+
+// El cliente corta la subida a mitad (SetLinger(0) → RST): el servidor no
+// debe tratarlo como fallo de temporal ni dejar log a Error de esa rama.
+func TestSubirReporteConClienteQueCortaNoDa500(t *testing.T) {
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	boundary := "----intela-borde"
+	var cuerpo bytes.Buffer
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"fuente\"\r\n\r\ncaracol\r\n")
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"periodo\"\r\n\r\n2026-01\r\n")
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"archivo\"; filename=\"corte.csv\"\r\n")
+	fmt.Fprintf(&cuerpo, "Content-Type: text/csv\r\n\r\n")
+	cuerpo.Write(bytes.Repeat([]byte("x"), 64<<10))
+	// Sin cerrar el multipart a proposito: el cliente aborta a mitad.
+
+	u, err := url.Parse(srv.URL + "/reportes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("conn = %T, se esperaba *net.TCPConn", conn)
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+
+	req := fmt.Sprintf(
+		"POST /reportes HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer tok\r\nContent-Type: multipart/form-data; boundary=%s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+		u.Host, boundary, cuerpo.Len()+64, // margen: el cliente no manda todo
+	)
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(cuerpo.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+
+	// Esperar a que el servidor procese el RST y escriba el log si lo hace.
+	time.Sleep(50 * time.Millisecond)
+
+	log := buf.String()
+	if strings.Contains(log, "fallo al recibir la entrega multipart") {
+		t.Errorf("un RST del cliente no puede dejar log a Error de temporal: %q", log)
+	}
+	if strings.Contains(strings.ToUpper(log), "ERROR") &&
+		strings.Contains(log, "connection reset") {
+		t.Errorf("un RST del cliente no puede ser Error: %q", log)
 	}
 }
 

@@ -129,6 +129,7 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
         <button
           type="button"
           className="tabla-cargas-boton"
+          aria-label="Página anterior de cargas"
           onClick={() =>
             setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
           }
@@ -225,6 +226,7 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página anterior de cargas"
             disabled={desplazamiento === 0}
             onClick={() =>
               setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
@@ -237,6 +239,7 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página siguiente de cargas"
             disabled={!hayMas}
             onClick={() =>
               setDesplazamiento(desplazamiento + LIMITE_POR_PAGINA)
@@ -315,6 +318,7 @@ function RechazosDeCarga({ id, total }: { id: string; total: number }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página anterior de rechazos"
             disabled={desplazamiento === 0}
             onClick={() =>
               setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
@@ -327,6 +331,7 @@ function RechazosDeCarga({ id, total }: { id: string; total: number }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página siguiente de rechazos"
             disabled={!hayMas}
             onClick={() =>
               setDesplazamiento(desplazamiento + LIMITE_POR_PAGINA)

@@ -4207,6 +4207,29 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /**
+             * @description Incidente del servidor al recibir o registrar la entrega: el
+             *     temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+             *     permiso o lleno), fallo la lectura del archivo ya recibido, o la
+             *     boveda ya tiene contenido distinto bajo esa huella (evidencia
+             *     corrupta). No es un conflicto que el cliente pueda resolver
+             *     reintentando con otro archivo: hay que avisar a operacion. El
+             *     detalle queda en el log a nivel Error; el cuerpo no filtra la
+             *     causa interna.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la boveda ya tiene contenido distinto bajo esa huella; avise a operacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description Esta instalacion no cablea la ingesta. */
             503: {
                 headers: {

@@ -1519,6 +1519,59 @@ func TestListarCargasFiltradaPagina(t *testing.T) {
 	}
 }
 
+// ListarCargas tiene que participar en Store.EnUnidad: lee por ejecutorDe, no
+// por el pool. Sin esto, una lectura dentro de la unidad no ve lo que la
+// unidad acaba de escribir (y con el pool agotado se interbloquea). El merge
+// que separo la consulta en dos ramas revirtio s.ejecutorDe a s.pool; esta
+// sonda es lo que evita que vuelva a pasar en silencio.
+func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	const (
+		idSonda  = "rep-sonda"
+		periodo  = "2026-03"
+		shaSonda = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	err := s.EnUnidad(t.Context(), func(ctx context.Context) error {
+		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
+			shaSonda, "reportes/"+shaSonda, 32); err != nil {
+			return err
+		}
+		cargas, err := s.ListarCargas(ctx, periodo, aplicacion.Paginacion{})
+		if err != nil {
+			t.Errorf("ListarCargas dentro de la unidad: %v", err)
+			return nil
+		}
+		if len(cargas) != 1 || cargas[0].ID != idSonda {
+			t.Errorf("ListarCargas no ve la carga escrita en la MISMA unidad: %d, se esperaba 1",
+				len(cargas))
+		}
+
+		// Desde otra conexion la fila no existe todavia: la unidad no confirmo.
+		var n int
+		if err := pool.QueryRow(t.Context(),
+			`SELECT count(*) FROM reportes WHERE id = $1`, idSonda).Scan(&n); err != nil {
+			t.Errorf("contar desde fuera: %v", err)
+			return nil
+		}
+		if n != 0 {
+			t.Errorf("ListarCargas confirmo la transaccion de la unidad por su cuenta")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("EnUnidad: %v", err)
+	}
+
+	fuera, err := s.ListarCargas(t.Context(), periodo, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas fuera de la unidad: %v", err)
+	}
+	if len(fuera) != 1 || fuera[0].ID != idSonda {
+		t.Fatalf("la unidad confirmo y la carga tenia que verse: %+v", fuera)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RechazosDeReporte: el log de rechazos de una carga
 // ---------------------------------------------------------------------------

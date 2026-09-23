@@ -2425,6 +2425,22 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: el archivo pasa de 32 MiB
+        "500":
+          description: |
+            Incidente del servidor al recibir o registrar la entrega: el
+            temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+            permiso o lleno), fallo la lectura del archivo ya recibido, o la
+            boveda ya tiene contenido distinto bajo esa huella (evidencia
+            corrupta). No es un conflicto que el cliente pueda resolver
+            reintentando con otro archivo: hay que avisar a operacion. El
+            detalle queda en el log a nivel Error; el cuerpo no filtra la
+            causa interna.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la boveda ya tiene contenido distinto bajo esa huella; avise a operacion
         "503":
           description: Esta instalacion no cablea la ingesta.
           content:

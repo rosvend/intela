@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -88,24 +87,21 @@ var leerCuerpoArchivo = io.ReadAll
 //
 // Con memoriaMaximaMultipart en 1 MiB, todo archivo mayor se derrama a un
 // temporal via os.CreateTemp: un TMPDIR roto, sin permiso o lleno (ENOENT,
-// EACCES, ENOSPC) vuelve como *os.PathError o *os.SyscallError envuelto en el
-// error del parseo. Eso es E/S del servidor, no peticion malformada, y se
-// responde 500 con log a Error.
+// EACCES, ENOSPC) vuelve como *os.PathError envuelto en el error del parseo.
+// Eso es E/S del servidor, no peticion malformada, y se responde 500 con log
+// a Error.
+//
+// Solo *os.PathError: un ECONNRESET del socket del cliente llega envuelto
+// como *net.OpError → *os.SyscallError (o syscall.Errno), y no es incidente
+// del servidor -el cliente ya corto la subida-. Contarlo como 5xx ensuciaria
+// la alerta que #114 reservo para fallos de TMPDIR/disco.
 //
 // Un cuerpo que no es multipart, sin boundary o truncado (ErrNotMultipart,
 // ErrMissingBoundary, io.ErrUnexpectedEOF) NO es os.PathError y sigue dando
 // 400. El tope se distingue antes, por *http.MaxBytesError, y da 413.
 func esFalloTemporal(err error) bool {
 	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		return true
-	}
-	var syscallErr *os.SyscallError
-	if errors.As(err, &syscallErr) {
-		return true
-	}
-	var errno syscall.Errno
-	return errors.As(err, &errno)
+	return errors.As(err, &pathErr)
 }
 
 // entregaJSON es el acuse que devuelve una subida.
