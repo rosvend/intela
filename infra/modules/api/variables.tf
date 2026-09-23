@@ -91,9 +91,3 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
-
-variable "wait_for" {
-  description = "Opaque token from the migration run. Sequences this function after goose without a module-level depends_on."
-  type        = string
-  default     = ""
-}

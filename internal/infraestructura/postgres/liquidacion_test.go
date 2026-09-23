@@ -215,10 +215,17 @@ func TestPorLineaLinajeCompleto(t *testing.T) {
 	if !x.Neto.Equal(decimal.RequireFromString("3600.00")) {
 		t.Fatalf("neto = %s", x.Neto)
 	}
-	// 3600/7500 * 10000 = 4800. El bruto del titular es proporcional, no
-	// la bolsa entera, y solo existe aqui.
+	// 3600 + prorrateo de admin/social/reserva = 4800. Bruto se reconstruye
+	// desde neto + deducciones ya redondeadas (liquidacion.Prorratear).
 	if !x.Bruto.Equal(decimal.RequireFromString("4800.00")) {
 		t.Fatalf("bruto = %s, se esperaba 4800.00", x.Bruto)
+	}
+	suma := x.Neto
+	for _, d := range x.Deducciones {
+		suma = suma.Add(d.Monto)
+	}
+	if !suma.Equal(x.Bruto) {
+		t.Fatalf("Bruto %s != Neto+ΣDeducciones %s", x.Bruto, suma)
 	}
 	if x.Corrida.ProcesoID != procEnero || x.Corrida.Periodo != "2026-01" {
 		t.Fatalf("corrida = %+v", x.Corrida)
@@ -249,5 +256,75 @@ func TestPorLineaNoEncontrada(t *testing.T) {
 	_, err := s.PorLinea(t.Context(), "proc-no", obraCompleta, titularAna)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+// Reproduce el bug de redondeo del prorrateo "bruto * factor" aislado:
+// con netoLinea=2500.01, Bruto - Σ Deducciones quedaba en 2500.02.
+// La identidad exige Bruto = Neto + Σ deducciones ya redondeadas.
+func TestPorLineaIdentidadCierraConCentavosReales(t *testing.T) {
+	s := sembrarCorridas(t)
+	ctx := t.Context()
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE resultados_titular
+		   SET importe = 2500.01
+		 WHERE proceso_id = $1 AND obra_id = $2 AND titular_id = $3`,
+		procEnero, obraCompleta, titularAna,
+	); err != nil {
+		t.Fatalf("forzar neto con centavos: %v", err)
+	}
+
+	x, err := s.PorLinea(ctx, procEnero, obraCompleta, titularAna)
+	if err != nil {
+		t.Fatalf("PorLinea: %v", err)
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("2500.01")) {
+		t.Fatalf("neto = %s", x.Neto)
+	}
+	suma := x.Neto
+	for _, d := range x.Deducciones {
+		suma = suma.Add(d.Monto)
+	}
+	if !suma.Equal(x.Bruto) {
+		t.Fatalf("bruto %s != neto+deducciones %s (explicar esta cifra no cuadra)", x.Bruto, suma)
+	}
+	if !x.Neto.Equal(x.Bruto.Sub(x.Deducciones[0].Monto).Sub(x.Deducciones[1].Monto).Sub(x.Deducciones[2].Monto)) {
+		t.Fatalf("Neto mostrado %s != Bruto - Σ Deducciones", x.Neto)
+	}
+}
+
+// Si la obra pondero por varias fuentes en el periodo, "explicar esta cifra"
+// tiene que listarlas todas — no quedarse con un solo reporte en silencio.
+func TestPorLineaListaTodasLasFuentesDelPeriodo(t *testing.T) {
+	s := sembrarCorridas(t)
+	ctx := t.Context()
+	const rptExtra = "rpt-netflix-2026-01"
+	shaExtra := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+		VALUES ($1, 'netflix', '2026-01', $2, 'obj/rpt-extra', 32)`,
+		rptExtra, shaExtra,
+	); err != nil {
+		t.Fatalf("insertar reporte extra: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra)
+		VALUES ('uso-extra', $1, 'netflix', 'La Casa de las Dos Palmas', $2, 'id_global', 'IDA', 0.50000, FALSE, 'ott', 'serie')`,
+		rptExtra, obraCompleta,
+	); err != nil {
+		t.Fatalf("insertar uso extra: %v", err)
+	}
+
+	x, err := s.PorLinea(ctx, procEnero, obraCompleta, titularAna)
+	if err != nil {
+		t.Fatalf("PorLinea: %v", err)
+	}
+	if x.Reporte.Fuente != "caracol, netflix" {
+		t.Fatalf("fuente = %q, se esperaban ambas", x.Reporte.Fuente)
+	}
+	// El reporte principal sigue siendo el de mayor puntaje (caracol = 1.0).
+	if x.Reporte.ID != rptCaracol {
+		t.Fatalf("reporte principal = %q, se esperaba %q", x.Reporte.ID, rptCaracol)
 	}
 }

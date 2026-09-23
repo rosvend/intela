@@ -2,16 +2,17 @@ package postgres
 
 import (
 	"context"
-	"errors"
+	"slices"
+	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 )
 
 var (
-	_ aplicacion.RepositorioLiquidacion = (*Store)(nil)
+	_ aplicacion.RepositorioIngresos    = (*Store)(nil)
 	_ aplicacion.RepositorioExplicacion = (*Store)(nil)
 )
 
@@ -88,6 +89,10 @@ func (s *Store) IngresosDe(ctx context.Context, titularID string, f aplicacion.F
 // PorLinea reconstruye el linaje de una cifra a partir de lo persistido:
 // la linea de titular, la corrida, el reporte que pondero, el match, el
 // snapshot y las deducciones. No recalcula el motor (ADR 0005): lee.
+//
+// El prorrateo bruto/deducciones es trabajo del dominio
+// ([liquidacion.Prorratear]): aqui solo se deshace la resta de la bolsa
+// sobre la linea del titular para mostrarla.
 func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID string) (aplicacion.Explicacion, error) {
 	var (
 		x          aplicacion.Explicacion
@@ -131,7 +136,14 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 	}
 	x.Ref = aplicacion.FormarRef(procesoID, obraID, titularID)
 	x.Split.TitularID = x.TitularID
-	x.Bruto, x.Deducciones = proporcional(x.Neto, bolsaBruto, admin, social, reserva, bolsaNeto)
+
+	linea := liquidacion.Prorratear(x.Neto, admin, social, reserva, bolsaNeto)
+	x.Bruto = linea.Bruto
+	if bolsaNeto.IsZero() {
+		x.Deducciones = []aplicacion.Deduccion{}
+	} else {
+		x.Deducciones = deduccionesDe(linea, admin, social, reserva, bolsaBruto)
+	}
 
 	if err := s.origenDeObra(ctx, &x, obraID); err != nil {
 		return aplicacion.Explicacion{}, err
@@ -139,49 +151,80 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 	return x, nil
 }
 
+// deduccionesDe arma el desglose para ExplicarCifra. Los porcentajes son
+// los de la bolsa (tasas normativas del proceso); los montos son los ya
+// redondeados de [liquidacion.Prorratear], para que Bruto - Σ = Neto.
+func deduccionesDe(
+	l liquidacion.Linea,
+	adminProc, socialProc, reservaProc, bolsaBruto decimal.Decimal,
+) []aplicacion.Deduccion {
+	cien := decimal.NewFromInt(100)
+	pct := func(parte decimal.Decimal) decimal.Decimal {
+		if bolsaBruto.IsZero() {
+			return decimal.Zero
+		}
+		return parte.Div(bolsaBruto).Mul(cien).Round(2)
+	}
+	return []aplicacion.Deduccion{
+		{Concepto: "gastos administrativos", Porcentaje: pct(adminProc), Monto: l.Admin},
+		{Concepto: "bienestar social", Porcentaje: pct(socialProc), Monto: l.Social},
+		{Concepto: "reserva", Porcentaje: pct(reservaProc), Monto: l.Reserva},
+	}
+}
+
 // origenDeObra rellena reporte, escalon y puntaje. Sin uso la cifra sigue
 // existiendo: el origen queda vacio, no se convierte un 200 en 404.
+//
+// Si la obra pondero por varias fuentes en el periodo, fuente lista todas
+// (ordenadas, separadas por coma). id/sha256/escalon/puntaje quedan del
+// uso de mayor puntaje — el reporte "principal" — sin ocultar las demas
+// fuentes en silencio.
 func (s *Store) origenDeObra(ctx context.Context, x *aplicacion.Explicacion, obraID string) error {
-	var puntaje decimal.Decimal
-	err := s.pool.QueryRow(ctx, `
+	filas, err := s.pool.Query(ctx, `
 		SELECT r.id, r.fuente, r.sha256, u.escalon, u.puntaje
 		FROM usos u
 		JOIN reportes r ON r.id = u.reporte_id
 		WHERE u.obra_id = $1 AND r.periodo = $2 AND NOT u.oni
-		ORDER BY u.puntaje DESC, r.id
-		LIMIT 1`,
+		ORDER BY u.puntaje DESC, r.id`,
 		obraID, x.Corrida.Periodo,
-	).Scan(&x.Reporte.ID, &x.Reporte.Fuente, &x.Reporte.SHA256, &x.Obra.Escalon, &puntaje)
-	if err == nil {
-		x.Obra.Puntaje = puntaje
-		return nil
+	)
+	if err != nil {
+		return traducirError(err, "uso de obra %q periodo %q", obraID, x.Corrida.Periodo)
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	return traducirError(err, "uso de obra %q periodo %q", obraID, x.Corrida.Periodo)
-}
+	defer filas.Close()
 
-// proporcional reparte bruto y deducciones de la bolsa en la misma
-// proporcion que el neto de la linea. La linea ya es neta (cierra contra
-// resultados_proceso.neto); el bruto del titular no se persiste y solo
-// existe para la explicacion (OE-6).
-func proporcional(netoLinea, bruto, admin, social, reserva, netoBolsa decimal.Decimal) (decimal.Decimal, []aplicacion.Deduccion) {
-	if netoBolsa.IsZero() {
-		return decimal.Zero, []aplicacion.Deduccion{}
-	}
-	factor := netoLinea.Div(netoBolsa)
-	brutoTitular := bruto.Mul(factor).Round(2)
-	cien := decimal.NewFromInt(100)
-	pct := func(parte decimal.Decimal) decimal.Decimal {
-		if bruto.IsZero() {
-			return decimal.Zero
+	var (
+		fuentes []string
+		visto   = map[string]struct{}{}
+		primero = true
+	)
+	for filas.Next() {
+		var (
+			id, fuente, sha, escalon string
+			puntaje                  decimal.Decimal
+		)
+		if err := filas.Scan(&id, &fuente, &sha, &escalon, &puntaje); err != nil {
+			return traducirError(err, "escanear uso de obra %q periodo %q", obraID, x.Corrida.Periodo)
 		}
-		return parte.Div(bruto).Mul(cien).Round(2)
+		if primero {
+			x.Reporte.ID = id
+			x.Reporte.SHA256 = sha
+			x.Obra.Escalon = escalon
+			x.Obra.Puntaje = puntaje
+			primero = false
+		}
+		if _, ok := visto[fuente]; !ok {
+			visto[fuente] = struct{}{}
+			fuentes = append(fuentes, fuente)
+		}
 	}
-	return brutoTitular, []aplicacion.Deduccion{
-		{Concepto: "gastos administrativos", Porcentaje: pct(admin), Monto: admin.Mul(factor).Round(2)},
-		{Concepto: "bienestar social", Porcentaje: pct(social), Monto: social.Mul(factor).Round(2)},
-		{Concepto: "reserva", Porcentaje: pct(reserva), Monto: reserva.Mul(factor).Round(2)},
+	if err := filas.Err(); err != nil {
+		return traducirError(err, "uso de obra %q periodo %q", obraID, x.Corrida.Periodo)
 	}
+	if len(fuentes) > 0 {
+		// Mismo criterio que IngresosDe (string_agg ORDER BY fuente).
+		slices.Sort(fuentes)
+		x.Reporte.Fuente = strings.Join(fuentes, ", ")
+	}
+	return nil
 }

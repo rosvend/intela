@@ -33,7 +33,7 @@ type Ingreso struct {
 
 // ConsultaIngresos es el caso de uso del panel: lo que le toca a ESTE titular.
 type ConsultaIngresos struct {
-	Repo RepositorioLiquidacion
+	Repo RepositorioIngresos
 }
 
 // MisIngresos lista las cifras netas del actor. El alcance lo fija

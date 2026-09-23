@@ -675,12 +675,22 @@ type RepositorioResultados interface {
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular (OE-6).
+// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+//
+// Andamiaje del modulo de liquidacion (ordenes de pago). El panel de
+// ingresos del titular (#42) NO reusa este puerto: usa [RepositorioIngresos]
+// y [RepositorioExplicacion], para no colisionar con el diseno de ordenes
+// (#80) ni con el de exportables (#83).
+type RepositorioLiquidacion interface {
+	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+}
+
+// RepositorioIngresos lista las cifras netas del panel del titular (OE-6).
 //
 // El recorte es por titularID, que el caso de uso toma de la sesion y nunca
 // de un parametro de la peticion. Filtrar por obra, fuente o periodo recorta
 // esa lista; no amplia el alcance.
-type RepositorioLiquidacion interface {
+type RepositorioIngresos interface {
 	IngresosDe(ctx context.Context, titularID string, f FiltroIngresos) ([]Ingreso, error)
 }
 
@@ -688,7 +698,8 @@ type RepositorioLiquidacion interface {
 //
 // ExplicarCifra es el unico productor de esta vista: el portal del titular
 // y el de auditoria la consumen sin recomputar. La autorizacion vive en el
-// caso de uso, no aqui.
+// caso de uso, no aqui. El prorrateo bruto/deducciones vive en
+// dominio/liquidacion.Prorratear; este puerto solo lee lo persistido.
 type RepositorioExplicacion interface {
 	PorLinea(ctx context.Context, procesoID, obraID, titularID string) (Explicacion, error)
 }

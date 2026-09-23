@@ -127,6 +127,9 @@ describe("flujo de autenticacion (integracion)", () => {
     expect(screen.getAllByText("Ana Escritora").length).toBeGreaterThan(0);
     expect(screen.getByText("Mis obras")).toBeTruthy();
     expect(
+      screen.getByRole("heading", { name: "Mis ingresos" }),
+    ).toBeTruthy();
+    expect(
       screen.queryByRole("heading", { name: "Panel de control" }),
     ).toBeNull();
     expect(screen.queryByText("Cargas pendientes")).toBeNull();

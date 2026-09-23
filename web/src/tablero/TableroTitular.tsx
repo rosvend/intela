@@ -1,3 +1,4 @@
+import { PanelIngresos } from "../PanelIngresos";
 import { Usuario } from "../sesion";
 import { Tarjeta } from "./Tarjeta";
 import { formatearEntero, formatearImporte } from "./formato";
@@ -5,7 +6,7 @@ import { useDashboard } from "./useDashboard";
 
 /**
  * Resumen del titular. El panel con filtros por obra/fuente/periodo y
- * "explicar esta cifra" es #42: aterriza en la seccion #ingresos de abajo,
+ * "explicar esta cifra" (#42) aterriza en la seccion #ingresos de abajo,
  * no en una ruta nueva (M-5).
  */
 export default function TableroTitular({ usuario }: { usuario: Usuario }) {
@@ -64,12 +65,7 @@ export default function TableroTitular({ usuario }: { usuario: Usuario }) {
       </div>
 
       <article className="tarjeta tarjeta-amplia" id="ingresos">
-        <h2 className="tarjeta-etiqueta">Detalle por obra</h2>
-        <p className="muted">
-          El filtro por obra, fuente y periodo, los importes netos y «explicar
-          esta cifra» llegan con el panel del titular. Mientras tanto no hay
-          cifras que mostrar.
-        </p>
+        <PanelIngresos />
       </article>
     </section>
   );

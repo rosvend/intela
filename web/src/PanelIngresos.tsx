@@ -56,16 +56,20 @@ export function PanelIngresos() {
 
   if (error) {
     return (
-      <section>
-        <h1>Mis ingresos</h1>
+      <section aria-labelledby="panel-ingresos-titulo">
+        <h2 id="panel-ingresos-titulo" className="tarjeta-etiqueta">
+          Mis ingresos
+        </h2>
         <p role="alert">No se pudieron cargar los ingresos: {error}</p>
       </section>
     );
   }
 
   return (
-    <section>
-      <h1>Mis ingresos</h1>
+    <section aria-labelledby="panel-ingresos-titulo">
+      <h2 id="panel-ingresos-titulo" className="tarjeta-etiqueta">
+        Mis ingresos
+      </h2>
       <p className="muted">
         Montos netos despues de deducciones. El origen de cada cifra — fuente,
         reporte y regla — se abre con una pulsacion.
