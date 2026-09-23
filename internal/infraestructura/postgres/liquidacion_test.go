@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 )
 
 func TestDeTitularDevuelveNetoYTotalesDelProceso(t *testing.T) {
@@ -81,6 +83,40 @@ func TestDeTitularSinCorridasEsListaVacia(t *testing.T) {
 	}
 	if len(filas) != 0 {
 		t.Fatalf("sin corridas: %+v", filas)
+	}
+}
+
+// Ana y Beto, cada uno por su lado, tienen que recibir porciones de Admin
+// cuya suma es exactamente el admin del proceso (no 1999.98 por redondeos
+// independientes).
+func TestDeTitularNetosProcesoPermitenReconciliarDeducciones(t *testing.T) {
+	s, _ := sembrar(t)
+	sembrarCorrida(t, s)
+
+	ana, err := s.DeTitular(t.Context(), titularAna, "2026-01")
+	if err != nil {
+		t.Fatalf("ana: %v", err)
+	}
+	beto, err := s.DeTitular(t.Context(), titularBeto, "2026-01")
+	if err != nil {
+		t.Fatalf("beto: %v", err)
+	}
+	if len(ana) != 1 || len(beto) != 1 {
+		t.Fatalf("ana=%d beto=%d", len(ana), len(beto))
+	}
+	if len(ana[0].NetosProceso) != 2 {
+		t.Fatalf("netos del proceso = %d, se esperaban Ana+Beto", len(ana[0].NetosProceso))
+	}
+	if ana[0].Indice == beto[0].Indice {
+		t.Fatal("Ana y Beto no pueden compartir indice en el vector del proceso")
+	}
+
+	lineas := liquidacion.ProrratearProceso(
+		ana[0].NetosProceso, ana[0].ProcesoAdmin, ana[0].ProcesoSocial, ana[0].ProcesoReserva,
+	)
+	sumaAdmin := lineas[ana[0].Indice].Admin.Add(lineas[beto[0].Indice].Admin)
+	if !sumaAdmin.Equal(ana[0].ProcesoAdmin) {
+		t.Fatalf("Σ admin Ana+Beto = %s, proceso = %s", sumaAdmin, ana[0].ProcesoAdmin)
 	}
 }
 

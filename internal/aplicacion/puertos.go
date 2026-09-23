@@ -675,7 +675,13 @@ type RepositorioResultados interface {
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+// RepositorioLiquidacion sirve el panel/export de liquidacion del titular
+// (#43): bruto, deducciones y neto por obra. DeTitular es lectura de
+// resultados_titular + resultados_proceso; el prorrateo vive en dominio.
+//
+// Nota de coordinacion: #80 (ordenes de pago) y #81 (panel de ingresos /
+// ExplicarCifra) no deben redefinir este puerto con otra firma — el lote
+// necesita un solo diseno antes de mergear.
 //
 // periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
 // un titular sin corridas tiene una liquidacion de cero lineas.

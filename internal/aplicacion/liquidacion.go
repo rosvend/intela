@@ -42,7 +42,7 @@ func (s ServicioLiquidacion) Consultar(ctx context.Context, actor Usuario, perio
 		Lineas:    make([]LineaLiquidacion, 0, len(filas)),
 	}
 	for _, f := range filas {
-		p := liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto)
+		p := prorratearFila(f)
 		linea := LineaLiquidacion{
 			Periodo: f.Periodo,
 			ObraID:  f.ObraID,
@@ -61,6 +61,20 @@ func (s ServicioLiquidacion) Consultar(ctx context.Context, actor Usuario, perio
 		liq.Totales.Neto = liq.Totales.Neto.Add(linea.Neto)
 	}
 	return liq, nil
+}
+
+// prorratearFila usa [liquidacion.ProrratearProceso] cuando el repositorio
+// trajo todos los netos del proceso (para que Σ deducciones cuadre con el
+// proceso). Si no, [liquidacion.Prorratear] con cubeta residual.
+func prorratearFila(f FilaLiquidacion) liquidacion.Linea {
+	if len(f.NetosProceso) == 0 {
+		return liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto)
+	}
+	lineas := liquidacion.ProrratearProceso(f.NetosProceso, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva)
+	if f.Indice < 0 || f.Indice >= len(lineas) {
+		return liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto)
+	}
+	return lineas[f.Indice]
 }
 
 // Exportar renderiza la misma liquidacion que Consultar. formato es pdf o

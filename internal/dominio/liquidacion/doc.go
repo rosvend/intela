@@ -14,6 +14,8 @@
 // # El reporte
 //
 // Las deducciones (R-06, R-07) se restan de la bolsa ANTES de partir por
-// obra. [Prorratear] solo deshace esa resta sobre la linea del titular para
-// que el reporte pueda mostrar bruto, cada deduccion y neto por obra.
+// obra. [ProrratearProceso] deshace esa resta sobre las lineas del proceso
+// con mayor-resto, de modo que Σ Admin/Social/Reserva cuadra con el total
+// del proceso al centavo (RD 16; el residuo no se pierde en silencio, ADR
+// 0005). [Prorratear] es el caso de una sola linea.
 package liquidacion

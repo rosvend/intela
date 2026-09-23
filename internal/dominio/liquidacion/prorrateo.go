@@ -1,6 +1,10 @@
 package liquidacion
 
-import "github.com/shopspring/decimal"
+import (
+	"sort"
+
+	"github.com/shopspring/decimal"
+)
 
 // Linea es la participacion de un titular en una obra, con las deducciones
 // del proceso ya prorrateadas sobre su neto.
@@ -22,12 +26,15 @@ type Linea struct {
 	Neto    decimal.Decimal
 }
 
-// Prorratear asigna las deducciones de un proceso a una linea de titular.
+var centavo = decimal.RequireFromString("0.01")
+
+// Prorratear asigna las deducciones de un proceso a UNA linea de titular.
 //
-// neto es lo que ya le toca al titular (resultados_titular.importe). El
-// resto son los totales del proceso. Si el neto del proceso es cero no hay
-// proporcion que aplicar: se devuelve la linea vacia. Liquidacion no
-// recalcula el reparto (ADR 0003); solo deshace la resta para mostrarla.
+// Cuando solo se conoce esta linea, el remanente del neto del proceso
+// (netoProc - neto) entra como cubeta residual para que el mayor-resto
+// coincida con lo que [ProrratearProceso] asignaria si el resto fuera una
+// sola partida. Para reconciliar Σ Admin = admin del proceso entre TODOS
+// los titulares hay que llamar a [ProrratearProceso] con sus netos.
 //
 // El bruto se reconstruye desde el neto y las deducciones ya redondeadas
 // para que la identidad de la linea cierre al centavo.
@@ -35,15 +42,86 @@ func Prorratear(neto, adminProc, socialProc, reservaProc, netoProc decimal.Decim
 	if netoProc.IsZero() {
 		return Linea{}
 	}
-	admin := neto.Mul(adminProc).Div(netoProc).Round(2)
-	social := neto.Mul(socialProc).Div(netoProc).Round(2)
-	reserva := neto.Mul(reservaProc).Div(netoProc).Round(2)
-	bruto := neto.Add(admin).Add(social).Add(reserva)
-	return Linea{
-		Bruto:   bruto,
-		Admin:   admin,
-		Social:  social,
-		Reserva: reserva,
-		Neto:    neto,
+	partes := []decimal.Decimal{neto}
+	if resto := netoProc.Sub(neto); resto.IsPositive() {
+		partes = append(partes, resto)
 	}
+	return ProrratearProceso(partes, adminProc, socialProc, reservaProc)[0]
+}
+
+// ProrratearProceso reparte admin/social/reserva del proceso entre todas las
+// lineas (netos) del mismo. La suma de cada concepto cuadra con el total
+// del proceso al centavo: el residuo de redondeo se asigna por mayor resto
+// fraccionario (Hamilton), con desempate por indice estable — no se pierde
+// en silencio ni se absorbe en "la ultima linea" (ADR 0005, RD 16).
+//
+// Cada Linea conserva Neto == Bruto - Admin - Social - Reserva.
+func ProrratearProceso(netos []decimal.Decimal, admin, social, reserva decimal.Decimal) []Linea {
+	if len(netos) == 0 {
+		return nil
+	}
+	admins := repartirExacto(admin, netos)
+	sociales := repartirExacto(social, netos)
+	reservas := repartirExacto(reserva, netos)
+	out := make([]Linea, len(netos))
+	for i, neto := range netos {
+		out[i] = Linea{
+			Neto:    neto,
+			Admin:   admins[i],
+			Social:  sociales[i],
+			Reserva: reservas[i],
+			Bruto:   neto.Add(admins[i]).Add(sociales[i]).Add(reservas[i]),
+		}
+	}
+	return out
+}
+
+// repartirExacto asigna total entre pesos con mayor resto, de modo que
+// suma(resultado) == total. Pesos no positivos reciben cero.
+func repartirExacto(total decimal.Decimal, pesos []decimal.Decimal) []decimal.Decimal {
+	out := make([]decimal.Decimal, len(pesos))
+	sumaPesos := decimal.Zero
+	for _, p := range pesos {
+		if p.IsPositive() {
+			sumaPesos = sumaPesos.Add(p)
+		}
+	}
+	if total.IsZero() || sumaPesos.IsZero() {
+		return out
+	}
+
+	type candidato struct {
+		i    int
+		frac decimal.Decimal
+	}
+	candidatos := make([]candidato, 0, len(pesos))
+	asignado := decimal.Zero
+	for i, p := range pesos {
+		if !p.IsPositive() {
+			continue
+		}
+		exacto := total.Mul(p).Div(sumaPesos)
+		base := exacto.RoundDown(2)
+		out[i] = base
+		asignado = asignado.Add(base)
+		candidatos = append(candidatos, candidato{i: i, frac: exacto.Sub(base)})
+	}
+
+	sort.SliceStable(candidatos, func(a, b int) bool {
+		cmp := candidatos[a].frac.Cmp(candidatos[b].frac)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		return candidatos[a].i < candidatos[b].i
+	})
+
+	falta := total.Sub(asignado)
+	for _, c := range candidatos {
+		if !falta.IsPositive() {
+			break
+		}
+		out[c.i] = out[c.i].Add(centavo)
+		falta = falta.Sub(centavo)
+	}
+	return out
 }

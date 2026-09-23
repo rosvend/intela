@@ -369,16 +369,23 @@ const (
 //
 // El prorrateo vive en dominio/liquidacion, no aqui ni en el SQL: si una
 // cifra se puede calcular mal, se calcula una sola vez (postgres/doc.go).
+//
+// NetosProceso e Indice permiten [liquidacion.ProrratearProceso]: todos los
+// importes del proceso, ordenados de forma estable, y la posicion de esta
+// fila. Vacios → el caso de uso prorratea solo esta linea (tests en memoria).
 type FilaLiquidacion struct {
 	Periodo        string
 	ObraID         string
 	Titulo         string
 	Neto           decimal.Decimal
+	ProcesoID      string
 	ProcesoBruto   decimal.Decimal
 	ProcesoAdmin   decimal.Decimal
 	ProcesoSocial  decimal.Decimal
 	ProcesoReserva decimal.Decimal
 	ProcesoNeto    decimal.Decimal
+	NetosProceso   []decimal.Decimal
+	Indice         int
 }
 
 // LineaLiquidacion es una obra en el reporte del titular, con bruto,

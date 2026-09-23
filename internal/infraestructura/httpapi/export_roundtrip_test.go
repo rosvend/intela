@@ -63,8 +63,13 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 		t.Fatalf("pdf disposition = %q", pdf.Header().Get("Content-Disposition"))
 	}
 	texto := pdf.Body.String()
-	if !strings.Contains(texto, cuerpo.Totales.Neto) && !strings.Contains(texto, "3900") {
-		t.Fatalf("el PDF no lleva el neto del panel %s", cuerpo.Totales.Neto)
+	// Solo contra el neto del panel: un fallback hardcodeado ("3900") enmascara
+	// mutaciones reales (p. ej. "13900.00" contiene "3900" y el test quedaba verde).
+	if !strings.Contains(texto, cuerpo.Totales.Neto) {
+		t.Fatalf("el PDF no lleva el neto del panel %q", cuerpo.Totales.Neto)
+	}
+	if !strings.Contains(texto, cuerpo.Totales.Bruto) {
+		t.Fatalf("el PDF no lleva el bruto del panel %q", cuerpo.Totales.Bruto)
 	}
 
 	xlsx := pedir(t, h, http.MethodGet, "/mis-liquidaciones/export?periodo=2026-01&formato=xlsx", "", "tok")

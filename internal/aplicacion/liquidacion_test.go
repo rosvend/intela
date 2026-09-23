@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 )
 
 func dec(s string) decimal.Decimal {
@@ -210,5 +212,49 @@ func TestConsultarSinFilasDevuelveListaVaciaNoNil(t *testing.T) {
 	}
 	if liq.Lineas == nil {
 		t.Fatal("lineas nil se serializa como null; tiene que ser slice vacio")
+	}
+}
+
+// Con NetosProceso completo, el admin de Ana es el que sale del mayor-resto
+// del proceso entero — no un redondeo aislado que luego no sume 2000.
+func TestConsultarProrrateaConNetosDelProcesoCompleto(t *testing.T) {
+	netos := []decimal.Decimal{
+		dec("2500.01"), // Ana
+		dec("1800.00"),
+		dec("1500.00"),
+		dec("1200.00"),
+		dec("999.99"),
+		dec("1000.00"),
+		dec("1000.00"),
+	}
+	repo := &repoLiquidacionMemoria{filas: []FilaLiquidacion{{
+		Periodo:        "2026-01",
+		ObraID:         "obra-ana",
+		Titulo:         "Obra Ana",
+		Neto:           netos[0],
+		ProcesoID:      "proc-1",
+		ProcesoBruto:   dec("13500"),
+		ProcesoAdmin:   dec("2000"),
+		ProcesoSocial:  dec("1000"),
+		ProcesoReserva: dec("500"),
+		ProcesoNeto:    dec("10000"),
+		NetosProceso:   netos,
+		Indice:         0,
+	}}}
+	s := ServicioLiquidacion{Repo: repo}
+
+	liq, err := s.Consultar(context.Background(), ana(), "2026-01")
+	if err != nil {
+		t.Fatalf("Consultar: %v", err)
+	}
+	if len(liq.Lineas) != 1 {
+		t.Fatalf("lineas = %d", len(liq.Lineas))
+	}
+	// Misma cifra que ProrratearProceso sobre el vector completo.
+	quiero := liquidacion.ProrratearProceso(netos, dec("2000"), dec("1000"), dec("500"))[0]
+	l := liq.Lineas[0]
+	if !l.Admin.Equal(quiero.Admin) || !l.Social.Equal(quiero.Social) || !l.Reserva.Equal(quiero.Reserva) || !l.Bruto.Equal(quiero.Bruto) {
+		t.Fatalf("linea = %+v, se esperaba admin=%s social=%s reserva=%s bruto=%s",
+			l, quiero.Admin, quiero.Social, quiero.Reserva, quiero.Bruto)
 	}
 }
