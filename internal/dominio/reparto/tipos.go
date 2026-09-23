@@ -294,9 +294,20 @@ type Resultado struct {
 }
 
 // Sentinel errors del paquete. Un solo centinela por clase de fallo.
+//
+// ErrProcesoInvalido y ErrRepartoInvalido son DOS clases distintas a
+// proposito (revision de PR #159): un ErrProcesoInvalido es un dato mal
+// formado que no depende de en que etapa esta el proceso -un campo vacio, un
+// rol que no existe, un rechazo sin motivo- y el llamador HTTP lo traduce a
+// 400. Un ErrRepartoInvalido es un conflicto contra el ESTADO actual del
+// proceso -una compuerta sin las dos firmas, un rol que ya firmo, una etapa
+// terminal- y se traduce a 409. Confundir los dos le dice al cliente que
+// reintente el mismo cuerpo cuando el dato esta bien y lo que falta es
+// esperar, o que corrija un campo cuando el dato ya era correcto.
 var (
 	ErrModalidadDesconocida = errors.New("modalidad desconocida")
 	ErrGrupoDesconocido     = errors.New("grupo de canal desconocido")
 	ErrParametroAusente     = errors.New("parametro normativo ausente")
 	ErrRepartoInvalido      = errors.New("reparto invalido")
+	ErrProcesoInvalido      = errors.New("proceso invalido")
 )
