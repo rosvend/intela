@@ -597,7 +597,7 @@ func TestBloquearPeriodoSeNiegaFueraDeUnaUnidad(t *testing.T) {
 	if err := s.BloquearPeriodo(t.Context(), "2026", reparto.Nacional); err == nil {
 		t.Fatal("un cerrojo de transaccion tomado contra el pool se suelta al instante")
 	}
-	if _, err := s.DiferidasDeTitular(t.Context(), titularAna); err == nil {
+	if _, err := s.DiferidasDeTitular(t.Context(), titularAna, reparto.Nacional, "2026-02"); err == nil {
 		t.Fatal("un FOR UPDATE contra el pool no protege nada")
 	}
 }

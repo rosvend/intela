@@ -92,13 +92,19 @@ func (r *repoLiqMemoria) BloquearPeriodo(context.Context, string, reparto.Circui
 	return nil
 }
 
-func (r *repoLiqMemoria) DiferidasDeTitular(_ context.Context, titularID string) ([]liquidacion.OrdenDePago, error) {
+func (r *repoLiqMemoria) DiferidasDeTitular(
+	_ context.Context, titularID string, circuito reparto.Circuito, antesDe string,
+) ([]liquidacion.OrdenDePago, error) {
 	r.cerrojosDeDiferidas++
 	out := []liquidacion.OrdenDePago{}
 	for _, o := range r.ordenes {
-		if o.TitularID == titularID && o.Estado == liquidacion.EstadoDiferida {
-			out = append(out, o)
+		if o.TitularID != titularID || o.Estado != liquidacion.EstadoDiferida {
+			continue
 		}
+		if o.Circuito != string(circuito) || o.Periodo >= antesDe {
+			continue
+		}
+		out = append(out, o)
 	}
 	return out, nil
 }
@@ -657,27 +663,40 @@ func TestGenerarLiquidacionNotificaYAsientaLaEmision(t *testing.T) {
 	if len(e.avisos.enviados) != 2 {
 		t.Fatalf("%d avisos; R-10 cuenta desde el envio, asi que hay uno por orden", len(e.avisos.enviados))
 	}
-	if len(e.libro.asientos) != 2 {
-		t.Fatalf("%d asientos; el ADR 0006 pide uno por orden emitida", len(e.libro.asientos))
-	}
+	emisiones, residuos := 0, 0
 	for _, a := range e.libro.asientos {
-		if a.Hecho != HechoLiquidacionEmitida {
-			t.Fatalf("hecho = %q", a.Hecho)
+		switch a.Hecho {
+		case HechoLiquidacionEmitida:
+			emisiones++
+			if a.RefTipo != RefOrdenDePago {
+				t.Fatalf("ref_tipo emision = %q", a.RefTipo)
+			}
+			if a.ActorID != "" {
+				t.Fatalf("actor = %q; la emision la produce el sistema y actor_id referencia usuarios(id)", a.ActorID)
+			}
+			if !a.Cuando.Equal(envio()) {
+				t.Fatalf("cuando = %s; el instante entra por el Reloj", a.Cuando)
+			}
+			if !strings.Contains(string(a.Payload), `"acuse":"acuse-`) {
+				t.Fatalf("el asiento no lleva el acuse de la notificacion: %s", a.Payload)
+			}
+			if strings.Contains(string(a.Payload), "residuo_prorrateo") {
+				t.Fatal("el residuo no viaja en el asiento de cada orden")
+			}
+		case HechoLiquidacionResiduoProrrateo:
+			residuos++
+			if a.RefTipo != RefLiquidacionLote || a.RefID != "2026-nacional" {
+				t.Fatalf("residuo ref = %s/%s", a.RefTipo, a.RefID)
+			}
+		default:
+			t.Fatalf("hecho inesperado = %q", a.Hecho)
 		}
-		if a.RefTipo != RefOrdenDePago {
-			t.Fatalf("ref_tipo = %q", a.RefTipo)
-		}
-		if a.ActorID != "" {
-			t.Fatalf("actor = %q; la emision la produce el sistema y actor_id referencia usuarios(id)", a.ActorID)
-		}
-		if !a.Cuando.Equal(envio()) {
-			t.Fatalf("cuando = %s; el instante entra por el Reloj", a.Cuando)
-		}
-		// El acuse es lo que respalda la fecha de envio sobre la que corre el
-		// plazo de R-10.
-		if !strings.Contains(string(a.Payload), `"acuse":"acuse-`) {
-			t.Fatalf("el asiento no lleva el acuse de la notificacion: %s", a.Payload)
-		}
+	}
+	if emisiones != 2 {
+		t.Fatalf("%d asientos de emision; el ADR 0006 pide uno por orden", emisiones)
+	}
+	if residuos != 1 {
+		t.Fatalf("%d asientos de residuo; el lote asienta UNA vez", residuos)
 	}
 	if !e.unidad.confirmo {
 		t.Fatal("la orden, su asiento y el cierre de las diferidas son un solo hecho")
@@ -721,7 +740,7 @@ func TestSilencioAsientaLaTransicion(t *testing.T) {
 	if !tarde.unidad.confirmo {
 		t.Fatal("la transicion y su asiento van en la misma unidad")
 	}
-	if asientosDeEmision != 2 {
+	if asientosDeEmision != 3 { // 2 emitida + 1 residuo de lote
 		t.Fatalf("asientos de emision = %d", asientosDeEmision)
 	}
 }
@@ -799,7 +818,8 @@ func TestMenorCuantiaSeAcumulaYSePagaAlSuperarUmbral(t *testing.T) {
 		Titulares: []reparto.LineaTitular{{TitularID: "tit-ana", Importe: liqDec("30000")}},
 	})
 	envio2 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	vistas, err = servicio(repo, envio2).GenerarLiquidacion(context.Background(), "prc-2")
+	e2 := montar(repo, envio2)
+	vistas, err = e2.svc.GenerarLiquidacion(context.Background(), "prc-2")
 	if err != nil {
 		t.Fatalf("periodo 2: %v", err)
 	}
@@ -811,6 +831,21 @@ func TestMenorCuantiaSeAcumulaYSePagaAlSuperarUmbral(t *testing.T) {
 	}
 	if repo.cerrojosDeDiferidas == 0 {
 		t.Fatal("el arrastre se lee con la fila bloqueada, no de cualquier manera")
+	}
+	// B2: el aviso de R-10 lleva la cifra FINAL (con arrastre), no el neto
+	// de la corrida antes de IncorporarArrastre.
+	if len(e2.avisos.enviados) != 1 {
+		t.Fatalf("%d avisos en periodo 2", len(e2.avisos.enviados))
+	}
+	cuerpo := e2.avisos.enviados[0].Cuerpo
+	if !strings.Contains(cuerpo, "31000.00") {
+		t.Fatalf("el aviso no lleva el neto con arrastre (31000.00): %q", cuerpo)
+	}
+	if strings.Contains(cuerpo, "Bruto 30000.00") || strings.Contains(cuerpo, "neto 30000.00") {
+		t.Fatalf("el aviso anuncia 30000 sin el arrastre: %q", cuerpo)
+	}
+	if !strings.Contains(cuerpo, "Incluye arrastre de liq-2026-01-nacional-tit-ana") {
+		t.Fatalf("el aviso no menciona el arrastre absorbido: %q", cuerpo)
 	}
 
 	var p1 liquidacion.OrdenDePago
@@ -931,5 +966,152 @@ func TestGenerarLiquidacionExigeEstarCableada(t *testing.T) {
 	}
 	if len(repo.ordenes) != 0 {
 		t.Fatal("no se puede haber escrito nada")
+	}
+}
+
+// TestArrastreNoCruzaCircuitos es B1: una diferida nacional no entra en una
+// orden internacional del mismo titular (RD 7.4, ADR 0008 / 0019).
+func TestArrastreNoCruzaCircuitos(t *testing.T) {
+	repo := &repoLiqMemoria{
+		smmlv: liqDec("1300000"),
+		docs:  map[string]liquidacion.Documentos{"tit-ana": {RUT: true, CertificacionBancaria: true}},
+	}
+	repo.sembrar(metaLista("prc-nac", "2026-01", reparto.Nacional), InsumoLiquidacion{
+		Bruto:     liqDec("1000"),
+		Titulares: []reparto.LineaTitular{{TitularID: "tit-ana", Importe: liqDec("1000")}},
+	})
+	if _, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "prc-nac"); err != nil {
+		t.Fatalf("nacional: %v", err)
+	}
+	if _, err := servicio(repo, envio().AddDate(0, 0, 15)).Listar(context.Background(), Usuario{Rol: RolAdministrador}); err != nil {
+		t.Fatalf("diferir nacional: %v", err)
+	}
+
+	repo.sembrar(metaLista("prc-int", "2026-02", reparto.Internacional), InsumoLiquidacion{
+		Bruto:     liqDec("30000"),
+		Titulares: []reparto.LineaTitular{{TitularID: "tit-ana", Importe: liqDec("30000")}},
+	})
+	vistas, err := servicio(repo, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)).
+		GenerarLiquidacion(context.Background(), "prc-int")
+	if err != nil {
+		t.Fatalf("internacional: %v", err)
+	}
+	if len(vistas) != 1 {
+		t.Fatalf("%d ordenes", len(vistas))
+	}
+	o := vistas[0].Orden
+	if !o.Neto.Equal(liqDec("30000")) {
+		t.Fatalf("neto = %s; la diferida nacional no puede entrar en el internacional", o.Neto)
+	}
+	if len(o.Arrastres) != 0 {
+		t.Fatalf("arrastres = %v; el circuito no se cruza", o.Arrastres)
+	}
+	for _, prev := range repo.ordenes {
+		if prev.Periodo == "2026-01" && prev.Estado != liquidacion.EstadoDiferida {
+			t.Fatalf("nacional 2026-01 quedo %q; sigue diferida hasta un nacional posterior", prev.Estado)
+		}
+	}
+}
+
+// TestArrastreNoAbsorbePeriodoPosterior es B1: una diferida de un periodo
+// posterior no se absorbe al liquidar uno anterior (R-11: "siguiente periodo").
+func TestArrastreNoAbsorbePeriodoPosterior(t *testing.T) {
+	repo := &repoLiqMemoria{
+		smmlv: liqDec("1300000"),
+		docs:  map[string]liquidacion.Documentos{"tit-ana": {RUT: true, CertificacionBancaria: true}},
+	}
+	// Diferida "futura" ya en el libro (laboratorio: se liquido 2026-03 antes).
+	futura, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
+		ID: "liq-2026-03-nacional-tit-ana", ProcesoID: "prc-03",
+		TitularID: "tit-ana", Periodo: "2026-03", Circuito: "nacional",
+		EnviadaDia: "2026-03-01", Bruto: liqDec("1000"),
+	})
+	if err != nil {
+		t.Fatalf("futura: %v", err)
+	}
+	futura.Estado = liquidacion.EstadoDiferida
+	repo.ordenes = append(repo.ordenes, futura)
+
+	repo.sembrar(metaLista("prc-02", "2026-02", reparto.Nacional), InsumoLiquidacion{
+		Bruto:     liqDec("30000"),
+		Titulares: []reparto.LineaTitular{{TitularID: "tit-ana", Importe: liqDec("30000")}},
+	})
+	vistas, err := servicio(repo, time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)).
+		GenerarLiquidacion(context.Background(), "prc-02")
+	if err != nil {
+		t.Fatalf("2026-02: %v", err)
+	}
+	o := vistas[0].Orden
+	if !o.Neto.Equal(liqDec("30000")) {
+		t.Fatalf("neto = %s; no puede absorber una diferida de periodo posterior", o.Neto)
+	}
+	if len(o.Arrastres) != 0 {
+		t.Fatalf("arrastres = %v", o.Arrastres)
+	}
+	for _, o := range repo.ordenes {
+		if o.ID == "liq-2026-03-nacional-tit-ana" && o.Estado != liquidacion.EstadoDiferida {
+			t.Fatalf("2026-03 quedo %q; una liquidacion anterior no la cierra", o.Estado)
+		}
+	}
+}
+
+// TestResiduoProrrateoSeAsientaUnaVezPorLote es N1/N2: el residuo del lote
+// aparece exactamente una vez en el libro, con los montos exactos, y no en
+// cada asiento de orden.
+func TestResiduoProrrateoSeAsientaUnaVezPorLote(t *testing.T) {
+	repo := &repoLiqMemoria{
+		smmlv: liqDec("1300000"),
+		docs: map[string]liquidacion.Documentos{
+			"t1": {RUT: true, CertificacionBancaria: true},
+			"t2": {RUT: true, CertificacionBancaria: true},
+			"t3": {RUT: true, CertificacionBancaria: true},
+			"t4": {RUT: true, CertificacionBancaria: true},
+			"t5": {RUT: true, CertificacionBancaria: true},
+			"t6": {RUT: true, CertificacionBancaria: true},
+			"t7": {RUT: true, CertificacionBancaria: true},
+		},
+	}
+	repo.sembrar(metaLista("prc-1", "2026-01", reparto.Nacional), InsumoLiquidacion{
+		Bruto:   liqDec("1000"),
+		Admin:   liqDec("200"),
+		Social:  liqDec("100"),
+		Reserva: liqDec("50"),
+		Titulares: []reparto.LineaTitular{
+			{TitularID: "t1", Importe: liqDec("92.86")},
+			{TitularID: "t2", Importe: liqDec("92.86")},
+			{TitularID: "t3", Importe: liqDec("92.86")},
+			{TitularID: "t4", Importe: liqDec("92.86")},
+			{TitularID: "t5", Importe: liqDec("92.86")},
+			{TitularID: "t6", Importe: liqDec("92.86")},
+			{TitularID: "t7", Importe: liqDec("92.84")},
+		},
+	})
+	e := montar(repo, envio())
+	if _, err := e.svc.GenerarLiquidacion(context.Background(), "prc-1"); err != nil {
+		t.Fatalf("generar: %v", err)
+	}
+
+	var residuo Asiento
+	nResiduos := 0
+	for _, a := range e.libro.asientos {
+		if a.Hecho == HechoLiquidacionResiduoProrrateo {
+			nResiduos++
+			residuo = a
+		}
+		if a.Hecho == HechoLiquidacionEmitida && strings.Contains(string(a.Payload), "residuo") {
+			t.Fatalf("residuo en asiento de orden %s: %s", a.RefID, a.Payload)
+		}
+	}
+	if nResiduos != 1 {
+		t.Fatalf("%d asientos de residuo; se esperaba 1 por lote", nResiduos)
+	}
+	if residuo.RefTipo != RefLiquidacionLote || residuo.RefID != "2026-01-nacional" {
+		t.Fatalf("ref = %s/%s", residuo.RefTipo, residuo.RefID)
+	}
+	cuerpo := string(residuo.Payload)
+	if !strings.Contains(cuerpo, `"admin":"0.01"`) ||
+		!strings.Contains(cuerpo, `"social":"-0.02"`) ||
+		!strings.Contains(cuerpo, `"reserva":"0.02"`) {
+		t.Fatalf("payload del residuo = %s; se esperaban admin 0.01, social -0.02, reserva 0.02", cuerpo)
 	}
 }

@@ -737,12 +737,17 @@ type RepositorioLiquidacion interface {
 	// FILA BLOQUEADA, para que el arrastre de R-11 no se pueda incorporar dos
 	// veces.
 	//
+	// Solo las del mismo circuito y de un periodo ESTRICTAMENTE ANTERIOR a
+	// antesDe (ADR 0019, RD 7.4 / 13.3): nacional e internacional no se suman
+	// en una sola orden, y el monto diferido va al siguiente periodo, no a uno
+	// anterior ni a otro circuito.
+	//
 	// Sin el cerrojo, dos generaciones de periodos distintos del mismo titular
 	// leen la misma diferida, cada una le suma el neto a su orden y cada una la
 	// marca acumulada: el saldo arrastrado se paga DOS veces y nada lo
 	// registra. Con el, la segunda espera, vuelve a evaluar la condicion y ya
 	// no la ve diferida.
-	DiferidasDeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
+	DiferidasDeTitular(ctx context.Context, titularID string, circuito reparto.Circuito, antesDe string) ([]liquidacion.OrdenDePago, error)
 
 	// EmitirOrdenes inserta ordenes NUEVAS con su desglose, y no pisa lo que
 	// ya hubiera bajo el mismo id.

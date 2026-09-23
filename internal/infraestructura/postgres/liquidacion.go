@@ -136,6 +136,10 @@ func claveCerrojoPeriodo(periodo string, circuito reparto.Circuito) int64 {
 
 // DiferidasDeTitular lee las diferidas de un titular con su fila bloqueada.
 //
+// Solo del mismo circuito y con periodo estrictamente anterior a antesDe
+// (ADR 0019, RD 7.4 / 13.3): el arrastre no cruza circuitos ni se absorbe
+// hacia atras.
+//
 // FOR UPDATE, y por eso exige transaccion: el arrastre de R-11 es un
 // leer-modificar-escribir sobre esas filas -- se les suma el neto a otra orden
 // y se marcan acumuladas -- y dos generaciones concurrentes del mismo titular
@@ -143,7 +147,9 @@ func claveCerrojoPeriodo(periodo string, circuito reparto.Circuito) int64 {
 // las dos como diferidas y pagarian el saldo dos veces. Con el cerrojo, la
 // segunda espera el commit de la primera y vuelve a evaluar el `estado =
 // 'diferida'`, que ya no se cumple.
-func (s *Store) DiferidasDeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error) {
+func (s *Store) DiferidasDeTitular(
+	ctx context.Context, titularID string, circuito reparto.Circuito, antesDe string,
+) ([]liquidacion.OrdenDePago, error) {
 	tx, hay := txDe(ctx)
 	if !hay {
 		return nil, fmt.Errorf("diferidas de %q: %w", titularID, errFueraDeUnidad)
@@ -155,8 +161,9 @@ func (s *Store) DiferidasDeTitular(ctx context.Context, titularID string) ([]liq
 	filas, err := tx.Query(ctx,
 		`SELECT `+columnasOrden+` FROM ordenes_pago
 		 WHERE titular_id = $1 AND estado = $2
+		   AND circuito = $3 AND periodo < $4
 		 ORDER BY periodo, id
-		 FOR UPDATE`, titularID, string(liquidacion.EstadoDiferida))
+		 FOR UPDATE`, titularID, string(liquidacion.EstadoDiferida), string(circuito), antesDe)
 	if err != nil {
 		return nil, traducirError(err, "diferidas de %q", titularID)
 	}

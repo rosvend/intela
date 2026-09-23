@@ -92,6 +92,8 @@ func TestProrratearNoDevuelveNilNiDivideEntreCero(t *testing.T) {
 // TestProrratearResiduoExplicitoConSieteTitulares es el caso de la revision:
 // bruto 1000 repartido entre 7 titulares deja centavos que antes desaparecian.
 // Con el residuo explicito, suma(brutos reconstruidos) + residuo = bruto.
+// Los montos por titular y el residuo se fijan EXPLICITOS: asignado+residuo
+// == concepto es tautologico si solo se comprueba esa identidad.
 func TestProrratearResiduoExplicitoConSieteTitulares(t *testing.T) {
 	bruto := dec("1000.00")
 	admin, social, reserva := dec("200.00"), dec("100.00"), dec("50.00")
@@ -116,44 +118,65 @@ func TestProrratearResiduoExplicitoConSieteTitulares(t *testing.T) {
 
 	porTitular, residuo := Prorratear(netos, admin, social, reserva, netoProc)
 
+	// Montos esperados con Round(2). t1..t6 identicos; t7 difiere en social.
+	esperados := map[string][3]string{
+		"t1": {"28.57", "14.29", "7.14"},
+		"t2": {"28.57", "14.29", "7.14"},
+		"t3": {"28.57", "14.29", "7.14"},
+		"t4": {"28.57", "14.29", "7.14"},
+		"t5": {"28.57", "14.29", "7.14"},
+		"t6": {"28.57", "14.29", "7.14"},
+		"t7": {"28.57", "14.28", "7.14"},
+	}
+	for id, want := range esperados {
+		ds := porTitular[id]
+		if len(ds) != 3 {
+			t.Fatalf("%s: %d deducciones", id, len(ds))
+		}
+		if !ds[0].Monto.Equal(dec(want[0])) || !ds[1].Monto.Equal(dec(want[1])) || !ds[2].Monto.Equal(dec(want[2])) {
+			t.Fatalf("%s: admin/social/reserva = %s/%s/%s, se esperaban %v",
+				id, ds[0].Monto, ds[1].Monto, ds[2].Monto, want)
+		}
+	}
+	if !residuo.Admin.Equal(dec("0.01")) || !residuo.Social.Equal(dec("-0.02")) || !residuo.Reserva.Equal(dec("0.02")) {
+		t.Fatalf("residuo = %+v, se esperaba admin=0.01 social=-0.02 reserva=0.02", residuo)
+	}
+	if !residuo.Total().Equal(dec("0.01")) {
+		t.Fatalf("residuo.Total = %s, se esperaba 0.01", residuo.Total())
+	}
+
 	sumaBrutos := dec("0")
-	sumaAdmin := dec("0")
-	sumaSocial := dec("0")
-	sumaReserva := dec("0")
 	for id, ds := range porTitular {
 		brutoTit := netos[id]
 		for _, d := range ds {
 			brutoTit = brutoTit.Add(d.Monto)
-			switch d.Concepto {
-			case ConceptoAdministracion:
-				sumaAdmin = sumaAdmin.Add(d.Monto)
-			case ConceptoSocial:
-				sumaSocial = sumaSocial.Add(d.Monto)
-			case ConceptoReserva:
-				sumaReserva = sumaReserva.Add(d.Monto)
-			}
 		}
 		sumaBrutos = sumaBrutos.Add(brutoTit)
 	}
-
-	if !sumaAdmin.Add(residuo.Admin).Equal(admin) {
-		t.Fatalf("admin: asignado(%s)+residuo(%s)=%s != %s",
-			sumaAdmin, residuo.Admin, sumaAdmin.Add(residuo.Admin), admin)
-	}
-	if !sumaSocial.Add(residuo.Social).Equal(social) {
-		t.Fatalf("social: asignado(%s)+residuo(%s)=%s != %s",
-			sumaSocial, residuo.Social, sumaSocial.Add(residuo.Social), social)
-	}
-	if !sumaReserva.Add(residuo.Reserva).Equal(reserva) {
-		t.Fatalf("reserva: asignado(%s)+residuo(%s)=%s != %s",
-			sumaReserva, residuo.Reserva, sumaReserva.Add(residuo.Reserva), reserva)
-	}
 	if !sumaBrutos.Add(residuo.Total()).Equal(bruto) {
-		t.Fatalf("suma(brutos)=%s + residuo=%s = %s != bruto %s (centavos perdidos)",
+		t.Fatalf("suma(brutos)=%s + residuo=%s = %s != bruto %s",
 			sumaBrutos, residuo.Total(), sumaBrutos.Add(residuo.Total()), bruto)
 	}
-	if residuo.Total().IsZero() {
-		t.Fatal("el fixture de 7 titulares debe producir residuo no cero; si cierra exacto, cambiar los netos")
+}
+
+// TestProrratearResiduoPuedeSerNegativo fija que Round(2) puede pasarse del
+// concepto: 0.02 entre tres partes iguales asigna 0.01*3=0.03 y el residuo
+// queda en -0.01. No se rectifica con Abs.
+func TestProrratearResiduoPuedeSerNegativo(t *testing.T) {
+	porTitular, residuo := Prorratear(
+		map[string]decimal.Decimal{"a": dec("1"), "b": dec("1"), "c": dec("1")},
+		dec("0.02"), dec("0"), dec("0"), dec("3"),
+	)
+	for _, id := range []string{"a", "b", "c"} {
+		if !porTitular[id][0].Monto.Equal(dec("0.01")) {
+			t.Fatalf("%s admin = %s, se esperaba 0.01", id, porTitular[id][0].Monto)
+		}
+	}
+	if !residuo.Admin.Equal(dec("-0.01")) {
+		t.Fatalf("residuo.Admin = %s, se esperaba -0.01 (no Abs)", residuo.Admin)
+	}
+	if residuo.Admin.IsPositive() || residuo.Admin.IsZero() {
+		t.Fatal("el residuo negativo es el comportamiento documentado de Round(2)")
 	}
 }
 

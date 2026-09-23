@@ -14,6 +14,11 @@ import (
 // corresponderia al neto no distribuido: esa parte no se reparte a los
 // pagados (ver [Prorratear]), y sin este campo desapareceria sin rastro.
 //
+// Puede ser NEGATIVO: Round(2) (mitad hacia arriba) puede hacer que la suma
+// asignada se pase del concepto (p. ej. 0.02 entre tres partes iguales da
+// 0.01+0.01+0.01=0.03). Eso es correcto contablemente; no se "arregla" con
+// Abs ni se absorbe en la ultima orden.
+//
 // Quien liquida lo registra: no se absorbe en la ultima orden ni se pierde.
 type ResiduoProrrateo struct {
 	Admin   decimal.Decimal

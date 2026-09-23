@@ -22,6 +22,12 @@ const claveSMMLV = "smmlv"
 // -- emision, silencio, arrastre -- en el orden en que ocurrio.
 const RefOrdenDePago = "orden_pago"
 
+// RefLiquidacionLote es la referencia del asiento de lote: el residuo de
+// prorrateo es del (periodo, circuito), no de cada orden. Un asiento por
+// orden con el mismo residuo haria que quien sume el libro cuente N veces
+// el mismo centavo (ADR 0005).
+const RefLiquidacionLote = "liquidacion_lote"
+
 // Hechos que la liquidacion asienta en la bitacora (ADR 0006).
 //
 // Constantes y no literales en la llamada por lo mismo que en el catalogo: el
@@ -33,6 +39,10 @@ const (
 	// Su payload lleva el acuse de la notificacion: es lo que prueba desde
 	// cuando corre el plazo de R-10.
 	HechoLiquidacionEmitida = "liquidacion.emitida"
+	// HechoLiquidacionResiduoProrrateo asienta UNA vez por lote el centavaje
+	// de [liquidacion.Prorratear] que no quedo en ninguna orden. RefID =
+	// periodo-circuito.
+	HechoLiquidacionResiduoProrrateo = "liquidacion.residuo_prorrateo"
 	// HechoLiquidacionAceptadaPorSilencio es R-10 consumado: 15 dias
 	// calendario sin respuesta con el neto sobre el umbral.
 	HechoLiquidacionAceptadaPorSilencio = "liquidacion.aceptada_por_silencio"
@@ -103,6 +113,14 @@ type Liquidaciones struct {
 // corridas (#34 / ProcesoDeReparto) lo dispare al cerrar la compuerta del
 // RD 13.5. Sin ese disparador, `ordenes_pago` solo se poblaria desde tests o
 // una llamada directa al caso de uso — es deliberado, no un olvido.
+//
+// # Precondicion del disparador (#34 / #159)
+//
+// Hoy `cmd/api` y `cmd/lambda` cablean `notificaciones.Bitacora`, que solo
+// registra en el log y inventa un acuse. El PR que conecte este caso de uso
+// tiene que traer un adaptador que entregue de verdad (correo, SMS, portal)
+// o bloquear la emision: si no, el plazo de R-10 corre sin que el titular
+// haya recibido nada.
 //
 // # Una orden por (titular, periodo, circuito), no por corrida
 //
@@ -319,23 +337,6 @@ func (l Liquidaciones) emitir(
 
 		id := idOrden(meta.Periodo, meta.Circuito, titularID)
 
-		// Se notifica ANTES de fijar el dia del envio, y el acuse queda en el
-		// asiento. R-10 cuenta 15 dias "desde el envio": una orden en `enviada`
-		// con una fecha que no respalda ningun acuse le opondria al titular un
-		// plazo que empezo a correr sin que a el le llegara nada.
-		//
-		// Que la notificacion sea un efecto que no se revierte -- si la unidad
-		// falla despues, el aviso ya salio -- es el mismo reparto que la boveda
-		// de la ingesta: de un envio no se hace rollback. El resto que deja es
-		// un aviso sin orden, que es inerte; el contrario, una orden sin aviso,
-		// es el que corre un plazo contra alguien que no sabe nada.
-		acuse, err := l.Notificador.Notificar(ctx, titularID,
-			asuntoLiquidacion(meta), cuerpoLiquidacion(meta, bruto, neto, enviadaDia))
-		if err != nil {
-			return fmt.Errorf("notificar la liquidacion %s: %w", id, err)
-		}
-		acuses[id] = acuse
-
 		o, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
 			ID:          id,
 			ProcesoID:   ag.Procesos[0],
@@ -352,7 +353,8 @@ func (l Liquidaciones) emitir(
 		}
 
 		// Con la fila bloqueada: ver [RepositorioLiquidacion.DiferidasDeTitular].
-		diferidas, err := l.Ordenes.DiferidasDeTitular(ctx, titularID)
+		// Solo mismo circuito y periodos anteriores (R-11, ADR 0019).
+		diferidas, err := l.Ordenes.DiferidasDeTitular(ctx, titularID, meta.Circuito, meta.Periodo)
 		if err != nil {
 			return fmt.Errorf("diferidas de %s: %w", titularID, err)
 		}
@@ -367,17 +369,41 @@ func (l Liquidaciones) emitir(
 			o = o.IncorporarArrastre(prev)
 			acumuladas = append(acumuladas, prev.MarcarAcumulada())
 		}
+
+		// Se notifica DESPUES de armar la orden completa (arrastres incluidos)
+		// y el acuse queda en el asiento. R-10 cuenta 15 dias "desde el envio"
+		// sobre la liquidacion que se le mostro al titular (RD 13.2): bruto y
+		// neto del aviso tienen que coincidir con la orden persistida.
+		//
+		// Que la notificacion sea un efecto que no se revierte -- si la unidad
+		// falla despues, el aviso ya salio -- es el mismo reparto que la boveda
+		// de la ingesta: de un envio no se hace rollback. Notificar despues de
+		// NuevaOrden / DiferidasDeTitular reduce avisos huerfanos si esas
+		// lecturas fallan. El contrario, una orden sin aviso, es el que corre
+		// un plazo contra alguien que no sabe nada.
+		acuse, err := l.Notificador.Notificar(ctx, titularID,
+			asuntoLiquidacion(meta), cuerpoLiquidacion(meta, o, enviadaDia))
+		if err != nil {
+			return fmt.Errorf("notificar la liquidacion %s: %w", id, err)
+		}
+		acuses[id] = acuse
+
 		nuevas = append(nuevas, o)
 	}
 
 	if err := l.Ordenes.EmitirOrdenes(ctx, nuevas); err != nil {
 		return fmt.Errorf("emitir las ordenes de %s: %w", meta.donde(), err)
 	}
-	residuoAsentado := residuoAsentadoDe(residuoProrrateo)
 	for _, o := range nuevas {
-		if err := l.asentar(ctx, HechoLiquidacionEmitida, o, "", acuses[o.ID], residuoAsentado); err != nil {
+		if err := l.asentar(ctx, HechoLiquidacionEmitida, o, "", acuses[o.ID]); err != nil {
 			return err
 		}
+	}
+	// Residuo del lote UNA sola vez (ref periodo+circuito), aunque no haya
+	// titulares con neto: si todo quedo retenido, el centavaje no puede
+	// desaparecer sin rastro (ADR 0005).
+	if err := l.asentarResiduoLote(ctx, meta, residuoProrrateo); err != nil {
+		return err
 	}
 
 	if len(acumuladas) == 0 {
@@ -388,7 +414,7 @@ func (l Liquidaciones) emitir(
 		return fmt.Errorf("cerrar las diferidas arrastradas a %s: %w", meta.donde(), err)
 	}
 	for _, o := range aplicadas {
-		if err := l.asentar(ctx, HechoLiquidacionAcumulada, o, liquidacion.EstadoDiferida, "", nil); err != nil {
+		if err := l.asentar(ctx, HechoLiquidacionAcumulada, o, liquidacion.EstadoDiferida, ""); err != nil {
 			return err
 		}
 	}
@@ -462,7 +488,7 @@ func (l Liquidaciones) conPlazoYDocumentos(ctx context.Context, ordenes []liquid
 			return fmt.Errorf("persistir transicion de silencio: %w", err)
 		}
 		for _, o := range aplicadas {
-			if err := l.asentar(ctx, hechoDeSilencio(o.Estado), o, liquidacion.EstadoEnviada, "", nil); err != nil {
+			if err := l.asentar(ctx, hechoDeSilencio(o.Estado), o, liquidacion.EstadoEnviada, ""); err != nil {
 				return err
 			}
 		}
@@ -524,14 +550,11 @@ func (l Liquidaciones) umbralVigente(ctx context.Context, ahora time.Time) (deci
 //
 // Sin [exigirActor]: estos hechos los produce el sistema, no una persona. Ver
 // [actorSistema].
-//
-// residuo solo viaja en la emision: es el centavaje de [liquidacion.Prorratear]
-// que no quedo en ninguna orden (ADR 0005). En las demas transiciones va nil.
 func (l Liquidaciones) asentar(
 	ctx context.Context, hecho string, o liquidacion.OrdenDePago,
-	anterior liquidacion.Estado, acuse string, residuo *ResiduoProrrateoAsentado,
+	anterior liquidacion.Estado, acuse string,
 ) error {
-	payload, err := json.Marshal(asientoDeOrden(o, anterior, acuse, residuo))
+	payload, err := json.Marshal(asientoDeOrden(o, anterior, acuse))
 	if err != nil {
 		return fmt.Errorf("serializar el asiento de la orden %q: %w", o.ID, err)
 	}
@@ -544,6 +567,30 @@ func (l Liquidaciones) asentar(
 		Cuando:  l.Reloj.Ahora(),
 	}); err != nil {
 		return fmt.Errorf("asentar %q sobre la orden %q: %w", hecho, o.ID, err)
+	}
+	return nil
+}
+
+// asentarResiduoLote escribe UNA vez el residuo de [liquidacion.Prorratear]
+// del (periodo, circuito). No va en cada asiento de orden: con N titulares
+// el mismo centavo se contaria N veces.
+func (l Liquidaciones) asentarResiduoLote(
+	ctx context.Context, meta MetaProceso, r liquidacion.ResiduoProrrateo,
+) error {
+	payload, err := json.Marshal(residuoAsentadoDe(r))
+	if err != nil {
+		return fmt.Errorf("serializar el residuo de %s/%s: %w", meta.Periodo, meta.Circuito, err)
+	}
+	refID := meta.Periodo + "-" + string(meta.Circuito)
+	if err := l.Bitacora.Asentar(ctx, Asiento{
+		Hecho:   HechoLiquidacionResiduoProrrateo,
+		RefTipo: RefLiquidacionLote,
+		RefID:   refID,
+		ActorID: actorSistema,
+		Payload: payload,
+		Cuando:  l.Reloj.Ahora(),
+	}); err != nil {
+		return fmt.Errorf("asentar residuo de prorrateo de %s: %w", refID, err)
 	}
 	return nil
 }
@@ -663,17 +710,28 @@ func hechoDeSilencio(estado liquidacion.Estado) string {
 // en esta capa y no en el adaptador porque el plazo que anuncia es una regla:
 // quince dias CALENDARIO desde el envio, no habiles (R-22 usa habiles y no se
 // unifican).
+//
+// Recibe la orden YA completa (arrastres incluidos): el silencio corre sobre
+// la cifra que se le comunico al titular, no sobre el neto de la corrida
+// antes del arrastre (RD 13.2, ADR 0006).
 func asuntoLiquidacion(m MetaProceso) string {
 	return fmt.Sprintf("Liquidacion del periodo %s (%s)", m.Periodo, m.Circuito)
 }
 
-func cuerpoLiquidacion(m MetaProceso, bruto, neto decimal.Decimal, enviadaDia string) string {
-	return fmt.Sprintf(
+func cuerpoLiquidacion(m MetaProceso, o liquidacion.OrdenDePago, enviadaDia string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b,
 		"Liquidacion del periodo %s, circuito %s, enviada el %s.\n"+
-			"Bruto %s, neto %s.\n"+
-			"Sin respuesta en %d dias calendario se entiende aceptada (R-10, RD 13.2).",
+			"Bruto %s, neto %s.\n",
 		m.Periodo, m.Circuito, enviadaDia,
-		bruto.StringFixed(2), neto.StringFixed(2), liquidacion.PlazoAceptacionDias)
+		o.Bruto.StringFixed(2), o.Neto.StringFixed(2))
+	if len(o.Arrastres) > 0 {
+		fmt.Fprintf(&b, "Incluye arrastre de %s.\n", strings.Join(o.Arrastres, ", "))
+	}
+	fmt.Fprintf(&b,
+		"Sin respuesta en %d dias calendario se entiende aceptada (R-10, RD 13.2).",
+		liquidacion.PlazoAceptacionDias)
+	return b.String()
 }
 
 // AsientoOrden es el payload JSONB de los asientos de liquidacion.
@@ -712,16 +770,11 @@ type AsientoOrden struct {
 	// plazo de R-10: `enviada` es un dia civil, y sin acuse no hay nada que
 	// respalde que ese dia salio algo.
 	Acuse string `json:"acuse,omitempty"`
-
-	// ResiduoProrrateo es el centavaje de cada deduccion que el redondeo no
-	// asigno a ninguna orden (ADR 0005). Viaja en los asientos de emision del
-	// lote — el mismo valor en cada uno — para que no desaparezca sin rastro.
-	// Nil en las demas transiciones.
-	ResiduoProrrateo *ResiduoProrrateoAsentado `json:"residuo_prorrateo,omitempty"`
 }
 
 // ResiduoProrrateoAsentado es [liquidacion.ResiduoProrrateo] en el libro:
-// montos como cadena (ADR 0010).
+// montos como cadena (ADR 0010). Vive en el asiento de lote
+// ([HechoLiquidacionResiduoProrrateo]), no en cada orden.
 type ResiduoProrrateoAsentado struct {
 	Admin   string `json:"admin"`
 	Social  string `json:"social"`
@@ -734,8 +787,8 @@ type DeduccionAsentada struct {
 	Monto    string `json:"monto"`
 }
 
-func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) *ResiduoProrrateoAsentado {
-	return &ResiduoProrrateoAsentado{
+func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) ResiduoProrrateoAsentado {
+	return ResiduoProrrateoAsentado{
 		Admin:   r.Admin.StringFixed(2),
 		Social:  r.Social.StringFixed(2),
 		Reserva: r.Reserva.StringFixed(2),
@@ -744,7 +797,6 @@ func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) *ResiduoProrrateoAsentado
 
 func asientoDeOrden(
 	o liquidacion.OrdenDePago, anterior liquidacion.Estado, acuse string,
-	residuo *ResiduoProrrateoAsentado,
 ) AsientoOrden {
 	deducciones := make([]DeduccionAsentada, 0, len(o.Deducciones))
 	for _, d := range o.Deducciones {
@@ -754,19 +806,18 @@ func asientoDeOrden(
 		})
 	}
 	return AsientoOrden{
-		Periodo:          o.Periodo,
-		Circuito:         o.Circuito,
-		Procesos:         o.Procesos,
-		TitularID:        o.TitularID,
-		Bruto:            o.Bruto.StringFixed(2),
-		Deducciones:      deducciones,
-		Neto:             o.Neto.StringFixed(2),
-		Estado:           string(o.Estado),
-		EstadoAnterior:   string(anterior),
-		Enviada:          o.EnviadaDia,
-		Arrastres:        o.Arrastres,
-		Acuse:            acuse,
-		ResiduoProrrateo: residuo,
+		Periodo:        o.Periodo,
+		Circuito:       o.Circuito,
+		Procesos:       o.Procesos,
+		TitularID:      o.TitularID,
+		Bruto:          o.Bruto.StringFixed(2),
+		Deducciones:    deducciones,
+		Neto:           o.Neto.StringFixed(2),
+		Estado:         string(o.Estado),
+		EstadoAnterior: string(anterior),
+		Enviada:        o.EnviadaDia,
+		Arrastres:      o.Arrastres,
+		Acuse:          acuse,
 	}
 }
 
