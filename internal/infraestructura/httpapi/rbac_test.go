@@ -10,18 +10,22 @@ import (
 )
 
 // La tabla que pide el issue: (rol, ruta) -> codigo, a traves del chi
-// router, con el doble de sesiones. Los 204 son la superficie vacia; lo
-// que se comprueba es el middleware, no el payload.
+// router, con el doble de sesiones. Lo que se comprueba es el middleware, no
+// el payload: por eso el harness cablea auditoria y liquidaciones falsas y lo
+// permitido responde 200. Los 204 que quedan (/admin/pipeline) son la
+// superficie vacia.
 func TestMatrizRolRuta(t *testing.T) {
 	exito := map[string]int{
 		"/admin/pipeline":                       http.StatusNoContent,
-		"/auditoria/asientos":                   http.StatusNoContent,
+		"/auditoria/asientos":                   http.StatusOK,
+		"/auditoria/obra/obra-1":                http.StatusOK,
 		"/mis-liquidaciones":                    http.StatusOK,
 		"/mis-liquidaciones/export?formato=pdf": http.StatusOK,
 	}
 	permitido := map[string][]aplicacion.Rol{
 		"/admin/pipeline":                       {aplicacion.RolAdministrador},
 		"/auditoria/asientos":                   {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+		"/auditoria/obra/obra-1":                {aplicacion.RolAuditor, aplicacion.RolAdministrador},
 		"/mis-liquidaciones":                    {aplicacion.RolTitular},
 		"/mis-liquidaciones/export?formato=pdf": {aplicacion.RolTitular},
 	}
@@ -35,11 +39,15 @@ func TestMatrizRolRuta(t *testing.T) {
 
 	for _, rol := range roles {
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol, TitularID: "tit-1"}}
-		// Liquidaciones no es superficie vacia: el handler llama al caso de
-		// uso. El doble basta para comprobar el middleware, no el payload.
-		h := servidorConLiq(t, auth, &liquidacionesFalsa{
-			archivo: aplicacion.Archivo{Nombre: "liq.pdf", TipoMIME: "application/pdf", Contenido: []byte("%PDF")},
-		})
+		// Auditoria y liquidaciones no son superficie vacia: el handler llama
+		// al caso de uso. El doble basta para comprobar el middleware, no el payload.
+		h := Nueva(Casos{
+			Auth:      auth,
+			Auditoria: &auditoriaFalsa{},
+			Liquidaciones: &liquidacionesFalsa{
+				archivo: aplicacion.Archivo{Nombre: "liq.pdf", TipoMIME: "application/pdf", Contenido: []byte("%PDF")},
+			},
+		}, Opciones{}).Router()
 		for ruta, codigoOK := range exito {
 			codigo := http.StatusForbidden
 			for _, p := range permitido[ruta] {
@@ -64,7 +72,7 @@ func TestMatrizRolRuta(t *testing.T) {
 func TestRutaConRolSinSesionEs401(t *testing.T) {
 	h := servidor(t, &autenticacionFalsa{})
 
-	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/mis-liquidaciones"} {
+	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1", "/mis-liquidaciones"} {
 		t.Run(ruta, func(t *testing.T) {
 			rec := pedir(t, h, http.MethodGet, ruta, "", "")
 			if rec.Code != http.StatusUnauthorized {

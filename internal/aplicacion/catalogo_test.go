@@ -96,43 +96,6 @@ func (c *catalogoFalso) VigentesDeObras(_ context.Context, ids []string) (map[st
 	return c.vigentes, c.errVigentes
 }
 
-// bitacoraFalsa guarda lo que se asienta. El error configurable es lo que hace
-// comprobable la regla del ADR 0006: si el asiento falla, el caso de uso falla.
-type bitacoraFalsa struct {
-	asientos []Asiento
-	err      error
-}
-
-func (b *bitacoraFalsa) Asentar(_ context.Context, a Asiento) error {
-	if b.err != nil {
-		return b.err
-	}
-	b.asientos = append(b.asientos, a)
-	return nil
-}
-
-func (b *bitacoraFalsa) De(_ context.Context, refTipo, refID string) ([]Asiento, error) {
-	if b.err != nil {
-		return nil, b.err
-	}
-	var out []Asiento
-	for _, a := range b.asientos {
-		if a.RefTipo == refTipo && a.RefID == refID {
-			out = append(out, a)
-		}
-	}
-	return out, nil
-}
-
-func (b *bitacoraFalsa) AsientoPorID(_ context.Context, id string) (Asiento, error) {
-	for _, a := range b.asientos {
-		if a.ID == id {
-			return a, nil
-		}
-	}
-	return Asiento{}, ErrNoEncontrado
-}
-
 // unidadFalsa corre fn tal cual y APUNTA si termino bien. No puede revertir
 // nada -no hay base que revertir sin Postgres-, pero si deja comprobar la
 // unica decision que es del nucleo: que el error del asiento llega hasta el

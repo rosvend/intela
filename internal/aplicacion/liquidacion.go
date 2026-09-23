@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
@@ -41,8 +43,14 @@ func (s ServicioLiquidacion) Consultar(ctx context.Context, actor Usuario, perio
 		Periodo:   periodo,
 		Lineas:    make([]LineaLiquidacion, 0, len(filas)),
 	}
+	// Una sola corrida de ProrratearProceso por proceso: el vector de netos
+	// es el mismo en cada fila del titular y recalcularlo seria O(n²).
+	cache := map[string][]liquidacion.Linea{}
 	for _, f := range filas {
-		p := prorratearFila(f)
+		p, err := prorratearFila(f, cache)
+		if err != nil {
+			return Liquidacion{}, err
+		}
 		linea := LineaLiquidacion{
 			Periodo: f.Periodo,
 			ObraID:  f.ObraID,
@@ -66,15 +74,51 @@ func (s ServicioLiquidacion) Consultar(ctx context.Context, actor Usuario, perio
 // prorratearFila usa [liquidacion.ProrratearProceso] cuando el repositorio
 // trajo todos los netos del proceso (para que Σ deducciones cuadre con el
 // proceso). Si no, [liquidacion.Prorratear] con cubeta residual.
-func prorratearFila(f FilaLiquidacion) liquidacion.Linea {
+//
+// Cuando Σ NetosProceso < ProcesoNeto (retenido, residuo o no distribuido),
+// se agrega esa diferencia como partida residual —igual que [Prorratear]—
+// para que los titulares no carguen con deducciones ajenas. Si Σ supera el
+// neto del proceso, la invariante del motor esta rota y se rechaza.
+func prorratearFila(f FilaLiquidacion, cache map[string][]liquidacion.Linea) (liquidacion.Linea, error) {
 	if len(f.NetosProceso) == 0 {
-		return liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto)
+		return liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto), nil
 	}
-	lineas := liquidacion.ProrratearProceso(f.NetosProceso, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva)
-	if f.Indice < 0 || f.Indice >= len(lineas) {
-		return liquidacion.Prorratear(f.Neto, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva, f.ProcesoNeto)
+	if f.Indice < 0 || f.Indice >= len(f.NetosProceso) {
+		return liquidacion.Linea{}, fmt.Errorf(
+			"liquidacion: indice %d fuera de netos del proceso %s (%d netos)",
+			f.Indice, f.ProcesoID, len(f.NetosProceso),
+		)
 	}
-	return lineas[f.Indice]
+
+	lineas, ok := cache[f.ProcesoID]
+	if !ok {
+		pesos, err := pesosConCubetaResidual(f.NetosProceso, f.ProcesoNeto)
+		if err != nil {
+			return liquidacion.Linea{}, fmt.Errorf("liquidacion proceso %s: %w", f.ProcesoID, err)
+		}
+		lineas = liquidacion.ProrratearProceso(pesos, f.ProcesoAdmin, f.ProcesoSocial, f.ProcesoReserva)
+		cache[f.ProcesoID] = lineas
+	}
+	return lineas[f.Indice], nil
+}
+
+// pesosConCubetaResidual copia los netos de titular y, si falta plato
+// (retenido/residuo/no distribuido), agrega ProcesoNeto-Σ como ultima
+// partida para que el mayor-resto no se lo coma los titulares.
+func pesosConCubetaResidual(netos []decimal.Decimal, netoProc decimal.Decimal) ([]decimal.Decimal, error) {
+	suma := decimal.Zero
+	for _, n := range netos {
+		suma = suma.Add(n)
+	}
+	if suma.GreaterThan(netoProc) {
+		return nil, fmt.Errorf("Σ netos titulares %s > neto del proceso %s", suma, netoProc)
+	}
+	pesos := make([]decimal.Decimal, len(netos), len(netos)+1)
+	copy(pesos, netos)
+	if resto := netoProc.Sub(suma); resto.IsPositive() {
+		pesos = append(pesos, resto)
+	}
+	return pesos, nil
 }
 
 // Exportar renderiza la misma liquidacion que Consultar. formato es pdf o

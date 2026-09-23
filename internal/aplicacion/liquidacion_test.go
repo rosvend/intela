@@ -258,3 +258,72 @@ func TestConsultarProrrateaConNetosDelProcesoCompleto(t *testing.T) {
 			l, quiero.Admin, quiero.Social, quiero.Reserva, quiero.Bruto)
 	}
 }
+
+// Con retenido (Σ titulares < neto del proceso), las deducciones de la
+// cubeta residual no se le cargan a Ana: admin = 3900*2000/6500 = 1200.
+func TestConsultarConRetenidoNoInflaDeduccionesDelTitular(t *testing.T) {
+	repo := &repoLiquidacionMemoria{filas: []FilaLiquidacion{{
+		Periodo:        "2026-01",
+		ObraID:         "obra-completa",
+		Titulo:         "La Casa",
+		Neto:           dec("3900"),
+		ProcesoID:      "proc-retenido",
+		ProcesoBruto:   dec("10000"),
+		ProcesoAdmin:   dec("2000"),
+		ProcesoSocial:  dec("1000"),
+		ProcesoReserva: dec("500"),
+		ProcesoNeto:    dec("6500"),
+		NetosProceso:   []decimal.Decimal{dec("3900")}, // obra incompleta retenida: 2600 sin titular
+		Indice:         0,
+	}}}
+	s := ServicioLiquidacion{Repo: repo}
+
+	liq, err := s.Consultar(context.Background(), ana(), "2026-01")
+	if err != nil {
+		t.Fatalf("Consultar: %v", err)
+	}
+	l := liq.Lineas[0]
+	if !l.Admin.Equal(dec("1200")) || !l.Social.Equal(dec("600")) || !l.Reserva.Equal(dec("300")) || !l.Bruto.Equal(dec("6000")) {
+		t.Fatalf("con retenido Ana debe quedar proporcional: %+v", l)
+	}
+}
+
+func TestConsultarRechazaIndiceFueraDeNetosProceso(t *testing.T) {
+	repo := &repoLiquidacionMemoria{filas: []FilaLiquidacion{{
+		Periodo:        "2026-01",
+		ObraID:         "obra-1",
+		Titulo:         "X",
+		Neto:           dec("3900"),
+		ProcesoID:      "proc-1",
+		ProcesoAdmin:   dec("2000"),
+		ProcesoSocial:  dec("1000"),
+		ProcesoReserva: dec("500"),
+		ProcesoNeto:    dec("6500"),
+		NetosProceso:   []decimal.Decimal{dec("3900")},
+		Indice:         -1,
+	}}}
+	_, err := ServicioLiquidacion{Repo: repo}.Consultar(context.Background(), ana(), "2026-01")
+	if err == nil {
+		t.Fatal("indice -1 tiene que fallar: la fila del titular no esta en su propio proceso")
+	}
+}
+
+func TestConsultarRechazaNetosQueSuperanElProceso(t *testing.T) {
+	repo := &repoLiquidacionMemoria{filas: []FilaLiquidacion{{
+		Periodo:        "2026-01",
+		ObraID:         "obra-1",
+		Titulo:         "X",
+		Neto:           dec("4000"),
+		ProcesoID:      "proc-1",
+		ProcesoAdmin:   dec("2000"),
+		ProcesoSocial:  dec("1000"),
+		ProcesoReserva: dec("500"),
+		ProcesoNeto:    dec("6500"),
+		NetosProceso:   []decimal.Decimal{dec("4000"), dec("3000")}, // 7000 > 6500
+		Indice:         0,
+	}}}
+	_, err := ServicioLiquidacion{Repo: repo}.Consultar(context.Background(), ana(), "2026-01")
+	if err == nil {
+		t.Fatal("Σ netos > neto del proceso tiene que fallar, no corregirse en silencio")
+	}
+}

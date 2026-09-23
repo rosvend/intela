@@ -64,6 +64,7 @@ type API struct {
 	liq           Liquidaciones
 	procesos      Procesos
 	cola          ColaRevision
+	auditoria     Auditoria
 	opts          Opciones
 	log           *slog.Logger
 }
@@ -86,6 +87,7 @@ type Casos struct {
 	Liquidaciones Liquidaciones
 	Procesos      Procesos
 	Cola          ColaRevision
+	Auditoria     Auditoria
 }
 
 // ColaRevision lista lo que espera ojo humano: filas que no se pudieron
@@ -117,6 +119,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		liq:           casos.Liquidaciones,
 		procesos:      casos.Procesos,
 		cola:          casos.Cola,
+		auditoria:     casos.Auditoria,
 		opts:          opts,
 		log:           log,
 	}
@@ -166,7 +169,8 @@ func (a *API) Router() http.Handler {
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
-			audit.Get("/asientos", superficieOK)
+			audit.Get("/asientos", a.listarAsientos)
+			audit.Get("/obra/{id}", a.historialDeObra)
 		})
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve

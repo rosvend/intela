@@ -5,7 +5,9 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
+	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
 func TestDeTitularDevuelveNetoYTotalesDelProceso(t *testing.T) {
@@ -117,6 +119,67 @@ func TestDeTitularNetosProcesoPermitenReconciliarDeducciones(t *testing.T) {
 	sumaAdmin := lineas[ana[0].Indice].Admin.Add(lineas[beto[0].Indice].Admin)
 	if !sumaAdmin.Equal(ana[0].ProcesoAdmin) {
 		t.Fatalf("Σ admin Ana+Beto = %s, proceso = %s", sumaAdmin, ana[0].ProcesoAdmin)
+	}
+}
+
+// Con retenido en el proceso, DeTitular + Consultar no deben inflar las
+// deducciones de Ana con la parte de la obra retenida (Bloqueante 1 / RD 16).
+func TestConsultarConRetenidoNoInflaDeducciones(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	ejecutar := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("sembrar retenido: %v", err)
+		}
+	}
+	ejecutar(`INSERT INTO usuarios_recaudo (id, nombre, categoria)
+	          VALUES ('usr-canal', 'Canal de prueba', 'tv_abierta')
+	          ON CONFLICT (id) DO NOTHING`)
+	ejecutar(`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
+	          VALUES ('bolsa-ret', 'usr-canal', '2026-03', 'nacional', 10000)`)
+	ejecutar(`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
+	          VALUES ('proc-ret', 'nacional', 'liquidacion_final', '2026-03', 'bolsa-ret', 'snap-1', 'RD IX')`)
+
+	r := reparto.Resultado{
+		Neto:       decimal.RequireFromString("6500"),
+		Admin:      decimal.RequireFromString("2000"),
+		Social:     decimal.RequireFromString("1000"),
+		Reserva:    decimal.RequireFromString("500"),
+		Retenido:   decimal.RequireFromString("2600"),
+		Residuo:    decimal.Zero,
+		ValorPunto: decimal.RequireFromString("1"),
+		SnapshotID: "snap-1",
+		Reglamento: "RD IX",
+		Obras: []reparto.LineaObra{
+			{ObraID: obraCompleta, Puntos: decimal.RequireFromString("60"), Importe: decimal.RequireFromString("3900")},
+			{ObraID: obraIncompleta, Puntos: decimal.RequireFromString("40"), Importe: decimal.RequireFromString("2600"), Retenida: true, Motivo: "declaracion_incompleta"},
+		},
+		Titulares: []reparto.LineaTitular{
+			{ObraID: obraCompleta, TitularID: titularAna, IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("100"), Importe: decimal.RequireFromString("3900")},
+		},
+	}
+	if err := s.GuardarResultado(ctx, "proc-ret", r); err != nil {
+		t.Fatalf("GuardarResultado: %v", err)
+	}
+
+	svc := aplicacion.ServicioLiquidacion{Repo: s}
+	liq, err := svc.Consultar(ctx, aplicacion.Usuario{
+		ID: "usr-ana", Rol: aplicacion.RolTitular, TitularID: titularAna,
+	}, "2026-03")
+	if err != nil {
+		t.Fatalf("Consultar: %v", err)
+	}
+	if len(liq.Lineas) != 1 {
+		t.Fatalf("lineas = %d", len(liq.Lineas))
+	}
+	l := liq.Lineas[0]
+	if !l.Admin.Equal(decimal.RequireFromString("1200")) ||
+		!l.Social.Equal(decimal.RequireFromString("600")) ||
+		!l.Reserva.Equal(decimal.RequireFromString("300")) ||
+		!l.Bruto.Equal(decimal.RequireFromString("6000")) ||
+		!l.Neto.Equal(decimal.RequireFromString("3900")) {
+		t.Fatalf("Ana con retenido quedo inflada: %+v (admin proporcional=1200)", l)
 	}
 }
 

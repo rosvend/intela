@@ -219,6 +219,7 @@ func construir() (http.Handler, error) {
 		Liquidaciones: liquidaciones,
 		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Auditoria:     aplicacion.Auditoria{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
