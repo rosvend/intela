@@ -171,3 +171,71 @@ func TestLaBitacoraRechazaUpdateYDelete(t *testing.T) {
 		t.Fatal("se esperaba que el trigger append-only rechazara el DELETE")
 	}
 }
+
+// Listar devuelve lo mas reciente primero: es el orden de timeline que lee
+// el Portal de Auditoria, no el orden de cadena de ExplicarCifra.
+func TestListarOrdenaLoRecientePrimero(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	for i, hecho := range []string{"primero", "segundo", "tercero"} {
+		if err := s.Asentar(ctx, aplicacion.Asiento{
+			Hecho: hechoDePrueba(hecho), RefTipo: "obra", RefID: obraSinDeclaracion,
+			Cuando: base.Add(time.Duration(i) * time.Hour), Payload: []byte(`{}`),
+		}); err != nil {
+			t.Fatalf("Asentar %s: %v", hecho, err)
+		}
+	}
+
+	asientos, err := s.Listar(ctx, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("Listar: %v", err)
+	}
+	if len(asientos) != 3 {
+		t.Fatalf("se esperaban 3 asientos, llegaron %d: %+v", len(asientos), asientos)
+	}
+	for i, quiero := range []string{"tercero", "segundo", "primero"} {
+		if asientos[i].Hecho != "test."+quiero {
+			t.Fatalf("posicion %d = %q, se esperaba %q", i, asientos[i].Hecho, "test."+quiero)
+		}
+	}
+}
+
+func hechoDePrueba(nombre string) string { return "test." + nombre }
+
+// Listar pagina con limite y desplazamiento, con el defecto cuando no se
+// piden: el mismo recorte que el resto de listados.
+func TestListarPagina(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	for i := range 5 {
+		if err := s.Asentar(ctx, aplicacion.Asiento{
+			Hecho: hechoDePrueba("h"), RefTipo: "bolsa", RefID: "bo",
+			Cuando: base.Add(time.Duration(i) * time.Minute), Payload: []byte(`{}`),
+		}); err != nil {
+			t.Fatalf("Asentar: %v", err)
+		}
+	}
+
+	pagina, err := s.Listar(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("Listar: %v", err)
+	}
+	if len(pagina) != 2 {
+		t.Fatalf("se esperaban 2 asientos, llegaron %d", len(pagina))
+	}
+	if !pagina[0].Cuando.After(pagina[1].Cuando) {
+		t.Fatalf("la pagina no viene en orden descendente: %v, %v", pagina[0].Cuando, pagina[1].Cuando)
+	}
+
+	vacia, err := s.Listar(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 5})
+	if err != nil {
+		t.Fatalf("Listar mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("se esperaba pagina vacia, llegaron %d", len(vacia))
+	}
+}
