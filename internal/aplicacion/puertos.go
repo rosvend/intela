@@ -681,10 +681,26 @@ type FilaParametro struct {
 }
 
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
+//
+// Nombres largos y no Guardar/PorID a secas, por la misma razon que
+// [RepositorioResultados]: el mismo *Store satisface [GestionDeclaraciones]
+// (que ya tiene su propio Guardar) y [CatalogoObras] (que ya tiene su propio
+// PorID), y dos metodos con el mismo nombre y distinta firma no caben en un
+// solo tipo.
 type RepositorioProcesos interface {
-	Guardar(ctx context.Context, p ProcesoVista) error
-	PorID(ctx context.Context, id string) (ProcesoVista, error)
-	Listar(ctx context.Context) ([]ProcesoVista, error)
+	// GuardarProceso inserta un proceso nuevo, o actualiza uno existente con
+	// control de concurrencia optimista: revisionAnterior es la revision que
+	// el llamador leyo antes de calcular la transicion, y el UPDATE solo
+	// aplica si la fila sigue en esa revision. Sin esto, dos transiciones
+	// concurrentes sobre el mismo proceso -dos AvanzarEtapa, o un
+	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
+	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
+	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
+	// la escritura; no aplica a un alta nueva, que nunca tiene fila previa
+	// que comparar.
+	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
+	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
+	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
 
@@ -694,12 +710,15 @@ type RepositorioProcesos interface {
 // distintas, una por circuito, y hasta que ese PR fije los tipos esta vista
 // guarda los campos planos.
 type ProcesoVista struct {
-	ID            string
-	Circuito      reparto.Circuito
-	Etapa         reparto.Etapa
-	Periodo       string
-	BolsaID       string
-	SnapshotID    string
+	ID         string
+	Circuito   reparto.Circuito
+	Etapa      reparto.Etapa
+	Periodo    string
+	BolsaID    string
+	SnapshotID string
+	// Reglamento es la version vigente al abrir la corrida (ADR 0004), copiada
+	// del snapshot congelado -- no se resuelve de nuevo en un reproceso.
+	Reglamento    string
 	Revision      int
 	Firmas        []reparto.Firma
 	RechazoMotivo string
