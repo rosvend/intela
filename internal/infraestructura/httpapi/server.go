@@ -62,6 +62,7 @@ type API struct {
 	declaraciones Declaraciones
 	recaudo       Recaudo
 	liq           Liquidaciones
+	procesos      Procesos
 	cola          ColaRevision
 	opts          Opciones
 	log           *slog.Logger
@@ -83,6 +84,7 @@ type Casos struct {
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
 	Liquidaciones Liquidaciones
+	Procesos      Procesos
 	Cola          ColaRevision
 }
 
@@ -113,6 +115,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
 		liq:           casos.Liquidaciones,
+		procesos:      casos.Procesos,
 		cola:          casos.Cola,
 		opts:          opts,
 		log:           log,
@@ -228,6 +231,34 @@ func (a *API) Router() http.Handler {
 			titular.Use(requiereRol(aplicacion.RolTitular))
 			titular.Get("/mis-liquidaciones", a.consultarLiquidaciones)
 			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
+		})
+
+		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,
+		// porque no comparten roles: administrador OPERA el pipeline (abre y
+		// avanza etapas), y distribucion/contabilidad son las dos firmas de
+		// sus compuertas (firmar, rechazar) -- la MISMA separacion que ya
+		// aplica a /recaudo y /bolsas, y por la misma razon: quien co-firma
+		// la salida del dinero no debe ser quien opera el pipeline que la
+		// prepara. La lectura la comparten los tres, mas auditor.
+		protegido.Route("/procesos", func(proc chi.Router) {
+			proc.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.listarProcesos)
+				lectura.Get("/{id}", a.procesoPorID)
+			})
+			proc.Group(func(pipeline chi.Router) {
+				pipeline.Use(requiereRol(aplicacion.RolAdministrador))
+				pipeline.Post("/", a.abrirProceso)
+				pipeline.Post("/{id}/avanzar", a.avanzarEtapaProceso)
+			})
+			proc.Group(func(compuerta chi.Router) {
+				compuerta.Use(requiereRol(aplicacion.RolDistribucion, aplicacion.RolContabilidad))
+				compuerta.Post("/{id}/firmar", a.firmarProceso)
+				compuerta.Post("/{id}/rechazar", a.rechazarGateProceso)
+			})
 		})
 
 		// La ingesta manual de reportes de uso. Pide `administrador` por lo

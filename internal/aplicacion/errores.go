@@ -270,6 +270,30 @@ var (
 	// discrepancia que una auditoria de RD 16 encuentra y que nadie puede
 	// explicar despues.
 	ErrReservaYaRegistrada = errors.New("ya existe una reserva registrada para ese proceso")
+
+	// ErrProcesoIDReutilizado: IniciarProceso es idempotente por id -- un
+	// reintento del mismo trabajo (Intentos, no Corrida) tiene que poder
+	// llamarlo dos veces sin reabrir el proceso -- pero solo cuando el
+	// periodo, circuito y bolsa que trae son LOS MISMOS que abrieron esa
+	// corrida. Un id que colisiona con un proceso de otros datos no es un
+	// reintento legitimo: es un identificador mal generado o reutilizado por
+	// error, y devolver el proceso existente en silencio valorizaria la
+	// bolsa equivocada bajo el nombre de otra.
+	ErrProcesoIDReutilizado = errors.New("ese id de proceso ya existe con otro periodo, circuito o bolsa")
+
+	// ErrProcesoBolsaNoCoincide: el circuito o el periodo que se declaran al
+	// abrir un proceso tienen que ser los mismos que los de la bolsa que
+	// referencia -- si no, la corrida valorizaria con las reglas de un
+	// circuito, o los usos de un periodo, que no son los de esa bolsa.
+	ErrProcesoBolsaNoCoincide = errors.New("el circuito o el periodo no coinciden con los de la bolsa")
+
+	// ErrProcesoConflictoDeConcurrencia: la fila de `procesos` cambio entre
+	// que se leyo y que se escribio. Dos transiciones concurrentes sobre el
+	// mismo proceso -dos AvanzarEtapa, o un AvanzarEtapa y un RechazarGate
+	// corriendo a la vez- no pueden pisarse: la segunda en llegar tiene que
+	// releer el estado actual y decidir de nuevo, no sobreescribir a ciegas
+	// lo que la primera ya guardo.
+	ErrProcesoConflictoDeConcurrencia = errors.New("el proceso cambio de estado mientras se procesaba esta peticion, vuelva a intentar")
 )
 
 // ErrorParametroAusente nombra las clausulas normativas que no tienen valor
