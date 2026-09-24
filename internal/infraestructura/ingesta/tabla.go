@@ -69,6 +69,17 @@ type Tabla struct {
 	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON. Se lee
 	// por [Tabla.ancho].
 	anchos []int
+
+	// compuestas marca, por fila, las columnas cuyo valor era un objeto o un
+	// array JSON. Solo lo rellena [TablaJSON]. Existe porque la celda es
+	// texto: `{"x":1}` como texto es un titulo valido y un identificador
+	// valido, y sin la marca el mapa no tiene forma de saber que no lo era.
+	compuestas []map[int]bool
+}
+
+// compuesta dice si la celda (n, col) era un valor JSON compuesto.
+func (t Tabla) compuesta(n, col int) bool {
+	return n >= 0 && n < len(t.compuestas) && t.compuestas[n][col]
 }
 
 // ancho devuelve cuantos campos traia de verdad Filas[n], o len(Filas[n])
@@ -259,9 +270,11 @@ func TablaCSV(datos []byte) (Tabla, error) {
 // json.Number conserva el literal tal como venia: 80197856 no se convierte a
 // float64 y vuelve como 8.0197856e+07, que es exactamente como se estropea un
 // identificador al pasar por un JSON. Un valor compuesto -- objeto o array --
-// se conserva como su JSON compacto: si la columna no esta mapeada da igual, y
-// si lo esta, la coercion la rechaza NOMBRANDO el campo, que es mejor que
-// convertirla en cadena vacia sin decirlo.
+// se conserva como su JSON y se MARCA como compuesto: si la columna no esta
+// mapeada da igual, y si lo esta, [Mapa.Aplicar] rechaza la fila NOMBRANDO el
+// campo, que es mejor que convertirla en cadena vacia sin decirlo. La marca
+// hace falta porque, como texto, `{"x":1}` pasa por un titulo y `[1,2]` por un
+// identificador: sin ella entraban los dos sin motivo (issue #113).
 func TablaJSON(datos []byte) (Tabla, error) {
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(datos, []byte(bom))))
 	dec.UseNumber()
@@ -293,10 +306,18 @@ func TablaJSON(datos []byte) (Tabla, error) {
 
 	filas := make([][]string, 0, len(registros))
 	lineas := make([]int, 0, len(registros))
+	compuestas := make([]map[int]bool, len(registros))
 	for n, r := range registros {
 		fila := make([]string, len(columnas))
 		for i, c := range columnas {
-			fila[i] = textoJSON(r[c])
+			var compuesto bool
+			fila[i], compuesto = textoJSON(r[c])
+			if compuesto {
+				if compuestas[n] == nil {
+					compuestas[n] = map[int]bool{}
+				}
+				compuestas[n][i] = true
+			}
 		}
 		filas = append(filas, fila)
 		// Un array JSON no tiene cabecera, pero el registro n-esimo se numera
@@ -305,36 +326,38 @@ func TablaJSON(datos []byte) (Tabla, error) {
 		// deja UN solo formato de motivo para los tres formatos.
 		lineas = append(lineas, n+2)
 	}
-	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas}, nil
+	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas, compuestas: compuestas}, nil
 }
 
-// textoJSON reduce un valor JSON a su texto de celda.
-func textoJSON(crudo json.RawMessage) string {
+// textoJSON reduce un valor JSON a su texto de celda, y dice si era un valor
+// compuesto (objeto o array).
+func textoJSON(crudo json.RawMessage) (string, bool) {
 	if len(crudo) == 0 {
-		return ""
+		return "", false
 	}
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(crudo))
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
-		return string(crudo)
+		return string(crudo), false
 	}
 	switch t := v.(type) {
 	case nil:
-		return ""
+		return "", false
 	case string:
-		return t
+		return t, false
 	case json.Number:
-		return t.String()
+		return t.String(), false
 	case bool:
 		if t {
-			return "true"
+			return "true", false
 		}
-		return "false"
+		return "false", false
 	default:
-		// Objeto o array. Se conserva su texto para que la coercion lo pueda
-		// rechazar nombrando el campo. Ver el doc de TablaJSON.
-		return string(crudo)
+		// Objeto o array. Se conserva su texto para el log de rechazos y se
+		// marca, para que el mapa lo rechace nombrando el campo. Ver el doc de
+		// TablaJSON.
+		return string(crudo), true
 	}
 }
 

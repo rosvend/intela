@@ -317,7 +317,7 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		// es mandar al cliente a arreglar una fila que esta bien.
 		linea := t.Linea(n)
 
-		u, motivo := m.fila(fila, indices, linea)
+		u, motivo := m.fila(fila, indices, linea, func(col int) bool { return t.compuesta(n, col) })
 		if ancho := t.ancho(n); ancho < len(t.Columnas) {
 			// Una coma PERDIDA corre los valores a la izquierda igual que una
 			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
@@ -424,7 +424,10 @@ func (m Mapa) indicesClave(t Tabla) ([]int, error) {
 // Solo se devuelve el PRIMER motivo. Un rechazo se lee para arreglar la fila y
 // volver a mandarla; acumular los cinco fallos de una fila rota entera no
 // ayuda mas y no cabe en el CHECK de un motivo por fila.
-func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion.UsoPersistido, string) {
+//
+// compuesta dice si la celda de una columna era un objeto o array JSON (ver
+// [TablaJSON]); en los demas formatos no lo es nunca.
+func (m Mapa) fila(fila []string, indices map[string]int, linea int, compuesta func(col int) bool) (aplicacion.UsoPersistido, string) {
 	u := aplicacion.UsoPersistido{Modalidad: m.Modalidad}
 	var motivo string
 	var ids []aplicacion.IDFuente
@@ -434,6 +437,12 @@ func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion
 	// recorrido aleatorio de un mapa de Go seria otro en cada corrida.
 	for _, c := range m.Columnas {
 		bruto := celda(fila, indices[c.Nombre])
+		if compuesta(indices[c.Nombre]) && motivo == "" {
+			// Antes que nada: como texto, un objeto pasa por titulo y un array
+			// por identificador, y ninguna comprobacion de abajo lo veria.
+			motivo = fmt.Sprintf("fila %d, %s (columna %q): valor JSON compuesto (objeto o array) donde va un valor simple: %s",
+				linea, c.Campo, c.Nombre, bruto)
+		}
 		if c.Requerida && esPlaceholder(bruto) && motivo == "" {
 			// Antes que la coercion: aDecimal convertiria el hueco en un cero
 			// valido y nadie volveria a ver que faltaba.

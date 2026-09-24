@@ -422,3 +422,70 @@ func TestCineCSVReportaLaLineaDelRechazoTrasLineasEnBlanco(t *testing.T) {
 		t.Fatalf("motivo = %q, se esperaba la linea 5", usos[1].RechazoMotivo)
 	}
 }
+
+// El docstring de TablaJSON prometia que un valor compuesto en una columna
+// mapeada se rechaza NOMBRANDO el campo, y no ocurria: `{"titulo":{"x":1}}`
+// persistia titulo = `{"x":1}` e `"id":[1,2]` persistia
+// ids_fuente = `id_pelicula=[1,2]`, sin motivo (issue #113, punto 4).
+func TestJSONRechazaLosValoresCompuestosNombrandoElCampo(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre   string
+		datos    string
+		enMotivo []string
+	}{
+		{
+			nombre:   "objeto en el titulo",
+			datos:    `[{"titulo":{"x":1},"id":"PX-1","taquilla":1}]`,
+			enMotivo: []string{"fila 2", "titulo", `"titulo"`, "compuesto"},
+		},
+		{
+			nombre:   "array en el identificador",
+			datos:    `[{"titulo":"Pelicula X","id":[1,2],"taquilla":1}]`,
+			enMotivo: []string{"fila 2", "ids_fuente", `"id"`, "compuesto"},
+		},
+		{
+			nombre:   "objeto en la metrica",
+			datos:    `[{"titulo":"Pelicula X","id":"PX-1","taquilla":{"valor":1}}]`,
+			enMotivo: []string{"fila 2", "taquilla", "compuesto"},
+		},
+		{
+			nombre:   "segundo registro, para la linea",
+			datos:    `[{"titulo":"A","id":"A-1","taquilla":1},{"titulo":"B","id":{},"taquilla":1}]`,
+			enMotivo: []string{"fila 3", "ids_fuente", "compuesto"},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(c.datos))
+			if err != nil {
+				t.Fatalf("un valor compuesto es un rechazo de fila: %v", err)
+			}
+			m := usos[len(usos)-1].RechazoMotivo
+			if m == "" {
+				t.Fatalf("la fila deberia rechazarse: %+v", usos[len(usos)-1])
+			}
+			for _, quiere := range c.enMotivo {
+				if !strings.Contains(m, quiere) {
+					t.Errorf("el motivo no dice %q: %s", quiere, m)
+				}
+			}
+		})
+	}
+}
+
+// Un compuesto en una columna que el mapa NO usa da igual: no se persiste.
+func TestJSONIgnoraLosCompuestosDeColumnasNoMapeadas(t *testing.T) {
+	t.Parallel()
+
+	datos := `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"extra":{"a":[1]}}]`
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if usos[0].RechazoMotivo != "" {
+		t.Fatalf("una columna no mapeada no rechaza la fila: %s", usos[0].RechazoMotivo)
+	}
+}
