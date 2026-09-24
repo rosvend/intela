@@ -509,12 +509,20 @@ const umbralMayoriaAncho = 0.9
 //     TODAS sus filas. No hay forma de saber cual es la buena, y aceptar la
 //     mayoria es como entraban corridas las filas de K2.
 //
-// Lo que NO puede ver, y conviene decirlo: un archivo en un solo ancho con una
-// coma perdida en todas sus filas -- el caso extremo, una sola fila (K1) -- se
-// lee como coherente y entra corrido. Y una fila que pierde un campo y gana
-// otro (`Rapido, furioso,2` bajo `titulo,id,taquilla`) tiene el ancho de las
-// buenas. Ninguna regla de ancho distingue esas filas de una bien escrita; en
-// `main` tambien entran.
+// Lo que NO puede ver, y conviene decirlo, porque ninguna regla de ancho
+// distingue estas filas de una bien escrita:
+//
+//   - Un archivo en un solo ancho con la misma coma perdida en todas sus filas
+//     se lee como coherente y entra corrido. El caso extremo es una sola fila
+//     (K1).
+//   - K2 a escala: si al menos umbralMayoriaAncho de las filas perdieron la
+//     misma coma, esas filas SON la mayoria. Entran corridas, y la fila buena
+//     cae como minoria con un motivo que dice "campo de mas". Es el precio del
+//     umbral; en `main` entraban todas, tambien la buena, sin motivo.
+//   - Una fila que pierde un campo y gana otro (`Rapido, furioso,2` bajo
+//     `titulo,id,taquilla`) tiene el ancho de las buenas.
+//
+// En `main` las tres entran igual.
 func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa []anchoEnDisputa) {
 	nombradas := len(columnas)
 	for nombradas > 0 && columnas[nombradas-1] == "" {

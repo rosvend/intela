@@ -702,3 +702,26 @@ func TestAplicarNombraLaCeldaFueraDeLaCabeceraEnXLSX(t *testing.T) {
 		t.Errorf("fila 3 rechazada: %s", usos[1].RechazoMotivo)
 	}
 }
+
+// Un registro de solo blancos (`,,,`) se descarta, y su ancho no puede
+// anotarse: `anchos` es paralela a `Filas`, y un ancho de mas desalinearia el
+// de TODAS las filas de detras. Con el desfase, A (corta) heredaria el ancho
+// del blanco y entraria, y B (justa) heredaria el de A y caeria.
+func TestAplicarNoDesalineaLosAnchosAlDescartarUnRegistroEnBlanco(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla,espectadores\n,,,\nA,PX-1,5\nB,PX-2,6,7\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 2 {
+		t.Fatalf("usos = %d, se esperaban 2 (el blanco no cuenta)", len(usos))
+	}
+	if m := usos[0].RechazoMotivo; usos[0].Titulo != "A" || !strings.Contains(m, "trae 3 campos") {
+		t.Errorf("A deberia rechazarse por corta: %q", m)
+	}
+	if usos[1].Titulo != "B" || usos[1].RechazoMotivo != "" {
+		t.Errorf("B deberia entrar: %q", usos[1].RechazoMotivo)
+	}
+}
