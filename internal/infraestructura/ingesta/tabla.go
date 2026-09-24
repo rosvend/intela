@@ -66,9 +66,11 @@ type Tabla struct {
 	Lineas []int
 
 	// anchos es, cuando el formato lo hace significativo (solo CSV), cuantos
-	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON. Se lee
-	// por [Tabla.ancho].
-	anchos []int
+	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON.
+	// anchoEsperado es el que tiene que alcanzar para no ser corta; ver
+	// [anchoEsperado]. Se leen por [Tabla.corta].
+	anchos        []int
+	anchoEsperado int
 
 	// compuestas marca, por fila, las columnas cuyo valor era un objeto o un
 	// array JSON. Solo lo rellena [TablaJSON]. Existe porque la celda es
@@ -82,13 +84,13 @@ func (t Tabla) compuesta(n, col int) bool {
 	return n >= 0 && n < len(t.compuestas) && t.compuestas[n][col]
 }
 
-// ancho devuelve cuantos campos traia de verdad Filas[n], o len(Filas[n])
-// cuando el formato no lo anota.
-func (t Tabla) ancho(n int) int {
-	if n >= 0 && n < len(t.anchos) {
-		return t.anchos[n]
+// corta dice si Filas[n] traia menos campos de los que el archivo escribe, y
+// cuantos traia. Siempre false en los formatos que no anotan el ancho.
+func (t Tabla) corta(n int) (ancho, esperado int, es bool) {
+	if n < 0 || n >= len(t.anchos) {
+		return 0, 0, false
 	}
-	return len(t.Filas[n])
+	return t.anchos[n], t.anchoEsperado, t.anchos[n] < t.anchoEsperado
 }
 
 // Linea devuelve el numero de fila del archivo del que salio Filas[n].
@@ -387,16 +389,11 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 	for i, c := range filas[0] {
 		columnas[i] = strings.TrimSpace(strings.TrimPrefix(c, bom))
 	}
-	// Las columnas FINALES sin nombre no son columnas: son la coma final de
-	// una cabecera CSV (`titulo,id,taquilla,`) o la celda vacia con la que
-	// Excel cierra el rango usado (la parrilla real de Caracol trae una
-	// columna 49 con cabecera vacia). Contarlas para el ancho hacia que todas
-	// las filas bien escritas salieran "cortas", culpando a la fila de un
-	// defecto de la cabecera. Una columna sin nombre EN MEDIO si se conserva:
-	// ahi quitarla correria las posiciones de las de detras.
-	for len(columnas) > 0 && columnas[len(columnas)-1] == "" {
-		columnas = columnas[:len(columnas)-1]
-	}
+	// Las columnas sin nombre se CONSERVAN, en su posicion: quitarlas correria
+	// las de detras (en medio) o haria pasar por fila justa una fila con un
+	// campo de mas (al final: `titulo,id,taquilla,moneda` y una fila
+	// `Rapido, furioso,55,100,` solo se ve ancha contra el ancho ORIGINAL).
+	// Lo que traiga una fila bajo ellas lo rechaza [Mapa.Aplicar] con motivo.
 
 	cuerpo := make([][]string, 0, len(filas)-1)
 	lineas := make([]int, 0, len(filas)-1)
@@ -411,14 +408,6 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 			// los rechazos de verdad, que son los que hay que pedirle al
 			// cliente.
 			continue
-		}
-		if len(f) > len(columnas) && vacia(f[len(columnas):]) {
-			// Lo que sobra son solo vacios bajo las columnas sin nombre: no es
-			// una fila ancha, y quitarlos no pierde nada. Con DATOS ahi, en
-			// cambio, la fila se queda ancha y [Mapa.Aplicar] la rechaza: no
-			// hay nombre al que mandar ese valor, y descartarlo es como se
-			// pierde un identificador corrido por una coma de mas.
-			f = f[:len(columnas)]
 		}
 		var fila []string
 		if len(f) > len(columnas) {
@@ -443,7 +432,40 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 		// hubiera un registro de solo blancos, que el lector no descarta.
 		lineas = append(lineas, fisicas[i+1])
 	}
-	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}, nil
+	t := Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}
+	if anotarAncho {
+		t.anchoEsperado = anchoEsperado(columnas, anchos)
+	}
+	return t, nil
+}
+
+// anchoEsperado decide, para TODO el archivo, cuantos campos tiene que traer
+// una fila para no ser corta.
+//
+// Solo es dudoso cuando la cabecera termina en columnas sin nombre -- la coma
+// final de `titulo,id,taquilla,` --, porque entonces hay dos formas legitimas
+// de escribir una fila: con esas comas o sin ellas. Se decide por archivo y no
+// por fila porque por fila no se puede: con la coma final en todas las filas,
+// una coma PERDIDA deja la fila justo en el ancho de las columnas con nombre, y
+// aceptarla por eso la haria entrar corrida.
+//
+// Si alguna fila llega al ancho ORIGINAL de la cabecera, el archivo escribe las
+// comas finales y ese es el ancho. Si ninguna llega, es el de la ultima columna
+// con nombre. En un archivo con las dos formas mezcladas, las filas que se
+// quedan por debajo se rechazan como cortas: no hay forma segura de saber cual
+// de las dos perdio algo, y un rechazo con motivo es preferible a una fila
+// corrida.
+func anchoEsperado(columnas []string, anchos []int) int {
+	nombradas := len(columnas)
+	for nombradas > 0 && columnas[nombradas-1] == "" {
+		nombradas--
+	}
+	for _, a := range anchos {
+		if a >= len(columnas) {
+			return len(columnas)
+		}
+	}
+	return nombradas
 }
 
 func vacia(fila []string) bool {

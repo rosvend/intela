@@ -242,9 +242,11 @@ type UsoPersistido struct {
 	RechazoTipo   string
 	RechazoCodigo string
 
-	// Linea es la fila DEL ARCHIVO de la que salio este uso, con la cabecera
-	// como 1, tal como la ve el cliente en su hoja. 0 si el uso no salio de un
-	// archivo (el seed, las pruebas).
+	// Linea es la linea DEL ARCHIVO en la que EMPIEZA el registro del que salio
+	// este uso, con la cabecera como 1. En un CSV un campo entrecomillado puede
+	// abarcar varias lineas, y entonces es la primera; en .xlsx es la fila de
+	// la hoja; en JSON, la posicion del registro en el array contando desde 2.
+	// 0 si el uso no salio de un archivo (el seed, las pruebas).
 	//
 	// No se persiste: vive lo que dura la ingesta, para que los motivos que se
 	// deciden en esta capa -- validarUso y la normalizacion -- digan la linea

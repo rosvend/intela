@@ -2,6 +2,7 @@ package ingesta
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -349,7 +350,7 @@ func TestAplicarRechazaLaFilaCSVConCamposDeMenos(t *testing.T) {
 		t.Fatalf("la fila justa no deberia rechazarse: %s", usos[0].RechazoMotivo)
 	}
 	m := usos[1].RechazoMotivo
-	for _, quiere := range []string{"fila 3", "trae 2 campos", "cabecera tiene 3"} {
+	for _, quiere := range []string{"fila 3", "trae 2 campos", "filas de este archivo traen 3"} {
 		if !strings.Contains(m, quiere) {
 			t.Errorf("el motivo no dice %q: %s", quiere, m)
 		}
@@ -378,19 +379,28 @@ func TestAplicarNoRechazaLaFilaXLSXQueExcelizeRecorta(t *testing.T) {
 }
 
 // Una cabecera con coma final -- `titulo,id,taquilla,` -- trae una columna
-// SIN NOMBRE al final. Antes contaba para el ancho, y todas las filas bien
-// escritas salian "cortas" culpando a la fila de un defecto de la cabecera.
-// El xlsx real de Caracol trae lo mismo: una columna 49 con cabecera vacia.
+// SIN NOMBRE al final. El xlsx real de Caracol trae lo mismo: una columna 49
+// con cabecera vacia. Lo que sigue fija como se lee, y la regla es una sola:
+// NINGUNA variante acepta una fila corrida; lo que no se puede decidir con
+// seguridad se rechaza con motivo.
 //
-// Las columnas finales sin nombre no cuentan para el ancho, y una fila que
-// solo trae vacios mas alla de la ultima columna con nombre no es ancha.
+//   - El ancho esperado se decide POR ARCHIVO. Si alguna fila de datos llega
+//     al ancho original de la cabecera, el archivo escribe la coma final, y
+//     una fila por debajo de ese ancho es corta. Si ninguna llega, el ancho es
+//     el de la ultima columna con nombre.
+//   - Mas alla del ancho ORIGINAL de la cabecera, todo campo -- vacio o no --
+//     hace la fila ancha.
+//   - Un dato bajo una columna sin nombre rechaza la fila: no hay nombre al que
+//     mandarlo.
 func TestAplicarIgnoraLasColumnasFinalesSinNombreDeLaCabecera(t *testing.T) {
 	t.Parallel()
 
 	for nombre, datos := range map[string]string{
-		"filas sin la coma": "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\n",
-		"filas con la coma": "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,2, \n",
-		"varias sin nombre": "titulo,id,taquilla,, \nA,PX-1,1\nB,PX-2,2,,\n",
+		"ninguna fila escribe la coma final":  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\n",
+		"todas escriben la coma final":        "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,2, \n",
+		"varias sin nombre, ninguna coma":     "titulo,id,taquilla,, \nA,PX-1,1\nB,PX-2,2\n",
+		"varias sin nombre, todas las comas":  "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2,,\n",
+		"comas parciales sin llegar al ancho": "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
 	} {
 		t.Run(nombre, func(t *testing.T) {
 			t.Parallel()
@@ -407,24 +417,106 @@ func TestAplicarIgnoraLasColumnasFinalesSinNombreDeLaCabecera(t *testing.T) {
 	}
 }
 
-// La otra mitad, para que ignorar la columna sin nombre no abra un silencio:
-// una fila con DATOS ahi sigue siendo ancha y se rechaza. No hay nombre al
-// que mandar ese valor, y descartarlo es como se pierde un identificador
-// corrido por una coma de mas.
-func TestAplicarRechazaLosDatosEnUnaColumnaSinNombre(t *testing.T) {
+// Las variantes que NO se aceptan, cada una con el motivo que la explica.
+func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 	t.Parallel()
 
-	datos := "titulo,id,taquilla,\nA,PX-1,1,valor huerfano\nB,PX-2,2\n"
-	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	casos := []struct {
+		nombre string
+		datos  string
+		// motivos esperados por fila, "" = aceptada
+		quiere []string
+	}{
+		{
+			// H1 de la segunda auditoria: la cabecera NO tiene coma final, y la
+			// coma de mas de "Rapido, furioso" deja una celda vacia al final.
+			// Recortarla hacia entrar la fila corrida (id=furioso, taquilla=55).
+			nombre: "coma de mas con la ultima celda vacia",
+			datos:  "titulo,id,taquilla,moneda\nRapido, furioso,55,100,\nB,PX-2,2,COP\n",
+			quiere: []string{"campo de mas", ""},
+		},
+		{
+			nombre: "vacios mas alla de una cabecera sin coma final",
+			datos:  "titulo,id,taquilla\nA,PX-1,1\nB,PX-2,2,,,\n",
+			quiere: []string{"", "campo de mas"},
+		},
+		{
+			// H2: con la coma final en todas las filas, la coma PERDIDA de la
+			// fila 3 la deja justo en el ancho de las columnas con nombre.
+			nombre: "coma perdida en un archivo que escribe la coma final",
+			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7,\nA55,100,7,\n",
+			quiere: []string{"", "fila corta"},
+		},
+		{
+			// Mezcla: la primera fila escribe las dos comas finales, la segunda
+			// ninguna. No se puede saber cual de las dos perdio algo, asi que
+			// la que no llega al ancho del archivo se rechaza con motivo.
+			nombre: "anchos mezclados con varias columnas sin nombre",
+			datos:  "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2\n",
+			quiere: []string{"", "fila corta"},
+		},
+		{
+			nombre: "dato bajo la columna final sin nombre",
+			datos:  "titulo,id,taquilla,\nA,PX-1,1,valor huerfano\nB,PX-2,2,\n",
+			quiere: []string{"columna 4, que no tiene nombre", ""},
+		},
+		{
+			// H3: una columna sin nombre EN MEDIO se conserva en su posicion, y
+			// lo que traiga no se descarta en silencio.
+			nombre: "dato bajo una columna sin nombre en medio",
+			datos:  "titulo,,id,taquilla\nA,huerfano,PX-1,1\nB,,PX-2,2\n",
+			quiere: []string{"columna 2, que no tiene nombre", ""},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(c.datos))
+			if err != nil {
+				t.Fatalf("Leer: %v", err)
+			}
+			if len(usos) != len(c.quiere) {
+				t.Fatalf("usos = %d, se esperaban %d", len(usos), len(c.quiere))
+			}
+			for i, q := range c.quiere {
+				m := usos[i].RechazoMotivo
+				if q == "" && m != "" {
+					t.Errorf("fila %d rechazada: %s", i, m)
+				}
+				if q != "" && !strings.Contains(m, q) {
+					t.Errorf("fila %d: el motivo no dice %q: %q", i, q, m)
+				}
+			}
+		})
+	}
+}
+
+// H3: la columna sin nombre en medio conserva las posiciones de las de detras.
+// Borrar todas las cabeceras vacias correria `id` y `taquilla` una posicion.
+func TestTablaCSVConservaLaColumnaSinNombreEnMedio(t *testing.T) {
+	t.Parallel()
+
+	tabla, err := TablaCSV([]byte("a,,b\n1,,2\n"))
 	if err != nil {
-		t.Fatalf("Leer: %v", err)
+		t.Fatalf("TablaCSV: %v", err)
 	}
-	m := usos[0].RechazoMotivo
-	if !strings.Contains(m, "fila 2") || !strings.Contains(m, "campo de mas") {
-		t.Errorf("el dato en la columna sin nombre no se rechazo: %q", m)
+	if want := []string{"a", "", "b"}; !slices.Equal(tabla.Columnas, want) {
+		t.Fatalf("columnas = %q, se esperaban %q", tabla.Columnas, want)
 	}
-	if usos[1].RechazoMotivo != "" {
-		t.Errorf("la fila justa no deberia rechazarse: %s", usos[1].RechazoMotivo)
+	if tabla.Filas[0][2] != "2" {
+		t.Errorf("la celda de `b` se corrio: %q", tabla.Filas[0])
+	}
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "", "id", "taquilla"},
+		Filas:    [][]string{{"A", "", "PX-1", "7"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if usos[0].RechazoMotivo != "" || usos[0].Taquilla.String() != "7" ||
+		aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDPelicula] != "PX-1" {
+		t.Errorf("las columnas de detras se corrieron: %+v", usos[0])
 	}
 }
 
@@ -444,7 +536,7 @@ func TestAplicarIgnoraLaColumnaFinalSinNombreEnXLSX(t *testing.T) {
 	if usos[0].RechazoMotivo != "" {
 		t.Errorf("fila 2 rechazada: %s", usos[0].RechazoMotivo)
 	}
-	if !strings.Contains(usos[1].RechazoMotivo, "campo de mas") {
+	if !strings.Contains(usos[1].RechazoMotivo, "columna 4, que no tiene nombre") {
 		t.Errorf("el dato en la columna sin nombre no se rechazo: %q", usos[1].RechazoMotivo)
 	}
 }

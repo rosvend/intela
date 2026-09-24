@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -514,5 +515,18 @@ func TestJSONRecortaElCompuestoDentroDelMotivo(t *testing.T) {
 	}
 	if len(m) > 400 {
 		t.Errorf("motivo de %d bytes: el crudo no se recorto", len(m))
+	}
+
+	// El recorte es por RUNAS. `["x` son 3 bytes y cada `ñ` son 2: cortar por
+	// bytes en el 80 parte una `ñ` por la mitad y deja UTF-8 invalido en el
+	// log de rechazos, que Postgres rechaza en una columna TEXT.
+	datos = `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"moneda":["x` +
+		strings.Repeat("ñ", 100) + `"]}]`
+	usos, err = lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if m := usos[0].RechazoMotivo; !utf8.ValidString(m) || !strings.Contains(m, "ñ...") {
+		t.Errorf("el recorte partio una runa: %q", m)
 	}
 }

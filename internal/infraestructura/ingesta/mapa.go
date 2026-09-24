@@ -319,15 +319,22 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea, func(col int) bool { return t.compuesta(n, col) })
-		if ancho := t.ancho(n); ancho < len(t.Columnas) {
+		if ancho, esperado, corta := t.corta(n); corta {
 			// Una coma PERDIDA corre los valores a la izquierda igual que una
 			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
 			// de celda y lo pisa: con el corrimiento, la celda que "falla" es
 			// un sintoma, y su motivo mandaria al cliente a rellenar una celda
 			// cuando lo que falta es una coma.
 			motivo = fmt.Sprintf(
-				"fila %d: trae %d campos y la cabecera tiene %d; una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda",
-				linea, ancho, len(t.Columnas))
+				"fila %d: trae %d campos y las filas de este archivo traen %d; una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda",
+				linea, ancho, esperado)
+		} else if col, v, hay := datoSinNombre(t.Columnas, fila); hay {
+			// Estructural, igual que el ancho: pisa el motivo de celda. No hay
+			// nombre al que mandar el valor, y descartarlo en silencio es como
+			// se pierde un identificador corrido por una coma de mas.
+			motivo = fmt.Sprintf(
+				"fila %d: trae un dato en la columna %d, que no tiene nombre en la cabecera (%q); suele ser una coma de mas que corre los valores",
+				linea, col, recortar(strings.TrimSpace(v), maxCrudoEnMotivo))
 		}
 		if motivo == "" && len(fila) > len(t.Columnas) {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
@@ -638,6 +645,18 @@ var (
 	maxInt64 = decimal.NewFromInt(math.MaxInt64)
 	minInt64 = decimal.NewFromInt(math.MinInt64)
 )
+
+// datoSinNombre busca la primera celda con contenido bajo una columna cuya
+// cabecera viene vacia. Devuelve su posicion contando desde 1, como la ve el
+// cliente en su hoja.
+func datoSinNombre(columnas, fila []string) (int, string, bool) {
+	for i, c := range columnas {
+		if c == "" && i < len(fila) && strings.TrimSpace(fila[i]) != "" {
+			return i + 1, fila[i], true
+		}
+	}
+	return 0, "", false
+}
 
 // maxCrudoEnMotivo es cuanto del valor crudo cabe en un motivo. Un objeto de
 // un export puede traer kilobytes, y el motivo es una linea del log de
