@@ -410,21 +410,106 @@ func TestAplicarDetectaElRegistroRepetidoSinConfundirDosEmisiones(t *testing.T) 
 	}
 }
 
-func TestAplicarNoInventaMotivoParaLoQueValidaElNucleo(t *testing.T) {
+// Columna.Requerida se aplica POR FILA (issue #113, punto 2): su docstring lo
+// prometia y solo se comprobaba la cabecera. Una celda vacia -- o con un
+// placeholder, que en una columna requerida es lo mismo -- en una columna
+// requerida es un rechazo de fila con linea y columna, no un uso que entra
+// sin identificador o con la metrica en cero sin dejar rastro.
+//
+// Antes esta prueba afirmaba lo contrario para el titulo ("lo decide
+// validarUso"). Se invierte a proposito: validarUso solo ve el blanco, no el
+// `--` ni el `N/A`, y su motivo no dice ni la linea ni la columna. Sigue
+// estando detras como red para las filas que no pasan por un Mapa (el seed).
+func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 	t.Parallel()
 
-	// El titulo vacio SI es un rechazo, pero lo decide `validarUso` en
-	// aplicacion, una sola vez y para todas las fuentes. Repetir aqui la regla
-	// daria dos criterios para el mismo campo, que es como acaban discrepando.
-	usos, err := mapaMinimo().Aplicar(Tabla{
-		Columnas: []string{"titulo", "duracion"},
-		Filas:    [][]string{{"", "10"}},
+	casos := []struct {
+		nombre   string
+		mapa     Mapa
+		columnas []string
+		fila     []string
+		enMotivo []string
+	}{
+		{
+			nombre:   "cine sin id: la cascada no puede casar ni aprender alias",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "", "100"},
+			enMotivo: []string{"fila 2", "ids_fuente", `"id"`, "requerida"},
+		},
+		{
+			nombre:   "cine sin taquilla: no pondera nada y no dejaba rastro",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "PX-1", " "},
+			enMotivo: []string{"fila 2", "taquilla", `"taquilla"`, "requerida"},
+		},
+		{
+			nombre:   "placeholder en una columna requerida no es un hueco declarado",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "PX-1", "--"},
+			enMotivo: []string{"fila 2", "taquilla", "--"},
+		},
+		{
+			nombre:   "netflix sin show_id: falta el par que sondea la cascada",
+			mapa:     MapaNetflix(),
+			columnas: []string{"show_name", "show_id", "series_id", "netflix_id", "stream_starts"},
+			fila:     []string{"Show", "", "S-1", "N-1", "10"},
+			enMotivo: []string{"fila 2", "ids_fuente", `"show_id"`},
+		},
+		{
+			nombre:   "titulo vacio: lo dice el adaptador, con linea y columna",
+			mapa:     mapaMinimo(),
+			columnas: []string{"titulo", "duracion"},
+			fila:     []string{"", "10"},
+			enMotivo: []string{"fila 2", "titulo", `"titulo"`},
+		},
+		{
+			nombre:   "titulo con placeholder, que validarUso no ve",
+			mapa:     mapaMinimo(),
+			columnas: []string{"titulo", "duracion"},
+			fila:     []string{"N/A", "10"},
+			enMotivo: []string{"fila 2", "titulo", "N/A"},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := c.mapa.Aplicar(Tabla{Columnas: c.columnas, Filas: [][]string{c.fila}})
+			if err != nil {
+				t.Fatalf("una celda vacia es un rechazo de fila, no de entrega: %v", err)
+			}
+			if len(usos) != 1 {
+				t.Fatalf("usos = %d, la fila no se descarta", len(usos))
+			}
+			motivo := usos[0].RechazoMotivo
+			if motivo == "" {
+				t.Fatal("la fila deberia venir rechazada con motivo")
+			}
+			for _, quiere := range c.enMotivo {
+				if !strings.Contains(motivo, quiere) {
+					t.Errorf("el motivo no dice %q: %s", quiere, motivo)
+				}
+			}
+		})
+	}
+}
+
+// La otra mitad: en una columna OPCIONAL el placeholder sigue siendo un hueco
+// declarado (Caracol sin `Programa ID_IMDB`, Netflix sin `episode_runtime`).
+func TestAplicarAceptaLaCeldaVaciaDeUnaColumnaOpcional(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "id", "taquilla", "espectadores", "moneda"},
+		Filas:    [][]string{{"Pelicula X", "PX-1", "100", "--", ""}},
 	})
 	if err != nil {
 		t.Fatalf("Aplicar: %v", err)
 	}
 	if usos[0].RechazoMotivo != "" {
-		t.Errorf("el adaptador no decide sobre el titulo: %s", usos[0].RechazoMotivo)
+		t.Fatalf("una columna opcional vacia no rechaza la fila: %s", usos[0].RechazoMotivo)
 	}
 }
 

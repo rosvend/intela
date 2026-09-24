@@ -213,8 +213,14 @@ func TestCaracolCSVSigueElMismoMapaQueSuXLSX(t *testing.T) {
 			malas++
 		}
 	}
-	if buenas != 4 || malas != 2 {
-		t.Fatalf("buenas/malas = %d/%d, se esperaba 4/2: %+v", buenas, malas, motivos(usos))
+	// 3/3: la sexta fila viene sin titulo, y desde #113 la rechaza el propio
+	// adaptador por ser columna requerida, con linea y columna. Antes entraba
+	// limpia aqui y solo la paraba validarUso, aguas abajo y sin linea.
+	if buenas != 3 || malas != 3 {
+		t.Fatalf("buenas/malas = %d/%d, se esperaba 3/3: %+v", buenas, malas, motivos(usos))
+	}
+	if m := usos[5].RechazoMotivo; !strings.Contains(m, "fila 7") || !strings.Contains(m, `"Titulo"`) {
+		t.Errorf("fila 7 sin titulo: %q", m)
 	}
 	// La cuarta fila repite la primera emision entera.
 	if !strings.Contains(usos[3].RechazoMotivo, "duplicado") {

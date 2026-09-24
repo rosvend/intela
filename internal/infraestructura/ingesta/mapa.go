@@ -112,12 +112,20 @@ type Columna struct {
 	// carga una columna equivocada sin que nadie se entere.
 	Nombre string
 
-	// Requerida: la columna tiene que ESTAR en la cabecera. Si falta, no se
-	// persiste nada; ver [Mapa.Aplicar].
+	// Requerida dice dos cosas, a dos niveles:
 	//
-	// No dice nada de los valores. Una columna requerida con una celda vacia
-	// es un rechazo DE FILA, con su motivo, no una entrega perdida: los
-	// archivos reales del cliente traen 18 de 48 columnas vacias al 100%, y una
+	//   - La columna tiene que ESTAR en la cabecera. Si falta, no se persiste
+	//     nada; ver [Mapa.Aplicar].
+	//   - Cada fila tiene que traerle un VALOR. Una celda vacia -- o con un
+	//     placeholder: en una columna requerida `--` y `N/A` son lo mismo que el
+	//     blanco -- es un rechazo DE FILA, con linea y columna en el motivo, no
+	//     una entrega perdida. Lo contrario era peor que fallar: un `id` vacio
+	//     entraba y la cascada no podia casar ni aprender alias con esa fila, y
+	//     una `taquilla` vacia entraba en cero sin ponderar nada ni dejar rastro
+	//     (issue #113).
+	//
+	// Las columnas OPCIONALES conservan los placeholders como hueco declarado:
+	// los archivos reales traen 18 de 48 columnas vacias al 100%, y ahi una
 	// celda en blanco es el caso normal, no la excepcion.
 	Requerida bool
 
@@ -416,6 +424,12 @@ func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion
 	// recorrido aleatorio de un mapa de Go seria otro en cada corrida.
 	for _, c := range m.Columnas {
 		bruto := celda(fila, indices[c.Nombre])
+		if c.Requerida && esPlaceholder(bruto) && motivo == "" {
+			// Antes que la coercion: aDecimal convertiria el hueco en un cero
+			// valido y nadie volveria a ver que faltaba.
+			motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia (%q)",
+				linea, c.Campo, c.Nombre, strings.TrimSpace(bruto))
+		}
 		if c.Campo == CampoIDsFuente {
 			ids = append(ids, aplicacion.IDFuente{
 				Clave: strings.TrimSpace(c.ClaveID),
