@@ -1,4 +1,4 @@
-# 0020 Las anomalias de un periodo son un recurso propio, no la cola de revision
+# 0021 Las anomalias de un periodo son un recurso propio, no la cola de revision
 
 Fecha: 2026-09-21
 Estado: Vigente

@@ -18,8 +18,8 @@ en el handler. Ese chequeo de grupo es grueso: `requiereRol` no sustituye
 a la autorizacion dentro del caso de uso. El middleware solo cierra la
 puerta del prefijo; la autorizacion fina vive con el caso de uso.
 
-La tabla lleva **dos columnas de roles** desde que existe `/alertas/*`, que es
-el primer prefijo donde leer y escribir no piden lo mismo. Donde las dos
+La tabla lleva **dos columnas de roles** porque `/alertas/*` y `/procesos/*` son
+prefijos donde leer y escribir no piden lo mismo. Donde las dos
 columnas coinciden, el prefijo tiene un solo grupo de `requiereRol`; donde
 difieren, el `Route` se parte en dos `Group` y **la diferencia es la que hay que
 justificar**, porque una columna de escritura mas ancha de lo necesario no falla
@@ -34,6 +34,7 @@ en ninguna prueba.
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` | — |
 | `/alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador`, `distribucion` |
 | `/reportes/*` | `administrador` | `administrador` |
+| `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -48,8 +49,8 @@ co-firma la salida del dinero no debe poder declarar cuanto entro.
 `titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
 participa (`OE-6`), no el ingreso de la sociedad.
 
-`/alertas/*` es la bandeja de anomalias de un periodo (#37, ADR 0020) y es el
-unico prefijo con las dos columnas distintas. **Lee** quien tiene que ver que
+`/alertas/*` es la bandeja de anomalias de un periodo (#37, ADR 0021) y, con
+`/procesos/*`, uno de los dos prefijos con las columnas distintas. **Lee** quien tiene que ver que
 impide repartir: `distribucion`, que es quien persigue las alertas con los
 autores (`RD 13.5`); `auditor`, que lee todo; y `contabilidad`, que es la otra
 firma de las mismas compuertas y necesita saber cuantas criticas siguen abiertas
@@ -79,3 +80,13 @@ el menu del cliente.
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
 `TitularID`, no el id de usuario.
+
+`/procesos/*` es el flujo de aprobaciones de `RD 13.5` (#34), y se parte en
+tres grupos por la misma razon que `/recaudo` y `/bolsas`: `administrador`
+OPERA el pipeline -abre una corrida y avanza sus etapas-, y `distribucion`/
+`contabilidad` son las dos firmas de sus compuertas, no quien lo opera. El
+rol con el que se firma sale de la SESION del actor, nunca de un campo del
+cuerpo: si el cliente pudiera elegirlo, un actor de `contabilidad` podria
+firmar "como `distribucion`" y la doble firma dejaria de separar a dos
+personas. La lectura la comparten los cuatro roles del modulo, `auditor`
+incluido, porque leer en que etapa esta una corrida no mueve nada.

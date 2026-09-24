@@ -61,8 +61,10 @@ type API struct {
 	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
+	procesos      Procesos
 	cola          ColaRevision
 	anomalias     Anomalias
+	auditoria     Auditoria
 	opts          Opciones
 	log           *slog.Logger
 }
@@ -82,8 +84,10 @@ type Casos struct {
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
+	Procesos      Procesos
 	Cola          ColaRevision
 	Anomalias     Anomalias
+	Auditoria     Auditoria
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar y esperan ojo
@@ -93,7 +97,7 @@ type Casos struct {
 // aterrizaron en su propio recurso, `/alertas`, porque necesitan estado de
 // resolucion y `ItemRevision` no lo tiene, y porque `/admin/*` es solo de
 // `administrador` y el tablero de anomalias lo miran tambien `distribucion` y
-// `auditor` (ADR 0020).
+// `auditor` (ADR 0021).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
@@ -117,8 +121,10 @@ func Nueva(casos Casos, opts Opciones) *API {
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
+		procesos:      casos.Procesos,
 		cola:          casos.Cola,
 		anomalias:     casos.Anomalias,
+		auditoria:     casos.Auditoria,
 		opts:          opts,
 		log:           log,
 	}
@@ -168,7 +174,8 @@ func (a *API) Router() http.Handler {
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
-			audit.Get("/asientos", superficieOK)
+			audit.Get("/asientos", a.listarAsientos)
+			audit.Get("/obra/{id}", a.historialDeObra)
 		})
 
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
@@ -235,7 +242,7 @@ func (a *API) Router() http.Handler {
 		// superior y NO bajo `/admin/*`, que es solo `administrador`: el
 		// tablero de anomalias lo miran los tres roles que operan o auditan
 		// el reparto, y meterlo ahi dejaria en 403 permanente al panel de
-		// #104 para `distribucion` y `auditor` (ADR 0020).
+		// #104 para `distribucion` y `auditor` (ADR 0021).
 		//
 		// Dos sub-grupos y NO un chequeo a mano dentro del handler, porque
 		// ver y resolver no piden lo mismo. `auditor` lee todo y no opera el
@@ -279,6 +286,34 @@ func (a *API) Router() http.Handler {
 				))
 				escritura.Post("/evaluacion", a.conAnomalias(a.evaluarAnomalias))
 				escritura.Post("/{id}/resolver", a.conAnomalias(a.resolverAlerta))
+			})
+		})
+
+		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,
+		// porque no comparten roles: administrador OPERA el pipeline (abre y
+		// avanza etapas), y distribucion/contabilidad son las dos firmas de
+		// sus compuertas (firmar, rechazar) -- la MISMA separacion que ya
+		// aplica a /recaudo y /bolsas, y por la misma razon: quien co-firma
+		// la salida del dinero no debe ser quien opera el pipeline que la
+		// prepara. La lectura la comparten los tres, mas auditor.
+		protegido.Route("/procesos", func(proc chi.Router) {
+			proc.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.listarProcesos)
+				lectura.Get("/{id}", a.procesoPorID)
+			})
+			proc.Group(func(pipeline chi.Router) {
+				pipeline.Use(requiereRol(aplicacion.RolAdministrador))
+				pipeline.Post("/", a.abrirProceso)
+				pipeline.Post("/{id}/avanzar", a.avanzarEtapaProceso)
+			})
+			proc.Group(func(compuerta chi.Router) {
+				compuerta.Use(requiereRol(aplicacion.RolDistribucion, aplicacion.RolContabilidad))
+				compuerta.Post("/{id}/firmar", a.firmarProceso)
+				compuerta.Post("/{id}/rechazar", a.rechazarGateProceso)
 			})
 		})
 

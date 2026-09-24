@@ -2209,3 +2209,265 @@ td {
   font-size: 0.85rem;
   color: var(--alerta);
 }
+
+/* ---------- auditoria (OE-7) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo: es otra pantalla del
+   mismo tablero. */
+.auditoria {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.auditoria-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.auditoria-cabecera p {
+  margin: 0;
+  max-width: 62rem;
+}
+
+/* La nota de inmutabilidad: tinte de acento y no ambar -no es una
+   advertencia, es la propiedad que hace que esta pantalla sirva como
+   evidencia-. */
+.auditoria-nota {
+  margin: 0;
+  padding: 0.9rem 1.15rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--acento);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+  max-width: 62rem;
+}
+
+.auditoria-filtros {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.auditoria-campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem 1.25rem;
+}
+
+.auditoria-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.auditoria-campo label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.auditoria-campo input,
+.auditoria-campo select {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.auditoria-campo input:focus-visible,
+.auditoria-campo select:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.auditoria-historia {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.auditoria-historia-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auditoria-historia-fila input {
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+  max-width: 16rem;
+}
+
+/* La linea de tiempo: una raya continua con un punto por asiento. */
+.linea-tiempo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.linea-tiempo-asiento {
+  display: flex;
+  gap: 0.9rem;
+  padding: 1rem 0 1rem 0.35rem;
+  border-left: 2px solid var(--borde);
+}
+
+.linea-tiempo-asiento:last-child {
+  border-left-color: transparent;
+}
+
+.linea-tiempo-punto {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.25rem;
+  margin-left: -0.5rem;
+  border-radius: 50%;
+  background: var(--texto-suave);
+}
+
+/* Un color por familia, todos de la paleta existente: el punto dice el tipo
+   sin que haya que leer la etiqueta. */
+.linea-tiempo-punto-catalogo {
+  background: var(--acento);
+}
+
+.linea-tiempo-punto-splits {
+  background: var(--ok);
+}
+
+.linea-tiempo-punto-distribucion {
+  background: var(--alerta);
+}
+
+.linea-tiempo-punto-recaudo {
+  background: var(--texto);
+}
+
+.linea-tiempo-punto-identificacion {
+  background: var(--texto-suave);
+}
+
+.linea-tiempo-punto-otro {
+  background: var(--borde);
+}
+
+.linea-tiempo-contenido {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.linea-tiempo-cabecera {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.linea-tiempo-hecho {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.linea-tiempo-meta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.linea-tiempo-evidencia {
+  font-size: 0.9rem;
+}
+
+.linea-tiempo-evidencia summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--acento);
+}
+
+.linea-tiempo-evidencia summary:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* La evidencia de un asiento: pares clave-valor con el rotulo encima del
+   valor, igual que la ficha del detalle de obra -cada dato tiene que poder
+   citarse por su nombre desde una auditoria-. */
+.evidencia {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.evidencia-datos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem 1.25rem;
+  margin: 0;
+}
+
+.evidencia-datos dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.evidencia-datos dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.evidencia .tabla-partes {
+  caption-side: top;
+}
+
+.evidencia caption {
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding-bottom: 0.4rem;
+}
+
+@media (max-width: 900px) {
+  .evidencia-datos {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .evidencia-datos {
+    grid-template-columns: 1fr;
+  }
+}

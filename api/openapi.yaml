@@ -114,7 +114,7 @@ tags:
       **No es la cola de revision.** `/admin/cola-revision` lista filas que no
       se pudieron NORMALIZAR y no tiene estado de resolucion; esto lista
       anomalias del periodo, se resuelve con firma y lo miran tres roles
-      distintos. Son dos colas y dos recursos (ADR 0020).
+      distintos. Son dos colas y dos recursos (ADR 0021).
 
       Lee `administrador`, `distribucion` y `auditor`. Resuelve solo
       `administrador` y `distribucion`: el Revisor Fiscal lee todo y no opera
@@ -137,6 +137,20 @@ tags:
 
       Una fila que no se puede normalizar no se descarta: queda con su motivo
       en el log de rechazos (ADR 0016). Es criterio de aceptacion de OE-1.
+
+  - name: procesos
+    description: |
+      El flujo de aprobaciones de `RD 13.5` (ADR 0008): abrir una corrida,
+      avanzarla y firmar o rechazar sus compuertas.
+
+      Nacional e internacional son dos maquinas de estado distintas, no una
+      con bandera: el internacional no valoriza por puntos (`RD 7.4`), asi
+      que nunca pasa por `importe_obra` ni `importe_titular`.
+
+      `administrador` opera el pipeline -abre y avanza-; `distribucion` y
+      `contabilidad` son las dos firmas de sus compuertas, no quien lo opera.
+      El rol con el que se firma sale de la sesion del actor autenticado,
+      nunca de un campo del cuerpo.
 
 paths:
   /health:
@@ -340,7 +354,7 @@ paths:
         prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
         necesita estado de resolucion y este schema no lo tiene, y este prefijo
         es solo de `administrador` mientras el tablero de anomalias lo miran
-        ademas `distribucion` y `auditor`. Viven en `/alertas` (ADR 0020).
+        ademas `distribucion` y `auditor`. Viven en `/alertas` (ADR 0021).
 
         Un solo listado y un solo schema. `tipo` discrimina el origen
         (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
@@ -389,21 +403,148 @@ paths:
   /auditoria/asientos:
     get:
       tags: [auditoria]
-      summary: Superficie de la bitacora
+      summary: Pagina de la bitacora
       description: |
-        Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
-        `administrador`. Los asientos aterrizan con el PR de bitacora;
-        hoy el grupo existe para que el rol se haga cumplir en un solo
-        sitio.
+        Devuelve una pagina de asientos en orden de timeline: lo mas reciente
+        primero. Sin filtros de servidor, a proposito: los filtros de la vista
+        (tipo, fecha, actor) se aplican en el cliente sobre la pagina.
 
-        Sin sesion responde 401. Con sesion de otro rol responde 403.
+        Solo lectura: no hay POST, PUT ni DELETE bajo `/auditoria/*`, y la
+        tabla ademas los rechaza por trigger (`asientos_inmutables`, ADR 0006).
+
+        Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
+        `administrador`. Sin sesion responde 401. Con sesion de otro rol
+        responde 403.
       operationId: auditoriaAsientos
       security:
         - bearerAuth: []
       x-required-roles: [auditor, administrador]
+      parameters:
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantos asientos saltarse desde lo mas reciente. Cero o ausente
+            es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
-        "204":
-          description: Autorizado. Sin cuerpo; la superficie aun no tiene payload.
+        "200":
+          description: |
+            Los asientos de la pagina, lo mas reciente primero. Bitacora
+            vacia devuelve una lista vacia, no un 404.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asiento"
+              example:
+                - id: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+                  hecho: declaracion.guardada
+                  ref_tipo: obra
+                  ref_id: obra-1
+                  actor: usr-admin
+                  payload:
+                    version: 2
+                    estado: completa
+                    partes:
+                      - TitularID: t1
+                        IPI: IPI-00000001
+                        Porcentaje: 60
+                  cuando: "2026-04-02T10:30:00Z"
+        "400":
+          description: Un parametro de paginacion esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: limite tiene que ser un entero positivo
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /auditoria/obra/{id}:
+    get:
+      tags: [auditoria]
+      summary: Historial de una obra
+      description: |
+        Devuelve los asientos que referencian a una obra, en orden de cadena:
+        del mas antiguo al mas nuevo, que es el orden en que ocurrieron los
+        hechos y el que espera `ExplicarCifra` para reconstruir.
+
+        Una obra sin asientos devuelve una lista vacia, no un 404: "sin
+        hechos" no es "la obra no existe".
+
+        Solo lectura, igual que `/auditoria/asientos`. Sin sesion responde
+        401. Con sesion de otro rol que `auditor` o `administrador` responde
+        403.
+      operationId: auditoriaHistorialDeObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [auditor, administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la obra en el catalogo.
+          schema:
+            type: string
+          example: obra-1
+      responses:
+        "200":
+          description: |
+            Los asientos de la obra en orden de cadena. Sin asientos,
+            lista vacia.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asiento"
+              example:
+                - id: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+                  hecho: declaracion.guardada
+                  ref_tipo: obra
+                  ref_id: obra-1
+                  actor: usr-admin
+                  payload:
+                    version: 2
+                    estado: completa
+                    partes:
+                      - TitularID: t1
+                        IPI: IPI-00000001
+                        Porcentaje: 60
+                  cuando: "2026-04-02T10:30:00Z"
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -1846,7 +1987,7 @@ paths:
         sigue detectando seis y escribe cero.
 
         Una alerta que una persona ya cerro **no se reabre** aunque la anomalia
-        siga ahi. Limitacion conocida, ver ADR 0020.
+        siga ahi. Limitacion conocida, ver ADR 0021.
 
         Responde 200 y no 201: la pasada no crea un recurso con URL, crea N
         alertas o ninguna, y lo que devuelve es el recuento.
@@ -2030,6 +2171,386 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: la deteccion de anomalias no esta configurada en esta instalacion
+
+  /procesos:
+    post:
+      tags: [procesos]
+      summary: Abrir una corrida
+      description: |
+        Congela el snapshot de parametros normativos vigente a la fecha del
+        periodo (`ADR 0004`) y abre el proceso en `recaudo`, revision 1.
+
+        Idempotente por `id`, pero solo cuando `periodo`/`circuito`/`bolsa_id`
+        son LOS MISMOS que abrieron esa corrida: reabrir con esos tres datos
+        sin cambiar devuelve el proceso que ya hay, sin tocarlo. Es lo que
+        hace seguro reintentar -un trabajo de `TrabajoEjecutarReparto` que se
+        retoma no reinicia una corrida que un humano ya avanzo-. Un `id` que
+        colisiona con un proceso de OTROS datos es 409, no una devolucion en
+        silencio: el cliente no podria distinguir "se creo" de "se devolvio
+        otra cosa con este mismo id".
+
+        El `circuito` y el `periodo` declarados tienen que coincidir con los
+        de la bolsa referenciada -si no, la corrida valorizaria con las
+        reglas de otro circuito, o contra los usos de otro periodo- y eso
+        tambien es 409.
+
+        `ADR 0019`: una corrida es una bolsa y un proceso. Un periodo con dos
+        canales abre dos procesos, uno por bolsa -ver
+        `AbrirCorridaDelPeriodo`, que es lo que el calendario dispara para
+        cada bolsa del periodo.
+      operationId: abrirProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbrirProceso"
+            example:
+              id: proc-caracol-2026-01-1
+              periodo: 2026-01
+              circuito: nacional
+              bolsa_id: bolsa-caracol-2026-01-nacional
+      responses:
+        "201":
+          description: El proceso, recien abierto (o el que ya existia con ese id).
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /procesos/proc-caracol-2026-01-1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "400":
+          description: El cuerpo no es un proceso valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            El `id` ya existe con otro `periodo`/`circuito`/`bolsa_id`, o el
+            `circuito`/`periodo` declarados no coinciden con los de la bolsa
+            referenciada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags: [procesos]
+      summary: Listar los procesos
+      description: |
+        El panel de corridas: etapa, circuito, periodo y firmas de cada
+        proceso. Sin procesos devuelve una lista vacia, no un 404.
+      operationId: listarProcesos
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Los procesos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /procesos/{id}:
+    get:
+      tags: [procesos]
+      summary: Leer un proceso
+      description: |
+        Consulta de solo lectura: en que etapa esta una corrida, sin
+        avanzarla ni firmarla. Es la lectura que #69 (agente de staff)
+        necesitaba y que la issue original no traia.
+      operationId: procesoPorID
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+
+  /procesos/{id}/avanzar:
+    post:
+      tags: [procesos]
+      summary: Avanzar el proceso a la siguiente etapa
+      description: |
+        En una compuerta (`verificacion`, `pago_registro`) exige las firmas
+        de `distribucion` y `contabilidad` sobre la revision actual antes de
+        dejar pasar. Al entrar a `importe_obra` del circuito nacional invoca
+        el motor puro de valorizacion; el internacional nunca la alcanza
+        (`RD 7.4`).
+      operationId: avanzarEtapaProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso, en su nueva etapa.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            El estado del proceso no permite avanzar -por ejemplo, una
+            compuerta sin las dos firmas de la revision actual, o una etapa
+            terminal. El cuerpo de la peticion era correcto; lo que no cuadra
+            es el estado contra `RD 13.5`.
+
+            Tambien 409 si otra transicion escribio la fila entre que este
+            request la leyo y la escribio (control de concurrencia
+            optimista): releer el proceso y reintentar resuelve esto.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /procesos/{id}/firmar:
+    post:
+      tags: [procesos]
+      summary: Firmar la compuerta actual
+      description: |
+        Agrega la firma del actor autenticado a la compuerta actual del
+        proceso, sobre su revision vigente.
+
+        El rol con el que se firma es el de la SESION, nunca uno que elija el
+        cliente: si pudiera elegirse, un actor de `contabilidad` podria
+        firmar "como `distribucion`" y la doble firma de `RD 13.5` dejaria de
+        separar a dos personas. No hay cuerpo que mandar.
+      operationId: firmarProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [distribucion, contabilidad]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso, con la firma agregada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            La etapa actual no tiene compuerta, el rol de la sesion ya firmo
+            esta revision, o el actor ya cubre el otro rol. Firmar no toca la
+            revision de `procesos` -solo agrega una fila a `firmas`-, asi que
+            esta ruta no tiene el conflicto de concurrencia de avanzar o
+            rechazar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /procesos/{id}/rechazar:
+    post:
+      tags: [procesos]
+      summary: Rechazar la compuerta actual
+      description: |
+        Retrocede el proceso una etapa -nunca a un estado terminal- y sube la
+        revision: las firmas de la revision anterior dejan de contar. Un
+        rechazo RETROCEDE, no aborta (`ADR 0008`).
+      operationId: rechazarGateProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [distribucion, contabilidad]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RechazarProceso"
+            example:
+              motivo: faltan soportes de la liquidacion parcial
+      responses:
+        "200":
+          description: El proceso, retrocedido una etapa.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "400":
+          description: Falta el motivo del rechazo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            La etapa actual no tiene compuerta que rechazar, o otra
+            transicion escribio la fila entre que este request la leyo y la
+            escribio (control de concurrencia optimista): releer el proceso
+            y reintentar resuelve esto ultimo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /reportes:
     get:
@@ -3023,6 +3544,134 @@ components:
           description: Cuenta de cobro con la que se recaudo este importe.
           example: FE-1024
 
+    Firma:
+      type: object
+      required: [rol, actor_id, revision]
+      description: |
+        Una firma sobre una compuerta, sobre una revision concreta del
+        proceso. Sin `cuando`: el agregado de dominio no la guarda -el
+        dominio no importa `time` (`ADR 0002`)-, y la fecha exacta no es lo
+        que decide si la compuerta esta completa.
+      properties:
+        rol:
+          type: string
+          enum: [distribucion, contabilidad]
+          example: distribucion
+        actor_id:
+          type: string
+          example: usr-dist-1
+        revision:
+          type: integer
+          description: |
+            Revision del proceso sobre la que se firmo. Un rechazo sube la
+            revision del proceso; las firmas de la anterior dejan de contar.
+          example: 1
+
+    Proceso:
+      type: object
+      required: [id, circuito, etapa, periodo, bolsa_id, snapshot_id, revision]
+      description: |
+        Una corrida de `RD 13.5`. Nacional e internacional son dos maquinas
+        de estado distintas (`ADR 0008`): el internacional no valoriza por
+        puntos (`RD 7.4`), asi que nunca pasa por `importe_obra` ni
+        `importe_titular`, y `fees_in_error` es solo suyo (`R-16`).
+      properties:
+        id:
+          type: string
+          example: proc-caracol-2026-01-1
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+          example: nacional
+        etapa:
+          type: string
+          enum:
+            - recaudo
+            - deducciones
+            - importe_obra
+            - importe_titular
+            - liquidacion_parcial
+            - verificacion
+            - liquidacion_final
+            - pago_registro
+            - fees_in_error
+            - auditoria
+          description: |
+            `verificacion` y `pago_registro` son compuertas: no se avanza sin
+            las firmas de `distribucion` y `contabilidad` sobre la revision
+            actual.
+          example: verificacion
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2026-01
+        bolsa_id:
+          type: string
+          description: |
+            La bolsa de la que sale esta corrida. `ADR 0019`: una corrida es
+            una bolsa, asi que un periodo con dos canales abre dos procesos.
+          example: bolsa-caracol-2026-01-nacional
+        snapshot_id:
+          type: string
+          description: |
+            El snapshot de parametros normativos congelado al abrir la
+            corrida (`ADR 0004`, `ADR 0005`). No se vuelve a resolver en un
+            reproceso.
+          example: snap-2026-01-a1b2c3
+        reglamento:
+          type: string
+          description: Version del reglamento vigente al abrir la corrida.
+          example: IX
+        revision:
+          type: integer
+          description: |
+            Sube en cada rechazo de compuerta, y tambien al pasar una:
+            `firmas` solo tiene clave (`proceso_id`, `rol`, `revision`), sin
+            etapa, asi que las firmas de una compuerta no bastan tambien para
+            la siguiente.
+          example: 1
+        firmas:
+          type: array
+          items:
+            $ref: "#/components/schemas/Firma"
+        rechazo_motivo:
+          type: string
+          description: Motivo del ultimo rechazo, si lo hay.
+          example: faltan soportes de la liquidacion parcial
+
+    AbrirProceso:
+      type: object
+      required: [id, periodo, circuito, bolsa_id]
+      properties:
+        id:
+          type: string
+          description: |
+            Lo trae el cliente, igual que el de una bolsa. Reabrir un proceso
+            con el mismo id devuelve el que ya existe, sin tocarlo.
+          example: proc-caracol-2026-01-1
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2026-01
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+          example: nacional
+        bolsa_id:
+          type: string
+          example: bolsa-caracol-2026-01-nacional
+
+    RechazarProceso:
+      type: object
+      required: [motivo]
+      properties:
+        motivo:
+          type: string
+          description: |
+            Por que se rechaza la compuerta. Un rechazo sin motivo no es
+            explicable ante una auditoria (`RD 16`).
+          example: faltan soportes de la liquidacion parcial
+
     Error:
       type: object
       required: [error]
@@ -3153,7 +3802,7 @@ components:
           type: boolean
           description: |
             Si alguien ya se hizo cargo. Una alerta resuelta no se reabre
-            aunque la anomalia siga ahi (ADR 0020).
+            aunque la anomalia siga ahi (ADR 0021).
         resuelta_por:
           type: string
           description: Cuenta que la cerro. Sale de la sesion, nunca del cuerpo.
@@ -3242,6 +3891,56 @@ components:
             igual. El caso es real: `Hora` no es obligatoria en el mapa de
             Caracol y a la vez forma parte de su clave de registro.
 
+    Asiento:
+      type: object
+      required: [id, hecho, ref_tipo, ref_id, actor, payload, cuando]
+      description: |
+        Un asiento de la bitacora (ADR 0006): quien hizo que, sobre que
+        referencia, cuando, y el detalle del hecho en `payload`. El payload
+        viaja tal cual lo guardo el modulo que asento -es su evidencia, no
+        una proyeccion-: `declaracion.guardada` trae version, estado y
+        partes; `recaudo.registrado` trae periodo, circuito, bruto, convenio,
+        tarifa y factura. Append-only: no hay escritura ni borrado que
+        documentar.
+      properties:
+        id:
+          type: string
+          description: Identificador opaco del asiento, asignado por la base.
+          example: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+        hecho:
+          type: string
+          description: |
+            Que ocurrio, en forma `modulo.evento` (`declaracion.guardada`,
+            `recaudo.registrado`, `matching.cascada`).
+          example: declaracion.guardada
+        ref_tipo:
+          type: string
+          description: Tipo de la referencia (`obra`, `bolsa`, `uso`).
+          example: obra
+        ref_id:
+          type: string
+          description: Identificador de la referencia dentro de su tipo.
+          example: obra-1
+        actor:
+          type: string
+          description: |
+            Quien actuo. Vacio cuando el hecho no tiene un usuario detras
+            (una corrida automatica).
+          example: usr-admin
+        payload:
+          type: object
+          additionalProperties: true
+          description: |
+            Detalle del hecho, tal cual lo guardo el modulo que asento:
+            cualquier JSON. `declaracion.guardada` trae version, estado y
+            partes; `recaudo.registrado` trae periodo, circuito, bruto,
+            convenio, tarifa y factura.
+        cuando:
+          type: string
+          format: date-time
+          description: Instante del hecho.
+          example: "2026-04-02T10:30:00Z"
+
     ItemRevision:
       type: object
       required: [id, tipo, codigo, motivo, fuente, titulo, reporte_id]
@@ -3255,7 +3954,7 @@ components:
         `anomalia` sigue en el enum de `tipo` porque la columna
         `usos_rechazados.tipo` lo admite desde la migracion 00010, pero las
         anomalias de OE-5 / #37 **no se sirven por aqui**: van por `/alertas`,
-        que si tiene estado de resolucion y roles propios (ADR 0020).
+        que si tiene estado de resolucion y roles propios (ADR 0021).
       properties:
         id:
           type: string

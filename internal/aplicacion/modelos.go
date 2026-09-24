@@ -319,7 +319,7 @@ type ResumenUsosDeCanal struct {
 // necesita estado de resolucion -- actor e instante -- y este tipo no lo
 // tiene; y `/admin/cola-revision` es solo de `administrador` mientras el
 // tablero de anomalias lo miran ademas `distribucion` y `auditor`. Viven en
-// [Alerta], con tabla y recurso propios (ADR 0020). El valor "anomalia" se
+// [Alerta], con tabla y recurso propios (ADR 0021). El valor "anomalia" se
 // queda en el vocabulario porque la columna `usos_rechazados.tipo` lo admite
 // desde la migracion 00010.
 type ItemRevision struct {

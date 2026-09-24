@@ -251,7 +251,7 @@ func TestEvaluarAnomaliasDosVecesNoDuplicaFilas(t *testing.T) {
 // Una alerta que una persona ya cerro no se reabre al volver a detectarla. La
 // resolucion de #39 actua sobre el REGISTRO OFENSOR; si la anomalia sigue
 // ahi, reabrirla borraria la decision de quien la cerro sin que nadie lo
-// pidiera. Es limitacion conocida, declarada en el ADR 0020.
+// pidiera. Es limitacion conocida, declarada en el ADR 0021.
 func TestEvaluarAnomaliasNoReabreUnaAlertaResuelta(t *testing.T) {
 	s, _ := sembrarPeriodoConAnomalias(t)
 	svc := servicioDeAnomalias(s, instanteAlertas)

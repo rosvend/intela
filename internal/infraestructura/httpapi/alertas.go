@@ -222,7 +222,7 @@ func (a *API) listarAlertas(w http.ResponseWriter, r *http.Request) {
 //
 // No es el cableado de la compuerta de #34, que es otra cosa y no existe
 // todavia (`/admin/pipeline` es un stub). Es el disparador MANUAL mientras esa
-// compuerta llega, y por eso escribe quien opera el periodo. Ver ADR 0020.
+// compuerta llega, y por eso escribe quien opera el periodo. Ver ADR 0021.
 //
 // # Por que no se evalua dentro del GET
 //
