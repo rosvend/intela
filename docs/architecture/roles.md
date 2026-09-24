@@ -21,7 +21,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 La tabla lleva **dos columnas de roles** porque `/alertas/*` y `/procesos/*` son
 prefijos donde leer y escribir no piden lo mismo. Donde las dos
 columnas coinciden, el prefijo tiene un solo grupo de `requiereRol`; donde
-difieren, el `Route` se parte en dos `Group` y **la diferencia es la que hay que
+difieren, el `Route` se parte en un `Group` por cada conjunto de roles y **la diferencia es la que hay que
 justificar**, porque una columna de escritura mas ancha de lo necesario no falla
 en ninguna prueba.
 
