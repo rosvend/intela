@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -246,4 +247,46 @@ func parcheFilaXML(t *testing.T, datos []byte, viejo, nuevo string) []byte {
 		t.Fatalf("cerrar zip: %v", err)
 	}
 	return salida.Bytes()
+}
+
+// El caso literal de la revision de #108 (issue #113, punto 1). `ReadAll`
+// descarta las lineas FISICAMENTE en blanco antes de que `desdeFilas` pueda
+// numerarlas, asi que la fila mala de la linea 5 salia como "fila 3". La
+// prueba vieja usaba `,\n`, que es un registro no vacio y no cubria esto.
+func TestTablaCSVNumeraLaLineaFisicaTrasLineasEnBlanco(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla\n" + // linea 1
+		"Buena,PX-1,1\n" + // linea 2
+		"\n" + // linea 3
+		"\n" + // linea 4
+		"Mala,PX-2,no-es-numero\n" + // linea 5
+		" , , \n" + // linea 6: registro de solo blancos, se descarta
+		"Otra,PX-3,2\n" // linea 7
+	tabla, err := TablaCSV([]byte(datos))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	if want := []int{2, 5, 7}; !slices.Equal(tabla.Lineas, want) {
+		t.Fatalf("Lineas = %v, se esperaban %v", tabla.Lineas, want)
+	}
+}
+
+// Un campo entrecomillado que abarca varias lineas no puede correr la
+// numeracion de lo que viene detras, ni la cabecera tiene que estar en la
+// linea 1 para que el cuerpo se numere bien.
+func TestTablaCSVNumeraBienConCamposMultilineaYBlancosAntesDeLaCabecera(t *testing.T) {
+	t.Parallel()
+
+	datos := "\n" + // linea 1
+		"titulo,id\n" + // linea 2
+		"\"Dos\nlineas\",PX-1\n" + // lineas 3-4
+		"Mala,PX-2\n" // linea 5
+	tabla, err := TablaCSV([]byte(datos))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	if want := []int{3, 5}; !slices.Equal(tabla.Lineas, want) {
+		t.Fatalf("Lineas = %v, se esperaban %v", tabla.Lineas, want)
+	}
 }

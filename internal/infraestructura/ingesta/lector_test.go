@@ -398,3 +398,21 @@ func TestFormatoDeNombre(t *testing.T) {
 		}
 	}
 }
+
+// El mismo caso de punta a punta, por el Lector: el motivo tiene que mandar
+// al cliente a la linea 5, no a la 3.
+func TestCineCSVReportaLaLineaDelRechazoTrasLineasEnBlanco(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla\nBuena,PX-1,1\n\n\nMala,PX-2,no-es-numero\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 2 {
+		t.Fatalf("usos = %d, se esperaban 2", len(usos))
+	}
+	if !strings.HasPrefix(usos[1].RechazoMotivo, "fila 5,") {
+		t.Fatalf("motivo = %q, se esperaba la linea 5", usos[1].RechazoMotivo)
+	}
+}

@@ -43,8 +43,10 @@ type Tabla struct {
 	// Lineas es, para cada elemento de Filas, el numero de fila DEL ARCHIVO del
 	// que salio, con la cabecera como 1.
 	//
-	// Existe porque Filas ya no es el archivo: [desdeFilas] descarta las filas
-	// enteras en blanco, que son relleno del export y no registros. Sin esta
+	// Existe porque Filas ya no es el archivo: se descartan las filas enteras
+	// en blanco, que son relleno del export y no registros -- las descarta
+	// [desdeFilasNumeradas], y en CSV ya antes el propio `encoding/csv`, que se
+	// salta las lineas fisicamente vacias sin avisar --. Sin esta
 	// correspondencia, el unico numero disponible aguas arriba es la posicion en
 	// la lista YA FILTRADA, y entonces cada blanco corre la numeracion de todo lo
 	// que viene detras: la fila mala de la linea 4 de la hoja se reporta como
@@ -200,11 +202,30 @@ func TablaCSV(datos []byte) (Tabla, error) {
 	// Excel escribe CSV con `;` en configuraciones regionales europeas, pero el
 	// separador NO se adivina: adivinarlo mal parte los titulos por la mitad en
 	// silencio. Si algun dia hace falta, entra como campo declarado del mapa.
-	filas, err := lector.ReadAll()
-	if err != nil {
-		return Tabla{}, fmt.Errorf("%w: no se pudo leer como CSV: %w", ErrFormato, err)
+	//
+	// Se lee registro a registro y NO con ReadAll, por la numeracion: el lector
+	// descarta las lineas FISICAMENTE en blanco antes de devolver nada, asi que
+	// con ReadAll la posicion en la lista ya no es la linea del archivo, y la fila
+	// mala de la linea 5 con dos blancos delante se reportaba como "fila 3"
+	// (issue #113). FieldPos da la linea en la que EMPIEZA el registro, que es
+	// tambien lo correcto con un campo entrecomillado que abarca varias lineas.
+	var (
+		filas   [][]string
+		fisicas []int
+	)
+	for {
+		registro, err := lector.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Tabla{}, fmt.Errorf("%w: no se pudo leer como CSV: %w", ErrFormato, err)
+		}
+		linea, _ := lector.FieldPos(0)
+		filas = append(filas, registro)
+		fisicas = append(fisicas, linea)
 	}
-	return desdeFilas(filas)
+	return desdeFilasNumeradas(filas, fisicas)
 }
 
 // TablaJSON lee un array de objetos planos.
@@ -303,11 +324,30 @@ func textoJSON(crudo json.RawMessage) string {
 
 // desdeFilas parte la cabecera del cuerpo y cuadra el ancho de las filas.
 //
+// Numera cada fila por su posicion (la cabecera es la 1). Es lo correcto solo
+// cuando el lector no ha descartado nada antes; los que si -- el CSV, que se
+// salta las lineas en blanco, y el .xlsx, que salta filas fisicas -- pasan por
+// [desdeFilasNumeradas] con el numero real.
+func desdeFilas(filas [][]string) (Tabla, error) {
+	fisicas := make([]int, len(filas))
+	for i := range fisicas {
+		fisicas[i] = i + 1
+	}
+	return desdeFilasNumeradas(filas, fisicas)
+}
+
+// desdeFilasNumeradas es [desdeFilas] cuando el lector YA conoce el numero
+// fisico de cada fila: fisicas[i] es la linea del archivo de la que salio
+// filas[i], con fisicas[0] la de la cabecera.
+//
 // La cabecera se recorta con TrimSpace y se le quita el BOM. Los tres son
 // blancos que no se ven: una columna que en la pantalla del cliente se llama
 // `Titulo ` no casaria con `Titulo`, y el archivo se rechazaria entero
 // nombrando una columna que esta ahi.
-func desdeFilas(filas [][]string) (Tabla, error) {
+func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
+	if len(filas) != len(fisicas) {
+		return Tabla{}, fmt.Errorf("%w: el lector desalineo filas y numeros de linea", ErrFormato)
+	}
 	if len(filas) == 0 {
 		return Tabla{}, fmt.Errorf("%w: el archivo no tiene ni cabecera", ErrFormato)
 	}
@@ -338,33 +378,15 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 			copy(fila, f)
 		}
 		cuerpo = append(cuerpo, fila)
-		// El numero que ve el cliente en su hoja: `filas` incluye la cabecera,
-		// asi que el primer registro del archivo es la linea 2. Se anota AQUI,
-		// que es el unico sitio donde todavia se sabe de que linea salio: a
-		// partir de este return la fila descartada ya no existe y la posicion en
-		// `cuerpo` esta corrida.
-		lineas = append(lineas, i+2)
+		// El numero que ve el cliente en su hoja. Se anota AQUI, que es el
+		// unico sitio donde todavia se sabe de que linea salio: a partir de
+		// este return la fila descartada ya no existe y la posicion en
+		// `cuerpo` esta corrida. Y se anota en el MISMO bucle que descarta,
+		// no despues: numerar aparte desalinearia las dos listas en cuanto
+		// hubiera un registro de solo blancos, que el lector no descarta.
+		lineas = append(lineas, fisicas[i+1])
 	}
 	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas}, nil
-}
-
-// desdeFilasNumeradas es [desdeFilas] cuando el lector YA conoce el numero
-// fisico de cada fila -- el .xlsx, cuyo GetRows compacta huecos y no se usa.
-func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
-	if len(filas) != len(fisicas) {
-		return Tabla{}, fmt.Errorf("%w: el lector de xlsx desalineo filas y numeros de linea", ErrFormato)
-	}
-	t, err := desdeFilas(filas)
-	if err != nil {
-		return Tabla{}, err
-	}
-	if len(fisicas) == 0 {
-		return t, nil
-	}
-	// fisicas[0] es la cabecera. El cuerpo hereda el resto, que ya salio del
-	// XML y no se puede reconstruir como i+2.
-	t.Lineas = append([]int(nil), fisicas[1:]...)
-	return t, nil
 }
 
 func vacia(fila []string) bool {
