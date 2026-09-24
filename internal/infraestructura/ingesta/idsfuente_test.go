@@ -318,3 +318,54 @@ func (umbralesFijos) ParametroVigente(_ context.Context, clave string, _ time.Ti
 		return decimal.RequireFromString("0.45"), nil
 	}
 }
+
+// La simetrica de la de arriba (issue #113, punto 5). Una coma PERDIDA corre
+// los valores a la izquierda igual que una de mas los corre a la derecha, y
+// rellenar la fila corta en silencio escondia el primer caso: "Corrida,100"
+// entraba con id=100 y la taquilla vacia.
+//
+// El motivo tiene que ser el del ancho, no el de la celda: con el corrimiento
+// la taquilla viene vacia, y un "taquilla requerida vacia" mandaria al cliente
+// a rellenar una celda cuando lo que falta es una coma.
+func TestAplicarRechazaLaFilaCSVConCamposDeMenos(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla\nBuena,PX-1,1\nCorrida,100\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 2 {
+		t.Fatalf("usos = %d, la fila corta no se descarta", len(usos))
+	}
+	if usos[0].RechazoMotivo != "" {
+		t.Fatalf("la fila justa no deberia rechazarse: %s", usos[0].RechazoMotivo)
+	}
+	m := usos[1].RechazoMotivo
+	for _, quiere := range []string{"fila 3", "trae 2 campos", "cabecera tiene 3"} {
+		if !strings.Contains(m, quiere) {
+			t.Errorf("el motivo no dice %q: %s", quiere, m)
+		}
+	}
+	if usos[1].Titulo != "Corrida" {
+		t.Errorf("la fila rechazada perdio el titulo: %+v", usos[1])
+	}
+}
+
+// En .xlsx la fila corta NO es sospechosa: excelize recorta las celdas vacias
+// del final, asi que es la forma normal de una fila con opcionales vacias.
+func TestAplicarNoRechazaLaFilaXLSXQueExcelizeRecorta(t *testing.T) {
+	t.Parallel()
+
+	datos := xlsxDeCeldas(t, map[string]string{
+		"A1": "titulo", "B1": "id", "C1": "taquilla", "D1": "espectadores",
+		"A2": "Pelicula X", "B2": "PX-1", "C2": "100",
+	})
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoXLSX).Leer(datos)
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 1 || usos[0].RechazoMotivo != "" {
+		t.Fatalf("la fila recortada por excelize no se rechaza: %+v", motivos(usos))
+	}
+}

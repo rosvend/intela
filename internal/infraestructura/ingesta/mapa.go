@@ -318,6 +318,16 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea)
+		if ancho := t.ancho(n); ancho < len(t.Columnas) {
+			// Una coma PERDIDA corre los valores a la izquierda igual que una
+			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
+			// de celda y lo pisa: con el corrimiento, la celda que "falla" es
+			// un sintoma, y su motivo mandaria al cliente a rellenar una celda
+			// cuando lo que falta es una coma.
+			motivo = fmt.Sprintf(
+				"fila %d: trae %d campos y la cabecera tiene %d; una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda",
+				linea, ancho, len(t.Columnas))
+		}
 		if motivo == "" && len(fila) > len(t.Columnas) {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
 			// entrecomillar que recorre todos los valores de la fila, y si los

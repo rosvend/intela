@@ -31,11 +31,13 @@ import (
 // cual de las dos cosas se le esta pidiendo.
 //
 // Filas NO incluye la cabecera. Las filas cortas se rellenan hasta
-// len(Columnas): excelize recorta las celdas vacias del final, y un CSV
-// escrito a mano se queda sin comas. Una fila MAS ancha que la cabecera se
-// deja con los campos de mas -- [Mapa.Aplicar] la rechaza -- porque recortarlos
-// en silencio es como se persiste un identificador corrido por una coma sin
-// entrecomillar.
+// len(Columnas), para que el mapa pueda leer lo que traen. En .xlsx eso es
+// todo: excelize recorta las celdas vacias del final y la fila corta es la
+// forma normal. En CSV no: una coma PERDIDA corre los valores a la izquierda,
+// asi que el lector anota el ancho real y [Mapa.Aplicar] rechaza la fila
+// (issue #113). Una fila MAS ancha que la cabecera se deja con los campos de
+// mas -- [Mapa.Aplicar] la rechaza -- porque recortarlos en silencio es como
+// se persiste un identificador corrido por una coma sin entrecomillar.
 type Tabla struct {
 	Columnas []string
 	Filas    [][]string
@@ -62,6 +64,20 @@ type Tabla struct {
 	// mapeo a distinguir la celda de la anotacion. Se lee por [Tabla.Linea], que
 	// es lo unico que la consulta.
 	Lineas []int
+
+	// anchos es, cuando el formato lo hace significativo (solo CSV), cuantos
+	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON. Se lee
+	// por [Tabla.ancho].
+	anchos []int
+}
+
+// ancho devuelve cuantos campos traia de verdad Filas[n], o len(Filas[n])
+// cuando el formato no lo anota.
+func (t Tabla) ancho(n int) int {
+	if n >= 0 && n < len(t.anchos) {
+		return t.anchos[n]
+	}
+	return len(t.Filas[n])
 }
 
 // Linea devuelve el numero de fila del archivo del que salio Filas[n].
@@ -164,7 +180,7 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 	if err := filasIter.Error(); err != nil {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
 	}
-	return desdeFilasNumeradas(crudas, fisicas)
+	return desdeFilasNumeradas(crudas, fisicas, false)
 }
 
 // maxFilasExcel es el tope de filas de una hoja .xlsx (2^20). Es el mismo
@@ -189,10 +205,10 @@ func filaFisica(rows *excelize.Rows) (int, error) {
 // el mismo numero de campos, y es deliberado: con la comprobacion puesta, UNA
 // fila con una coma de mas aborta la lectura del archivo ENTERO y las demas se
 // pierden sin motivo por fila. El desajuste no se ignora: la fila corta se
-// rellena, la fila ancha se deja con los campos de mas y [Mapa.Aplicar] la
-// rechaza nombrando el desajuste, que es lo que convierte un corrimiento por
-// coma sin entrecomillar en un rechazo de fila y no en un identificador
-// persistido.
+// rellena para poder leerla pero se anota su ancho real, la fila ancha se deja
+// con los campos de mas, y [Mapa.Aplicar] rechaza las dos nombrando el
+// desajuste. Es lo que convierte un corrimiento por coma -- de mas o perdida --
+// en un rechazo de fila y no en un identificador persistido.
 func TablaCSV(datos []byte) (Tabla, error) {
 	lector := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(datos), bom)))
 	lector.FieldsPerRecord = -1
@@ -225,7 +241,7 @@ func TablaCSV(datos []byte) (Tabla, error) {
 		filas = append(filas, registro)
 		fisicas = append(fisicas, linea)
 	}
-	return desdeFilasNumeradas(filas, fisicas)
+	return desdeFilasNumeradas(filas, fisicas, true)
 }
 
 // TablaJSON lee un array de objetos planos.
@@ -322,29 +338,22 @@ func textoJSON(crudo json.RawMessage) string {
 	}
 }
 
-// desdeFilas parte la cabecera del cuerpo y cuadra el ancho de las filas.
+// desdeFilasNumeradas parte la cabecera del cuerpo y cuadra el ancho de las
+// filas. fisicas[i] es la linea del archivo de la que salio filas[i], con
+// fisicas[0] la de la cabecera: la posicion no sirve, porque los dos lectores
+// que pasan por aqui ya descartaron filas antes (el CSV las lineas en blanco,
+// el .xlsx los huecos fisicos).
 //
-// Numera cada fila por su posicion (la cabecera es la 1). Es lo correcto solo
-// cuando el lector no ha descartado nada antes; los que si -- el CSV, que se
-// salta las lineas en blanco, y el .xlsx, que salta filas fisicas -- pasan por
-// [desdeFilasNumeradas] con el numero real.
-func desdeFilas(filas [][]string) (Tabla, error) {
-	fisicas := make([]int, len(filas))
-	for i := range fisicas {
-		fisicas[i] = i + 1
-	}
-	return desdeFilasNumeradas(filas, fisicas)
-}
-
-// desdeFilasNumeradas es [desdeFilas] cuando el lector YA conoce el numero
-// fisico de cada fila: fisicas[i] es la linea del archivo de la que salio
-// filas[i], con fisicas[0] la de la cabecera.
+// anotarAncho guarda cuantos campos traia de verdad cada fila antes de
+// rellenarla, para que [Mapa.Aplicar] rechace la corta. Solo lo pide el CSV:
+// en .xlsx una fila corta es lo normal -- excelize recorta las celdas vacias
+// del final -- y rechazarla tiraria toda fila con opcionales vacias al final.
 //
 // La cabecera se recorta con TrimSpace y se le quita el BOM. Los tres son
 // blancos que no se ven: una columna que en la pantalla del cliente se llama
 // `Titulo ` no casaria con `Titulo`, y el archivo se rechazaria entero
 // nombrando una columna que esta ahi.
-func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
+func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tabla, error) {
 	if len(filas) != len(fisicas) {
 		return Tabla{}, fmt.Errorf("%w: el lector desalineo filas y numeros de linea", ErrFormato)
 	}
@@ -358,6 +367,10 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
 
 	cuerpo := make([][]string, 0, len(filas)-1)
 	lineas := make([]int, 0, len(filas)-1)
+	var anchos []int
+	if anotarAncho {
+		anchos = make([]int, 0, len(filas)-1)
+	}
 	for i, f := range filas[1:] {
 		if vacia(f) {
 			// Una fila entera en blanco es relleno del export, no un registro.
@@ -378,6 +391,9 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
 			copy(fila, f)
 		}
 		cuerpo = append(cuerpo, fila)
+		if anotarAncho {
+			anchos = append(anchos, len(f))
+		}
 		// El numero que ve el cliente en su hoja. Se anota AQUI, que es el
 		// unico sitio donde todavia se sabe de que linea salio: a partir de
 		// este return la fila descartada ya no existe y la posicion en
@@ -386,7 +402,7 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
 		// hubiera un registro de solo blancos, que el lector no descarta.
 		lineas = append(lineas, fisicas[i+1])
 	}
-	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas}, nil
+	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}, nil
 }
 
 func vacia(fila []string) bool {
