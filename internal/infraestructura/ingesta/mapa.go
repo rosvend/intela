@@ -445,12 +445,14 @@ func (m Mapa) fila(fila []string, indices map[string]int, linea int, compuesta f
 			// Antes que nada: como texto, un objeto pasa por titulo y un array
 			// por identificador, y ninguna comprobacion de abajo lo veria.
 			motivo = fmt.Sprintf("fila %d, %s (columna %q): valor JSON compuesto (objeto o array) donde va un valor simple: %s",
-				linea, c.Campo, c.Nombre, bruto)
+				linea, c.Campo, c.Nombre, recortar(bruto, maxCrudoEnMotivo))
 		}
 		if c.Requerida && esPlaceholder(bruto) && motivo == "" {
 			// Antes que la coercion: aDecimal convertiria el hueco en un cero
 			// valido y nadie volveria a ver que faltaba.
-			motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia (%q)",
+			// "vacia O con un placeholder": para un `N/A` o un `null` decir
+			// solo "vacia" es falso, y el cliente veria texto en esa celda.
+			motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia o con un placeholder (%q)",
 				linea, c.Campo, c.Nombre, strings.TrimSpace(bruto))
 		}
 		if c.Campo == CampoIDsFuente {
@@ -636,6 +638,21 @@ var (
 	maxInt64 = decimal.NewFromInt(math.MaxInt64)
 	minInt64 = decimal.NewFromInt(math.MinInt64)
 )
+
+// maxCrudoEnMotivo es cuanto del valor crudo cabe en un motivo. Un objeto de
+// un export puede traer kilobytes, y el motivo es una linea del log de
+// rechazos que lee una persona: con el principio basta para reconocerlo.
+const maxCrudoEnMotivo = 80
+
+// recortar deja los primeros n runas de v y marca el corte. Por runas y no por
+// bytes para no partir un caracter UTF-8 por la mitad.
+func recortar(v string, n int) string {
+	r := []rune(v)
+	if len(r) <= n {
+		return v
+	}
+	return string(r[:n]) + "..."
+}
 
 // celda lee una posicion de la fila. Una columna ausente -- indice -1 -- es una
 // celda vacia, no un panico.

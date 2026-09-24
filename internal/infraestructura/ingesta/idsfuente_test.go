@@ -231,6 +231,13 @@ func TestAplicarRechazaLaFilaConCamposDeMas(t *testing.T) {
 	if !strings.Contains(usos[1].RechazoMotivo, "campos") || !strings.Contains(usos[1].RechazoMotivo, "fila 3") {
 		t.Errorf("el motivo no nombra el desajuste ni la linea: %s", usos[1].RechazoMotivo)
 	}
+	// Y dice que SOBRA, no que falta: con la fila corta ya rechazada, un
+	// motivo de "coma perdida" en una fila ancha mandaria al cliente a buscar
+	// una coma que no falta.
+	if !strings.Contains(usos[1].RechazoMotivo, "campo de mas") ||
+		strings.Contains(usos[1].RechazoMotivo, "fila corta") {
+		t.Errorf("el motivo de la fila ancha no dice que sobra un campo: %s", usos[1].RechazoMotivo)
+	}
 	if usos[1].Titulo != "corrida" {
 		t.Errorf("la fila rechazada perdio el titulo: %+v", usos[1])
 	}
@@ -367,5 +374,77 @@ func TestAplicarNoRechazaLaFilaXLSXQueExcelizeRecorta(t *testing.T) {
 	}
 	if len(usos) != 1 || usos[0].RechazoMotivo != "" {
 		t.Fatalf("la fila recortada por excelize no se rechaza: %+v", motivos(usos))
+	}
+}
+
+// Una cabecera con coma final -- `titulo,id,taquilla,` -- trae una columna
+// SIN NOMBRE al final. Antes contaba para el ancho, y todas las filas bien
+// escritas salian "cortas" culpando a la fila de un defecto de la cabecera.
+// El xlsx real de Caracol trae lo mismo: una columna 49 con cabecera vacia.
+//
+// Las columnas finales sin nombre no cuentan para el ancho, y una fila que
+// solo trae vacios mas alla de la ultima columna con nombre no es ancha.
+func TestAplicarIgnoraLasColumnasFinalesSinNombreDeLaCabecera(t *testing.T) {
+	t.Parallel()
+
+	for nombre, datos := range map[string]string{
+		"filas sin la coma": "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\n",
+		"filas con la coma": "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,2, \n",
+		"varias sin nombre": "titulo,id,taquilla,, \nA,PX-1,1\nB,PX-2,2,,\n",
+	} {
+		t.Run(nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+			if err != nil {
+				t.Fatalf("Leer: %v", err)
+			}
+			for i, u := range usos {
+				if u.RechazoMotivo != "" {
+					t.Errorf("fila %d rechazada por la coma final de la cabecera: %s", i, u.RechazoMotivo)
+				}
+			}
+		})
+	}
+}
+
+// La otra mitad, para que ignorar la columna sin nombre no abra un silencio:
+// una fila con DATOS ahi sigue siendo ancha y se rechaza. No hay nombre al
+// que mandar ese valor, y descartarlo es como se pierde un identificador
+// corrido por una coma de mas.
+func TestAplicarRechazaLosDatosEnUnaColumnaSinNombre(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla,\nA,PX-1,1,valor huerfano\nB,PX-2,2\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	m := usos[0].RechazoMotivo
+	if !strings.Contains(m, "fila 2") || !strings.Contains(m, "campo de mas") {
+		t.Errorf("el dato en la columna sin nombre no se rechazo: %q", m)
+	}
+	if usos[1].RechazoMotivo != "" {
+		t.Errorf("la fila justa no deberia rechazarse: %s", usos[1].RechazoMotivo)
+	}
+}
+
+// En .xlsx, igual: la cabecera de Caracol trae una columna final vacia.
+func TestAplicarIgnoraLaColumnaFinalSinNombreEnXLSX(t *testing.T) {
+	t.Parallel()
+
+	datos := xlsxDeCeldas(t, map[string]string{
+		"A1": "titulo", "B1": "id", "C1": "taquilla", "D1": " ",
+		"A2": "Pelicula X", "B2": "PX-1", "C2": "100",
+		"A3": "Otra", "B3": "PX-2", "C3": "5", "D3": "huerfano",
+	})
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoXLSX).Leer(datos)
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if usos[0].RechazoMotivo != "" {
+		t.Errorf("fila 2 rechazada: %s", usos[0].RechazoMotivo)
+	}
+	if !strings.Contains(usos[1].RechazoMotivo, "campo de mas") {
+		t.Errorf("el dato en la columna sin nombre no se rechazo: %q", usos[1].RechazoMotivo)
 	}
 }

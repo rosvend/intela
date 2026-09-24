@@ -449,7 +449,7 @@ func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 			mapa:     MapaCine(),
 			columnas: []string{"titulo", "id", "taquilla"},
 			fila:     []string{"Pelicula X", "PX-1", "--"},
-			enMotivo: []string{"fila 2", "taquilla", "--"},
+			enMotivo: []string{"fila 2", "taquilla", "--", "vacia o con un placeholder"},
 		},
 		{
 			nombre:   "netflix sin show_id: falta el par que sondea la cascada",
@@ -470,7 +470,7 @@ func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 			mapa:     mapaMinimo(),
 			columnas: []string{"titulo", "duracion"},
 			fila:     []string{"N/A", "10"},
-			enMotivo: []string{"fila 2", "titulo", "N/A"},
+			enMotivo: []string{"fila 2", "titulo", "N/A", "vacia o con un placeholder"},
 		},
 	}
 	for _, c := range casos {

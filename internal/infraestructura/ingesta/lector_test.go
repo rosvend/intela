@@ -451,6 +451,12 @@ func TestJSONRechazaLosValoresCompuestosNombrandoElCampo(t *testing.T) {
 			enMotivo: []string{"fila 2", "taquilla", "compuesto"},
 		},
 		{
+			// Opcional y mapeada: no es requerida, pero se persistiria igual.
+			nombre:   "array en una columna opcional mapeada",
+			datos:    `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"moneda":["COP"]}]`,
+			enMotivo: []string{"fila 2", "moneda", `"moneda"`, "compuesto"},
+		},
+		{
 			nombre:   "segundo registro, para la linea",
 			datos:    `[{"titulo":"A","id":"A-1","taquilla":1},{"titulo":"B","id":{},"taquilla":1}]`,
 			enMotivo: []string{"fila 3", "ids_fuente", "compuesto"},
@@ -487,5 +493,26 @@ func TestJSONIgnoraLosCompuestosDeColumnasNoMapeadas(t *testing.T) {
 	}
 	if usos[0].RechazoMotivo != "" {
 		t.Fatalf("una columna no mapeada no rechaza la fila: %s", usos[0].RechazoMotivo)
+	}
+}
+
+// La parte cruda del compuesto va en el motivo para poder pedirlo, pero
+// recortada: un objeto de un export puede traer kilobytes, y el motivo es
+// una linea del log de rechazos que alguien lee.
+func TestJSONRecortaElCompuestoDentroDelMotivo(t *testing.T) {
+	t.Parallel()
+
+	largo := `{"texto":"` + strings.Repeat("x", 5000) + `"}`
+	datos := `[{"titulo":` + largo + `,"id":"PX-1","taquilla":1}]`
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	m := usos[0].RechazoMotivo
+	if !strings.Contains(m, "compuesto") || !strings.Contains(m, `{"texto":"xxx`) {
+		t.Fatalf("el motivo no nombra el compuesto: %.200s", m)
+	}
+	if len(m) > 400 {
+		t.Errorf("motivo de %d bytes: el crudo no se recorto", len(m))
 	}
 }

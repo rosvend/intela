@@ -387,6 +387,16 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 	for i, c := range filas[0] {
 		columnas[i] = strings.TrimSpace(strings.TrimPrefix(c, bom))
 	}
+	// Las columnas FINALES sin nombre no son columnas: son la coma final de
+	// una cabecera CSV (`titulo,id,taquilla,`) o la celda vacia con la que
+	// Excel cierra el rango usado (la parrilla real de Caracol trae una
+	// columna 49 con cabecera vacia). Contarlas para el ancho hacia que todas
+	// las filas bien escritas salieran "cortas", culpando a la fila de un
+	// defecto de la cabecera. Una columna sin nombre EN MEDIO si se conserva:
+	// ahi quitarla correria las posiciones de las de detras.
+	for len(columnas) > 0 && columnas[len(columnas)-1] == "" {
+		columnas = columnas[:len(columnas)-1]
+	}
 
 	cuerpo := make([][]string, 0, len(filas)-1)
 	lineas := make([]int, 0, len(filas)-1)
@@ -401,6 +411,14 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 			// los rechazos de verdad, que son los que hay que pedirle al
 			// cliente.
 			continue
+		}
+		if len(f) > len(columnas) && vacia(f[len(columnas):]) {
+			// Lo que sobra son solo vacios bajo las columnas sin nombre: no es
+			// una fila ancha, y quitarlos no pierde nada. Con DATOS ahi, en
+			// cambio, la fila se queda ancha y [Mapa.Aplicar] la rechaza: no
+			// hay nombre al que mandar ese valor, y descartarlo es como se
+			// pierde un identificador corrido por una coma de mas.
+			f = f[:len(columnas)]
 		}
 		var fila []string
 		if len(f) > len(columnas) {
