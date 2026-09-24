@@ -2,6 +2,7 @@ package ingesta
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -444,7 +445,7 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			// fila 3 la deja justo en el ancho de las columnas con nombre.
 			nombre: "coma perdida en un archivo que escribe la coma final",
 			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7,\nA55,100,7,\n",
-			quiere: []string{"", "fila corta"},
+			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 1 filas)", "mezcla filas de 4 y 5 campos"},
 		},
 		{
 			// Mezcla: la primera fila escribe las dos comas finales, la segunda
@@ -452,31 +453,45 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			// la que no llega al ancho del archivo se rechaza con motivo.
 			nombre: "anchos mezclados con varias columnas sin nombre",
 			datos:  "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2\n",
-			quiere: []string{"", "fila corta"},
+			quiere: []string{"mezcla filas de 3 y 5 campos", "mezcla filas de 3 y 5 campos"},
 		},
 		{
 			// J1 de la tercera auditoria: UNA fila con coma final en un archivo
-			// que no la escribe tumbaba todas las demas, con un motivo falso.
-			// Ahora la mayoria manda y solo cae la fila minoritaria. Y cae, no
-			// entra: con una celda en blanco al final es indistinguible de
-			// una coma de mas.
-			nombre: "una fila con coma final en un archivo que no la escribe",
+			// que no la escribe. 3 de 4 es el 75 %, por debajo del umbral: no
+			// se puede saber cual es la buena y caen las cuatro, con un motivo
+			// que lo dice. Con 58 de 59 (Caracol) si manda la mayoria; ver
+			// TestLosArchivosRealesEnCSVEntranEnterosEnTodasSusFormas.
+			nombre: "una fila con coma final en un archivo corto que no la escribe",
 			datos:  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\nC,PX-3,3,\nD,PX-4,4\n",
-			quiere: []string{"", "", "3 de 4 filas de este archivo traen 3", ""},
+			quiere: []string{"mezcla filas de 3 y 4 campos (3 y 1 filas)", "mezcla", "mezcla", "mezcla"},
 		},
 		{
 			// El silencio que evita rechazar esa minoria: una coma de mas en el
 			// titulo con la ultima celda en blanco entraria con id=furioso.
 			nombre: "coma de mas con celda final en blanco bajo la columna sin nombre",
 			datos:  "titulo,id,taquilla,\nA,PX-1,1\nRapido, furioso,55,\nD,PX-4,4\n",
-			quiere: []string{"", "campo de mas", ""},
+			quiere: []string{"mezcla", "mezcla", "mezcla"},
 		},
 		{
-			// H2 con mayoria clara: tres filas escriben la coma, la cuarta la
-			// perdio.
-			nombre: "coma perdida con la mayoria escribiendo la coma final",
+			// H2 con tres filas escribiendo la coma y la cuarta perdiendola: 75 %,
+			// por debajo del umbral. Caen las cuatro.
+			nombre: "coma perdida con el 75 % escribiendo la coma final",
 			datos:  "titulo,id,taquilla,espectadores,\nA,A-1,1,7,\nB,B-1,2,7,\nC,C-1,3,7,\nD55,100,7,\n",
-			quiere: []string{"", "", "", "3 de 4 filas de este archivo traen 5"},
+			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 3 filas)", "mezcla", "mezcla", "mezcla"},
+		},
+		{
+			// K2 de la cuarta auditoria: la MAYORIA pierde la coma. Con mayoria
+			// simple entraban B y C corridas y caia A, la buena. Ahora caen las
+			// tres: ante la duda, ruido y no silencio.
+			nombre: "la mayoria pierde la coma",
+			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7,\nB55,100,7,\nC66,200,8,\n",
+			quiere: []string{"mezcla filas de 4 y 5 campos (2 y 1 filas)", "mezcla", "mezcla"},
+		},
+		{
+			// K3: empate entre una buena sin coma y una coma de mas con blanco.
+			nombre: "empate entre buena y coma de mas",
+			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7\nRapido, furioso,55,100,\n",
+			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 1 filas)", "mezcla"},
 		},
 		{
 			// N10: el numero del motivo es el del ARCHIVO, no el de la cabecera
@@ -486,15 +501,21 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"", "trae 2 campos y 2 de 3 filas de este archivo traen 3", ""},
 		},
 		{
+			// Por debajo de las columnas con nombre la fila es corta siempre, y
+			// no cuenta para la mayoria: el archivo sigue siendo de un ancho.
 			nombre: "fila corta en un archivo con coma final",
-			datos:  "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,\nC,PX-3,3,\n",
-			quiere: []string{"", "trae 3 campos y 2 de 3 filas de este archivo traen 4", ""},
+			datos:  "titulo,id,taquilla,\nA,PX-1,1,\nB,\nC,PX-3,3,\n",
+			quiere: []string{"", "trae 2 campos y 2 de 3 filas de este archivo traen 4", ""},
 		},
 		{
-			// Empate: gana el ancho mayor, como antes.
 			nombre: "comas parciales en empate",
 			datos:  "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
-			quiere: []string{"", "fila corta"},
+			quiere: []string{"mezcla filas de 3 y 4 campos", "mezcla"},
+		},
+		{
+			nombre: "tres anchos legitimos a la vez",
+			datos:  "titulo,id,taquilla,,\nA,PX-1,1\nB,PX-2,2,\nC,PX-3,3,,\n",
+			quiere: []string{"mezcla filas de 3, 4 y 5 campos (1, 1 y 1 filas)", "mezcla", "mezcla"},
 		},
 		{
 			// N11: el dato sin nombre pisa el motivo de celda, aunque la fila
@@ -609,5 +630,75 @@ func TestJSONRechazaElDatoBajoUnaClaveVacia(t *testing.T) {
 		if usos[1].RechazoMotivo != "" {
 			t.Errorf("clave %q: la fila sin esa clave no deberia rechazarse: %s", clave, usos[1].RechazoMotivo)
 		}
+	}
+}
+
+// El borde del umbral de mayoria (umbralMayoriaAncho = 0.9): con 9 de 10
+// filas en un ancho manda la mayoria y cae solo la otra; con 8 de 10 no se
+// puede saber y caen las diez.
+func TestAplicarUmbralDeMayoriaDeAncho(t *testing.T) {
+	t.Parallel()
+
+	archivo := func(sinComa, conComa int) string {
+		var b strings.Builder
+		b.WriteString("titulo,id,taquilla,\n")
+		for i := range sinComa {
+			fmt.Fprintf(&b, "S%d,S-%d,1\n", i, i)
+		}
+		for i := range conComa {
+			fmt.Fprintf(&b, "C%d,C-%d,1,\n", i, i)
+		}
+		return b.String()
+	}
+
+	t.Run("9 de 10: manda la mayoria", func(t *testing.T) {
+		t.Parallel()
+		usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(archivo(9, 1)))
+		if err != nil {
+			t.Fatalf("Leer: %v", err)
+		}
+		for i, u := range usos[:9] {
+			if u.RechazoMotivo != "" {
+				t.Errorf("fila %d de la mayoria rechazada: %s", i, u.RechazoMotivo)
+			}
+		}
+		if m := usos[9].RechazoMotivo; !strings.Contains(m, "9 de 10 filas de este archivo traen 3") {
+			t.Errorf("la minoria: %q", m)
+		}
+	})
+	t.Run("8 de 10: caen todas", func(t *testing.T) {
+		t.Parallel()
+		usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(archivo(8, 2)))
+		if err != nil {
+			t.Fatalf("Leer: %v", err)
+		}
+		for i, u := range usos {
+			if !strings.Contains(u.RechazoMotivo, "mezcla filas de 3 y 4 campos (8 y 2 filas)") {
+				t.Errorf("fila %d: %q", i, u.RechazoMotivo)
+			}
+		}
+	})
+}
+
+// K4: en .xlsx una celda con dato mas alla de la cabecera se nombra como la
+// ve el cliente, por su referencia de Excel, y no se habla de comas.
+func TestAplicarNombraLaCeldaFueraDeLaCabeceraEnXLSX(t *testing.T) {
+	t.Parallel()
+
+	datos := xlsxDeCeldas(t, map[string]string{
+		"A1": "titulo", "B1": "id", "C1": "taquilla",
+		"A2": "A", "B2": "PX-1", "C2": "1", "AW2": "nota",
+		"A3": "B", "B3": "PX-2", "C3": "2",
+	})
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoXLSX).Leer(datos)
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	m := usos[0].RechazoMotivo
+	if !strings.Contains(m, "la celda AW2 esta fuera de la cabecera (ultima columna C)") || strings.Contains(m, "coma") {
+		t.Errorf("motivo = %q", m)
+	}
+	if usos[1].RechazoMotivo != "" {
+		t.Errorf("fila 3 rechazada: %s", usos[1].RechazoMotivo)
 	}
 }

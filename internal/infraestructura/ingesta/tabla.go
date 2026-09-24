@@ -74,6 +74,9 @@ type Tabla struct {
 	// conEsperado es cuantas filas traen anchoEsperado, de len(anchos): lo que
 	// el motivo de rechazo cuenta para que diga la verdad sobre el archivo.
 	conEsperado int
+	// disputa son los anchos legitimos que se reparten las filas cuando
+	// ninguno llega a umbralMayoriaAncho. Vacia si el archivo se decidio.
+	disputa []anchoEnDisputa
 
 	// formato es de que lector salio la tabla. Solo lo usan los motivos que
 	// dependen de el: un dato sin cabecera es "una coma de mas" en CSV, una
@@ -90,6 +93,23 @@ type Tabla struct {
 // compuesta dice si la celda (n, col) era un valor JSON compuesto.
 func (t Tabla) compuesta(n, col int) bool {
 	return n >= 0 && n < len(t.compuestas) && t.compuestas[n][col]
+}
+
+// anchoEnDisputa es un ancho legitimo y cuantas filas lo traen.
+type anchoEnDisputa struct{ ancho, filas int }
+
+// enDisputa dice si Filas[n] tiene uno de los anchos legitimos que el archivo
+// no pudo decidir (ver [anchoEsperado]). Toda fila asi se rechaza.
+func (t Tabla) enDisputa(n int) bool {
+	if len(t.disputa) == 0 || n < 0 || n >= len(t.anchos) {
+		return false
+	}
+	for _, d := range t.disputa {
+		if d.ancho == t.anchos[n] {
+			return true
+		}
+	}
+	return false
 }
 
 // desajuste dice si Filas[n] traia un numero de campos distinto del que
@@ -449,34 +469,53 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 	}
 	t := Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}
 	if anotarAncho {
-		t.anchoEsperado, t.conEsperado = anchoEsperado(columnas, anchos)
+		t.anchoEsperado, t.conEsperado, t.disputa = anchoEsperado(columnas, anchos)
 	}
 	return t, nil
 }
 
+// umbralMayoriaAncho es la fraccion de las filas de datos que tiene que
+// reunir un ancho para imponerse a los demas cuando el archivo los mezcla.
+//
+// Es alto a proposito. Por el ancho solo, una fila con la coma final de mas
+// (J1: una fila rara en un archivo sano) y una fila con la coma PERDIDA (K2:
+// la mayoria perdio la coma) tienen la misma forma, y con mayoria simple el
+// segundo caso dejaba entrar corridas las filas de la mayoria y rechazaba la
+// buena. Ante la duda, ruido y no silencio: solo una mayoria abrumadora -- la
+// de un archivo sano con alguna fila suelta, como la parrilla de Caracol con
+// una fila de coma final, 58 de 59 -- se toma por la forma del archivo.
+const umbralMayoriaAncho = 0.9
+
 // anchoEsperado decide, para TODO el archivo, cuantos campos tiene que traer
-// una fila, y cuantas filas los traen.
+// una fila, cuantas filas los traen, y si el archivo no se pudo decidir.
 //
 // Solo es dudoso cuando la cabecera termina en columnas sin nombre -- la coma
 // final de `titulo,id,taquilla,` --, porque entonces hay mas de una forma
 // legitima de escribir una fila: con esas comas o sin ellas. Los anchos
 // legitimos van del de la ultima columna con nombre al ancho original de la
-// cabecera.
+// cabecera. Se decide por archivo porque por fila no se puede: con la coma
+// final en todas las filas, una coma PERDIDA deja la fila justo en el ancho de
+// las columnas con nombre.
 //
-// Se decide por archivo, porque por fila no se puede: con la coma final en
-// todas las filas, una coma PERDIDA deja la fila justo en el ancho de las
-// columnas con nombre, y aceptarla por eso la haria entrar corrida. Y se decide
-// por MAYORIA, porque la regla anterior -- "si alguna fila llega al ancho
-// original" -- dejaba que una sola fila con coma final tumbara las otras 58 de
-// la parrilla de Caracol, con un motivo que les atribuia un ancho que no era el
-// suyo (issue #113, tercera auditoria).
+// Tres casos:
 //
-// Gana el ancho legitimo mas frecuente; con empate, el mayor. Toda fila que
-// no lo traiga es la minoria y se rechaza, tambien la que se pasa: una celda en
-// blanco al final bajo la columna sin nombre es indistinguible de una coma de
-// mas (`Rapido, furioso,55,` entraria con id=furioso), y un rechazo con motivo
-// es preferible a una fila corrida.
-func anchoEsperado(columnas []string, anchos []int) (esperado, con int) {
+//   - Todas las filas en un solo ancho legitimo: ese es el ancho, y se aceptan.
+//     Cubre las tres formas coherentes de exportar un archivo.
+//   - Anchos legitimos mezclados y uno con al menos umbralMayoriaAncho de las
+//     filas de datos: ese es el ancho, y se rechaza la minoria -- tambien la
+//     que se pasa, porque una celda en blanco al final bajo la columna sin
+//     nombre es indistinguible de una coma de mas --.
+//   - Ninguno llega al umbral: se devuelven los anchos en disputa y se rechazan
+//     TODAS sus filas. No hay forma de saber cual es la buena, y aceptar la
+//     mayoria es como entraban corridas las filas de K2.
+//
+// Lo que NO puede ver, y conviene decirlo: un archivo en un solo ancho con una
+// coma perdida en todas sus filas -- el caso extremo, una sola fila (K1) -- se
+// lee como coherente y entra corrido. Y una fila que pierde un campo y gana
+// otro (`Rapido, furioso,2` bajo `titulo,id,taquilla`) tiene el ancho de las
+// buenas. Ninguna regla de ancho distingue esas filas de una bien escrita; en
+// `main` tambien entran.
+func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa []anchoEnDisputa) {
 	nombradas := len(columnas)
 	for nombradas > 0 && columnas[nombradas-1] == "" {
 		nombradas--
@@ -487,15 +526,25 @@ func anchoEsperado(columnas []string, anchos []int) (esperado, con int) {
 			cuenta[a]++
 		}
 	}
-	// De menor a mayor con >=: en empate se queda el ultimo, que es el mayor.
-	// Sin ninguna fila en el rango legitimo, el ancho original.
+	// De menor a mayor con >=: en empate se queda el mayor. Sin ninguna fila
+	// en el rango legitimo, el ancho original.
 	esperado = len(columnas)
 	for a := nombradas; a <= len(columnas); a++ {
 		if cuenta[a] > 0 && cuenta[a] >= con {
 			esperado, con = a, cuenta[a]
 		}
 	}
-	return esperado, con
+	if len(cuenta) <= 1 || float64(con)/float64(len(anchos)) >= umbralMayoriaAncho {
+		return esperado, con, nil
+	}
+	for a := nombradas; a <= len(columnas); a++ {
+		if cuenta[a] > 0 {
+			disputa = append(disputa, anchoEnDisputa{ancho: a, filas: cuenta[a]})
+		}
+	}
+	// Lo que queda por debajo de las columnas con nombre es corto igual, y
+	// su motivo cuenta contra el ancho minimo legitimo, que es un hecho.
+	return nombradas, cuenta[nombradas], disputa
 }
 
 func vacia(fila []string) bool {

@@ -319,7 +319,11 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea, func(col int) bool { return t.compuesta(n, col) })
-		if ancho, desajuste := t.desajuste(n); desajuste {
+		if t.enDisputa(n) {
+			// El archivo mezcla anchos y ninguno reune la mayoria: no se sabe
+			// cual es el bueno, y la fila no entra. Ver anchoEsperado.
+			motivo = motivoDisputa(linea, t.disputa)
+		} else if ancho, desajuste := t.desajuste(n); desajuste {
 			// Una coma PERDIDA corre los valores a la izquierda igual que una
 			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
 			// de celda y lo pisa: con el corrimiento, la celda que "falla" es
@@ -338,6 +342,13 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 			// nombre al que mandar el valor, y descartarlo en silencio es como
 			// se pierde un identificador corrido.
 			motivo = motivoSinNombre(t.formato, linea, col, recortar(strings.TrimSpace(v), maxCrudoEnMotivo))
+		}
+		if motivo == "" && len(fila) > len(t.Columnas) && t.formato == aplicacion.FormatoXLSX {
+			// En .xlsx no hay comas que se corran: es una celda escrita fuera
+			// del rango de la cabecera, y se nombra por su referencia.
+			motivo = fmt.Sprintf(
+				"fila %d: la celda %s%d esta fuera de la cabecera (ultima columna %s); sin encabezado no se sabe a que campo va",
+				linea, letraColumna(fueraDeCabecera(fila, len(t.Columnas))+1), linea, letraColumna(len(t.Columnas)))
 		}
 		if motivo == "" && len(fila) > len(t.Columnas) {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
@@ -677,6 +688,39 @@ func motivoSinNombre(formato string, linea, col int, valor string) string {
 		return fmt.Sprintf("fila %d: trae un dato en la columna %d, que no tiene nombre en la cabecera (%q); suele ser una coma de mas que corre los valores",
 			linea, col, valor)
 	}
+}
+
+// motivoDisputa redacta el rechazo de una fila de un archivo que mezcla anchos
+// sin mayoria: "mezcla filas de 3 y 4 campos (3 y 1 filas)".
+func motivoDisputa(linea int, disputa []anchoEnDisputa) string {
+	anchos := make([]string, len(disputa))
+	filas := make([]string, len(disputa))
+	for i, d := range disputa {
+		anchos[i] = strconv.Itoa(d.ancho)
+		filas[i] = strconv.Itoa(d.filas)
+	}
+	return fmt.Sprintf(
+		"fila %d: el archivo mezcla filas de %s campos (%s filas) y no se puede saber cual es la buena; revisa las comas finales",
+		linea, enumerar(anchos), enumerar(filas))
+}
+
+// enumerar une una lista como se escribe en espanol: "3", "3 y 4", "3, 4 y 5".
+func enumerar(xs []string) string {
+	if len(xs) <= 1 {
+		return strings.Join(xs, "")
+	}
+	return strings.Join(xs[:len(xs)-1], ", ") + " y " + xs[len(xs)-1]
+}
+
+// fueraDeCabecera devuelve la posicion (desde 0) de la primera celda con dato
+// mas alla de la cabecera, o la primera de mas si todas vienen en blanco.
+func fueraDeCabecera(fila []string, ancho int) int {
+	for i := ancho; i < len(fila); i++ {
+		if strings.TrimSpace(fila[i]) != "" {
+			return i
+		}
+	}
+	return ancho
 }
 
 // letraColumna escribe la columna n (desde 1) como la ve Excel: A, B, ..., Z,
