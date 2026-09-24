@@ -2611,10 +2611,12 @@ components:
             Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
             archivo, que es lo que permite volver a pedirle al cliente
             exactamente eso. Toda fila que salio de un archivo empieza por
-            `fila N`, la linea de la hoja con la cabecera como 1, decida el
-            rechazo el adaptador de formato, la validacion o la
-            normalizacion. Es texto para una persona, no un formato que
-            analizar: el codigo tipado va aparte.
+            `fila N`, decida el rechazo el adaptador de formato, la validacion
+            o la normalizacion. N es la linea del archivo en la que EMPIEZA el
+            registro (un campo entrecomillado de un CSV puede abarcar varias
+            lineas); en .xlsx, la fila de la hoja; en JSON, la posicion del
+            registro en el array contando desde 2. Es texto para una persona,
+            no un formato que analizar: el codigo tipado va aparte.
           example: 'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero'
 
     Carga:
