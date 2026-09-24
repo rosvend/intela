@@ -319,22 +319,25 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		linea := t.Linea(n)
 
 		u, motivo := m.fila(fila, indices, linea, func(col int) bool { return t.compuesta(n, col) })
-		if ancho, esperado, corta := t.corta(n); corta {
+		if ancho, desajuste := t.desajuste(n); desajuste {
 			// Una coma PERDIDA corre los valores a la izquierda igual que una
 			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
 			// de celda y lo pisa: con el corrimiento, la celda que "falla" es
 			// un sintoma, y su motivo mandaria al cliente a rellenar una celda
-			// cuando lo que falta es una coma.
-			motivo = fmt.Sprintf(
-				"fila %d: trae %d campos y las filas de este archivo traen %d; una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda",
-				linea, ancho, esperado)
+			// cuando lo que falta es una coma. El recuento dice cuantas filas
+			// del archivo escriben como se espera, para que el motivo diga la
+			// verdad sobre el archivo y no sobre la cabecera.
+			porque := "una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda"
+			if ancho > t.anchoEsperado {
+				porque = "un campo de mas no se acepta porque suele ser una coma sin entrecomillar que corre los valores"
+			}
+			motivo = fmt.Sprintf("fila %d: trae %d campos y %d de %d filas de este archivo traen %d; %s",
+				linea, ancho, t.conEsperado, len(t.anchos), t.anchoEsperado, porque)
 		} else if col, v, hay := datoSinNombre(t.Columnas, fila); hay {
 			// Estructural, igual que el ancho: pisa el motivo de celda. No hay
 			// nombre al que mandar el valor, y descartarlo en silencio es como
-			// se pierde un identificador corrido por una coma de mas.
-			motivo = fmt.Sprintf(
-				"fila %d: trae un dato en la columna %d, que no tiene nombre en la cabecera (%q); suele ser una coma de mas que corre los valores",
-				linea, col, recortar(strings.TrimSpace(v), maxCrudoEnMotivo))
+			// se pierde un identificador corrido.
+			motivo = motivoSinNombre(t.formato, linea, col, recortar(strings.TrimSpace(v), maxCrudoEnMotivo))
 		}
 		if motivo == "" && len(fila) > len(t.Columnas) {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
@@ -647,15 +650,45 @@ var (
 )
 
 // datoSinNombre busca la primera celda con contenido bajo una columna cuya
-// cabecera viene vacia. Devuelve su posicion contando desde 1, como la ve el
-// cliente en su hoja.
+// cabecera viene vacia -- o en blanco: la clave JSON " " es tan anonima como
+// "" --. Devuelve su posicion contando desde 1, como la ve el cliente.
 func datoSinNombre(columnas, fila []string) (int, string, bool) {
 	for i, c := range columnas {
-		if c == "" && i < len(fila) && strings.TrimSpace(fila[i]) != "" {
+		if strings.TrimSpace(c) == "" && i < len(fila) && strings.TrimSpace(fila[i]) != "" {
 			return i + 1, fila[i], true
 		}
 	}
 	return 0, "", false
+}
+
+// motivoSinNombre redacta el rechazo de un dato sin cabecera en el idioma de
+// su formato. En CSV casi siempre es una coma de mas; en .xlsx no hay comas,
+// es una columna sin encabezado y se nombra por su letra; en JSON es una clave
+// vacia.
+func motivoSinNombre(formato string, linea, col int, valor string) string {
+	switch formato {
+	case aplicacion.FormatoXLSX:
+		return fmt.Sprintf("fila %d: trae un dato en la columna %s, que no tiene encabezado (%q); sin encabezado no se sabe a que campo va",
+			linea, letraColumna(col), valor)
+	case aplicacion.FormatoJSON:
+		return fmt.Sprintf("fila %d: trae un dato bajo una clave vacia (%q); sin nombre no se sabe a que campo va",
+			linea, valor)
+	default:
+		return fmt.Sprintf("fila %d: trae un dato en la columna %d, que no tiene nombre en la cabecera (%q); suele ser una coma de mas que corre los valores",
+			linea, col, valor)
+	}
+}
+
+// letraColumna escribe la columna n (desde 1) como la ve Excel: A, B, ..., Z,
+// AA, AB...
+func letraColumna(n int) string {
+	var letras []byte
+	for n > 0 {
+		n--
+		letras = append([]byte{byte('A' + n%26)}, letras...)
+		n /= 26
+	}
+	return string(letras)
 }
 
 // maxCrudoEnMotivo es cuanto del valor crudo cabe en un motivo. Un objeto de

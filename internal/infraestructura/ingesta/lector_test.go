@@ -1,13 +1,18 @@
 package ingesta
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -529,4 +534,87 @@ func TestJSONRecortaElCompuestoDentroDelMotivo(t *testing.T) {
 	if m := usos[0].RechazoMotivo; !utf8.ValidString(m) || !strings.Contains(m, "ñ...") {
 		t.Errorf("el recorte partio una runa: %q", m)
 	}
+}
+
+// Los dos archivos reales, exportados a CSV de las formas en que Excel y una
+// persona lo hacen. Todas entran enteras menos la mezclada, en la que solo
+// cae la fila que no escribe como las demas (J1 de la tercera auditoria:
+// antes caian TODAS las otras, con un motivo que decia un ancho falso).
+func TestLosArchivosRealesEnCSVEntranEnterosEnTodasSusFormas(t *testing.T) {
+	t.Parallel()
+
+	reales := []struct {
+		nombre string
+		ruta   string
+		mapa   Mapa
+		filas  int
+	}{
+		{"caracol", rutaCaracol, MapaCaracol(), filasCaracol},
+		{"netflix", rutaNetflix, MapaNetflix(), filasNetflix},
+	}
+	for _, r := range reales {
+		for _, forma := range []string{"tal-cual", "coma-final", "cabecera-con-coma", "mezcla"} {
+			t.Run(r.nombre+"/"+forma, func(t *testing.T) {
+				t.Parallel()
+				datos := csvDeXLSX(t, r.ruta, forma)
+				usos, err := lector(t, r.mapa, aplicacion.FormatoCSV).Leer(datos)
+				if err != nil {
+					t.Fatalf("Leer: %v", err)
+				}
+				if len(usos) != r.filas {
+					t.Fatalf("usos = %d, se esperaban %d", len(usos), r.filas)
+				}
+				for i, u := range usos {
+					if forma == "mezcla" && u.Linea == 8 {
+						quiere := fmt.Sprintf("%d de %d filas de este archivo traen", r.filas-1, r.filas)
+						if !strings.Contains(u.RechazoMotivo, quiere) {
+							t.Errorf("la fila minoritaria: %q, se esperaba %q", u.RechazoMotivo, quiere)
+						}
+						continue
+					}
+					if u.RechazoMotivo != "" {
+						t.Fatalf("fila %d (linea %d) rechazada: %s", i, u.Linea, u.RechazoMotivo)
+					}
+				}
+			})
+		}
+	}
+}
+
+// csvDeXLSX exporta la primera hoja de un .xlsx a CSV de una de cuatro formas:
+// tal cual; con la coma final de la columna sin nombre que declara el rango
+// usado en TODAS las filas; solo en la cabecera; o en la cabecera y en UNA
+// fila de datos (la linea 8).
+func csvDeXLSX(t *testing.T, ruta, forma string) []byte {
+	t.Helper()
+	libro, err := excelize.OpenFile(ruta)
+	if err != nil {
+		t.Fatalf("abrir %s: %v", ruta, err)
+	}
+	defer func() { _ = libro.Close() }()
+	filas, err := libro.GetRows(libro.GetSheetList()[0])
+	if err != nil {
+		t.Fatalf("GetRows: %v", err)
+	}
+	ancho := 0
+	for _, f := range filas {
+		ancho = max(ancho, len(f))
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	for i, f := range filas {
+		conComa := forma == "coma-final" ||
+			(forma == "cabecera-con-coma" && i == 0) ||
+			(forma == "mezcla" && (i == 0 || i == 7))
+		if conComa {
+			for len(f) < ancho+1 {
+				f = append(f, "")
+			}
+		}
+		if err := w.Write(f); err != nil {
+			t.Fatalf("csv: %v", err)
+		}
+	}
+	w.Flush()
+	return buf.Bytes()
 }

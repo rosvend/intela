@@ -71,6 +71,14 @@ type Tabla struct {
 	// [anchoEsperado]. Se leen por [Tabla.corta].
 	anchos        []int
 	anchoEsperado int
+	// conEsperado es cuantas filas traen anchoEsperado, de len(anchos): lo que
+	// el motivo de rechazo cuenta para que diga la verdad sobre el archivo.
+	conEsperado int
+
+	// formato es de que lector salio la tabla. Solo lo usan los motivos que
+	// dependen de el: un dato sin cabecera es "una coma de mas" en CSV, una
+	// columna sin encabezado en .xlsx y una clave vacia en JSON.
+	formato string
 
 	// compuestas marca, por fila, las columnas cuyo valor era un objeto o un
 	// array JSON. Solo lo rellena [TablaJSON]. Existe porque la celda es
@@ -84,13 +92,16 @@ func (t Tabla) compuesta(n, col int) bool {
 	return n >= 0 && n < len(t.compuestas) && t.compuestas[n][col]
 }
 
-// corta dice si Filas[n] traia menos campos de los que el archivo escribe, y
-// cuantos traia. Siempre false en los formatos que no anotan el ancho.
-func (t Tabla) corta(n int) (ancho, esperado int, es bool) {
+// desajuste dice si Filas[n] traia un numero de campos distinto del que
+// escribe el archivo, dentro del ancho de la cabecera, y cuantos traia. Una
+// fila MAS ancha que la cabecera no es desajuste: la rechaza [Mapa.Aplicar]
+// por ancha. Siempre false en los formatos que no anotan el ancho.
+func (t Tabla) desajuste(n int) (ancho int, es bool) {
 	if n < 0 || n >= len(t.anchos) {
-		return 0, 0, false
+		return 0, false
 	}
-	return t.anchos[n], t.anchoEsperado, t.anchos[n] < t.anchoEsperado
+	a := t.anchos[n]
+	return a, a != t.anchoEsperado && a <= len(t.Columnas)
 }
 
 // Linea devuelve el numero de fila del archivo del que salio Filas[n].
@@ -193,7 +204,9 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 	if err := filasIter.Error(); err != nil {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
 	}
-	return desdeFilasNumeradas(crudas, fisicas, false)
+	t, err := desdeFilasNumeradas(crudas, fisicas, false)
+	t.formato = aplicacion.FormatoXLSX
+	return t, err
 }
 
 // maxFilasExcel es el tope de filas de una hoja .xlsx (2^20). Es el mismo
@@ -254,7 +267,9 @@ func TablaCSV(datos []byte) (Tabla, error) {
 		filas = append(filas, registro)
 		fisicas = append(fisicas, linea)
 	}
-	return desdeFilasNumeradas(filas, fisicas, true)
+	t, err := desdeFilasNumeradas(filas, fisicas, true)
+	t.formato = aplicacion.FormatoCSV
+	return t, err
 }
 
 // TablaJSON lee un array de objetos planos.
@@ -328,7 +343,7 @@ func TablaJSON(datos []byte) (Tabla, error) {
 		// deja UN solo formato de motivo para los tres formatos.
 		lineas = append(lineas, n+2)
 	}
-	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas, compuestas: compuestas}, nil
+	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas, compuestas: compuestas, formato: aplicacion.FormatoJSON}, nil
 }
 
 // textoJSON reduce un valor JSON a su texto de celda, y dice si era un valor
@@ -434,38 +449,53 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 	}
 	t := Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}
 	if anotarAncho {
-		t.anchoEsperado = anchoEsperado(columnas, anchos)
+		t.anchoEsperado, t.conEsperado = anchoEsperado(columnas, anchos)
 	}
 	return t, nil
 }
 
 // anchoEsperado decide, para TODO el archivo, cuantos campos tiene que traer
-// una fila para no ser corta.
+// una fila, y cuantas filas los traen.
 //
 // Solo es dudoso cuando la cabecera termina en columnas sin nombre -- la coma
-// final de `titulo,id,taquilla,` --, porque entonces hay dos formas legitimas
-// de escribir una fila: con esas comas o sin ellas. Se decide por archivo y no
-// por fila porque por fila no se puede: con la coma final en todas las filas,
-// una coma PERDIDA deja la fila justo en el ancho de las columnas con nombre, y
-// aceptarla por eso la haria entrar corrida.
+// final de `titulo,id,taquilla,` --, porque entonces hay mas de una forma
+// legitima de escribir una fila: con esas comas o sin ellas. Los anchos
+// legitimos van del de la ultima columna con nombre al ancho original de la
+// cabecera.
 //
-// Si alguna fila llega al ancho ORIGINAL de la cabecera, el archivo escribe las
-// comas finales y ese es el ancho. Si ninguna llega, es el de la ultima columna
-// con nombre. En un archivo con las dos formas mezcladas, las filas que se
-// quedan por debajo se rechazan como cortas: no hay forma segura de saber cual
-// de las dos perdio algo, y un rechazo con motivo es preferible a una fila
-// corrida.
-func anchoEsperado(columnas []string, anchos []int) int {
+// Se decide por archivo, porque por fila no se puede: con la coma final en
+// todas las filas, una coma PERDIDA deja la fila justo en el ancho de las
+// columnas con nombre, y aceptarla por eso la haria entrar corrida. Y se decide
+// por MAYORIA, porque la regla anterior -- "si alguna fila llega al ancho
+// original" -- dejaba que una sola fila con coma final tumbara las otras 58 de
+// la parrilla de Caracol, con un motivo que les atribuia un ancho que no era el
+// suyo (issue #113, tercera auditoria).
+//
+// Gana el ancho legitimo mas frecuente; con empate, el mayor. Toda fila que
+// no lo traiga es la minoria y se rechaza, tambien la que se pasa: una celda en
+// blanco al final bajo la columna sin nombre es indistinguible de una coma de
+// mas (`Rapido, furioso,55,` entraria con id=furioso), y un rechazo con motivo
+// es preferible a una fila corrida.
+func anchoEsperado(columnas []string, anchos []int) (esperado, con int) {
 	nombradas := len(columnas)
 	for nombradas > 0 && columnas[nombradas-1] == "" {
 		nombradas--
 	}
+	cuenta := map[int]int{}
 	for _, a := range anchos {
-		if a >= len(columnas) {
-			return len(columnas)
+		if a >= nombradas && a <= len(columnas) {
+			cuenta[a]++
 		}
 	}
-	return nombradas
+	// De menor a mayor con >=: en empate se queda el ultimo, que es el mayor.
+	// Sin ninguna fila en el rango legitimo, el ancho original.
+	esperado = len(columnas)
+	for a := nombradas; a <= len(columnas); a++ {
+		if cuenta[a] > 0 && cuenta[a] >= con {
+			esperado, con = a, cuenta[a]
+		}
+	}
+	return esperado, con
 }
 
 func vacia(fila []string) bool {

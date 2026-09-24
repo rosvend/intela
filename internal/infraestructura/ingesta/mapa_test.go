@@ -597,3 +597,13 @@ func TestAplicarEstampaLaLineaEnElUsoYEnElMotivoDeDuplicado(t *testing.T) {
 		t.Errorf("motivo de duplicado: %q", m)
 	}
 }
+
+func TestLetraColumnaComoLaEscribeExcel(t *testing.T) {
+	t.Parallel()
+
+	for n, quiere := range map[int]string{1: "A", 4: "D", 26: "Z", 27: "AA", 49: "AW", 702: "ZZ", 703: "AAA"} {
+		if got := letraColumna(n); got != quiere {
+			t.Errorf("letraColumna(%d) = %q, se esperaba %q", n, got, quiere)
+		}
+	}
+}

@@ -384,10 +384,10 @@ func TestAplicarNoRechazaLaFilaXLSXQueExcelizeRecorta(t *testing.T) {
 // NINGUNA variante acepta una fila corrida; lo que no se puede decidir con
 // seguridad se rechaza con motivo.
 //
-//   - El ancho esperado se decide POR ARCHIVO. Si alguna fila de datos llega
-//     al ancho original de la cabecera, el archivo escribe la coma final, y
-//     una fila por debajo de ese ancho es corta. Si ninguna llega, el ancho es
-//     el de la ultima columna con nombre.
+//   - El ancho esperado se decide POR ARCHIVO y POR MAYORIA, entre el de las
+//     columnas con nombre y el ancho original de la cabecera. Con empate gana
+//     el mayor. Solo se rechaza la minoria: una fila que no llega es corta,
+//     una que se pasa (sin salir de la cabecera) trae un campo de mas.
 //   - Mas alla del ancho ORIGINAL de la cabecera, todo campo -- vacio o no --
 //     hace la fila ancha.
 //   - Un dato bajo una columna sin nombre rechaza la fila: no hay nombre al que
@@ -396,11 +396,10 @@ func TestAplicarIgnoraLasColumnasFinalesSinNombreDeLaCabecera(t *testing.T) {
 	t.Parallel()
 
 	for nombre, datos := range map[string]string{
-		"ninguna fila escribe la coma final":  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\n",
-		"todas escriben la coma final":        "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,2, \n",
-		"varias sin nombre, ninguna coma":     "titulo,id,taquilla,, \nA,PX-1,1\nB,PX-2,2\n",
-		"varias sin nombre, todas las comas":  "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2,,\n",
-		"comas parciales sin llegar al ancho": "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
+		"ninguna fila escribe la coma final": "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\n",
+		"todas escriben la coma final":       "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,2, \n",
+		"varias sin nombre, ninguna coma":    "titulo,id,taquilla,, \nA,PX-1,1\nB,PX-2,2\n",
+		"varias sin nombre, todas las comas": "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2,,\n",
 	} {
 		t.Run(nombre, func(t *testing.T) {
 			t.Parallel()
@@ -454,6 +453,55 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			nombre: "anchos mezclados con varias columnas sin nombre",
 			datos:  "titulo,id,taquilla,, \nA,PX-1,1,,\nB,PX-2,2\n",
 			quiere: []string{"", "fila corta"},
+		},
+		{
+			// J1 de la tercera auditoria: UNA fila con coma final en un archivo
+			// que no la escribe tumbaba todas las demas, con un motivo falso.
+			// Ahora la mayoria manda y solo cae la fila minoritaria. Y cae, no
+			// entra: con una celda en blanco al final es indistinguible de
+			// una coma de mas.
+			nombre: "una fila con coma final en un archivo que no la escribe",
+			datos:  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\nC,PX-3,3,\nD,PX-4,4\n",
+			quiere: []string{"", "", "3 de 4 filas de este archivo traen 3", ""},
+		},
+		{
+			// El silencio que evita rechazar esa minoria: una coma de mas en el
+			// titulo con la ultima celda en blanco entraria con id=furioso.
+			nombre: "coma de mas con celda final en blanco bajo la columna sin nombre",
+			datos:  "titulo,id,taquilla,\nA,PX-1,1\nRapido, furioso,55,\nD,PX-4,4\n",
+			quiere: []string{"", "campo de mas", ""},
+		},
+		{
+			// H2 con mayoria clara: tres filas escriben la coma, la cuarta la
+			// perdio.
+			nombre: "coma perdida con la mayoria escribiendo la coma final",
+			datos:  "titulo,id,taquilla,espectadores,\nA,A-1,1,7,\nB,B-1,2,7,\nC,C-1,3,7,\nD55,100,7,\n",
+			quiere: []string{"", "", "", "3 de 4 filas de este archivo traen 5"},
+		},
+		{
+			// N10: el numero del motivo es el del ARCHIVO, no el de la cabecera
+			// (aqui 3 y no 4).
+			nombre: "fila corta en un archivo sin coma final bajo cabecera con coma final",
+			datos:  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2\nC,PX-3,3\n",
+			quiere: []string{"", "trae 2 campos y 2 de 3 filas de este archivo traen 3", ""},
+		},
+		{
+			nombre: "fila corta en un archivo con coma final",
+			datos:  "titulo,id,taquilla,\nA,PX-1,1,\nB,PX-2,\nC,PX-3,3,\n",
+			quiere: []string{"", "trae 3 campos y 2 de 3 filas de este archivo traen 4", ""},
+		},
+		{
+			// Empate: gana el ancho mayor, como antes.
+			nombre: "comas parciales en empate",
+			datos:  "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
+			quiere: []string{"", "fila corta"},
+		},
+		{
+			// N11: el dato sin nombre pisa el motivo de celda, aunque la fila
+			// traiga ademas una requerida vacia.
+			nombre: "dato sin nombre y requerida vacia en la misma fila",
+			datos:  "titulo,,id,taquilla\nA,huerfano,,1\n",
+			quiere: []string{"columna 2, que no tiene nombre"},
 		},
 		{
 			nombre: "dato bajo la columna final sin nombre",
@@ -536,7 +584,30 @@ func TestAplicarIgnoraLaColumnaFinalSinNombreEnXLSX(t *testing.T) {
 	if usos[0].RechazoMotivo != "" {
 		t.Errorf("fila 2 rechazada: %s", usos[0].RechazoMotivo)
 	}
-	if !strings.Contains(usos[1].RechazoMotivo, "columna 4, que no tiene nombre") {
-		t.Errorf("el dato en la columna sin nombre no se rechazo: %q", usos[1].RechazoMotivo)
+	// En .xlsx se nombra por su letra y no se habla de comas: no hay comas.
+	m := usos[1].RechazoMotivo
+	if !strings.Contains(m, "columna D, que no tiene encabezado") || strings.Contains(m, "coma") {
+		t.Errorf("el dato en la columna sin encabezado no se rechazo con su motivo: %q", m)
+	}
+}
+
+// J2: en JSON el hueco es una clave vacia, y " " es tan vacia como "": antes
+// la primera se rechazaba y la segunda entraba sin motivo.
+func TestJSONRechazaElDatoBajoUnaClaveVacia(t *testing.T) {
+	t.Parallel()
+
+	for _, clave := range []string{"", " ", `\t`} { // `\t` es el escape JSON del tabulador
+		datos := `[{"titulo":"A","id":"PX-1","taquilla":1,"` + clave + `":"x"},{"titulo":"B","id":"PX-2","taquilla":2}]`
+		usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+		if err != nil {
+			t.Fatalf("clave %q: %v", clave, err)
+		}
+		m := usos[0].RechazoMotivo
+		if !strings.Contains(m, "clave vacia") || strings.Contains(m, "coma") {
+			t.Errorf("clave %q: %q", clave, m)
+		}
+		if usos[1].RechazoMotivo != "" {
+			t.Errorf("clave %q: la fila sin esa clave no deberia rechazarse: %s", clave, usos[1].RechazoMotivo)
+		}
 	}
 }
