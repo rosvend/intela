@@ -538,3 +538,40 @@ func TestAplicarDejaQueLaFilaDigaSuModalidad(t *testing.T) {
 		t.Errorf("modalidad[1] = %q, se esperaba %q", usos[1].Modalidad, reparto.Hotel)
 	}
 }
+
+// decimal.Decimal.IntPart() trunca fuera del rango de int64 sin avisar, asi
+// que un recuento enorme entraba como otro numero (issue #113, punto 6).
+// Latente -- ningun mapa usa emisiones hoy --, pero entra en cuanto uno lo haga.
+func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{
+		"9223372036854775808",   // MaxInt64 + 1: ParseInt falla con ErrRange
+		"-9223372036854775809",  // MinInt64 - 1
+		"9223372036854775808.0", // igual, escrito como decimal exacto
+		"1e19",
+		"1e30",
+	} {
+		n, err := aEntero(v)
+		if err == nil {
+			t.Errorf("aEntero(%q) = %d sin error; no cabe en int64", v, n)
+			continue
+		}
+		if !strings.Contains(err.Error(), v) {
+			t.Errorf("aEntero(%q): el error no nombra el valor: %v", v, err)
+		}
+	}
+	// Los bordes si caben.
+	for v, quiere := range map[string]int64{
+		"9223372036854775807":    9223372036854775807,
+		"-9223372036854775808":   -9223372036854775808,
+		"9223372036854775807.0":  9223372036854775807,
+		"-9223372036854775808.0": -9223372036854775808,
+		"1e3":                    1000,
+	} {
+		n, err := aEntero(v)
+		if err != nil || n != quiere {
+			t.Errorf("aEntero(%q) = %d, %v; se esperaba %d", v, n, err, quiere)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package ingesta
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -618,8 +619,20 @@ func aEntero(bruto string) (int64, error) {
 	if !d.Equal(d.Truncate(0)) {
 		return 0, fmt.Errorf("%q no es entero y un recuento no se puede partir", bruto)
 	}
+	// IntPart no avisa fuera de rango: desborda, y con el signo cambiado
+	// (`9223372036854775808` sale como MinInt64). Es la unica salida por la que
+	// un recuento podria entrar como OTRO numero sin motivo (issue #113).
+	if d.GreaterThan(maxInt64) || d.LessThan(minInt64) {
+		return 0, fmt.Errorf("%q no cabe en un recuento (maximo %d)", bruto, int64(math.MaxInt64))
+	}
 	return d.IntPart(), nil
 }
+
+// Los bordes de int64 como decimales, para comparar antes de IntPart.
+var (
+	maxInt64 = decimal.NewFromInt(math.MaxInt64)
+	minInt64 = decimal.NewFromInt(math.MinInt64)
+)
 
 // celda lee una posicion de la fila. Una columna ausente -- indice -1 -- es una
 // celda vacia, no un panico.
