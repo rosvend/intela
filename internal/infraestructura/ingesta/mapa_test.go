@@ -575,3 +575,25 @@ func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
 		}
 	}
 }
+
+// El mapa estampa la linea en el uso para que aplicacion pueda numerar sus
+// propios motivos (issue #113, punto 3), y el motivo de duplicado dice su
+// PROPIA linea ademas de la de la fila con la que choca.
+func TestAplicarEstampaLaLineaEnElUsoYEnElMotivoDeDuplicado(t *testing.T) {
+	t.Parallel()
+
+	tabla, err := TablaCSV([]byte("titulo,id,taquilla\nA,PX-1,1\n\nA,PX-1,1\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	usos, err := MapaCine().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if usos[0].Linea != 2 || usos[1].Linea != 4 {
+		t.Fatalf("lineas = %d, %d; se esperaban 2, 4", usos[0].Linea, usos[1].Linea)
+	}
+	if m := usos[1].RechazoMotivo; !strings.HasPrefix(m, "fila 4: registro duplicado") || !strings.Contains(m, "fila 2") {
+		t.Errorf("motivo de duplicado: %q", m)
+	}
+}

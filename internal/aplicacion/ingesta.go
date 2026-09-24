@@ -690,7 +690,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 			// un placeholder como el `--` de episode_nbr-. Pisarlo con el
 			// motivo generico perderia la unica explicacion util del log de
 			// rechazos.
-			u.RechazoMotivo = validarUso(u)
+			u.RechazoMotivo = motivoConLinea(u.Linea, validarUso(u))
 		}
 		if u.RechazoMotivo != "" && u.RechazoTipo == "" {
 			MarcarRechazoAdaptador(&u)
@@ -730,9 +730,31 @@ func (i Ingesta) aplicarNormalizacion(ctx context.Context, filas []UsoPersistido
 			continue
 		}
 		uso, rev := normalizacion.Normalizar(aFila(u), p)
-		out = append(out, aPersistido(uso, rev))
+		n := aPersistido(uso, rev)
+		// aPersistido reconstruye el uso desde la Fila del dominio, que no sabe
+		// de lineas: sin copiarla aqui se perderia justo antes de los motivos
+		// que la necesitan.
+		n.Linea = u.Linea
+		n.RechazoMotivo = motivoConLinea(n.Linea, n.RechazoMotivo)
+		out = append(out, n)
 	}
 	return out, nil
+}
+
+// motivoConLinea antepone la linea del archivo a un motivo que se decidio en
+// esta capa, con la misma forma que los del adaptador (`fila N...`), para que
+// una respuesta no mezcle motivos que localizan la fila con otros que no
+// (issue #113).
+//
+// Sin linea (0: la fila no salio de un archivo) o sin motivo, lo deja como
+// esta: inventar una linea seria peor que no darla. Solo se llama sobre
+// motivos de validarUso y de normalizacion; los del adaptador ya la traen y
+// no pasan por aqui.
+func motivoConLinea(linea int, motivo string) string {
+	if linea <= 0 || motivo == "" {
+		return motivo
+	}
+	return "fila " + strconv.Itoa(linea) + ": " + motivo
 }
 
 // validarUso devuelve el motivo por el que una fila no es canonica, o "" si lo

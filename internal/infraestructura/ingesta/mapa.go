@@ -344,13 +344,16 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 			k := claveDe(fila, clave)
 			if antes, repe := vistas[k]; repe {
 				motivo = fmt.Sprintf(
-					"registro duplicado: %s ya venia en la fila %d de este mismo archivo",
-					descripcionClave(m.ClaveRegistro, fila, clave), antes)
+					"fila %d: registro duplicado: %s ya venia en la fila %d de este mismo archivo",
+					linea, descripcionClave(m.ClaveRegistro, fila, clave), antes)
 			} else {
 				vistas[k] = linea
 			}
 		}
 		u.RechazoMotivo = motivo
+		// Viaja con el uso para que aplicacion numere tambien los motivos que
+		// decide ella (validarUso, normalizacion). Ver UsoPersistido.Linea.
+		u.Linea = linea
 		usos = append(usos, u)
 	}
 	return usos, nil
