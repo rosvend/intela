@@ -2610,7 +2610,11 @@ components:
           description: |
             Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
             archivo, que es lo que permite volver a pedirle al cliente
-            exactamente eso.
+            exactamente eso. Toda fila que salio de un archivo empieza por
+            `fila N`, la linea de la hoja con la cabecera como 1, decida el
+            rechazo el adaptador de formato, la validacion o la
+            normalizacion. Es texto para una persona, no un formato que
+            analizar: el codigo tipado va aparte.
           example: 'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero'
 
     Carga:
