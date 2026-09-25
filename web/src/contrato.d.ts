@@ -796,6 +796,10 @@ export interface paths {
          *     Es la unica lectura que responde "¿entro completo lo que subi?": el
          *     recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
          *
+         *     Va paginado con la misma forma que el resto de listados (limite y
+         *     desplazamiento, mismo defecto y mismo techo): el listado crece sin
+         *     cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+         *
          *     Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
          *     volver al archivo EXACTO que pondero una corrida y no "al archivo de
@@ -4572,6 +4576,18 @@ export interface operations {
                  * @example 2026-01
                  */
                 periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+                 *     la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
             };
             header?: never;
             path?: never;
@@ -4588,7 +4604,7 @@ export interface operations {
                     "application/json": components["schemas"]["Carga"][];
                 };
             };
-            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe. */
+            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe, o el limite y el desplazamiento no son enteros validos. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4752,8 +4768,7 @@ export interface operations {
             };
             /**
              * @description Esa fuente ya entrego exactamente esos bytes -lo decide el
-             *     UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-             *     tiene contenido distinto bajo esa huella.
+             *     UNIQUE (sha256, fuente), no el nombre del archivo-.
              */
             409: {
                 headers: {
@@ -4782,6 +4797,29 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "el archivo pasa de 32 MiB"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Incidente del servidor al recibir o registrar la entrega: el
+             *     temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+             *     permiso o lleno), fallo la lectura del archivo ya recibido, o la
+             *     boveda ya tiene contenido distinto bajo esa huella (evidencia
+             *     corrupta). No es un conflicto que el cliente pueda resolver
+             *     reintentando con otro archivo: hay que avisar a operacion. El
+             *     detalle queda en el log a nivel Error; el cuerpo no filtra la
+             *     causa interna.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la boveda ya tiene contenido distinto bajo esa huella; avise a operacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

@@ -63,6 +63,17 @@ type Ingesta struct {
 	SnapshotNormalizacion func(ctx context.Context) (reparto.Snapshot, error)
 }
 
+// DeducirFormato deduce el formato de una entrega por la extension de su
+// nombre de archivo. Es [FormatoDeNombre], expuesto como metodo para que la
+// interfaz que el adaptador HTTP declara describa TODO lo que el handler
+// necesita del nucleo -incluida esta deduccion- en vez de importar un
+// paquete hermano de infraestructura para una sola funcion. Un doble de
+// prueba puede alterar la deduccion, que es justo lo que el patron del
+// fichero promete y lo que el import directo rompia.
+func (i Ingesta) DeducirFormato(nombre string) string {
+	return FormatoDeNombre(nombre)
+}
+
 // IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
 // la evidencia y persiste las filas.
 //
@@ -185,14 +196,15 @@ func (i Ingesta) lectoresDisponibles() string {
 // Lo mismo vale para un mes que no existe: `2026-13` se rechaza con 400 en vez
 // de contestar una lista vacia que se lee como "ese mes no tuvo recaudo". La
 // regla es la del dominio, `recaudo.PeriodoValido`, sin copia en este paquete.
-func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+func (i Ingesta) Cargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	periodo = strings.TrimSpace(periodo)
 	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, fmt.Errorf(
 			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
 			ErrReporteInvalido, periodo)
 	}
-	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	pag = pag.ConDefecto()
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo, pag)
 	if err != nil {
 		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
 	}
@@ -554,8 +566,8 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 	for n, u := range usos {
 		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
 		// no es el espacio: es que el campo se lee TRES veces en DOS capas
-		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el
-		// NULLIF($6, '') del INSERT- y cada lectura decide "vacio" por su cuenta.
+		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el nil de
+		// valoresUso para obra_id- y cada lectura decide "vacio" por su cuenta.
 		// Mientras el criterio se escriba tres veces, puede discrepar tres veces.
 		//
 		// Discrepaba ya. Un obra_id de solo blancos -un espacio, un tabulador, un
@@ -568,16 +580,16 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		//
 		// Y arreglarlo solo en Go lo empeora, que es la razon de que la
 		// normalizacion sea UNA y este ANTES de todo. Con TrimSpace en las dos
-		// comparaciones de arriba pero no en el SQL, la fila pasa como vacia,
-		// llega al INSERT con el espacio intacto, NULLIF no la anula -no es
+		// comparaciones de arriba pero no sobre el campo, la fila pasa como vacia,
+		// llega al COPY con el espacio intacto, valoresUso no lo anula -no es
 		// literalmente ''- y el CHECK uso_resuelto_tiene_obra la rechaza: 23514
 		// dentro de la transaccion del lote, que se lleva por delante TODAS las
 		// filas buenas que la acompanan. Un rechazo con el motivo equivocado se
 		// convertiria asi en una entrega entera perdida.
 		//
 		// Normalizando aqui el valor viaja ya limpio a las tres lecturas, incluido
-		// el que se manda al INSERT, y "vacio" pasa a significar lo mismo en Go y
-		// en SQL por construccion, no por acuerdo.
+		// el que se manda al COPY, y "vacio" pasa a significar lo mismo en Go y
+		// en el adaptador por construccion, no por acuerdo.
 		//
 		// TrimSpace y no un recorte propio: su definicion de blanco es
 		// unicode.IsSpace, que incluye el NBSP (U+00A0) con el que los exports de
@@ -592,7 +604,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		// el razonamiento de arriba, que vale igual para todos: mientras el
 		// criterio de "vacio" se escriba en mas de un sitio puede discrepar en
 		// mas de un sitio, y cada discrepancia acaba en el mismo lugar, que es
-		// una restriccion de la base abortando el INSERT del lote ENTERO. UNA
+		// una restriccion de la base abortando la escritura del lote ENTERO. UNA
 		// normalizacion por campo, aqui arriba, ANTES de que nada los lea.
 		//
 		// Lo que se pierde por cada uno si el blanco no se recorta AQUI:
@@ -658,13 +670,13 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		// Compara contra "" a secas, y tiene que seguir siendo asi: el TrimSpace
 		// esta arriba, una vez. Repetirlo aqui volveria a dar dos criterios que
-		// pueden separarse, y el de mas abajo -el NULLIF del INSERT- no se puede
-		// repetir en Go de ninguna manera.
+		// pueden separarse, y el de mas abajo -el nil del COPY para obra_id-
+		// compara contra la misma cadena vacia literal.
 		if u.ObraID == "" {
 			// A la salida de ingesta ninguna fila esta identificada: es lo que
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
-			// DEFAULT TRUE de la columna no llega a aplicarse porque
-			// insertarUso manda el valor siempre, asi que el que vale es este.
+			// DEFAULT TRUE de la columna no llega a aplicarse porque el COPY
+			// manda el valor siempre, asi que el que vale es este.
 			//
 			// Es ademas lo que deja el CHECK uso_resuelto_tiene_obra fuera del
 			// alcance de esta ruta, y por eso validarUso ya no lo repite.
@@ -679,7 +691,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		if u.Emisiones == 0 && u.EmisionesTexto != "0" {
 			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
-			// porque insertarUso manda el valor siempre. Una celda vacia es el
+			// porque el COPY manda el valor siempre. Una celda vacia es el
 			// cero de Go, no un dato. Un "0" explicito (S4) llega con
 			// EmisionesTexto=="0" desde normalizacion y se respeta.
 			u.Emisiones = 1
@@ -802,8 +814,8 @@ func validarUso(u UsoPersistido) string {
 	// Contra "" a secas: GuardarUsos ya recorto los blancos antes de llamar, y
 	// esa es la UNICA normalizacion del campo en todo el camino. Un TrimSpace
 	// tambien aqui no seria redundante sino peligroso: sugeriria que esta funcion
-	// se puede llamar con un valor sin normalizar, y el INSERT -que compara con
-	// NULLIF($6, '')- no puede hacer esa misma concesion.
+	// se puede llamar con un valor sin normalizar, y valoresUso -que compara
+	// contra '' literal para mandar nil- no puede hacer esa misma concesion.
 	if u.ObraID != "" {
 		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
 	}
