@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -61,13 +62,18 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 	}
 	var cuerpo struct {
 		Lineas []struct {
-			Neto  string `json:"neto"`
-			Bruto string `json:"bruto"`
+			Bruto   string `json:"bruto"`
+			Admin   string `json:"admin"`
+			Social  string `json:"social"`
+			Reserva string `json:"reserva"`
+			Neto    string `json:"neto"`
 		} `json:"lineas"`
 		Totales struct {
-			Bruto string `json:"bruto"`
-			Admin string `json:"admin"`
-			Neto  string `json:"neto"`
+			Bruto   string `json:"bruto"`
+			Admin   string `json:"admin"`
+			Social  string `json:"social"`
+			Reserva string `json:"reserva"`
+			Neto    string `json:"neto"`
 		} `json:"totales"`
 	}
 	if err := json.Unmarshal(panel.Body.Bytes(), &cuerpo); err != nil {
@@ -94,7 +100,10 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 		t.Fatalf("pdf disposition = %q", pdf.Header().Get("Content-Disposition"))
 	}
 	texto := textoPDFRoundtrip(pdf.Body.Bytes())
-	for _, monto := range []string{cuerpo.Totales.Neto, cuerpo.Totales.Bruto, cuerpo.Lineas[0].Neto, cuerpo.Lineas[1].Neto} {
+	for _, monto := range []string{
+		cuerpo.Totales.Neto, cuerpo.Totales.Bruto, cuerpo.Totales.Admin, cuerpo.Totales.Social, cuerpo.Totales.Reserva,
+		cuerpo.Lineas[0].Neto, cuerpo.Lineas[1].Neto,
+	} {
 		if !contieneMontoExacto(texto, monto) {
 			t.Fatalf("el PDF no lleva el monto exacto %q (un prefijo tipo 1%sseria falso positivo de Contains)", monto, monto)
 		}
@@ -113,25 +122,40 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	const hoja = "Liquidacion"
-	for celda, quiero := range map[string]string{
-		"G5": cuerpo.Lineas[0].Neto,
-		"G6": cuerpo.Lineas[1].Neto,
-		"C5": cuerpo.Lineas[0].Bruto,
-		"C6": cuerpo.Lineas[1].Bruto,
-	} {
-		v, err := f.GetCellValue(hoja, celda)
-		if err != nil {
-			t.Fatalf("%s: %v", celda, err)
-		}
-		normalizado := strings.ReplaceAll(v, ",", "")
-		fragmento := strings.TrimSuffix(quiero, ".00")
-		if !strings.Contains(normalizado, fragmento) {
-			t.Fatalf("%s = %q, se esperaba %s del panel", celda, v, quiero)
+	// C..G son bruto, admin, social, reserva y neto. El valor crudo se
+	// compara con Equal: "3900" cabe dentro de "13900.00" y de "3900.99".
+	letras := []string{"C", "D", "E", "F", "G"}
+	for i, ln := range cuerpo.Lineas {
+		fila := 5 + i
+		quiero := []string{ln.Bruto, ln.Admin, ln.Social, ln.Reserva, ln.Neto}
+		for col, espera := range quiero {
+			celda := fmt.Sprintf("%s%d", letras[col], fila)
+			assertCeldaDecimal(t, f, hoja, celda, espera)
 		}
 	}
-	formula, err := f.GetCellFormula(hoja, "G7")
-	if err != nil || !strings.Contains(formula, "SUM(G5:G6)") {
-		t.Fatalf("formula neto totales = %q (%v); tiene que sumar las dos lineas", formula, err)
+	for _, letra := range letras {
+		celda := letra + "7"
+		formula, err := f.GetCellFormula(hoja, celda)
+		quiero := fmt.Sprintf("SUM(%s5:%s6)", letra, letra)
+		if err != nil || formula != quiero {
+			t.Fatalf("formula %s = %q (%v); se esperaba %s", celda, formula, err, quiero)
+		}
+	}
+}
+
+func assertCeldaDecimal(t *testing.T, f *excelize.File, hoja, celda, quiero string) {
+	t.Helper()
+	v, err := f.GetCellValue(hoja, celda, excelize.Options{RawCellValue: true})
+	if err != nil {
+		t.Fatalf("%s: %v", celda, err)
+	}
+	got, err := decimal.NewFromString(v)
+	if err != nil {
+		t.Fatalf("%s = %q no es un monto", celda, v)
+	}
+	want := decimal.RequireFromString(quiero)
+	if !got.Equal(want) {
+		t.Fatalf("%s = %s, se esperaba %s del panel", celda, got, want)
 	}
 }
 

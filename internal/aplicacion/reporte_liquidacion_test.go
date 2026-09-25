@@ -288,6 +288,41 @@ func TestConsultarConRetenidoNoInflaDeduccionesDelTitular(t *testing.T) {
 	}
 }
 
+// El cache de prorrateo se indexa por ProcesoID. Si la clave fuera fija,
+// el segundo proceso del mismo periodo heredaria las deducciones del primero.
+func TestConsultarDosProcesosDelMismoPeriodoNoCompartenProrrateo(t *testing.T) {
+	casa := FilaLiquidacion{
+		Periodo: "2026-01", ObraID: "obra-casa", Titulo: "Casa",
+		Neto: dec("3900"), ProcesoID: "proc-casa",
+		ProcesoAdmin: dec("2000"), ProcesoSocial: dec("1000"), ProcesoReserva: dec("500"),
+		ProcesoNeto:  dec("6500"),
+		NetosProceso: []decimal.Decimal{dec("3900")},
+		Indice:       0,
+	}
+	rio := FilaLiquidacion{
+		Periodo: "2026-01", ObraID: "obra-rio", Titulo: "Rio",
+		Neto: dec("100"), ProcesoID: "proc-rio",
+		ProcesoAdmin: dec("50"), ProcesoSocial: dec("20"), ProcesoReserva: dec("10"),
+		ProcesoNeto:  dec("100"),
+		NetosProceso: []decimal.Decimal{dec("100")},
+		Indice:       0,
+	}
+	liq, err := ServicioLiquidacion{Repo: &repoLiquidacionMemoria{filas: []FilaLiquidacion{casa, rio}}}.
+		Consultar(context.Background(), ana(), "2026-01")
+	if err != nil {
+		t.Fatalf("Consultar: %v", err)
+	}
+	if len(liq.Lineas) != 2 {
+		t.Fatalf("lineas = %d", len(liq.Lineas))
+	}
+	if !liq.Lineas[0].Admin.Equal(dec("1200")) || !liq.Lineas[0].Neto.Equal(dec("3900")) || !liq.Lineas[0].Bruto.Equal(dec("6000")) {
+		t.Fatalf("casa = %+v", liq.Lineas[0])
+	}
+	if !liq.Lineas[1].Admin.Equal(dec("50")) || !liq.Lineas[1].Social.Equal(dec("20")) || !liq.Lineas[1].Reserva.Equal(dec("10")) || !liq.Lineas[1].Neto.Equal(dec("100")) || !liq.Lineas[1].Bruto.Equal(dec("180")) {
+		t.Fatalf("rio no puede heredar el prorrateo de casa: %+v", liq.Lineas[1])
+	}
+}
+
 func TestConsultarRechazaIndiceFueraDeNetosProceso(t *testing.T) {
 	repo := &repoLiquidacionMemoria{filas: []FilaLiquidacion{{
 		Periodo:        "2026-01",
