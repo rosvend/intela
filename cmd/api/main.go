@@ -22,6 +22,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -93,13 +94,26 @@ func ejecutar(log *slog.Logger) error {
 	}
 	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
-	// El mismo *Store cubre bitacora, ONI, declaraciones, padron y recaudo.
-	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): PorID ya
-	// es el de la bitacora. Declaraciones se lee aparte para componer el
-	// estado de cada obra. El nucleo sigue viendo puertos separados.
-	//
-	// El asiento del alta comparte transaccion con la obra (ADR 0006, #91):
-	// por eso van tambien Bitacora, Unidad y Reloj, igual que en origin/main.
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: log},
+		Bitacora:    store,
+		Unidad:      store,
+	}
+
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91).
 	catalogo := aplicacion.Catalogo{
 		Obras:         store.CatalogoObras(),
 		Bitacora:      store,
@@ -163,6 +177,7 @@ func ejecutar(log *slog.Logger) error {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
+		Liq:        liquidaciones,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{

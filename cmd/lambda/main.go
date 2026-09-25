@@ -30,6 +30,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -135,19 +136,26 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store cubre bitacora, ONI, declaraciones, padron y recaudo.
-	// CatalogoObras va por un envoltorio (ver postgres/catalogo.go): PorID ya
-	// es el de la bitacora. Declaraciones se lee aparte para componer el
-	// estado de cada obra. El nucleo sigue viendo puertos separados.
-	//
-	// El asiento de auditoria de declaraciones y recaudo lo escribe el
-	// propio adaptador dentro de la misma transaccion -no un
-	// BitacoraAuditoria aparte-, ver puertos.go. Mismo cableado que
-	// cmd/api: este binario es un adaptador primario mas y comparte el
-	// Router().
-	//
-	// El asiento del alta del catalogo comparte transaccion con la obra
-	// (ADR 0006, #91): por eso van tambien Bitacora, Unidad y Reloj.
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: registro},
+		Bitacora:    store,
+		Unidad:      store,
+	}
+
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91). Mismo cableado que cmd/api.
 	catalogo := aplicacion.Catalogo{
 		Obras:         store.CatalogoObras(),
 		Bitacora:      store,
@@ -206,6 +214,7 @@ func construir() (http.Handler, error) {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
+		Liq:        liquidaciones,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{

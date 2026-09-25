@@ -99,7 +99,7 @@ func (b *bitacoraMem) AsientoPorID(_ context.Context, _ string) (Asiento, error)
 	return Asiento{}, ErrNoEncontrado
 }
 
-func (b *bitacoraMem) Listar(_ context.Context, _ Paginacion) ([]Asiento, error) {
+func (b *bitacoraMem) ListarAsientos(_ context.Context, _ Paginacion) ([]Asiento, error) {
 	return b.asientos, b.err
 }
 

@@ -52,23 +52,12 @@ const TITULO_POR_STATUS: Record<number, string> = {
   // navega a la pantalla de entrada (`alExpirarSesion`) ANTES de lanzar el
   // `ApiError`, asi que lo que el operador termina leyendo no es este panel.
   403: "La sesión no tiene permiso para registrar entregas",
-  // 409 es ambiguo y por eso no se titula con ninguna de sus dos causas: el
-  // backend responde 409 tanto cuando esa fuente ya entrego exactamente ese
-  // archivo como cuando la boveda tiene contenido distinto bajo esa huella
-  // (evidencia corrupta, un incidente de integridad que hay que avisar a
-  // operacion). Un titulo que afirmara el duplicado contradiria al mensaje que
-  // va debajo y haria pasar el segundo caso por un "ya estaba, sigue".
-  //
-  // Y tampoco puede afirmar el no-registro, que es lo que decia antes ("La
-  // entrega no se registró"). Un 4xx prueba que ESA peticion no dejo entrega en
-  // `reportes`, que no es lo mismo que "esa entrega no esta registrada": en el
-  // duplicado -el caso comun, el que le pasa a quien reenvia- la entrega SI
-  // esta, y es justo lo que hace saltar el UNIQUE (sha256, fuente) del esquema
-  // (migrations/00001_init.sql); en la evidencia corrupta esta peticion tampoco
-  // dejo entrega, pero lo que hay bajo la clave no es lo que se iba a
-  // certificar. El
-  // titulo dice solo el conflicto, que es lo unico cierto en las dos ramas, y
-  // el mensaje de debajo dice cual de las dos es, cuando llega legible.
+  // 409 es solo el duplicado: esa fuente ya entrego exactamente ese archivo
+  // (UNIQUE (sha256, fuente)). La evidencia corrupta -contenido distinto bajo
+  // la misma huella- responde 500 desde el backend y cae en el cajon neutro
+  // con el aviso: es un incidente de integridad, no un conflicto que el
+  // operador resuelva reenviando. El titulo dice solo el conflicto, y el
+  // mensaje de debajo -que siempre se pinta tal cual- dice cual es.
   409: "La entrega choca con lo que ya está guardado",
   413: "El archivo es demasiado grande",
   // Un 500 **no** esta aqui a proposito: es el status con numero que deja

@@ -97,14 +97,14 @@ func (s *Store) AsientoPorID(ctx context.Context, id string) (aplicacion.Asiento
 	return a, nil
 }
 
-// Listar devuelve una pagina de asientos en orden de timeline: lo mas
+// ListarAsientos devuelve una pagina de asientos en orden de timeline: lo mas
 // reciente primero. ORDER BY explicito por lo mismo que en [Store.De]:
 // reproducible (ADR 0005), con el id como desempate para los asientos que
 // comparten instante.
 //
 // `pag` sigue la misma convencion que el resto de listados: el repositorio
 // aplica el defecto, el adaptador HTTP rechaza lo ilegal.
-func (s *Store) Listar(ctx context.Context, pag aplicacion.Paginacion) ([]aplicacion.Asiento, error) {
+func (s *Store) ListarAsientos(ctx context.Context, pag aplicacion.Paginacion) ([]aplicacion.Asiento, error) {
 	pag = pag.ConDefecto()
 	// LIMIT NULL es "sin limite" en PostgreSQL: misma convencion que
 	// [Store.Historial] en declaraciones.go.
