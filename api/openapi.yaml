@@ -4067,7 +4067,8 @@ components:
           minimum: 0
           description: |
             Cuantas de esas no estaban antes de esta pasada (incluye las
-            autocerradas que se reabren). Las dos cifras hacen falta: con una
+            autocerradas que se reabren, cada una con su asiento
+            `alerta.reabierta`). Las dos cifras hacen falta: con una
             sola, correr la evaluacion dos veces daria 0 la segunda y se leeria
             como "el periodo esta limpio".
         autocerradas:

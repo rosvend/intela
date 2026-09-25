@@ -100,11 +100,12 @@ func claveNatural(a Alerta) string {
 	return strings.Join([]string{a.Periodo, a.Tipo, a.RefTipo, a.RefID, a.RefTitular}, "\x00")
 }
 
-func (f *alertasFalsas) GuardarAlertas(_ context.Context, alertas []Alerta) (int, error) {
+func (f *alertasFalsas) GuardarAlertas(_ context.Context, alertas []Alerta) (int, []Alerta, error) {
 	f.guardados++
 	if f.errGuarda != nil {
-		return 0, f.errGuarda
+		return 0, nil, f.errGuarda
 	}
+	var reabiertas []Alerta
 	vistas := map[string]bool{}
 	for _, ya := range f.filas {
 		vistas[claveNatural(ya)] = true
@@ -116,6 +117,7 @@ func (f *alertasFalsas) GuardarAlertas(_ context.Context, alertas []Alerta) (int
 				if claveNatural(f.filas[i]) == claveNatural(a) && f.filas[i].Autocerrada {
 					f.filas[i].Resuelta, f.filas[i].Autocerrada, f.filas[i].ResueltaEn, f.filas[i].Nota = false, false, nil, ""
 					nuevas++
+					reabiertas = append(reabiertas, f.filas[i])
 				}
 			}
 			continue
@@ -125,7 +127,7 @@ func (f *alertasFalsas) GuardarAlertas(_ context.Context, alertas []Alerta) (int
 		f.filas = append(f.filas, a)
 		nuevas++
 	}
-	return nuevas, nil
+	return nuevas, reabiertas, nil
 }
 
 func (f *alertasFalsas) ListarAlertas(_ context.Context, filtro FiltroAlertas) ([]Alerta, error) {
@@ -803,6 +805,18 @@ func TestReevaluarAutocierraLasQueYaNoAplicanYLasReabreSiVuelven(t *testing.T) {
 		if a.Autocerrada {
 			t.Fatalf("la alerta %s sigue autocerrada tras volver a detectarse", a.ID)
 		}
+	}
+	var reapertura *Asiento
+	for i := range bitacora.asientos {
+		if bitacora.asientos[i].Hecho == HechoAlertaReabierta {
+			if reapertura != nil {
+				t.Fatal("mas de un asiento de reapertura para una sola alerta reabierta")
+			}
+			reapertura = &bitacora.asientos[i]
+		}
+	}
+	if reapertura == nil || reapertura.ActorID != actorSistema || reapertura.RefTipo != RefAlerta || reapertura.RefID != autocierre.RefID {
+		t.Fatalf("falta el asiento alerta.reabierta sobre %q con actor de sistema: %+v", autocierre.RefID, reapertura)
 	}
 }
 

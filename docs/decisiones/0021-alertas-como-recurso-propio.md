@@ -187,7 +187,10 @@ adaptadores para que no puedan separarse.
   (`autocerrada = true`, `resuelta_por` NULL, nota fija) y deja un asiento `alerta.autocerrada`
   con el actor de sistema por cada una. Asi una critica ya arreglada deja de bloquear la
   compuerta sin que nadie la cierre a mano. Si la anomalia vuelve, la fila autocerrada **se
-  reabre** (`ON CONFLICT ... DO UPDATE ... WHERE autocerrada`) y cuenta en `nuevas`.
+  reabre** (`ON CONFLICT ... DO UPDATE ... WHERE autocerrada`), cuenta en `nuevas` y deja un
+  asiento `alerta.reabierta` con el actor de sistema, simetrico al autocierre: el ultimo hecho de
+  la alerta en la bitacora siempre coincide con su estado (`RETURNING ..., NOT (xmax = 0)` separa
+  la fila reabierta de la insertada).
 
   Una alerta que cerro una **persona** no se toca en ninguno de los dos sentidos: no se reabre
   aunque la anomalia siga, porque reabrirla borraria una decision firmada. La contrapartida queda

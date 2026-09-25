@@ -1095,7 +1095,10 @@ type RepositorioAlertas interface {
 	// o no entra ninguna, por lo mismo que [RepositorioIngesta.GuardarUsos]:
 	// una evaluacion guardada a medias deja un tablero que no corresponde a
 	// ninguna pasada.
-	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, err error)
+	//
+	// Las autocerradas que el lote vuelve a traer se reabren: cuentan en nuevas y se devuelven en
+	// reabiertas para que el caso de uso deje su asiento `alerta.reabierta`.
+	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, reabiertas []Alerta, err error)
 
 	// ResolverAlerta marca una alerta y devuelve como quedo. Devuelve
 	// ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo estaba --

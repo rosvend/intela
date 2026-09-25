@@ -27,6 +27,8 @@ const (
 	HechoAlertaResuelta = "alerta.resuelta"
 	// HechoAlertaAutocerrada: una reevaluacion ya no detecto la anomalia y el sistema la cerro.
 	HechoAlertaAutocerrada = "alerta.autocerrada"
+	// HechoAlertaReabierta: una reevaluacion volvio a detectar una alerta autocerrada y el sistema la reabrio.
+	HechoAlertaReabierta = "alerta.reabierta"
 )
 
 // notaAutocierre es la nota que deja el sistema al autocerrar una alerta.
@@ -211,11 +213,16 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 			UsosSinCotejar: anomalias.SinClaveDeRegistro(armado.Usos),
 		}
 
-		nuevas, err := a.Alertas.GuardarAlertas(ctx, alertas)
+		nuevas, reabiertas, err := a.Alertas.GuardarAlertas(ctx, alertas)
 		if err != nil {
 			return fmt.Errorf("guardar las alertas de %q: %w", periodo, err)
 		}
 		resumen.Nuevas = nuevas
+		for _, r := range reabiertas {
+			if err := a.asentarDecisionDeSistema(ctx, HechoAlertaReabierta, r, ahora); err != nil {
+				return err
+			}
+		}
 
 		cerradas, err := a.Alertas.AutocerrarAlertas(ctx, periodo, alertas, notaAutocierre, ahora)
 		if err != nil {

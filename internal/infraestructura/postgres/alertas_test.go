@@ -748,6 +748,24 @@ func TestReevaluarAutocierraYReabreContraLaBase(t *testing.T) {
 	if tercera.CriticasAbiertas != primera.CriticasAbiertas || tercera.Nuevas != 1 {
 		t.Fatalf("criticas = %d nuevas = %d, se esperaban %d y 1", tercera.CriticasAbiertas, tercera.Nuevas, primera.CriticasAbiertas)
 	}
+
+	// La reapertura deja su asiento por alerta, simetrico al autocierre: el historial no contradice el estado.
+	var alertaID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM alertas WHERE tipo = 'duplicado_registro' AND ref_id = 'u-dup2'`).Scan(&alertaID); err != nil {
+		t.Fatalf("leer id de la alerta: %v", err)
+	}
+	var reaperturas, deLaAlerta int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE ref_tipo = $2 AND ref_id = $3 AND actor_id IS NULL)
+		   FROM asientos WHERE hecho = $1`,
+		aplicacion.HechoAlertaReabierta, aplicacion.RefAlerta, alertaID).Scan(&reaperturas, &deLaAlerta); err != nil {
+		t.Fatalf("contar reaperturas: %v", err)
+	}
+	if reaperturas != 1 || deLaAlerta != 1 {
+		t.Fatalf("asientos de reapertura = %d (de la alerta, actor sistema: %d); se esperaba exactamente 1 y solo de la reabierta",
+			reaperturas, deLaAlerta)
+	}
 }
 
 // Una alerta no puede estar autocerrada Y firmada por una persona.

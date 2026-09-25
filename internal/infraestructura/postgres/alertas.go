@@ -30,35 +30,55 @@ const columnasAlerta = `id::text, periodo, tipo, ref_tipo, ref_id, ref_titular, 
 // GuardarAlertas escribe el lote en UNA sentencia (INSERT ... SELECT FROM unnest) y devuelve cuantas entraron.
 //
 // ON CONFLICT sobre la clave natural hace la idempotencia en la base, sin carrera. Una alerta que el
-// sistema autocerro y vuelve a aparecer se REABRE (cuenta como nueva); una que cerro una persona no se toca.
+// sistema autocerro y vuelve a aparecer se REABRE (cuenta como nueva y se devuelve en reabiertas, para su
+// asiento); una que cerro una persona no se toca. `xmax = 0` distingue la fila insertada de la reabierta.
 // Participa en la unidad de trabajo abierta si la hay (enTransaccionDe).
-func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta) (int, error) {
+func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta) (int, []aplicacion.Alerta, error) {
 	alertas = sinClavesRepetidas(alertas)
 	if len(alertas) == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 	c := columnasDeLote(alertas)
 
 	nuevas := 0
+	var reabiertas []aplicacion.Alerta
 	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
-		etiqueta, err := tx.Exec(ctx,
+		filas, err := tx.Query(ctx,
 			`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, ref_titular, detalle, detectada)
 			 SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
 			 ON CONFLICT ON CONSTRAINT alerta_unica_por_hallazgo DO UPDATE
 			    SET resuelta = FALSE, autocerrada = FALSE, resuelta_por = NULL, resuelta_en = NULL,
 			        nota = '', detalle = EXCLUDED.detalle, detectada = EXCLUDED.detectada
-			  WHERE alertas.autocerrada`,
+			  WHERE alertas.autocerrada
+			 RETURNING `+columnasAlerta+`, NOT (xmax = 0)`,
 			c.periodos, c.tipos, c.refTipos, c.refIDs, c.refTitulares, c.detalles, c.detectadas)
 		if err != nil {
 			return traducirError(err, "guardar %d alertas del periodo %q", len(alertas), alertas[0].Periodo)
 		}
-		nuevas = int(etiqueta.RowsAffected())
+		defer filas.Close()
+		for filas.Next() {
+			var a aplicacion.Alerta
+			var reabierta bool
+			if err := filas.Scan(
+				&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
+				&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada, &reabierta,
+			); err != nil {
+				return traducirError(err, "escanear alerta guardada")
+			}
+			nuevas++
+			if reabierta {
+				reabiertas = append(reabiertas, a)
+			}
+		}
+		if err := filas.Err(); err != nil {
+			return traducirError(err, "guardar %d alertas del periodo %q", len(alertas), alertas[0].Periodo)
+		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return nuevas, nil
+	return nuevas, reabiertas, nil
 }
 
 // AutocerrarAlertas cierra, a nombre del sistema, las abiertas del periodo que no estan en vigentes.

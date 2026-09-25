@@ -29,7 +29,7 @@ func sembrarMuchasCriticas(t *testing.T, s *Store, periodo string, n int) {
 			Detectada: instanteAlertas,
 		})
 	}
-	nuevas, err := s.GuardarAlertas(t.Context(), alertas)
+	nuevas, _, err := s.GuardarAlertas(t.Context(), alertas)
 	if err != nil {
 		t.Fatalf("sembrar %d alertas: %v", n, err)
 	}
@@ -168,7 +168,7 @@ func TestGuardarAlertasEnUnaSentenciaCuentaSoloLasNuevas(t *testing.T) {
 	vieja := otra
 	vieja.RefID = "uso-0000"
 
-	nuevas, err := s.GuardarAlertas(t.Context(), []aplicacion.Alerta{otra, repetida, vieja})
+	nuevas, _, err := s.GuardarAlertas(t.Context(), []aplicacion.Alerta{otra, repetida, vieja})
 	if err != nil {
 		t.Fatalf("GuardarAlertas: %v", err)
 	}
