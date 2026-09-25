@@ -92,9 +92,7 @@ type evaluacionJSON struct {
 	Periodo string `json:"periodo"`
 }
 
-// resolucionJSON es el cuerpo de una resolucion. La nota es opcional: el
-// hecho obligatorio es QUIEN resolvio, y ese sale de la sesion, no del cuerpo
-// -- dejarlo llegar por JSON permitiria firmar a nombre de otro.
+// resolucionJSON es el cuerpo de una resolucion: la nota (obligatoria); quien resolvio sale de la sesion.
 type resolucionJSON struct {
 	Nota string `json:"nota"`
 }
