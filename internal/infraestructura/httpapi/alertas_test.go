@@ -53,6 +53,8 @@ func (a *anomaliasFalsas) Resolver(
 	return a.alerta, a.errResolver
 }
 
+const idAlertaHTTP = "3f1d0a4e-0000-4000-8000-000000000001"
+
 var instanteAlertaHTTP = time.Date(2026, 5, 2, 8, 30, 0, 0, time.UTC)
 
 func alertaDeEjemplo() aplicacion.Alerta {
@@ -121,7 +123,7 @@ func TestAlertasAplicaLosRolesPorRuta(t *testing.T) {
 			if rec.Code != c.escribe {
 				t.Fatalf("POST /alertas/evaluacion = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.escribe, rec.Body)
 			}
-			rec = pedir(t, h, http.MethodPost, "/alertas/al-1/resolver", `{"nota":"x"}`, "tok")
+			rec = pedir(t, h, http.MethodPost, "/alertas/"+idAlertaHTTP+"/resolver", `{"nota":"x"}`, "tok")
 			if rec.Code != c.escribe {
 				t.Fatalf("POST /alertas/{id}/resolver = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.escribe, rec.Body)
 			}
@@ -324,7 +326,7 @@ func TestResolverAlertaSinCuerpoPasaLaNotaVaciaYEs400(t *testing.T) {
 	falso := &anomaliasFalsas{errResolver: fmt.Errorf("resolver: %w", aplicacion.ErrNotaObligatoria)}
 	h := servidorConAnomalias(t, aplicacion.RolAdministrador, falso)
 
-	rec := pedir(t, h, http.MethodPost, "/alertas/al-1/resolver", "", "tok")
+	rec := pedir(t, h, http.MethodPost, "/alertas/"+idAlertaHTTP+"/resolver", "", "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
 	}
@@ -351,13 +353,31 @@ func TestResolverAlertaTraduceLosCentinelas(t *testing.T) {
 			falso := &anomaliasFalsas{errResolver: c.err}
 			h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
 
-			rec := pedir(t, h, http.MethodPost, "/alertas/al-1/resolver", `{}`, "tok")
+			rec := pedir(t, h, http.MethodPost, "/alertas/"+idAlertaHTTP+"/resolver", `{}`, "tok")
 			if rec.Code != c.codigo {
 				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.codigo, rec.Body)
 			}
 			// Los errores salen en JSON, no en text/plain.
 			if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
 				t.Fatalf("content-type = %q", ct)
+			}
+		})
+	}
+}
+
+// Un id que no es UUID es 400 y no llega al caso de uso (revision de #158, punto 5).
+func TestResolverAlertaConIDQueNoEsUUIDEs400(t *testing.T) {
+	for _, id := range []string{"no-soy-uuid", "al-1", "3f1d0a4e-0000-4000-8000", "%20"} {
+		t.Run(id, func(t *testing.T) {
+			falso := &anomaliasFalsas{alerta: alertaDeEjemplo()}
+			h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
+
+			rec := pedir(t, h, http.MethodPost, "/alertas/"+id+"/resolver", `{"nota":"x"}`, "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if falso.idRecibido != "" {
+				t.Fatalf("el caso de uso recibio %q: la validacion tiene que ir antes", falso.idRecibido)
 			}
 		})
 	}

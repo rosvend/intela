@@ -4416,7 +4416,7 @@ export interface operations {
                     "application/json": components["schemas"]["Alerta"];
                 };
             };
-            /** @description El cuerpo no es un JSON valido, o la nota falta o esta vacia. */
+            /** @description El id no es un UUID, el cuerpo no es un JSON valido, o la nota falta o esta vacia. */
             400: {
                 headers: {
                     [name: string]: unknown;

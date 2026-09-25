@@ -2267,7 +2267,7 @@ paths:
                 resuelta_en: "2026-05-03T14:05:00Z"
                 nota: hablado con la autora, declara esta semana
         "400":
-          description: El cuerpo no es un JSON valido, o la nota falta o esta vacia.
+          description: El id no es un UUID, el cuerpo no es un JSON valido, o la nota falta o esta vacia.
           content:
             application/json:
               schema:

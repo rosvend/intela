@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
@@ -292,7 +294,14 @@ func (a *API) resolverAlerta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alerta, err := a.anomalias.Resolver(r.Context(), chi.URLParam(r, "id"), usuario.ID, cuerpo.Nota)
+	// Un id que no es UUID es error del cliente (400); sin esto el cast ::uuid de Postgres daba 500.
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if _, err := uuid.Parse(id); err != nil {
+		escribirError(w, http.StatusBadRequest, "el id de la alerta no es un UUID valido")
+		return
+	}
+
+	alerta, err := a.anomalias.Resolver(r.Context(), id, usuario.ID, cuerpo.Nota)
 	switch {
 	case err == nil:
 	case errors.Is(err, aplicacion.ErrNotaObligatoria):
