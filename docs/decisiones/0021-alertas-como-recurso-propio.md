@@ -61,7 +61,7 @@ que siempre fue: filas que no se pudieron normalizar.
    `Route("/alertas")`. El chequeo no se escribe a mano en el handler: `rbac.go` explica que
    olvidar uno es justo el fallo que la seguridad de #47 quiere poder auditar en un solo sitio.
 
-2. **Tabla propia, `alertas` (migracion 00016).** `usos_rechazados` no sirve: su clave y sus
+2. **Tabla propia, `alertas` (migracion 00017).** `usos_rechazados` no sirve: su clave y sus
    claves foraneas son de una FILA DE REPORTE (`reporte_id NOT NULL REFERENCES reportes`), y
    cuatro de las seis anomalias no se cuelgan de una fila de reporte — `duplicado_archivo` se
    cuelga de una entrega, y las dos de declaracion de una obra. Ademas no tiene estado de

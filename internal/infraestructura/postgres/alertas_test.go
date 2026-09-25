@@ -21,7 +21,7 @@ import (
 // declaracion que R-04 distingue (semilla_test.go).
 //
 // Se apoya en el esquema real y no en un doble a proposito (ADR 0010): la
-// idempotencia de la evaluacion la decide el UNIQUE de la migracion 00016, y
+// idempotencia de la evaluacion la decide el UNIQUE de la migracion 00017, y
 // un mock no tiene ese UNIQUE.
 const (
 	periodoAlertas = "2025-01"
@@ -548,7 +548,7 @@ func TestCriticasAbiertasSobrePostgres(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Invariantes del esquema (migracion 00016)
+// Invariantes del esquema (migracion 00017)
 
 // El CHECK que impide marcar una alerta como resuelta sin decir quien y
 // cuando. Es la mitad del ADR 0006 que la base puede sostener por si sola.
