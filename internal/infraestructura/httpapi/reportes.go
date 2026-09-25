@@ -7,12 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rosvend/intela/internal/aplicacion"
-	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 )
 
 // Ingesta es lo que la capa HTTP necesita del nucleo para recibir entregas.
@@ -22,8 +22,9 @@ import (
 // sin levantar ni base ni boveda.
 type Ingesta interface {
 	IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error)
-	Cargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error)
+	Cargas(ctx context.Context, periodo string, pag aplicacion.Paginacion) ([]aplicacion.CargaReporte, error)
 	RechazosDeCarga(ctx context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error)
+	DeducirFormato(nombre string) string
 }
 
 // tamanoMaximoEntrega es el tope del ARCHIVO de una subida.
@@ -33,6 +34,18 @@ type Ingesta interface {
 // escribe en disco lo que le manden y una subida basta para llenar el volumen.
 // El streaming de archivos grandes de verdad es el issue #46.
 const tamanoMaximoEntrega = 32 << 20
+
+// memoriaMaximaMultipart es lo que ParseMultipartForm guarda EN MEMORIA antes
+// de derramar a disco.
+//
+// Es 1 MiB a proposito y NO tamanoMaximoEntrega: el argumento no acota lo que
+// se lee -pasado ese numero `multipart.Reader` sigue leyendo y derrama a disco
+// todo lo que le manden-, asi que pasarle el tope del archivo garantiza que
+// una subida dentro del tope NUNCA se derrame, y el RemoveAll de abajo no
+// llegaria a tener nada que limpiar. Con 1 MiB el pico de RSS por subida es
+// ese mas el `io.ReadAll` de despues, y los temporales si existen y si se
+// limpian.
+const memoriaMaximaMultipart = 1 << 20
 
 // tamanoMaximoCuerpo es el tope de la PETICION entera, que es donde el limite
 // se puede aplicar de verdad.
@@ -57,6 +70,39 @@ const tamanoMaximoEntrega = 32 << 20
 // unos cientos de bytes, y aqui lo que importa es que el maximo este ACOTADO, no
 // que sea exacto.
 const tamanoMaximoCuerpo = tamanoMaximoEntrega + 1<<20
+
+// leerCuerpoArchivo lee el archivo ya recibido. Es una variable y no una
+// llamada directa a [io.ReadAll] para que las pruebas puedan simular el fallo
+// de lectura del temporal del servidor sin romper el disco: en produccion es
+// io.ReadAll tal cual.
+//
+// El fallo de lectura a esta altura es E/S del servidor -los bytes ya estan
+// en RAM o en un temporal- y se responde 500. Sin esta costura, la unica forma
+// de cubrir esa rama seria romper el temporal entre el parseo y la lectura,
+// que no tiene gancho determinista.
+var leerCuerpoArchivo = io.ReadAll
+
+// esFalloTemporal dice si el error de ParseMultipartForm viene del disco del
+// servidor y no del cliente.
+//
+// Con memoriaMaximaMultipart en 1 MiB, todo archivo mayor se derrama a un
+// temporal via os.CreateTemp: un TMPDIR roto, sin permiso o lleno (ENOENT,
+// EACCES, ENOSPC) vuelve como *os.PathError envuelto en el error del parseo.
+// Eso es E/S del servidor, no peticion malformada, y se responde 500 con log
+// a Error.
+//
+// Solo *os.PathError: un ECONNRESET del socket del cliente llega envuelto
+// como *net.OpError → *os.SyscallError (o syscall.Errno), y no es incidente
+// del servidor -el cliente ya corto la subida-. Contarlo como 5xx ensuciaria
+// la alerta que #114 reservo para fallos de TMPDIR/disco.
+//
+// Un cuerpo que no es multipart, sin boundary o truncado (ErrNotMultipart,
+// ErrMissingBoundary, io.ErrUnexpectedEOF) NO es os.PathError y sigue dando
+// 400. El tope se distingue antes, por *http.MaxBytesError, y da 413.
+func esFalloTemporal(err error) bool {
+	var pathErr *os.PathError
+	return errors.As(err, &pathErr)
+}
 
 // entregaJSON es el acuse que devuelve una subida.
 //
@@ -145,7 +191,7 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 	// lado.
 	r.Body = http.MaxBytesReader(w, r.Body, tamanoMaximoCuerpo)
 
-	if err := r.ParseMultipartForm(tamanoMaximoEntrega); err != nil {
+	if err := r.ParseMultipartForm(memoriaMaximaMultipart); err != nil {
 		// Pasarse del tope no es una peticion mal formada, asi que no puede
 		// contestarse con el mismo 400 que un cuerpo que no es multipart: quien
 		// sube leeria "manda un multipart" habiendo mandado uno. MaxBytesReader
@@ -154,6 +200,19 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &excede) {
 			escribirError(w, http.StatusRequestEntityTooLarge,
 				fmt.Sprintf("la entrega pasa de %d MiB", tamanoMaximoEntrega>>20))
+			return
+		}
+		// El derrame a disco tambien es E/S del servidor, no peticion
+		// malformada: con 1 MiB en memoria, todo archivo mayor crea un temporal
+		// via os.CreateTemp, y un TMPDIR roto, sin permiso o lleno (ENOENT,
+		// EACCES, ENOSPC) falla aqui. Es el punto 5 de #114 aplicado a esta
+		// rama, igual que ya se hace para el ReadAll de abajo: 5xx con log a
+		// Error, y un mensaje que no culpa al cliente. Un cuerpo que no es
+		// multipart, sin boundary o truncado no es *os.PathError y sigue
+		// dando 400.
+		if esFalloTemporal(err) {
+			a.log.ErrorContext(r.Context(), "fallo al recibir la entrega multipart", slog.Any("error", err))
+			escribirError(w, http.StatusInternalServerError, "no se pudo recibir la entrega por un fallo del servidor")
 			return
 		}
 		escribirError(w, http.StatusBadRequest,
@@ -165,8 +224,15 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 	// reinicia el proceso.
 	defer func() { _ = r.MultipartForm.RemoveAll() }()
 
-	fuente := r.FormValue("fuente")
-	periodo := r.FormValue("periodo")
+	// Los campos del FORMULARIO, no de la query: `r.FormValue` consulta
+	// primero la URL, asi que `POST /reportes?fuente=netflix` con un multipart
+	// `fuente=cine` encaminaba el archivo al adaptador equivocado. `fuente`
+	// decide el id del reporte, la clave de deduplicacion UNIQUE (sha256,
+	// fuente) y el indice de alias_obra, asi que una entrega mal etiquetada es
+	// cara de deshacer. El contrato declara los tres como propiedades
+	// multipart (api/openapi.yaml).
+	fuente := r.PostFormValue("fuente")
+	periodo := r.PostFormValue("periodo")
 
 	archivo, cabecera, err := r.FormFile("archivo")
 	if err != nil {
@@ -177,9 +243,9 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 
 	// El formato explicito gana al deducido. El nombre del fichero es una
 	// conveniencia; un cliente que sepa lo que manda tiene que poder decirlo.
-	formato := r.FormValue("formato")
+	formato := r.PostFormValue("formato")
 	if formato == "" {
-		formato = ingesta.FormatoDeNombre(cabecera.Filename)
+		formato = a.ingesta.DeducirFormato(cabecera.Filename)
 	}
 
 	// El tope DEL ARCHIVO, que es otra pregunta que la del cuerpo: el
@@ -189,10 +255,14 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 	//
 	// El +1 es para poder distinguir "justo el tope" de "se paso": LimitReader no
 	// avisa, se queda callado en el limite.
-	datos, err := io.ReadAll(io.LimitReader(archivo, tamanoMaximoEntrega+1))
+	datos, err := leerCuerpoArchivo(io.LimitReader(archivo, tamanoMaximoEntrega+1))
 	if err != nil {
+		// 500 y no 400: a esta altura los bytes ya estan en RAM o en un
+		// temporal del servidor, asi que es E/S del servidor, no peticion
+		// malformada. Y no puede ser un MaxBytesError, porque el cuerpo ya
+		// lo consumio ParseMultipartForm.
 		a.log.ErrorContext(r.Context(), "fallo al leer la subida", slog.Any("error", err))
-		escribirError(w, http.StatusBadRequest, "no se pudo leer el archivo subido")
+		escribirError(w, http.StatusInternalServerError, "no se pudo leer el archivo subido")
 		return
 	}
 	if len(datos) > tamanoMaximoEntrega {
@@ -218,12 +288,14 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		escribirError(w, http.StatusConflict, "esa fuente ya entrego exactamente ese archivo")
 		return
 	case errors.Is(err, aplicacion.ErrEvidenciaCorrupta):
-		// Ni 400 ni un 500 mudo: bajo la clave de la boveda hay bytes que no
-		// son los que dice la huella. No es culpa de quien sube y no se arregla
-		// reintentando.
+		// 500 y no 409: bajo la clave de la boveda hay bytes que no son los
+		// que dice la huella. No es culpa de quien sube y no se arregla
+		// reintentando, pero tampoco es un conflicto que el cliente resuelva:
+		// es un incidente de integridad del servidor, y ninguna alerta basada
+		// en 5xx se dispararia con un 4xx. El mensaje se queda, que era bueno.
 		a.log.ErrorContext(r.Context(), "evidencia corrupta en la boveda",
 			slog.Any("error", err), slog.String("fuente", fuente))
-		escribirError(w, http.StatusConflict,
+		escribirError(w, http.StatusInternalServerError,
 			"la boveda ya tiene contenido distinto bajo esa huella; avise a operacion")
 		return
 	default:
@@ -245,9 +317,16 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listarCargas sirve el listado de cargas hechas, opcionalmente de un periodo.
+// listarCargas sirve una pagina del listado de cargas hechas, opcionalmente
+// de un periodo. Va paginado con la misma forma que `GET /obras` (limite y
+// desplazamiento, mismo defecto y mismo techo): el listado crece sin cota con
+// cada entrega, y cada fila trae dos subconsultas de recuento.
 func (a *API) listarCargas(w http.ResponseWriter, r *http.Request) {
-	cargas, err := a.ingesta.Cargas(r.Context(), r.URL.Query().Get("periodo"))
+	pag, ok := leerPaginacion(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	cargas, err := a.ingesta.Cargas(r.Context(), r.URL.Query().Get("periodo"), pag)
 	switch {
 	case err == nil:
 	case errors.Is(err, aplicacion.ErrReporteInvalido):

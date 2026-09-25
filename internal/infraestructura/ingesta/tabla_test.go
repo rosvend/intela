@@ -197,6 +197,41 @@ func TestTablaXLSXRechazaUnaFilaFueraDelTopeDeExcel(t *testing.T) {
 	}
 }
 
+// El tope de descompresion cierra la puerta a la bomba de zip: el tope de
+// 32 MiB de la subida es sobre el archivo comprimido, y sin UnzipSizeLimit
+// excelize acepta hasta 16 GB descomprimidos. Un zip de 300 MiB de ceros pesa
+// ~300 KB y tarda ~3 s; con la opcion se rechaza con "unzip size exceeds...",
+// sin ella se acepta el descomprimido y falla despues por otra causa.
+//
+// Sin t.Parallel a proposito: son 300 MiB pasando por el compresor.
+func TestTablaXLSXRechazaBombaDeZip(t *testing.T) {
+	var salida bytes.Buffer
+	dest := zip.NewWriter(&salida)
+	w, err := dest.Create("xl/worksheets/sheet1.xml")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	trozo := make([]byte, 1<<20)
+	for range 300 {
+		if _, err := w.Write(trozo); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	if err := dest.Close(); err != nil {
+		t.Fatalf("cerrar zip: %v", err)
+	}
+
+	_, err = TablaXLSX(salida.Bytes(), "")
+	if !errors.Is(err, aplicacion.ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+	// Lo que fija la opcion es la CAUSA unzip, no el 400: sin ella el mismo
+	// archivo falla despues por otra razon y el test se pone rojo.
+	if !strings.Contains(strings.ToLower(err.Error()), "unzip") {
+		t.Errorf("el error no viene del tope de descompresion: %v", err)
+	}
+}
+
 func xlsxDeCeldas(t *testing.T, celdas map[string]string) []byte {
 	t.Helper()
 	libro := excelize.NewFile()

@@ -34,7 +34,6 @@ package ingesta
 import (
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
@@ -150,39 +149,4 @@ func Fuentes(cat map[aplicacion.ClaveLector]aplicacion.LectorReporte) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-// FormatoDeNombre deduce el formato de una entrega por la extension de su
-// nombre de archivo.
-//
-// Vive aqui y no en el adaptador HTTP porque es conocimiento de formatos, que
-// es de lo que este paquete es dueno; el handler solo tiene un nombre de
-// fichero y una respuesta que dar.
-//
-// Devuelve "" para lo que no reconoce, y el caso de uso lo convierte en un
-// mensaje que lista los formatos que si sabe leer. NO adivina por el contenido:
-// un .csv renombrado a .xlsx tiene que fallar diciendolo, no colarse.
-//
-// `multipart.FileHeader.Filename` no es de fiar -- lo advierte la propia
-// documentacion de Go --, asi que de el sale UNICAMENTE esta decision, que se
-// puede equivocar sin consecuencias: un formato mal deducido da un error de
-// lectura. La clave del objeto de la boveda sigue derivandose de la huella.
-func FormatoDeNombre(nombre string) string {
-	i := strings.LastIndex(nombre, ".")
-	if i < 0 {
-		return ""
-	}
-	switch strings.ToLower(nombre[i+1:]) {
-	case "xlsx", "xlsm":
-		return aplicacion.FormatoXLSX
-	case "csv":
-		return aplicacion.FormatoCSV
-	case "json":
-		return aplicacion.FormatoJSON
-	default:
-		// .xls -- el formato binario viejo, el del padron IPI -- entra aqui a
-		// proposito: excelize no lo lee, y devolver FormatoXLSX daria un error
-		// de parseo en vez de decir que ese formato no esta soportado.
-		return ""
-	}
 }

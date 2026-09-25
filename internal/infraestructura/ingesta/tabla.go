@@ -99,7 +99,13 @@ const bom = "\ufeff"
 // (`NETFLIX_REDES_2018`), y ahi el nombre exacto es la comprobacion de que
 // llego el archivo que se creia.
 func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
-	libro, err := excelize.OpenReader(bytes.NewReader(datos))
+	// UnzipSizeLimit acota lo DESCOMPRIMIDO: el tope de 32 MiB de la subida es
+	// sobre el archivo comprimido, y sin esto excelize acepta hasta 16 GB. 256
+	// MiB es 8 veces el tope comprimido -holgado para el XML verboso de una
+	// parrilla real, que son KB- y cierra la puerta a la bomba de zip.
+	// UnzipXMLSizeLimit se queda en su defecto (16 MB derramados a disco):
+	// cumple UnzipXMLSizeLimit <= UnzipSizeLimit, que excelize exige.
+	libro, err := excelize.OpenReader(bytes.NewReader(datos), excelize.Options{UnzipSizeLimit: 256 << 20})
 	if err != nil {
 		return Tabla{}, fmt.Errorf("%w: no se pudo abrir como .xlsx: %w", ErrFormato, err)
 	}

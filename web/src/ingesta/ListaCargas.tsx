@@ -56,11 +56,21 @@ const COLUMNAS = 7;
 /**
  * Las cargas hechas (GET /reportes), de un periodo o de todos si `periodo`
  * viene vacio. Cada carga con rechazos se puede abrir para ver su log.
+ *
+ * Va paginado con el mismo limite que el log de rechazos: cien es una pagina
+ * que se lee de un vistazo y queda muy por debajo del maximo de 500 que el
+ * servidor rechaza con 400. El listado crece sin cota con cada entrega y cada
+ * fila trae dos subconsultas de recuento. Sin total en la respuesta, "hay
+ * mas" se dice con la pagina llena: una pagina que no llena el limite es la
+ * ultima.
  */
 export default function ListaCargas({ periodo }: { periodo: string }) {
-  const path = periodo
-    ? `/api/reportes?periodo=${encodeURIComponent(periodo)}`
-    : "/api/reportes";
+  const [desplazamiento, setDesplazamiento] = useState(0);
+  const params = new URLSearchParams();
+  if (periodo) params.set("periodo", periodo);
+  params.set("limite", String(LIMITE_POR_PAGINA));
+  params.set("desplazamiento", String(desplazamiento));
+  const path = `/api/reportes?${params.toString()}`;
   const { datos: cargas, cargando, error } = useApi<Carga[]>(path);
   // Un Set y no un solo id: comparar el log de dos cargas del mismo periodo
   // es justo lo que se hace al revisarlas.
@@ -107,88 +117,139 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
   }
 
   if (cargas.length === 0) {
-    return (
+    return desplazamiento === 0 ? (
       <p className="muted">
         {periodo
           ? `No hay cargas registradas para el periodo ${periodo}.`
           : "Aún no hay cargas registradas."}
       </p>
+    ) : (
+      <>
+        <p className="muted">No hay más cargas.</p>
+        <button
+          type="button"
+          className="tabla-cargas-boton"
+          aria-label="Página anterior de cargas"
+          onClick={() =>
+            setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
+          }
+        >
+          Atrás
+        </button>
+      </>
     );
   }
 
+  const desde = desplazamiento + 1;
+  const hasta = desplazamiento + cargas.length;
+  const hayMas = cargas.length === LIMITE_POR_PAGINA;
+
   return (
-    <table className="tabla-cargas" aria-label="Cargas hechas">
-      <thead>
-        <tr>
-          <th scope="col">Recibido</th>
-          <th scope="col">Fuente</th>
-          <th scope="col">Periodo</th>
-          <th scope="col">Huella</th>
-          <th scope="col" className="tabla-cargas-numero">
-            Aceptadas
-          </th>
-          <th scope="col" className="tabla-cargas-numero">
-            Rechazadas
-          </th>
-          <th scope="col" aria-label="Acciones" />
-        </tr>
-      </thead>
-      <tbody>
-        {cargas.map((carga) => {
-          const abierta = abiertas.has(carga.id);
-          const idLog = `rechazos-${carga.id}`;
-          return (
-            <Fragment key={carga.id}>
-              <tr>
-                <td>
-                  <time dateTime={carga.recibido}>
-                    {formatearInstante(carga.recibido)}
-                  </time>
-                </td>
-                <td>{carga.fuente}</td>
-                <td>{carga.periodo}</td>
-                <td>
-                  <code className="huella" title={carga.sha256}>
-                    {huellaCorta(carga.sha256)}
-                  </code>
-                </td>
-                <td className="tabla-cargas-numero">
-                  {formatearEntero(carga.aceptados)}
-                </td>
-                <td className="tabla-cargas-numero">
-                  {formatearEntero(carga.rechazados)}
-                </td>
-                <td>
-                  {carga.rechazados > 0 && (
-                    <button
-                      type="button"
-                      className="tabla-cargas-boton"
-                      aria-expanded={abierta}
-                      aria-controls={idLog}
-                      onClick={() => alternar(carga.id)}
-                    >
-                      {abierta
-                        ? "Ocultar rechazos"
-                        : `Ver rechazos (${formatearEntero(carga.rechazados)})`}
-                    </button>
-                  )}
-                </td>
-              </tr>
-              {abierta && (
-                <tr id={idLog} className="tabla-cargas-log">
-                  <td colSpan={COLUMNAS}>
-                    {/* El recuento de la fila es el TOTAL de la carga y viaja
-                        hasta el log: es con lo que se dice "de M" sin afirmar
-                        una cifra que nadie conto. */}
-                    <RechazosDeCarga id={carga.id} total={carga.rechazados} />
+    <>
+      <table className="tabla-cargas" aria-label="Cargas hechas">
+        <thead>
+          <tr>
+            <th scope="col">Recibido</th>
+            <th scope="col">Fuente</th>
+            <th scope="col">Periodo</th>
+            <th scope="col">Huella</th>
+            <th scope="col" className="tabla-cargas-numero">
+              Aceptadas
+            </th>
+            <th scope="col" className="tabla-cargas-numero">
+              Rechazadas
+            </th>
+            <th scope="col" aria-label="Acciones" />
+          </tr>
+        </thead>
+        <tbody>
+          {cargas.map((carga) => {
+            const abierta = abiertas.has(carga.id);
+            const idLog = `rechazos-${carga.id}`;
+            return (
+              <Fragment key={carga.id}>
+                <tr>
+                  <td>
+                    <time dateTime={carga.recibido}>
+                      {formatearInstante(carga.recibido)}
+                    </time>
+                  </td>
+                  <td>{carga.fuente}</td>
+                  <td>{carga.periodo}</td>
+                  <td>
+                    <code className="huella" title={carga.sha256}>
+                      {huellaCorta(carga.sha256)}
+                    </code>
+                  </td>
+                  <td className="tabla-cargas-numero">
+                    {formatearEntero(carga.aceptados)}
+                  </td>
+                  <td className="tabla-cargas-numero">
+                    {formatearEntero(carga.rechazados)}
+                  </td>
+                  <td>
+                    {carga.rechazados > 0 && (
+                      <button
+                        type="button"
+                        className="tabla-cargas-boton"
+                        aria-expanded={abierta}
+                        aria-controls={idLog}
+                        onClick={() => alternar(carga.id)}
+                      >
+                        {abierta
+                          ? "Ocultar rechazos"
+                          : `Ver rechazos (${formatearEntero(carga.rechazados)})`}
+                      </button>
+                    )}
                   </td>
                 </tr>
-              )}
-            </Fragment>
-          );
-        })}
-      </tbody>
-    </table>
+                {abierta && (
+                  <tr id={idLog} className="tabla-cargas-log">
+                    <td colSpan={COLUMNAS}>
+                      {/* El recuento de la fila es el TOTAL de la carga y viaja
+                        hasta el log: es con lo que se dice "de M" sin afirmar
+                        una cifra que nadie conto. */}
+                      <RechazosDeCarga id={carga.id} total={carga.rechazados} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="tabla-rechazos-pie">
+        <span>
+          {`Cargas ${formatearEntero(desde)} a ${formatearEntero(hasta)}`}
+        </span>
+        <div className="tabla-rechazos-botones">
+          <button
+            type="button"
+            className="tabla-rechazos-pagina"
+            aria-label="Página anterior de cargas"
+            disabled={desplazamiento === 0}
+            onClick={() =>
+              setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
+            }
+          >
+            Atrás
+          </button>
+          {/* Sin total en la respuesta, la pagina llena es la unica senal de
+              que puede haber mas: una pagina corta es la ultima. */}
+          <button
+            type="button"
+            className="tabla-rechazos-pagina"
+            aria-label="Página siguiente de cargas"
+            disabled={!hayMas}
+            onClick={() =>
+              setDesplazamiento(desplazamiento + LIMITE_POR_PAGINA)
+            }
+          >
+            Adelante
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -257,6 +318,7 @@ function RechazosDeCarga({ id, total }: { id: string; total: number }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página anterior de rechazos"
             disabled={desplazamiento === 0}
             onClick={() =>
               setDesplazamiento(Math.max(0, desplazamiento - LIMITE_POR_PAGINA))
@@ -269,6 +331,7 @@ function RechazosDeCarga({ id, total }: { id: string; total: number }) {
           <button
             type="button"
             className="tabla-rechazos-pagina"
+            aria-label="Página siguiente de rechazos"
             disabled={!hayMas}
             onClick={() =>
               setDesplazamiento(desplazamiento + LIMITE_POR_PAGINA)
