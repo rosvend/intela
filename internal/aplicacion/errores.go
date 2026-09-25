@@ -264,6 +264,44 @@ var (
 	// reglamento no reconoce. Ver UsosSinCanal para detectar ese hueco.
 	ErrCanalVacio = errors.New("el canal no puede quedar vacio")
 
+	// ErrProcesoNoListo: se pidio liquidar una corrida que todavia no puede
+	// pagar.
+	//
+	// Son las dos condiciones del RD 13.5, y se comprueban juntas porque
+	// juntas son la compuerta: la corrida tiene que estar en
+	// `liquidacion_final` Y llevar las firmas de distribucion y contabilidad
+	// SOBRE SU REVISION ACTUAL. Un rechazo sube la revision y las firmas de la
+	// anterior dejan de contar, asi que "tiene dos firmas" sin mirar la
+	// revision no es la regla.
+	//
+	// No es ErrNoEncontrado -- el proceso existe -- ni ErrNoAutorizado -- no
+	// es quien pregunta lo que falla, es el estado del proceso --. Se
+	// distingue porque emitir ordenes de pago es lo que hace salir el dinero:
+	// sin este centinela, liquidar una corrida a medio verificar es una
+	// llamada que devuelve 200 y paga.
+	//
+	// Se envuelve siempre nombrando la etapa que se encontro y los roles que
+	// faltan: quien lo recibe es distribucion, y tiene que saber si le falta
+	// avanzar la etapa o pedir una firma.
+	ErrProcesoNoListo = errors.New("el proceso no esta listo para liquidar")
+
+	// ErrCorridaNoCuadra: los totales de la corrida no sostienen las lineas
+	// que dice haber repartido.
+	//
+	// Dos formas: el neto de la corrida (`bruto - admin - social - reserva`)
+	// sale negativo, o la suma de las lineas de titular lo SUPERA. Las dos
+	// hacen inutilizable el prorrateo de [liquidacion.Prorratear], porque el
+	// denominador deja de ser una cota de los numeradores y las proporciones
+	// suman mas de uno: cada orden mostraria menos deducciones de las que la
+	// corrida aplico, y la suma de los netos de las ordenes seria mayor que el
+	// neto que la corrida cerro.
+	//
+	// `resultados_proceso` ya comprueba la primera en la base, asi que llegar
+	// aqui significa que se esta agregando lo que no se puede agregar. Se
+	// falla en vez de recortar: recortar reparte de menos a alguien sin
+	// decirlo, y eso no se ve mirando la orden.
+	ErrCorridaNoCuadra = errors.New("la corrida no cuadra")
+
 	// ErrUsoSinObra: un uso sin obra identificada (`obra_id` NULL: pendiente,
 	// ONI o excluido) nunca puede llegar a [reparto.Reparto]. Sin este
 	// guardian, COALESCE(obra_id, '') convierte las tres en una obra fantasma

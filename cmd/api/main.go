@@ -22,6 +22,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -84,6 +85,19 @@ func ejecutar(log *slog.Logger) error {
 		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
 		IDs:         cripto.TokensAleatorios{},
 		Claves:      cripto.Bcrypt{},
+	}
+
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: log},
+		Bitacora:    store,
+		Unidad:      store,
 	}
 
 	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
@@ -173,6 +187,7 @@ func ejecutar(log *slog.Logger) error {
 		Salud:         store,
 		Auth:          autenticacion,
 		Admision:      admision,
+		Liq:           liquidaciones,
 		Catalogo:      catalogo,
 		Padron:        padron,
 		Ingesta:       recepcion,

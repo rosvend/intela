@@ -54,6 +54,10 @@ tags:
       y queda pendiente de admision del Consejo Directivo (`RS 5.2`, `RS 5.3`).
       El RUT y la certificacion bancaria son obligatorios (`R-12`). Pertenecer
       a otra SGC del mismo genero sin renuncia expresa bloquea el alta (`R-28`).
+  - name: liquidaciones
+    description: |
+      Ordenes de pago. Bruto, cada deduccion y neto viajan por separado
+      (RD 13.2). El admin ve todas; el titular, solo las suyas.
   - name: admin
     description: |
       Superficie del pipeline. Solo `administrador` (Consejo Directivo).
@@ -596,6 +600,79 @@ paths:
               example:
                 error: la solicitud no esta pendiente de admision
 
+  /liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Listar liquidaciones (admin)
+      description: |
+        Devuelve las ordenes de pago de todos los titulares.
+
+        Cada orden muestra bruto, cada deduccion y neto por separado
+        (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
+        bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
+        silencio (`R-10`).
+
+        Reservada a administrador, distribucion, contabilidad y auditor.
+        Un titular usa `/mis-liquidaciones`.
+      operationId: listarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Listado de ordenes de pago.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-2026-nacional-tit-ana
+                    proceso_id: prc-nac-2026
+                    procesos: [prc-nac-2026]
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    circuito: nacional
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                      - concepto: bienestar_social
+                        monto: "100.00"
+                      - concepto: reserva_errores_tecnicos
+                        monto: "50.00"
+                    neto: "650.00"
+                    estado: aceptada_por_silencio
+                    pagable: true
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "500":
+          description: |
+            No se pudieron leer las liquidaciones, o falta un parametro
+            normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+            valor por defecto).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: parametro normativo ausente
+
   /admin/pipeline:
     get:
       tags: [admin]
@@ -631,6 +708,71 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: no autorizado
+
+  /mis-liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Liquidaciones del titular autenticado
+      description: |
+        Devuelve las ordenes de pago del titular de la sesion.
+
+        El identificador no viaja en la URL: sale del token, para que un
+        titular no consulte las de otro. Mismo desglose bruto / deducciones
+        / neto que el listado de administracion (`RD 13.2`).
+      operationId: misLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      responses:
+        "200":
+          description: Las ordenes del titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-2026-nacional-tit-ana
+                    proceso_id: prc-nac-2026
+                    procesos: [prc-nac-2026]
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    circuito: nacional
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                    neto: "800.00"
+                    estado: enviada
+                    pagable: false
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "500":
+          description: |
+            No se pudieron leer las liquidaciones, o falta un parametro
+            normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+            valor por defecto).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: parametro normativo ausente
 
   /admin/cola-revision:
     get:
@@ -2518,6 +2660,10 @@ paths:
         Es la unica lectura que responde "¿entro completo lo que subi?": el
         recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
 
+        Va paginado con la misma forma que el resto de listados (limite y
+        desplazamiento, mismo defecto y mismo techo): el listado crece sin
+        cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+
         Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
         de la que salio (`sha256`, `clave_objeto`), que es lo que permite
         volver al archivo EXACTO que pondero una corrida y no "al archivo de
@@ -2544,6 +2690,29 @@ paths:
             type: string
             pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: 2026-01
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+            la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
           description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
@@ -2554,7 +2723,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/Carga"
         "400":
-          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe.
+          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe,
+            o el limite y el desplazamiento no son enteros validos.
           content:
             application/json:
               schema:
@@ -2691,8 +2861,7 @@ paths:
         "409":
           description: |
             Esa fuente ya entrego exactamente esos bytes -lo decide el
-            UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-            tiene contenido distinto bajo esa huella.
+            UNIQUE (sha256, fuente), no el nombre del archivo-.
           content:
             application/json:
               schema:
@@ -2711,6 +2880,22 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: el archivo pasa de 32 MiB
+        "500":
+          description: |
+            Incidente del servidor al recibir o registrar la entrega: el
+            temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+            permiso o lleno), fallo la lectura del archivo ya recibido, o la
+            boveda ya tiene contenido distinto bajo esa huella (evidencia
+            corrupta). No es un conflicto que el cliente pueda resolver
+            reintentando con otro archivo: hay que avisar a operacion. El
+            detalle queda en el log a nivel Error; el cuerpo no filtra la
+            causa interna.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la boveda ya tiene contenido distinto bajo esa huella; avise a operacion
         "503":
           description: Esta instalacion no cablea la ingesta.
           content:
@@ -3754,6 +3939,130 @@ components:
           description: |
             Fila del padron, rellenada al admitir. Cadena vacia mientras
             la solicitud esta pendiente.
+
+    Deduccion:
+      type: object
+      required: [concepto, monto]
+      properties:
+        concepto:
+          type: string
+          description: |
+            Que se desconto. Los de la corrida son `gastos_administrativos`,
+            `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
+            entra con su propio concepto.
+        monto:
+          type: string
+          description: |
+            Importe descontado, decimal exacto con dos decimales. String y
+            no number: un JSON number es IEEE-754 y no puede representar
+            dinero.
+
+    OrdenDePago:
+      type: object
+      required:
+        - id
+        - proceso_id
+        - procesos
+        - titular_id
+        - periodo
+        - circuito
+        - bruto
+        - deducciones
+        - neto
+        - estado
+        - pagable
+        - enviada
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la orden. Es `liq-{periodo}-{circuito}-{titular}`:
+            hay UNA orden por esa terna (ADR 0019), no una por corrida.
+        proceso_id:
+          type: string
+          description: |
+            Proceso de reparto de REFERENCIA. Cuando varias corridas del mismo
+            periodo y circuito aportan, es la primera por orden lexicografico;
+            la lista completa va en `procesos`.
+        procesos:
+          type: array
+          description: |
+            Corridas cuyas lineas entraron en esta orden. Es lo que explica un
+            bruto agregado: `proceso_id` a secas afirmaria que todo vino de una
+            sola corrida.
+          items:
+            type: string
+        titular_id:
+          type: string
+          description: Titular que cobra.
+        periodo:
+          type: string
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+        circuito:
+          type: string
+          description: |
+            Circuito de la orden. El nacional y el internacional del mismo
+            periodo son dos recorridos distintos (`RD 7.4`) y no se suman en una
+            sola orden.
+          enum:
+            - nacional
+            - internacional
+        bruto:
+          type: string
+          description: Monto bruto, decimal exacto con dos decimales.
+        deducciones:
+          type: array
+          description: |
+            Desglose. No se colapsa en el neto: `RD 13.2` exige ver cada
+            renglon.
+          items:
+            $ref: "#/components/schemas/Deduccion"
+        neto:
+          type: string
+          description: Bruto menos la suma de las deducciones.
+        estado:
+          type: string
+          description: |
+            Maquina de R-10 y R-11. `enviada` significa que la notificacion al
+            titular salio y dejo acuse, y que el plazo corre desde ese acuse;
+            `aceptada_por_silencio` a los 15 dias calendario si el neto supera
+            el 2% SMMLV; `diferida` si no lo supera, y entonces el monto se
+            arrastra al periodo siguiente; `acumulada` es una diferida cuyo neto
+            ya se incorporo a una orden posterior.
+          enum:
+            - enviada
+            - aceptada
+            - aceptada_por_silencio
+            - diferida
+            - acumulada
+            - objetada
+        pagable:
+          type: boolean
+          description: |
+            Aceptada (por respuesta o por silencio) y con RUT mas
+            certificacion bancaria en expediente (`R-12`). Falso no es
+            un error: se liquido, todavia no se puede girar.
+        enviada:
+          type: string
+          format: date
+          description: |
+            Dia civil del envio, sobre el que corre el plazo de 15 dias
+            calendario de `R-10` / `RD 13.2`.
+
+            El plazo corre desde el ACUSE de la notificacion registrado: la
+            fecha se fija cuando el aviso al titular ya salio, y el acuse queda
+            en el asiento de auditoria de la emision (ADR 0006). Una orden en
+            `enviada` con una fecha que no respalde ningun acuse le opondria al
+            titular un plazo que empezo sin que a el le llegara nada.
+
+    ListadoLiquidaciones:
+      type: object
+      required: [liquidaciones]
+      properties:
+        liquidaciones:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrdenDePago"
 
     Asiento:
       type: object

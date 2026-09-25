@@ -192,6 +192,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/liquidaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar liquidaciones (admin)
+         * @description Devuelve las ordenes de pago de todos los titulares.
+         *
+         *     Cada orden muestra bruto, cada deduccion y neto por separado
+         *     (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
+         *     bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
+         *     silencio (`R-10`).
+         *
+         *     Reservada a administrador, distribucion, contabilidad y auditor.
+         *     Un titular usa `/mis-liquidaciones`.
+         */
+        get: operations["listarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/pipeline": {
         parameters: {
             query?: never;
@@ -210,6 +238,30 @@ export interface paths {
          *     sesion de otro rol responde 403.
          */
         get: operations["adminPipeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liquidaciones del titular autenticado
+         * @description Devuelve las ordenes de pago del titular de la sesion.
+         *
+         *     El identificador no viaja en la URL: sale del token, para que un
+         *     titular no consulte las de otro. Mismo desglose bruto / deducciones
+         *     / neto que el listado de administracion (`RD 13.2`).
+         */
+        get: operations["misLiquidaciones"];
         put?: never;
         post?: never;
         delete?: never;
@@ -800,6 +852,10 @@ export interface paths {
          * @description El listado de entregas recibidas, de la mas reciente a la mas antigua.
          *     Es la unica lectura que responde "¿entro completo lo que subi?": el
          *     recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
+         *
+         *     Va paginado con la misma forma que el resto de listados (limite y
+         *     desplazamiento, mismo defecto y mismo techo): el listado crece sin
+         *     cota con cada entrega, y cada fila trae dos subconsultas de recuento.
          *
          *     Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
@@ -1614,6 +1670,90 @@ export interface components {
              */
             titular_id: string;
         };
+        Deduccion: {
+            /**
+             * @description Que se desconto. Los de la corrida son `gastos_administrativos`,
+             *     `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
+             *     entra con su propio concepto.
+             */
+            concepto: string;
+            /**
+             * @description Importe descontado, decimal exacto con dos decimales. String y
+             *     no number: un JSON number es IEEE-754 y no puede representar
+             *     dinero.
+             */
+            monto: string;
+        };
+        OrdenDePago: {
+            /**
+             * @description Identificador de la orden. Es `liq-{periodo}-{circuito}-{titular}`:
+             *     hay UNA orden por esa terna (ADR 0019), no una por corrida.
+             */
+            id: string;
+            /**
+             * @description Proceso de reparto de REFERENCIA. Cuando varias corridas del mismo
+             *     periodo y circuito aportan, es la primera por orden lexicografico;
+             *     la lista completa va en `procesos`.
+             */
+            proceso_id: string;
+            /**
+             * @description Corridas cuyas lineas entraron en esta orden. Es lo que explica un
+             *     bruto agregado: `proceso_id` a secas afirmaria que todo vino de una
+             *     sola corrida.
+             */
+            procesos: string[];
+            /** @description Titular que cobra. */
+            titular_id: string;
+            /** @description Periodo de la corrida, `YYYY` o `YYYY-MM`. */
+            periodo: string;
+            /**
+             * @description Circuito de la orden. El nacional y el internacional del mismo
+             *     periodo son dos recorridos distintos (`RD 7.4`) y no se suman en una
+             *     sola orden.
+             * @enum {string}
+             */
+            circuito: "nacional" | "internacional";
+            /** @description Monto bruto, decimal exacto con dos decimales. */
+            bruto: string;
+            /**
+             * @description Desglose. No se colapsa en el neto: `RD 13.2` exige ver cada
+             *     renglon.
+             */
+            deducciones: components["schemas"]["Deduccion"][];
+            /** @description Bruto menos la suma de las deducciones. */
+            neto: string;
+            /**
+             * @description Maquina de R-10 y R-11. `enviada` significa que la notificacion al
+             *     titular salio y dejo acuse, y que el plazo corre desde ese acuse;
+             *     `aceptada_por_silencio` a los 15 dias calendario si el neto supera
+             *     el 2% SMMLV; `diferida` si no lo supera, y entonces el monto se
+             *     arrastra al periodo siguiente; `acumulada` es una diferida cuyo neto
+             *     ya se incorporo a una orden posterior.
+             * @enum {string}
+             */
+            estado: "enviada" | "aceptada" | "aceptada_por_silencio" | "diferida" | "acumulada" | "objetada";
+            /**
+             * @description Aceptada (por respuesta o por silencio) y con RUT mas
+             *     certificacion bancaria en expediente (`R-12`). Falso no es
+             *     un error: se liquido, todavia no se puede girar.
+             */
+            pagable: boolean;
+            /**
+             * Format: date
+             * @description Dia civil del envio, sobre el que corre el plazo de 15 dias
+             *     calendario de `R-10` / `RD 13.2`.
+             *
+             *     El plazo corre desde el ACUSE de la notificacion registrado: la
+             *     fecha se fija cuando el aviso al titular ya salio, y el acuse queda
+             *     en el asiento de auditoria de la emision (ADR 0006). Una orden en
+             *     `enviada` con una fecha que no respalde ningun acuse le opondria al
+             *     titular un plazo que empezo sin que a el le llegara nada.
+             */
+            enviada: string;
+        };
+        ListadoLiquidaciones: {
+            liquidaciones: components["schemas"]["OrdenDePago"][];
+        };
         /**
          * @description Un asiento de la bitacora (ADR 0006): quien hizo que, sobre que
          *     referencia, cuando, y el detalle del hecho en `payload`. El payload
@@ -2312,6 +2452,107 @@ export interface operations {
             };
         };
     };
+    listarLiquidaciones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Listado de ordenes de pago. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "liquidaciones": [
+                     *         {
+                     *           "id": "liq-2026-nacional-tit-ana",
+                     *           "proceso_id": "prc-nac-2026",
+                     *           "procesos": [
+                     *             "prc-nac-2026"
+                     *           ],
+                     *           "titular_id": "tit-ana",
+                     *           "periodo": "2026",
+                     *           "circuito": "nacional",
+                     *           "bruto": "1000.00",
+                     *           "deducciones": [
+                     *             {
+                     *               "concepto": "gastos_administrativos",
+                     *               "monto": "200.00"
+                     *             },
+                     *             {
+                     *               "concepto": "bienestar_social",
+                     *               "monto": "100.00"
+                     *             },
+                     *             {
+                     *               "concepto": "reserva_errores_tecnicos",
+                     *               "monto": "50.00"
+                     *             }
+                     *           ],
+                     *           "neto": "650.00",
+                     *           "estado": "aceptada_por_silencio",
+                     *           "pagable": true,
+                     *           "enviada": "2026-01-01"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoLiquidaciones"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description No se pudieron leer las liquidaciones, o falta un parametro
+             *     normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+             *     valor por defecto).
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     adminPipeline: {
         parameters: {
             query?: never;
@@ -2351,6 +2592,99 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    misLiquidaciones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Las ordenes del titular. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "liquidaciones": [
+                     *         {
+                     *           "id": "liq-2026-nacional-tit-ana",
+                     *           "proceso_id": "prc-nac-2026",
+                     *           "procesos": [
+                     *             "prc-nac-2026"
+                     *           ],
+                     *           "titular_id": "tit-ana",
+                     *           "periodo": "2026",
+                     *           "circuito": "nacional",
+                     *           "bruto": "1000.00",
+                     *           "deducciones": [
+                     *             {
+                     *               "concepto": "gastos_administrativos",
+                     *               "monto": "200.00"
+                     *             }
+                     *           ],
+                     *           "neto": "800.00",
+                     *           "estado": "enviada",
+                     *           "pagable": false,
+                     *           "enviada": "2026-01-01"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoLiquidaciones"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description No se pudieron leer las liquidaciones, o falta un parametro
+             *     normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+             *     valor por defecto).
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
@@ -4561,6 +4895,18 @@ export interface operations {
                  * @example 2026-01
                  */
                 periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+                 *     la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
             };
             header?: never;
             path?: never;
@@ -4577,7 +4923,7 @@ export interface operations {
                     "application/json": components["schemas"]["Carga"][];
                 };
             };
-            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe. */
+            /** @description El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe, o el limite y el desplazamiento no son enteros validos. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4741,8 +5087,7 @@ export interface operations {
             };
             /**
              * @description Esa fuente ya entrego exactamente esos bytes -lo decide el
-             *     UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-             *     tiene contenido distinto bajo esa huella.
+             *     UNIQUE (sha256, fuente), no el nombre del archivo-.
              */
             409: {
                 headers: {
@@ -4771,6 +5116,29 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "el archivo pasa de 32 MiB"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Incidente del servidor al recibir o registrar la entrega: el
+             *     temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+             *     permiso o lleno), fallo la lectura del archivo ya recibido, o la
+             *     boveda ya tiene contenido distinto bajo esa huella (evidencia
+             *     corrupta). No es un conflicto que el cliente pueda resolver
+             *     reintentando con otro archivo: hay que avisar a operacion. El
+             *     detalle queda en el log a nivel Error; el cuerpo no filtra la
+             *     causa interna.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la boveda ya tiene contenido distinto bajo esa huella; avise a operacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

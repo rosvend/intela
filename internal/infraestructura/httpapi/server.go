@@ -57,6 +57,7 @@ type API struct {
 	salud         Salud
 	auth          Autenticacion
 	admision      Admision
+	liq           ConsultaLiquidaciones
 	catalogo      Catalogo
 	padron        Padron
 	ingesta       Ingesta
@@ -80,6 +81,7 @@ type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
 	Admision      Admision
+	Liq           ConsultaLiquidaciones
 	Catalogo      Catalogo
 	Padron        Padron
 	Ingesta       Ingesta
@@ -112,6 +114,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		salud:         casos.Salud,
 		auth:          casos.Auth,
 		admision:      casos.Admision,
+		liq:           casos.Liq,
 		catalogo:      casos.Catalogo,
 		padron:        casos.Padron,
 		ingesta:       casos.Ingesta,
@@ -159,6 +162,10 @@ func (a *API) Router() http.Handler {
 		protegido.Delete("/auth/session", a.cerrarSesion)
 		protegido.Post("/afiliaciones/{id}/aprobar", a.conAdmision(a.aprobarAfiliacion))
 		protegido.Post("/afiliaciones/{id}/rechazar", a.conAdmision(a.rechazarAfiliacion))
+		if a.liq != nil {
+			protegido.Get("/liquidaciones", a.listarLiquidaciones)
+			protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
+		}
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en

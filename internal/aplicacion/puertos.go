@@ -2,12 +2,14 @@ package aplicacion
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -501,7 +503,7 @@ type RepositorioIngesta interface {
 	// una carga de la que solo se sabe que llego no dice si entro entera, y
 	// "entro entera" es justamente lo que hay que poder mirar para saber si
 	// falta pedirle algo al cliente.
-	ListarCargas(ctx context.Context, periodo string) ([]CargaReporte, error)
+	ListarCargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error)
 }
 
 // Formatos en los que puede llegar una entrega. Son la mitad de la clave con
@@ -517,6 +519,44 @@ const (
 	FormatoCSV  = "csv"
 	FormatoJSON = "json"
 )
+
+// FormatoDeNombre deduce el formato de una entrega por la extension de su
+// nombre de archivo.
+//
+// Vive en el nucleo y no en el adaptador HTTP ni en el de ingesta aunque
+// hable de extensiones: es la mitad de la [ClaveLector] con la que el caso de
+// uso elige adaptador, y el handler (que solo tiene un nombre de fichero) la
+// necesita sin importar un paquete hermano de infraestructura. El caso de uso
+// la expone como [Ingesta.DeducirFormato] para que la interfaz del consumidor
+// describa todo lo que el handler necesita.
+//
+// Devuelve "" para lo que no reconoce, y el caso de uso lo convierte en un
+// mensaje que lista los formatos que si sabe leer. NO adivina por el contenido:
+// un .csv renombrado a .xlsx tiene que fallar diciendolo, no colarse.
+//
+// `multipart.FileHeader.Filename` no es de fiar -- lo advierte la propia
+// documentacion de Go --, asi que de el sale UNICAMENTE esta decision, que se
+// puede equivocar sin consecuencias: un formato mal deducido da un error de
+// lectura. La clave del objeto de la boveda sigue derivandose de la huella.
+func FormatoDeNombre(nombre string) string {
+	i := strings.LastIndex(nombre, ".")
+	if i < 0 {
+		return ""
+	}
+	switch strings.ToLower(nombre[i+1:]) {
+	case "xlsx", "xlsm":
+		return FormatoXLSX
+	case "csv":
+		return FormatoCSV
+	case "json":
+		return FormatoJSON
+	default:
+		// .xls -- el formato binario viejo, el del padron IPI -- entra aqui a
+		// proposito: excelize no lo lee, y devolver FormatoXLSX daria un error
+		// de parseo en vez de decir que ese formato no esta soportado.
+		return ""
+	}
+}
 
 // ClaveLector identifica al adaptador de formato de una entrega.
 //
@@ -564,6 +604,11 @@ type ClaveLector struct {
 // en [ErrReporteInvalido] y nombrando el campo, que es lo que permite volver a
 // pedirle al cliente exactamente eso.
 type LectorReporte interface {
+	// Leer convierte los bytes COMPLETOS de una entrega en filas. La firma
+	// fija de hecho el techo de 32 MiB: el parseo -la operacion mas larga de
+	// la peticion- no recibe ctx y no se puede cancelar, y el streaming de
+	// archivos grandes (#46) no sera un cambio de adaptador sino de puerto
+	// mas reescritura del caso de uso.
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
@@ -726,9 +771,148 @@ type RepositorioResultados interface {
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+// RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
+// corrida. DeTitular es el camino del panel del titular (#42).
+//
+// EmitirOrdenes y TransicionarOrdenes y no un Guardar: el mismo *Store
+// satisface tambien [GestionDeclaraciones], que ya tiene un Guardar con otra
+// firma. Y sobre todo porque emitir y transicionar NO son la misma escritura,
+// ver mas abajo.
+//
+// # Los metodos que solo valen dentro de una [UnidadDeTrabajo]
+//
+// BloquearPeriodo y DiferidasDeTitular toman cerrojos, y un cerrojo que se
+// suelta antes de la escritura que protege no protege nada. Las dos
+// implementaciones tienen que RECHAZAR la llamada si no hay transaccion en
+// curso en el contexto, en vez de tomar un cerrojo que se libera al volver:
+// [Liquidaciones.GenerarLiquidacion] las invoca dentro de su unidad, y un
+// adaptador que las aceptase suelto convertiria la serializacion en una
+// ilusion que ninguna prueba distingue de la real.
 type RepositorioLiquidacion interface {
-	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+	DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
+	Listar(ctx context.Context) ([]liquidacion.OrdenDePago, error)
+	DeProceso(ctx context.Context, procesoID string) ([]liquidacion.OrdenDePago, error)
+
+	// DePeriodoCircuito es la lectura por la CLAVE de una orden desde el ADR
+	// 0019: hay una por (titular, periodo, circuito), asi que "que hay emitido
+	// para este periodo y circuito" es la pregunta que decide si generar o no.
+	// DeProceso ya no sirve para eso -- una orden agregada pertenece a varias
+	// corridas -- y sigue existiendo para la trazabilidad.
+	DePeriodoCircuito(ctx context.Context, periodo string, circuito reparto.Circuito) ([]liquidacion.OrdenDePago, error)
+
+	// BloquearPeriodo serializa la generacion de UN (periodo, circuito).
+	//
+	// Es un cerrojo de aviso sobre un par de valores y no una fila que
+	// bloquear, porque lo que hay que impedir es que dos generaciones
+	// concurrentes lean "no hay ordenes" las dos y emitan las dos: en ese
+	// instante no existe todavia ninguna fila que sirva de cerrojo. Se suelta
+	// al confirmar o revertir la transaccion, nunca antes.
+	BloquearPeriodo(ctx context.Context, periodo string, circuito reparto.Circuito) error
+
+	// DiferidasDeTitular devuelve las ordenes diferidas de un titular CON SU
+	// FILA BLOQUEADA, para que el arrastre de R-11 no se pueda incorporar dos
+	// veces.
+	//
+	// Solo las del mismo circuito y de un periodo ESTRICTAMENTE ANTERIOR a
+	// antesDe (ADR 0019, RD 7.4 / 13.3): nacional e internacional no se suman
+	// en una sola orden, y el monto diferido va al siguiente periodo, no a uno
+	// anterior ni a otro circuito.
+	//
+	// Sin el cerrojo, dos generaciones de periodos distintos del mismo titular
+	// leen la misma diferida, cada una le suma el neto a su orden y cada una la
+	// marca acumulada: el saldo arrastrado se paga DOS veces y nada lo
+	// registra. Con el, la segunda espera, vuelve a evaluar la condicion y ya
+	// no la ve diferida.
+	DiferidasDeTitular(ctx context.Context, titularID string, circuito reparto.Circuito, antesDe string) ([]liquidacion.OrdenDePago, error)
+
+	// EmitirOrdenes inserta ordenes NUEVAS con su desglose, y no pisa lo que
+	// ya hubiera bajo el mismo id.
+	//
+	// "No pisa" es el contrato, no un detalle: el id de una orden es estable
+	// (`liq-{periodo}-{circuito}-{titular}`), asi que un upsert que
+	// sobrescribiera estado, bruto y neto devolveria a `enviada` una orden ya
+	// aceptada por silencio -- reabriendo un plazo de 15 dias que ya vencio --
+	// o borraria un arrastre ya incorporado. Una orden que ya existe se deja
+	// como esta; quien llama relee para saber que quedo.
+	EmitirOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDePago) error
+
+	// TransicionarOrdenes mueve el ESTADO de cada orden, y solo si en la base
+	// sigue en `desde`. Devuelve las que de verdad cambiaron, en el orden en
+	// que llegaron.
+	//
+	// Es un UPDATE condicional y no un upsert por la misma razon que
+	// EmitirOrdenes no pisa: entre la lectura que decidio la transicion y esta
+	// escritura cabe otra que ya la hizo, o que hizo otra distinta. Escribir
+	// sin condicion convertiria una carrera en una sobrescritura silenciosa;
+	// con la condicion, la que llega tarde no cambia nada y quien llama lo
+	// sabe porque su orden no viene en el resultado.
+	//
+	// Solo el estado: bruto, neto y arrastres no son de una transicion. Una
+	// transicion que los tocara podria deshacer el arrastre que otra
+	// transaccion acaba de escribir.
+	TransicionarOrdenes(
+		ctx context.Context, ordenes []liquidacion.OrdenDePago, desde liquidacion.Estado,
+	) ([]liquidacion.OrdenDePago, error)
+
+	DocumentosDe(ctx context.Context, titularID string) (liquidacion.Documentos, error)
+	Documentos(ctx context.Context) (map[string]liquidacion.Documentos, error)
+
+	// MetaDeProceso es lo que hace falta para decidir si una corrida puede
+	// liquidar: donde esta (periodo, circuito), en que etapa, y quien firmo
+	// sobre que revision. Ver [MetaProceso].
+	MetaDeProceso(ctx context.Context, procesoID string) (MetaProceso, error)
+
+	// ProcesosListos devuelve los ids de las corridas de ese periodo y
+	// circuito que YA pasaron la compuerta del RD 13.5 -- etapa
+	// `liquidacion_final` y las dos firmas sobre la revision vigente --,
+	// ordenados lexicograficamente.
+	//
+	// El orden es parte del contrato: el primero es el que queda como
+	// [liquidacion.OrdenDePago.ProcesoID] de referencia, y el ADR 0005 exige
+	// que generar dos veces lo mismo de lo mismo.
+	ProcesosListos(ctx context.Context, periodo string, circuito reparto.Circuito) ([]string, error)
+
+	InsumoDeProceso(ctx context.Context, procesoID string) (InsumoLiquidacion, error)
+	SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error)
+}
+
+// MetaProceso es la cabecera de una corrida: donde esta y quien la firmo.
+//
+// Existe aparte de [ProcesoVista] -- que lleva los mismos campos -- porque es
+// lo que necesita [RepositorioLiquidacion] y ese puerto no debe arrastrar el
+// flujo de aprobaciones entero: liquidacion lee la compuerta, no la mueve.
+type MetaProceso struct {
+	ID       string
+	Periodo  string
+	Circuito reparto.Circuito
+	Etapa    reparto.Etapa
+
+	// Revision es la vigente. Las firmas de revisiones anteriores no cuentan:
+	// un rechazo sube la revision (ver la PK de `firmas`, migracion 00001).
+	Revision int
+
+	// Firmas son las de la corrida, de CUALQUIER revision. Filtrar por
+	// Revision es de quien comprueba la compuerta, no del adaptador: si el
+	// adaptador devolviera solo las vigentes, una corrida rechazada y una sin
+	// firmar se verian igual, y el mensaje de error no podria distinguirlas.
+	Firmas []reparto.Firma
+}
+
+// InsumoLiquidacion es lo que la corrida ya cerro: totales de la bolsa y
+// lineas por titular. Liquidacion no recalcula ninguno.
+//
+// Bruto NO es decorativo: con Admin, Social y Reserva forma el neto de la
+// corrida, que es el denominador del prorrateo (ver
+// [liquidacion.Prorratear]) y la cota contra la que se comprueba que las
+// lineas de titular no sumen mas de lo que habia para repartir.
+type InsumoLiquidacion struct {
+	ProcesoID string
+	Periodo   string
+	Bruto     decimal.Decimal
+	Admin     decimal.Decimal
+	Social    decimal.Decimal
+	Reserva   decimal.Decimal
+	Titulares []reparto.LineaTitular
 }
 
 // RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.
@@ -774,16 +958,20 @@ type BitacoraAuditoria interface {
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
 	AsientoPorID(ctx context.Context, id string) (Asiento, error)
 
-	// Listar devuelve una pagina de asientos en orden de timeline: lo mas
-	// reciente primero (`cuando DESC, id DESC`). Es lo que lee el Portal de
-	// Auditoria; el orden de cadena -el que necesita ExplicarCifra para
+	// ListarAsientos devuelve una pagina de asientos en orden de timeline: lo
+	// mas reciente primero (`cuando DESC, id DESC`). Es lo que lee el Portal
+	// de Auditoria; el orden de cadena -el que necesita ExplicarCifra para
 	// reconstruir- lo da [BitacoraAuditoria.De], no este metodo.
+	//
+	// ListarAsientos y no Listar: el mismo *Store satisface tambien
+	// [RepositorioLiquidacion], que ya tiene un Listar con otra firma -misma
+	// razon por la que AsientoPorID no se llama PorID.
 	//
 	// Sin filtros de servidor, a proposito: los filtros de la vista (tipo,
 	// fecha, actor) se aplican en el cliente sobre la pagina. El dia que la
 	// bitacora tenga volumen para que eso no baste, los filtros entran aqui
 	// como un struct, no como mas metodos.
-	Listar(ctx context.Context, pag Paginacion) ([]Asiento, error)
+	ListarAsientos(ctx context.Context, pag Paginacion) ([]Asiento, error)
 }
 
 // UnidadDeTrabajo es el limite de transaccion cuando un caso de uso escribe
