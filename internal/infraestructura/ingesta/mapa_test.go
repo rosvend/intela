@@ -410,21 +410,106 @@ func TestAplicarDetectaElRegistroRepetidoSinConfundirDosEmisiones(t *testing.T) 
 	}
 }
 
-func TestAplicarNoInventaMotivoParaLoQueValidaElNucleo(t *testing.T) {
+// Columna.Requerida se aplica POR FILA (issue #113, punto 2): su docstring lo
+// prometia y solo se comprobaba la cabecera. Una celda vacia -- o con un
+// placeholder, que en una columna requerida es lo mismo -- en una columna
+// requerida es un rechazo de fila con linea y columna, no un uso que entra
+// sin identificador o con la metrica en cero sin dejar rastro.
+//
+// Antes esta prueba afirmaba lo contrario para el titulo ("lo decide
+// validarUso"). Se invierte a proposito: validarUso solo ve el blanco, no el
+// `--` ni el `N/A`, y su motivo no dice ni la linea ni la columna. Sigue
+// estando detras como red para las filas que no pasan por un Mapa (el seed).
+func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 	t.Parallel()
 
-	// El titulo vacio SI es un rechazo, pero lo decide `validarUso` en
-	// aplicacion, una sola vez y para todas las fuentes. Repetir aqui la regla
-	// daria dos criterios para el mismo campo, que es como acaban discrepando.
-	usos, err := mapaMinimo().Aplicar(Tabla{
-		Columnas: []string{"titulo", "duracion"},
-		Filas:    [][]string{{"", "10"}},
+	casos := []struct {
+		nombre   string
+		mapa     Mapa
+		columnas []string
+		fila     []string
+		enMotivo []string
+	}{
+		{
+			nombre:   "cine sin id: la cascada no puede casar ni aprender alias",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "", "100"},
+			enMotivo: []string{"fila 2", "ids_fuente", `"id"`, "requerida"},
+		},
+		{
+			nombre:   "cine sin taquilla: no pondera nada y no dejaba rastro",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "PX-1", " "},
+			enMotivo: []string{"fila 2", "taquilla", `"taquilla"`, "requerida"},
+		},
+		{
+			nombre:   "placeholder en una columna requerida no es un hueco declarado",
+			mapa:     MapaCine(),
+			columnas: []string{"titulo", "id", "taquilla"},
+			fila:     []string{"Pelicula X", "PX-1", "--"},
+			enMotivo: []string{"fila 2", "taquilla", "--", "vacia o con un placeholder"},
+		},
+		{
+			nombre:   "netflix sin show_id: falta el par que sondea la cascada",
+			mapa:     MapaNetflix(),
+			columnas: []string{"show_name", "show_id", "series_id", "netflix_id", "stream_starts"},
+			fila:     []string{"Show", "", "S-1", "N-1", "10"},
+			enMotivo: []string{"fila 2", "ids_fuente", `"show_id"`},
+		},
+		{
+			nombre:   "titulo vacio: lo dice el adaptador, con linea y columna",
+			mapa:     mapaMinimo(),
+			columnas: []string{"titulo", "duracion"},
+			fila:     []string{"", "10"},
+			enMotivo: []string{"fila 2", "titulo", `"titulo"`},
+		},
+		{
+			nombre:   "titulo con placeholder, que validarUso no ve",
+			mapa:     mapaMinimo(),
+			columnas: []string{"titulo", "duracion"},
+			fila:     []string{"N/A", "10"},
+			enMotivo: []string{"fila 2", "titulo", "N/A", "vacia o con un placeholder"},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := c.mapa.Aplicar(Tabla{Columnas: c.columnas, Filas: [][]string{c.fila}})
+			if err != nil {
+				t.Fatalf("una celda vacia es un rechazo de fila, no de entrega: %v", err)
+			}
+			if len(usos) != 1 {
+				t.Fatalf("usos = %d, la fila no se descarta", len(usos))
+			}
+			motivo := usos[0].RechazoMotivo
+			if motivo == "" {
+				t.Fatal("la fila deberia venir rechazada con motivo")
+			}
+			for _, quiere := range c.enMotivo {
+				if !strings.Contains(motivo, quiere) {
+					t.Errorf("el motivo no dice %q: %s", quiere, motivo)
+				}
+			}
+		})
+	}
+}
+
+// La otra mitad: en una columna OPCIONAL el placeholder sigue siendo un hueco
+// declarado (Caracol sin `Programa ID_IMDB`, Netflix sin `episode_runtime`).
+func TestAplicarAceptaLaCeldaVaciaDeUnaColumnaOpcional(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "id", "taquilla", "espectadores", "moneda"},
+		Filas:    [][]string{{"Pelicula X", "PX-1", "100", "--", ""}},
 	})
 	if err != nil {
 		t.Fatalf("Aplicar: %v", err)
 	}
 	if usos[0].RechazoMotivo != "" {
-		t.Errorf("el adaptador no decide sobre el titulo: %s", usos[0].RechazoMotivo)
+		t.Fatalf("una columna opcional vacia no rechaza la fila: %s", usos[0].RechazoMotivo)
 	}
 }
 
@@ -451,5 +536,74 @@ func TestAplicarDejaQueLaFilaDigaSuModalidad(t *testing.T) {
 	// declarada como cine sin que nadie lo notara.
 	if usos[1].Modalidad != reparto.Hotel {
 		t.Errorf("modalidad[1] = %q, se esperaba %q", usos[1].Modalidad, reparto.Hotel)
+	}
+}
+
+// decimal.Decimal.IntPart() trunca fuera del rango de int64 sin avisar, asi
+// que un recuento enorme entraba como otro numero (issue #113, punto 6).
+// Latente -- ningun mapa usa emisiones hoy --, pero entra en cuanto uno lo haga.
+func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{
+		"9223372036854775808",   // MaxInt64 + 1: ParseInt falla con ErrRange
+		"-9223372036854775809",  // MinInt64 - 1
+		"9223372036854775808.0", // igual, escrito como decimal exacto
+		"1e19",
+		"1e30",
+	} {
+		n, err := aEntero(v)
+		if err == nil {
+			t.Errorf("aEntero(%q) = %d sin error; no cabe en int64", v, n)
+			continue
+		}
+		if !strings.Contains(err.Error(), v) {
+			t.Errorf("aEntero(%q): el error no nombra el valor: %v", v, err)
+		}
+	}
+	// Los bordes si caben.
+	for v, quiere := range map[string]int64{
+		"9223372036854775807":    9223372036854775807,
+		"-9223372036854775808":   -9223372036854775808,
+		"9223372036854775807.0":  9223372036854775807,
+		"-9223372036854775808.0": -9223372036854775808,
+		"1e3":                    1000,
+	} {
+		n, err := aEntero(v)
+		if err != nil || n != quiere {
+			t.Errorf("aEntero(%q) = %d, %v; se esperaba %d", v, n, err, quiere)
+		}
+	}
+}
+
+// El mapa estampa la linea en el uso para que aplicacion pueda numerar sus
+// propios motivos (issue #113, punto 3), y el motivo de duplicado dice su
+// PROPIA linea ademas de la de la fila con la que choca.
+func TestAplicarEstampaLaLineaEnElUsoYEnElMotivoDeDuplicado(t *testing.T) {
+	t.Parallel()
+
+	tabla, err := TablaCSV([]byte("titulo,id,taquilla\nA,PX-1,1\n\nA,PX-1,1\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	usos, err := MapaCine().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if usos[0].Linea != 2 || usos[1].Linea != 4 {
+		t.Fatalf("lineas = %d, %d; se esperaban 2, 4", usos[0].Linea, usos[1].Linea)
+	}
+	if m := usos[1].RechazoMotivo; !strings.HasPrefix(m, "fila 4: registro duplicado") || !strings.Contains(m, "fila 2") {
+		t.Errorf("motivo de duplicado: %q", m)
+	}
+}
+
+func TestLetraColumnaComoLaEscribeExcel(t *testing.T) {
+	t.Parallel()
+
+	for n, quiere := range map[int]string{1: "A", 4: "D", 26: "Z", 27: "AA", 49: "AW", 702: "ZZ", 703: "AAA"} {
+		if got := letraColumna(n); got != quiere {
+			t.Errorf("letraColumna(%d) = %q, se esperaba %q", n, got, quiere)
+		}
 	}
 }

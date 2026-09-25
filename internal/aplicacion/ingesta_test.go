@@ -13,6 +13,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/normalizacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -1978,5 +1979,96 @@ func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
 		Paginacion{Limite: 1, Desplazamiento: 9})
 	if err != nil || len(mas) != 0 {
 		t.Fatalf("pagina fuera de rango = %#v, err = %v", mas, err)
+	}
+}
+
+// Los motivos canonicos -- los de validarUso y los de normalizacion -- no
+// decian la linea, y convivian en la misma respuesta HTTP con los del
+// adaptador, que si la dicen (issue #113, punto 3). La linea viaja en
+// UsoPersistido.Linea desde el adaptador y se antepone al motivo.
+func TestIngerirReporteNumeraLosMotivosCanonicosConLaLineaDelArchivo(t *testing.T) {
+	modalidadMala := usoBueno("Radio")
+	modalidadMala.Modalidad = "radio"
+	modalidadMala.Linea = 7
+
+	fechaMala := usoBueno("Fecha rota")
+	fechaMala.Fecha = "ayer"
+	fechaMala.DuracionMin = decimal.NewFromInt(45)
+	fechaMala.Linea = 9
+
+	delAdaptador := usoBueno("Con fallo")
+	delAdaptador.Linea = 3
+	delAdaptador.RechazoMotivo = `fila 3, duracion_min (columna "Duracion_total"): "x" no es un numero`
+
+	sinLinea := usoBueno("")
+	// Linea 0: una fila que no salio de un archivo (el seed). Su motivo queda
+	// como estaba, sin inventarle una linea.
+
+	lec := &lectorFalso{filas: []UsoPersistido{modalidadMala, fechaMala, delAdaptador, sinLinea}}
+	ingesta, _, _ := ingestaConLector(lec)
+	ingesta.SnapshotNormalizacion = func(context.Context) (reparto.Snapshot, error) {
+		return reparto.Snapshot{
+			DuracionArtisticaPct: decimal.RequireFromString("0.80"),
+			MinutosHoraTV:        decimal.NewFromInt(48),
+			MonedaBase:           "COP",
+		}, nil
+	}
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-lineas"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if len(rec.Rechazados) != 4 {
+		t.Fatalf("rechazados = %d, se esperaban 4: %+v", len(rec.Rechazados), rec.Rechazados)
+	}
+	porTitulo := map[string]UsoPersistido{}
+	for _, u := range rec.Rechazados {
+		porTitulo[u.Titulo] = u
+	}
+
+	if m := porTitulo["Radio"].RechazoMotivo; !strings.HasPrefix(m, "fila 7: modalidad") {
+		t.Errorf("validarUso sin linea: %q", m)
+	}
+	f := porTitulo["Fecha rota"]
+	if !strings.HasPrefix(f.RechazoMotivo, "fila 9: "+normalizacion.CodigoFechaInparseable) {
+		t.Errorf("normalizacion sin linea: %q", f.RechazoMotivo)
+	}
+	// El codigo tipado no se toca: sale de su columna, no del texto.
+	if f.RechazoCodigo != normalizacion.CodigoFechaInparseable {
+		t.Errorf("codigo = %q", f.RechazoCodigo)
+	}
+	// El del adaptador ya traia su linea: no se duplica.
+	if m := porTitulo["Con fallo"].RechazoMotivo; m != delAdaptador.RechazoMotivo {
+		t.Errorf("el motivo del adaptador cambio: %q", m)
+	}
+	if m := porTitulo[""].RechazoMotivo; !strings.HasPrefix(m, "titulo vacio") {
+		t.Errorf("sin linea no se inventa una: %q", m)
+	}
+}
+
+// Sin normalizacion cableada la fila llega a validarUso, que es el otro
+// origen de motivos canonicos: tambien tiene que decir la linea.
+func TestIngerirReporteNumeraLosMotivosDeValidarUso(t *testing.T) {
+	sinTitulo := usoBueno(" ")
+	sinTitulo.Linea = 12
+	radio := usoBueno("Radio")
+	radio.Modalidad = "radio"
+	radio.Linea = 13
+
+	lec := &lectorFalso{filas: []UsoPersistido{sinTitulo, radio}}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-validar"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if len(rec.Rechazados) != 2 {
+		t.Fatalf("rechazados = %d, se esperaban 2", len(rec.Rechazados))
+	}
+	if m := rec.Rechazados[0].RechazoMotivo; m != "fila 12: titulo vacio: sin titulo no hay nada que identificar" {
+		t.Errorf("motivo[0] = %q", m)
+	}
+	if m := rec.Rechazados[1].RechazoMotivo; !strings.HasPrefix(m, `fila 13: modalidad "radio"`) {
+		t.Errorf("motivo[1] = %q", m)
 	}
 }

@@ -2,6 +2,7 @@ package ingesta
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -112,12 +113,20 @@ type Columna struct {
 	// carga una columna equivocada sin que nadie se entere.
 	Nombre string
 
-	// Requerida: la columna tiene que ESTAR en la cabecera. Si falta, no se
-	// persiste nada; ver [Mapa.Aplicar].
+	// Requerida dice dos cosas, a dos niveles:
 	//
-	// No dice nada de los valores. Una columna requerida con una celda vacia
-	// es un rechazo DE FILA, con su motivo, no una entrega perdida: los
-	// archivos reales del cliente traen 18 de 48 columnas vacias al 100%, y una
+	//   - La columna tiene que ESTAR en la cabecera. Si falta, no se persiste
+	//     nada; ver [Mapa.Aplicar].
+	//   - Cada fila tiene que traerle un VALOR. Una celda vacia -- o con un
+	//     placeholder: en una columna requerida `--` y `N/A` son lo mismo que el
+	//     blanco -- es un rechazo DE FILA, con linea y columna en el motivo, no
+	//     una entrega perdida. Lo contrario era peor que fallar: un `id` vacio
+	//     entraba y la cascada no podia casar ni aprender alias con esa fila, y
+	//     una `taquilla` vacia entraba en cero sin ponderar nada ni dejar rastro
+	//     (issue #113).
+	//
+	// Las columnas OPCIONALES conservan los placeholders como hueco declarado:
+	// los archivos reales traen 18 de 48 columnas vacias al 100%, y ahi una
 	// celda en blanco es el caso normal, no la excepcion.
 	Requerida bool
 
@@ -309,7 +318,38 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		// es mandar al cliente a arreglar una fila que esta bien.
 		linea := t.Linea(n)
 
-		u, motivo := m.fila(fila, indices, linea)
+		u, motivo := m.fila(fila, indices, linea, func(col int) bool { return t.compuesta(n, col) })
+		if t.enDisputa(n) {
+			// El archivo mezcla anchos y ninguno reune la mayoria: no se sabe
+			// cual es el bueno, y la fila no entra. Ver anchoEsperado.
+			motivo = motivoDisputa(linea, t.disputa)
+		} else if ancho, desajuste := t.desajuste(n); desajuste {
+			// Una coma PERDIDA corre los valores a la izquierda igual que una
+			// de mas los corre a la derecha (issue #113). Va ANTES que el motivo
+			// de celda y lo pisa: con el corrimiento, la celda que "falla" es
+			// un sintoma, y su motivo mandaria al cliente a rellenar una celda
+			// cuando lo que falta es una coma. El recuento dice cuantas filas
+			// del archivo escriben como se espera, para que el motivo diga la
+			// verdad sobre el archivo y no sobre la cabecera.
+			porque := "una fila corta no se rellena porque suele ser una coma perdida que corre los valores a la izquierda"
+			if ancho > t.anchoEsperado {
+				porque = "un campo de mas no se acepta porque suele ser una coma sin entrecomillar que corre los valores"
+			}
+			motivo = fmt.Sprintf("fila %d: trae %d campos y %d de %d filas de este archivo traen %d; %s",
+				linea, ancho, t.conEsperado, len(t.anchos), t.anchoEsperado, porque)
+		} else if col, v, hay := datoSinNombre(t.Columnas, fila); hay {
+			// Estructural, igual que el ancho: pisa el motivo de celda. No hay
+			// nombre al que mandar el valor, y descartarlo en silencio es como
+			// se pierde un identificador corrido.
+			motivo = motivoSinNombre(t.formato, linea, col, recortar(strings.TrimSpace(v), maxCrudoEnMotivo))
+		}
+		if motivo == "" && len(fila) > len(t.Columnas) && t.formato == aplicacion.FormatoXLSX {
+			// En .xlsx no hay comas que se corran: es una celda escrita fuera
+			// del rango de la cabecera, y se nombra por su referencia.
+			motivo = fmt.Sprintf(
+				"fila %d: la celda %s%d esta fuera de la cabecera (ultima columna %s); sin encabezado no se sabe a que campo va",
+				linea, letraColumna(fueraDeCabecera(fila, len(t.Columnas))+1), linea, letraColumna(len(t.Columnas)))
+		}
 		if motivo == "" && len(fila) > len(t.Columnas) {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
 			// entrecomillar que recorre todos los valores de la fila, y si los
@@ -325,13 +365,16 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 			k := claveDe(fila, clave)
 			if antes, repe := vistas[k]; repe {
 				motivo = fmt.Sprintf(
-					"registro duplicado: %s ya venia en la fila %d de este mismo archivo",
-					descripcionClave(m.ClaveRegistro, fila, clave), antes)
+					"fila %d: registro duplicado: %s ya venia en la fila %d de este mismo archivo",
+					linea, descripcionClave(m.ClaveRegistro, fila, clave), antes)
 			} else {
 				vistas[k] = linea
 			}
 		}
 		u.RechazoMotivo = motivo
+		// Viaja con el uso para que aplicacion numere tambien los motivos que
+		// decide ella (validarUso, normalizacion). Ver UsoPersistido.Linea.
+		u.Linea = linea
 		usos = append(usos, u)
 	}
 	return usos, nil
@@ -406,7 +449,10 @@ func (m Mapa) indicesClave(t Tabla) ([]int, error) {
 // Solo se devuelve el PRIMER motivo. Un rechazo se lee para arreglar la fila y
 // volver a mandarla; acumular los cinco fallos de una fila rota entera no
 // ayuda mas y no cabe en el CHECK de un motivo por fila.
-func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion.UsoPersistido, string) {
+//
+// compuesta dice si la celda de una columna era un objeto o array JSON (ver
+// [TablaJSON]); en los demas formatos no lo es nunca.
+func (m Mapa) fila(fila []string, indices map[string]int, linea int, compuesta func(col int) bool) (aplicacion.UsoPersistido, string) {
 	u := aplicacion.UsoPersistido{Modalidad: m.Modalidad}
 	var motivo string
 	var ids []aplicacion.IDFuente
@@ -416,6 +462,20 @@ func (m Mapa) fila(fila []string, indices map[string]int, linea int) (aplicacion
 	// recorrido aleatorio de un mapa de Go seria otro en cada corrida.
 	for _, c := range m.Columnas {
 		bruto := celda(fila, indices[c.Nombre])
+		if compuesta(indices[c.Nombre]) && motivo == "" {
+			// Antes que nada: como texto, un objeto pasa por titulo y un array
+			// por identificador, y ninguna comprobacion de abajo lo veria.
+			motivo = fmt.Sprintf("fila %d, %s (columna %q): valor JSON compuesto (objeto o array) donde va un valor simple: %s",
+				linea, c.Campo, c.Nombre, recortar(bruto, maxCrudoEnMotivo))
+		}
+		if c.Requerida && esPlaceholder(bruto) && motivo == "" {
+			// Antes que la coercion: aDecimal convertiria el hueco en un cero
+			// valido y nadie volveria a ver que faltaba.
+			// "vacia O con un placeholder": para un `N/A` o un `null` decir
+			// solo "vacia" es falso, y el cliente veria texto en esa celda.
+			motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia o con un placeholder (%q)",
+				linea, c.Campo, c.Nombre, strings.TrimSpace(bruto))
+		}
 		if c.Campo == CampoIDsFuente {
 			ids = append(ids, aplicacion.IDFuente{
 				Clave: strings.TrimSpace(c.ClaveID),
@@ -585,7 +645,109 @@ func aEntero(bruto string) (int64, error) {
 	if !d.Equal(d.Truncate(0)) {
 		return 0, fmt.Errorf("%q no es entero y un recuento no se puede partir", bruto)
 	}
+	// IntPart no avisa fuera de rango: desborda, y con el signo cambiado
+	// (`9223372036854775808` sale como MinInt64). Es la unica salida por la que
+	// un recuento podria entrar como OTRO numero sin motivo (issue #113).
+	if d.GreaterThan(maxInt64) || d.LessThan(minInt64) {
+		return 0, fmt.Errorf("%q no cabe en un recuento (maximo %d)", bruto, int64(math.MaxInt64))
+	}
 	return d.IntPart(), nil
+}
+
+// Los bordes de int64 como decimales, para comparar antes de IntPart.
+var (
+	maxInt64 = decimal.NewFromInt(math.MaxInt64)
+	minInt64 = decimal.NewFromInt(math.MinInt64)
+)
+
+// datoSinNombre busca la primera celda con contenido bajo una columna cuya
+// cabecera viene vacia -- o en blanco: la clave JSON " " es tan anonima como
+// "" --. Devuelve su posicion contando desde 1, como la ve el cliente.
+func datoSinNombre(columnas, fila []string) (int, string, bool) {
+	for i, c := range columnas {
+		if strings.TrimSpace(c) == "" && i < len(fila) && strings.TrimSpace(fila[i]) != "" {
+			return i + 1, fila[i], true
+		}
+	}
+	return 0, "", false
+}
+
+// motivoSinNombre redacta el rechazo de un dato sin cabecera en el idioma de
+// su formato. En CSV casi siempre es una coma de mas; en .xlsx no hay comas,
+// es una columna sin encabezado y se nombra por su letra; en JSON es una clave
+// vacia.
+func motivoSinNombre(formato string, linea, col int, valor string) string {
+	switch formato {
+	case aplicacion.FormatoXLSX:
+		return fmt.Sprintf("fila %d: trae un dato en la columna %s, que no tiene encabezado (%q); sin encabezado no se sabe a que campo va",
+			linea, letraColumna(col), valor)
+	case aplicacion.FormatoJSON:
+		return fmt.Sprintf("fila %d: trae un dato bajo una clave vacia (%q); sin nombre no se sabe a que campo va",
+			linea, valor)
+	default:
+		return fmt.Sprintf("fila %d: trae un dato en la columna %d, que no tiene nombre en la cabecera (%q); suele ser una coma de mas que corre los valores",
+			linea, col, valor)
+	}
+}
+
+// motivoDisputa redacta el rechazo de una fila de un archivo que mezcla anchos
+// sin mayoria: "mezcla filas de 3 y 4 campos (3 y 1 filas)".
+func motivoDisputa(linea int, disputa []anchoEnDisputa) string {
+	anchos := make([]string, len(disputa))
+	filas := make([]string, len(disputa))
+	for i, d := range disputa {
+		anchos[i] = strconv.Itoa(d.ancho)
+		filas[i] = strconv.Itoa(d.filas)
+	}
+	return fmt.Sprintf(
+		"fila %d: el archivo mezcla filas de %s campos (%s filas) y no se puede saber cual es la buena; revisa las comas finales",
+		linea, enumerar(anchos), enumerar(filas))
+}
+
+// enumerar une una lista como se escribe en espanol: "3", "3 y 4", "3, 4 y 5".
+func enumerar(xs []string) string {
+	if len(xs) <= 1 {
+		return strings.Join(xs, "")
+	}
+	return strings.Join(xs[:len(xs)-1], ", ") + " y " + xs[len(xs)-1]
+}
+
+// fueraDeCabecera devuelve la posicion (desde 0) de la primera celda con dato
+// mas alla de la cabecera, o la primera de mas si todas vienen en blanco.
+func fueraDeCabecera(fila []string, ancho int) int {
+	for i := ancho; i < len(fila); i++ {
+		if strings.TrimSpace(fila[i]) != "" {
+			return i
+		}
+	}
+	return ancho
+}
+
+// letraColumna escribe la columna n (desde 1) como la ve Excel: A, B, ..., Z,
+// AA, AB...
+func letraColumna(n int) string {
+	var letras []byte
+	for n > 0 {
+		n--
+		letras = append([]byte{byte('A' + n%26)}, letras...)
+		n /= 26
+	}
+	return string(letras)
+}
+
+// maxCrudoEnMotivo es cuanto del valor crudo cabe en un motivo. Un objeto de
+// un export puede traer kilobytes, y el motivo es una linea del log de
+// rechazos que lee una persona: con el principio basta para reconocerlo.
+const maxCrudoEnMotivo = 80
+
+// recortar deja los primeros n runas de v y marca el corte. Por runas y no por
+// bytes para no partir un caracter UTF-8 por la mitad.
+func recortar(v string, n int) string {
+	r := []rune(v)
+	if len(r) <= n {
+		return v
+	}
+	return string(r[:n]) + "..."
 }
 
 // celda lee una posicion de la fila. Una columna ausente -- indice -1 -- es una

@@ -241,6 +241,19 @@ type UsoPersistido struct {
 	// sobre filas que nunca pasaron por ese detector.
 	RechazoTipo   string
 	RechazoCodigo string
+
+	// Linea es la linea DEL ARCHIVO en la que EMPIEZA el registro del que salio
+	// este uso, con la cabecera como 1. En un CSV un campo entrecomillado puede
+	// abarcar varias lineas, y entonces es la primera; en .xlsx es la fila de
+	// la hoja; en JSON, la posicion del registro en el array contando desde 2.
+	// 0 si el uso no salio de un archivo (el seed, las pruebas).
+	//
+	// No se persiste: vive lo que dura la ingesta, para que los motivos que se
+	// deciden en esta capa -- validarUso y la normalizacion -- digan la linea
+	// igual que los del adaptador. Sin ella, los dos formatos de motivo
+	// convivian en la misma respuesta y solo la mitad localizaba la fila
+	// (issue #113).
+	Linea int
 }
 
 // UsoDeReparto es una fila canonica lista para el motor: el uso mas la

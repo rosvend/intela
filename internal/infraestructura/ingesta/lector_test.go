@@ -1,12 +1,18 @@
 package ingesta
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -213,8 +219,14 @@ func TestCaracolCSVSigueElMismoMapaQueSuXLSX(t *testing.T) {
 			malas++
 		}
 	}
-	if buenas != 4 || malas != 2 {
-		t.Fatalf("buenas/malas = %d/%d, se esperaba 4/2: %+v", buenas, malas, motivos(usos))
+	// 3/3: la sexta fila viene sin titulo, y desde #113 la rechaza el propio
+	// adaptador por ser columna requerida, con linea y columna. Antes entraba
+	// limpia aqui y solo la paraba validarUso, aguas abajo y sin linea.
+	if buenas != 3 || malas != 3 {
+		t.Fatalf("buenas/malas = %d/%d, se esperaba 3/3: %+v", buenas, malas, motivos(usos))
+	}
+	if m := usos[5].RechazoMotivo; !strings.Contains(m, "fila 7") || !strings.Contains(m, `"Titulo"`) {
+		t.Errorf("fila 7 sin titulo: %q", m)
 	}
 	// La cuarta fila repite la primera emision entera.
 	if !strings.Contains(usos[3].RechazoMotivo, "duplicado") {
@@ -397,4 +409,212 @@ func TestFormatoDeNombre(t *testing.T) {
 			t.Errorf("FormatoDeNombre(%q) = %q, se esperaba %q", nombre, got, quiere)
 		}
 	}
+}
+
+// El mismo caso de punta a punta, por el Lector: el motivo tiene que mandar
+// al cliente a la linea 5, no a la 3.
+func TestCineCSVReportaLaLineaDelRechazoTrasLineasEnBlanco(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla\nBuena,PX-1,1\n\n\nMala,PX-2,no-es-numero\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if len(usos) != 2 {
+		t.Fatalf("usos = %d, se esperaban 2", len(usos))
+	}
+	if !strings.HasPrefix(usos[1].RechazoMotivo, "fila 5,") {
+		t.Fatalf("motivo = %q, se esperaba la linea 5", usos[1].RechazoMotivo)
+	}
+}
+
+// El docstring de TablaJSON prometia que un valor compuesto en una columna
+// mapeada se rechaza NOMBRANDO el campo, y no ocurria: `{"titulo":{"x":1}}`
+// persistia titulo = `{"x":1}` e `"id":[1,2]` persistia
+// ids_fuente = `id_pelicula=[1,2]`, sin motivo (issue #113, punto 4).
+func TestJSONRechazaLosValoresCompuestosNombrandoElCampo(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre   string
+		datos    string
+		enMotivo []string
+	}{
+		{
+			nombre:   "objeto en el titulo",
+			datos:    `[{"titulo":{"x":1},"id":"PX-1","taquilla":1}]`,
+			enMotivo: []string{"fila 2", "titulo", `"titulo"`, "compuesto"},
+		},
+		{
+			nombre:   "array en el identificador",
+			datos:    `[{"titulo":"Pelicula X","id":[1,2],"taquilla":1}]`,
+			enMotivo: []string{"fila 2", "ids_fuente", `"id"`, "compuesto"},
+		},
+		{
+			nombre:   "objeto en la metrica",
+			datos:    `[{"titulo":"Pelicula X","id":"PX-1","taquilla":{"valor":1}}]`,
+			enMotivo: []string{"fila 2", "taquilla", "compuesto"},
+		},
+		{
+			// Opcional y mapeada: no es requerida, pero se persistiria igual.
+			nombre:   "array en una columna opcional mapeada",
+			datos:    `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"moneda":["COP"]}]`,
+			enMotivo: []string{"fila 2", "moneda", `"moneda"`, "compuesto"},
+		},
+		{
+			nombre:   "segundo registro, para la linea",
+			datos:    `[{"titulo":"A","id":"A-1","taquilla":1},{"titulo":"B","id":{},"taquilla":1}]`,
+			enMotivo: []string{"fila 3", "ids_fuente", "compuesto"},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(c.datos))
+			if err != nil {
+				t.Fatalf("un valor compuesto es un rechazo de fila: %v", err)
+			}
+			m := usos[len(usos)-1].RechazoMotivo
+			if m == "" {
+				t.Fatalf("la fila deberia rechazarse: %+v", usos[len(usos)-1])
+			}
+			for _, quiere := range c.enMotivo {
+				if !strings.Contains(m, quiere) {
+					t.Errorf("el motivo no dice %q: %s", quiere, m)
+				}
+			}
+		})
+	}
+}
+
+// Un compuesto en una columna que el mapa NO usa da igual: no se persiste.
+func TestJSONIgnoraLosCompuestosDeColumnasNoMapeadas(t *testing.T) {
+	t.Parallel()
+
+	datos := `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"extra":{"a":[1]}}]`
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if usos[0].RechazoMotivo != "" {
+		t.Fatalf("una columna no mapeada no rechaza la fila: %s", usos[0].RechazoMotivo)
+	}
+}
+
+// La parte cruda del compuesto va en el motivo para poder pedirlo, pero
+// recortada: un objeto de un export puede traer kilobytes, y el motivo es
+// una linea del log de rechazos que alguien lee.
+func TestJSONRecortaElCompuestoDentroDelMotivo(t *testing.T) {
+	t.Parallel()
+
+	largo := `{"texto":"` + strings.Repeat("x", 5000) + `"}`
+	datos := `[{"titulo":` + largo + `,"id":"PX-1","taquilla":1}]`
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	m := usos[0].RechazoMotivo
+	if !strings.Contains(m, "compuesto") || !strings.Contains(m, `{"texto":"xxx`) {
+		t.Fatalf("el motivo no nombra el compuesto: %.200s", m)
+	}
+	if len(m) > 400 {
+		t.Errorf("motivo de %d bytes: el crudo no se recorto", len(m))
+	}
+
+	// El recorte es por RUNAS. `["x` son 3 bytes y cada `ñ` son 2: cortar por
+	// bytes en el 80 parte una `ñ` por la mitad y deja UTF-8 invalido en el
+	// log de rechazos, que Postgres rechaza en una columna TEXT.
+	datos = `[{"titulo":"Pelicula X","id":"PX-1","taquilla":1,"moneda":["x` +
+		strings.Repeat("ñ", 100) + `"]}]`
+	usos, err = lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	if m := usos[0].RechazoMotivo; !utf8.ValidString(m) || !strings.Contains(m, "ñ...") {
+		t.Errorf("el recorte partio una runa: %q", m)
+	}
+}
+
+// Los dos archivos reales, exportados a CSV de las formas en que Excel y una
+// persona lo hacen. Todas entran enteras menos la mezclada, en la que solo
+// cae la fila que no escribe como las demas (J1 de la tercera auditoria:
+// antes caian TODAS las otras, con un motivo que decia un ancho falso).
+func TestLosArchivosRealesEnCSVEntranEnterosEnTodasSusFormas(t *testing.T) {
+	t.Parallel()
+
+	reales := []struct {
+		nombre string
+		ruta   string
+		mapa   Mapa
+		filas  int
+	}{
+		{"caracol", rutaCaracol, MapaCaracol(), filasCaracol},
+		{"netflix", rutaNetflix, MapaNetflix(), filasNetflix},
+	}
+	for _, r := range reales {
+		for _, forma := range []string{"tal-cual", "coma-final", "cabecera-con-coma", "mezcla"} {
+			t.Run(r.nombre+"/"+forma, func(t *testing.T) {
+				t.Parallel()
+				datos := csvDeXLSX(t, r.ruta, forma)
+				usos, err := lector(t, r.mapa, aplicacion.FormatoCSV).Leer(datos)
+				if err != nil {
+					t.Fatalf("Leer: %v", err)
+				}
+				if len(usos) != r.filas {
+					t.Fatalf("usos = %d, se esperaban %d", len(usos), r.filas)
+				}
+				for i, u := range usos {
+					if forma == "mezcla" && u.Linea == 8 {
+						quiere := fmt.Sprintf("%d de %d filas de este archivo traen", r.filas-1, r.filas)
+						if !strings.Contains(u.RechazoMotivo, quiere) {
+							t.Errorf("la fila minoritaria: %q, se esperaba %q", u.RechazoMotivo, quiere)
+						}
+						continue
+					}
+					if u.RechazoMotivo != "" {
+						t.Fatalf("fila %d (linea %d) rechazada: %s", i, u.Linea, u.RechazoMotivo)
+					}
+				}
+			})
+		}
+	}
+}
+
+// csvDeXLSX exporta la primera hoja de un .xlsx a CSV de una de cuatro formas:
+// tal cual; con la coma final de la columna sin nombre que declara el rango
+// usado en TODAS las filas; solo en la cabecera; o en la cabecera y en UNA
+// fila de datos (la linea 8).
+func csvDeXLSX(t *testing.T, ruta, forma string) []byte {
+	t.Helper()
+	libro, err := excelize.OpenFile(ruta)
+	if err != nil {
+		t.Fatalf("abrir %s: %v", ruta, err)
+	}
+	defer func() { _ = libro.Close() }()
+	filas, err := libro.GetRows(libro.GetSheetList()[0])
+	if err != nil {
+		t.Fatalf("GetRows: %v", err)
+	}
+	ancho := 0
+	for _, f := range filas {
+		ancho = max(ancho, len(f))
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	for i, f := range filas {
+		conComa := forma == "coma-final" ||
+			(forma == "cabecera-con-coma" && i == 0) ||
+			(forma == "mezcla" && (i == 0 || i == 7))
+		if conComa {
+			for len(f) < ancho+1 {
+				f = append(f, "")
+			}
+		}
+		if err := w.Write(f); err != nil {
+			t.Fatalf("csv: %v", err)
+		}
+	}
+	w.Flush()
+	return buf.Bytes()
 }
