@@ -179,12 +179,14 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 	}
 
 	var resumen ResumenEvaluacion
-	ahora := a.Reloj.Ahora()
 	err = a.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
 		// Cerrojo por periodo ANTES de leer: la foto y el autocierre salen de la misma pasada serializada (ADR 0021).
 		if err := a.Alertas.BloquearAlertasDePeriodo(ctx, periodo); err != nil {
 			return fmt.Errorf("serializar la evaluacion de %q: %w", periodo, err)
 		}
+		// El reloj se lee con el cerrojo tomado: leido antes, la pasada que espero asentaria una reapertura
+		// con un instante anterior al autocierre de la que gano, y la bitacora terminaria en autocerrada.
+		ahora := a.Reloj.Ahora()
 		armado, err := a.armarPeriodo(ctx, periodo)
 		if err != nil {
 			return err

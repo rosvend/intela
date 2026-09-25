@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,5 +110,110 @@ func TestEvaluacionesConcurrentesNoAutocierranUnaAlertaVigente(t *testing.T) {
 	}
 	if abiertas == 0 || autocierres != 0 {
 		t.Fatalf("duplicado abierto = %d, asientos de autocierre = %d; se esperaba >0 y 0", abiertas, autocierres)
+	}
+}
+
+// relojQueAvanza da un instante un segundo mayor en cada lectura: el orden de las lecturas queda en la bitacora.
+type relojQueAvanza struct {
+	base time.Time
+	n    atomic.Int64
+}
+
+func (r *relojQueAvanza) Ahora() time.Time {
+	return r.base.Add(time.Duration(r.n.Add(1)) * time.Second)
+}
+
+// La pasada que espera el cerrojo lee el reloj DESPUES de tomarlo: si reabre una alerta que la pasada
+// ganadora autocerro, el asiento de reapertura queda despues del de autocierre (MENOR 1, verificacion 3).
+func TestReaperturaTrasEsperarElCerrojoQuedaDespuesDelAutocierre(t *testing.T) {
+	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+	anomalias := servicioDeAnomalias(s, time.Time{})
+	anomalias.Reloj = &relojQueAvanza{base: instanteAlertas}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+		 VALUES ('rep-caracol-enero-bis', 'caracol', '2026-01', repeat('c', 64), 'reportes/c.csv', 64)`); err != nil {
+		t.Fatalf("sembrar la segunda entrega: %v", err)
+	}
+	insertarUsoDeAlertas(t, pool, "u-dup1", reporteEnero, "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+	const segundoUso = `INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, obra_id, escalon, oni,
+	                                      modalidad, tipo_obra, fecha, hora, emisiones)
+	 VALUES ('u-dup2', 'rep-caracol-enero-bis', 'caracol', 'Titulo de prueba', 'id_ficha=7', 'obra-y',
+	         'alias', FALSE, 'tv', 'serie', '2026-01-02', '20:00:00', 1)`
+	if _, err := pool.Exec(ctx, segundoUso); err != nil {
+		t.Fatalf("sembrar el duplicado: %v", err)
+	}
+	if r, err := anomalias.Evaluar(ctx, "2026-01", ""); err != nil || r.CriticasAbiertas == 0 {
+		t.Fatalf("pasada inicial: %+v, %v; se esperaba el duplicado abierto", r, err)
+	}
+
+	type resultado struct {
+		r   aplicacion.ResumenEvaluacion
+		err error
+	}
+	deA := make(chan resultado, 1)
+	// Pasada B: gana el cerrojo, ve el duplicado ya ido y lo autocierra; la ingesta lo trae de vuelta antes de soltar.
+	err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := s.BloquearAlertasDePeriodo(ctx, "2026-01"); err != nil {
+			return err
+		}
+		go func() {
+			r, err := anomalias.Evaluar(t.Context(), "2026-01", "")
+			deA <- resultado{r, err}
+		}()
+		esperarCerrojoDeAvisoEnEspera(t, s)
+
+		tx, _ := txDe(ctx)
+		if _, err := tx.Exec(ctx, `DELETE FROM usos WHERE id = 'u-dup2'`); err != nil {
+			return err
+		}
+		r, err := anomalias.Evaluar(ctx, "2026-01", "")
+		if err != nil {
+			return err
+		}
+		if r.Autocerradas == 0 {
+			t.Errorf("la pasada B no autocerro el duplicado: %+v", r)
+		}
+		_, err = tx.Exec(ctx, segundoUso)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("pasada B: %v", err)
+	}
+
+	var a resultado
+	select {
+	case a = <-deA:
+	case <-time.After(30 * time.Second):
+		t.Fatal("la pasada A no termino tras soltar el cerrojo")
+	}
+	if a.err != nil {
+		t.Fatalf("pasada A: %v", a.err)
+	}
+
+	filas, err := pool.Query(ctx,
+		`SELECT id::text FROM alertas WHERE periodo = '2026-01' AND tipo = 'duplicado_registro' AND NOT resuelta`)
+	if err != nil {
+		t.Fatalf("leer duplicados abiertos: %v", err)
+	}
+	ids, err := pgx.CollectRows(filas, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("leer duplicados abiertos: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("la pasada A no reabrio el duplicado")
+	}
+	for _, id := range ids {
+		asientos, err := s.De(ctx, aplicacion.RefAlerta, id)
+		if err != nil {
+			t.Fatalf("bitacora de %s: %v", id, err)
+		}
+		if len(asientos) == 0 {
+			t.Fatalf("alerta %s reabierta sin asientos", id)
+		}
+		if ultimo := asientos[len(asientos)-1]; ultimo.Hecho != aplicacion.HechoAlertaReabierta {
+			t.Errorf("alerta %s abierta pero su bitacora termina en %q (cuando %s)", id, ultimo.Hecho, ultimo.Cuando)
+		}
 	}
 }
