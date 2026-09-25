@@ -188,7 +188,7 @@ func TestListarOrdenaLoRecientePrimero(t *testing.T) {
 		}
 	}
 
-	asientos, err := s.Listar(ctx, aplicacion.Paginacion{})
+	asientos, err := s.ListarAsientos(ctx, aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("Listar: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestListarPagina(t *testing.T) {
 		}
 	}
 
-	pagina, err := s.Listar(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 1})
+	pagina, err := s.ListarAsientos(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 1})
 	if err != nil {
 		t.Fatalf("Listar: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestListarPagina(t *testing.T) {
 		t.Fatalf("la pagina no viene en orden descendente: %v, %v", pagina[0].Cuando, pagina[1].Cuando)
 	}
 
-	vacia, err := s.Listar(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 5})
+	vacia, err := s.ListarAsientos(ctx, aplicacion.Paginacion{Limite: 2, Desplazamiento: 5})
 	if err != nil {
 		t.Fatalf("Listar mas alla del final: %v", err)
 	}
