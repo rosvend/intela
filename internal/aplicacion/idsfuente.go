@@ -114,7 +114,9 @@ var clavesDeRegistro = map[string][]string{
 	// la que impide que se separen.
 	"caracol": {ClaveIDFicha, ComponenteFecha, ComponenteHora},
 	"netflix": {ClaveNetflixID},
-	"cine":    {ClaveIDPelicula},
+	// Provisional: dos exhibiciones legitimas de la misma pelicula saldrian como duplicado (P-21).
+	"cine": {ClaveIDPelicula},
+	// rcn y expreso-bolivariano sin clave a proposito: no hay formato del cliente (P-21).
 }
 
 // ComponentesDeClaveDeRegistro devuelve los componentes ordenados de la clave
