@@ -151,3 +151,35 @@ func TestListarAlertasPaginaYLimiteSinTopeTraeTodo(t *testing.T) {
 		t.Fatalf("LimiteSinTope devolvio %d de %d alertas", len(todas), cuantas)
 	}
 }
+
+// GuardarAlertas es una sola sentencia: un lote grande entra entero, repetirlo no suma nada, y
+// una clave repetida DENTRO del lote cuenta una vez (revision de #158, punto 6).
+func TestGuardarAlertasEnUnaSentenciaCuentaSoloLasNuevas(t *testing.T) {
+	s, _ := sembrar(t)
+	const n = 5000
+	sembrarMuchasCriticas(t, s, "2025-03", n)
+
+	otra := aplicacion.Alerta{
+		Periodo: "2025-03", Tipo: anomalias.TipoDuplicadoRegistro, RefTipo: anomalias.RefUso,
+		RefID: "uso-nueva", Detalle: "nueva", Detectada: instanteAlertas,
+	}
+	repetida := otra
+	repetida.Detalle = "misma clave, otra prosa"
+	vieja := otra
+	vieja.RefID = "uso-0000"
+
+	nuevas, err := s.GuardarAlertas(t.Context(), []aplicacion.Alerta{otra, repetida, vieja})
+	if err != nil {
+		t.Fatalf("GuardarAlertas: %v", err)
+	}
+	if nuevas != 1 {
+		t.Fatalf("nuevas = %d, se esperaba 1 (una repetida en el lote y una que ya estaba)", nuevas)
+	}
+	total, err := s.ContarAlertasSinResolver(t.Context(), "2025-03", nil)
+	if err != nil {
+		t.Fatalf("contar: %v", err)
+	}
+	if total != n+1 {
+		t.Fatalf("total = %d, se esperaba %d", total, n+1)
+	}
+}

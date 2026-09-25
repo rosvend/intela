@@ -26,48 +26,36 @@ var _ aplicacion.RepositorioAlertas = (*Store)(nil)
 const columnasAlerta = `id::text, periodo, tipo, ref_tipo, ref_id, ref_titular, detalle,
 	detectada, resuelta, COALESCE(resuelta_por, ''), resuelta_en, nota`
 
-// GuardarAlertas escribe las alertas que todavia no estaban.
+// GuardarAlertas escribe el lote en UNA sentencia (INSERT ... SELECT FROM unnest) y devuelve cuantas entraron.
 //
-// # ON CONFLICT DO NOTHING sobre la clave natural
-//
-// La idempotencia de EvaluarAnomalias se decide AQUI, en la base, y no con un
-// SELECT previo en el caso de uso: entre la consulta y el INSERT cabe otra
-// pasada -- el scheduler y una persona pueden evaluar el mismo periodo a la
-// vez -- y la unica comprobacion de unicidad sin carrera es la de la base. Es
-// el mismo criterio que [esClaveDuplicada] explica para `reportes`.
-//
-// Y con DO NOTHING en vez de DO UPDATE: si la alerta ya existe y alguien la
-// resolvio, volver a detectarla NO la reabre. Ver el contrato del puerto.
-//
-// # El lote es una transaccion
-//
-// Se apoya en [Store.enTransaccionDe], asi que una llamada suelta abre la
-// suya y una llamada desde dentro de una unidad de trabajo -- que es lo que
-// hace [aplicacion.Anomalias.Evaluar], para que las alertas y su asiento sean
-// un solo hecho -- participa en la que ya hay. Sin esto, el asiento podria
-// revertirse dejando las alertas escritas.
-//
-// Devuelve cuantas filas ENTRARON, que no es len(alertas): es lo unico que
-// permite decir "esta pasada encontro tres anomalias que antes no estaban".
+// ON CONFLICT DO NOTHING sobre la clave natural hace la idempotencia en la base, sin carrera.
+// Participa en la unidad de trabajo abierta si la hay (enTransaccionDe).
 func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta) (int, error) {
 	if len(alertas) == 0 {
 		return 0, nil
 	}
 
+	n := len(alertas)
+	periodos, tipos := make([]string, n), make([]string, n)
+	refTipos, refIDs, refTitulares := make([]string, n), make([]string, n), make([]string, n)
+	detalles, detectadas := make([]string, n), make([]time.Time, n)
+	for i, a := range alertas {
+		periodos[i], tipos[i] = a.Periodo, a.Tipo
+		refTipos[i], refIDs[i], refTitulares[i] = a.RefTipo, a.RefID, a.RefTitular
+		detalles[i], detectadas[i] = a.Detalle, a.Detectada
+	}
+
 	nuevas := 0
 	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
-		for _, a := range alertas {
-			etiqueta, err := tx.Exec(ctx,
-				`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, ref_titular, detalle, detectada)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT ON CONSTRAINT alerta_unica_por_hallazgo DO NOTHING`,
-				a.Periodo, a.Tipo, a.RefTipo, a.RefID, a.RefTitular, a.Detalle, a.Detectada)
-			if err != nil {
-				return traducirError(err, "guardar la alerta %q sobre %s %q",
-					a.Tipo, a.RefTipo, a.RefID)
-			}
-			nuevas += int(etiqueta.RowsAffected())
+		etiqueta, err := tx.Exec(ctx,
+			`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, ref_titular, detalle, detectada)
+			 SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
+			 ON CONFLICT ON CONSTRAINT alerta_unica_por_hallazgo DO NOTHING`,
+			periodos, tipos, refTipos, refIDs, refTitulares, detalles, detectadas)
+		if err != nil {
+			return traducirError(err, "guardar %d alertas del periodo %q", n, alertas[0].Periodo)
 		}
+		nuevas = int(etiqueta.RowsAffected())
 		return nil
 	})
 	if err != nil {
