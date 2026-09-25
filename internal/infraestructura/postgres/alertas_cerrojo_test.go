@@ -217,3 +217,47 @@ func TestReaperturaTrasEsperarElCerrojoQuedaDespuesDelAutocierre(t *testing.T) {
 		}
 	}
 }
+
+// unidadConEpilogo corre `despues` al volver de la unidad, ya confirmada: es otra pasada que llega justo detras.
+type unidadConEpilogo struct {
+	*Store
+	despues func()
+}
+
+func (u unidadConEpilogo) EnUnidad(ctx context.Context, fn func(ctx context.Context) error) error {
+	err := u.Store.EnUnidad(ctx, fn)
+	if err == nil {
+		u.despues()
+	}
+	return err
+}
+
+// El conteo de criticas del resumen sale de la foto de la pasada, no de lo que otra hizo al soltar el cerrojo (NIT 1).
+func TestCriticasDelResumenSeCuentanDentroDeLaUnidad(t *testing.T) {
+	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+	anomalias := servicioDeAnomalias(s, instanteAlertas)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+		 VALUES ('rep-caracol-enero-bis', 'caracol', '2026-01', repeat('c', 64), 'reportes/c.csv', 64)`); err != nil {
+		t.Fatalf("sembrar la segunda entrega: %v", err)
+	}
+	insertarUsoDeAlertas(t, pool, "u-dup1", reporteEnero, "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+	insertarUsoDeAlertas(t, pool, "u-dup2", "rep-caracol-enero-bis", "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+
+	anomalias.Unidad = unidadConEpilogo{Store: s, despues: func() {
+		if _, err := pool.Exec(context.Background(),
+			`UPDATE alertas SET resuelta = TRUE, autocerrada = TRUE, resuelta_en = now(), nota = 'otra pasada'
+			  WHERE periodo = '2026-01' AND NOT resuelta`); err != nil {
+			t.Errorf("epilogo: %v", err)
+		}
+	}}
+	r, err := anomalias.Evaluar(ctx, "2026-01", "")
+	if err != nil {
+		t.Fatalf("evaluar: %v", err)
+	}
+	if r.CriticasAbiertas == 0 {
+		t.Fatalf("criticas abiertas = 0 con el duplicado detectado en la pasada (%+v): se contaron fuera de la unidad", r)
+	}
+}
