@@ -1686,16 +1686,19 @@ export interface components {
             /**
              * Format: date-time
              * @description Cuando se vio por PRIMERA vez. Una segunda pasada que vuelva a
-             *     detectarla no lo mueve.
+             *     detectarla no lo mueve, salvo que la reabra tras un autocierre.
              */
             detectada: string;
             /**
-             * @description Si alguien ya se hizo cargo. Una alerta resuelta no se reabre
-             *     aunque la anomalia siga ahi (ADR 0021).
+             * @description Si alguien ya se hizo cargo, o si el sistema la autocerro porque
+             *     una reevaluacion ya no la detecta (ver `autocerrada`). La que cerro
+             *     una persona no se reabre aunque la anomalia siga ahi; la
+             *     autocerrada si (ADR 0021).
              */
             resuelta: boolean;
             /**
-             * @description Cuenta que la cerro. Sale de la sesion, nunca del cuerpo.
+             * @description Cuenta que la cerro. Sale de la sesion, nunca del cuerpo. Ausente
+             *     si la autocerro el sistema.
              * @example usr-admin
              */
             resuelta_por?: string;
@@ -1709,6 +1712,11 @@ export interface components {
              *     esta abierta.
              */
             nota?: string;
+            /**
+             * @description La cerro el sistema porque una reevaluacion del periodo ya no la
+             *     detecto. Si la anomalia vuelve, la alerta se reabre.
+             */
+            autocerrada?: boolean;
         };
         /**
          * @description El periodo que se va a evaluar. Va en el cuerpo y no en la query porque
@@ -1738,11 +1746,17 @@ export interface components {
              */
             detectadas: number;
             /**
-             * @description Cuantas de esas no estaban antes de esta pasada. Las dos cifras
-             *     hacen falta: con una sola, correr la evaluacion dos veces daria 0 la
-             *     segunda y se leeria como "el periodo esta limpio".
+             * @description Cuantas de esas no estaban antes de esta pasada (incluye las
+             *     autocerradas que se reabren). Las dos cifras hacen falta: con una
+             *     sola, correr la evaluacion dos veces daria 0 la segunda y se leeria
+             *     como "el periodo esta limpio".
              */
             nuevas: number;
+            /**
+             * @description Alertas abiertas que esta pasada ya no detecto y el sistema cerro,
+             *     cada una con su asiento `alerta.autocerrada`.
+             */
+            autocerradas: number;
             /**
              * @description Lo detectado en esta pasada, por tipo. Trae los SEIS tipos siempre,
              *     con cero explicito donde no hubo nada: una clave ausente no se
@@ -1754,9 +1768,8 @@ export interface components {
             };
             /**
              * @description Alertas sin resolver del periodo cuyo tipo bloquea la distribucion.
-             *     Es el predicado que consumira la compuerta de #34 -que todavia no
-             *     existe: `/admin/pipeline` es un andamio-. Se expone aqui para que
-             *     la cifra se pueda mirar antes de que esa compuerta la use.
+             *     Es la cifra que mira la compuerta de `/procesos/{id}/avanzar` al
+             *     salir de `deducciones` (ADR 0021).
              */
             criticas_abiertas: number;
             /**
@@ -4288,6 +4301,7 @@ export interface operations {
                      *       "periodo": "2025-01",
                      *       "detectadas": 6,
                      *       "nuevas": 6,
+                     *       "autocerradas": 0,
                      *       "por_tipo": {
                      *         "oni": 1,
                      *         "duplicado_archivo": 1,

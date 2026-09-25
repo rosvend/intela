@@ -101,6 +101,12 @@ func (f *alertasFalsas) GuardarAlertas(_ context.Context, alertas []Alerta) (int
 	nuevas := 0
 	for _, a := range alertas {
 		if vistas[claveNatural(a)] {
+			for i := range f.filas {
+				if claveNatural(f.filas[i]) == claveNatural(a) && f.filas[i].Autocerrada {
+					f.filas[i].Resuelta, f.filas[i].Autocerrada, f.filas[i].ResueltaEn, f.filas[i].Nota = false, false, nil, ""
+					nuevas++
+				}
+			}
 			continue
 		}
 		vistas[claveNatural(a)] = true
@@ -151,6 +157,28 @@ func (f *alertasFalsas) ResolverAlerta(
 		return f.filas[i], nil
 	}
 	return Alerta{}, ErrNoEncontrado
+}
+
+func (f *alertasFalsas) AutocerrarAlertas(
+	_ context.Context, periodo string, vigentes []Alerta, nota string, cuando time.Time,
+) ([]Alerta, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	siguen := map[string]bool{}
+	for _, v := range vigentes {
+		siguen[claveNatural(v)] = true
+	}
+	var cerradas []Alerta
+	for i := range f.filas {
+		a := &f.filas[i]
+		if a.Periodo != periodo || a.Resuelta || siguen[claveNatural(*a)] {
+			continue
+		}
+		a.Resuelta, a.Autocerrada, a.ResueltaEn, a.Nota = true, true, &cuando, nota
+		cerradas = append(cerradas, *a)
+	}
+	return cerradas, nil
 }
 
 func (f *alertasFalsas) ContarAlertasSinResolver(
@@ -711,6 +739,84 @@ func TestBloqueantesEvaluaAntesDeContar(t *testing.T) {
 	}
 	if len(bitacora.asientos) == 0 || bitacora.asientos[0].ActorID != actorSistema {
 		t.Fatalf("la pasada de la compuerta debe asentarse con el actor de sistema: %+v", bitacora.asientos)
+	}
+}
+
+func TestReevaluarAutocierraLasQueYaNoAplicanYLasReabreSiVuelven(t *testing.T) {
+	svc, entregas, alertas, bitacora, _ := servicioSembrado()
+	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	antes, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba)
+
+	// Se corrige el dato: desaparece el duplicado de registro (critico).
+	usosOriginales := entregas.usos
+	var sinDup []UsoPersistido
+	for _, u := range usosOriginales {
+		if u.ID != "u-dup2" {
+			sinDup = append(sinDup, u)
+		}
+	}
+	entregas.usos = sinDup
+
+	resumen, err := svc.Evaluar(t.Context(), periodoDePrueba, "")
+	if err != nil {
+		t.Fatalf("reevaluar: %v", err)
+	}
+	if resumen.Autocerradas != 1 {
+		t.Fatalf("Autocerradas = %d, se esperaba 1", resumen.Autocerradas)
+	}
+	if resumen.CriticasAbiertas != antes-1 {
+		t.Fatalf("criticas = %d, se esperaban %d: una critica arreglada no puede seguir bloqueando", resumen.CriticasAbiertas, antes-1)
+	}
+	var autocierre *Asiento
+	for i := range bitacora.asientos {
+		if bitacora.asientos[i].Hecho == HechoAlertaAutocerrada {
+			autocierre = &bitacora.asientos[i]
+		}
+	}
+	if autocierre == nil || autocierre.ActorID != actorSistema || autocierre.RefTipo != RefAlerta {
+		t.Fatalf("falta el asiento de autocierre con actor de sistema: %+v", autocierre)
+	}
+
+	// Vuelve el duplicado: la alerta autocerrada se reabre y vuelve a bloquear.
+	entregas.usos = usosOriginales
+	resumen, err = svc.Evaluar(t.Context(), periodoDePrueba, "")
+	if err != nil {
+		t.Fatalf("tercera pasada: %v", err)
+	}
+	if resumen.CriticasAbiertas != antes || resumen.Nuevas != 1 {
+		t.Fatalf("criticas = %d nuevas = %d, se esperaban %d y 1 (reabierta)", resumen.CriticasAbiertas, resumen.Nuevas, antes)
+	}
+	for _, a := range alertas.filas {
+		if a.Autocerrada {
+			t.Fatalf("la alerta %s sigue autocerrada tras volver a detectarse", a.ID)
+		}
+	}
+}
+
+func TestReevaluarNoTocaLasQueCerroUnaPersona(t *testing.T) {
+	svc, entregas, alertas, _, _ := servicioSembrado()
+	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	var dup string
+	for _, a := range alertas.filas {
+		if a.Tipo == anomalias.TipoDuplicadoRegistro {
+			dup = a.ID
+		}
+	}
+	if _, err := svc.Resolver(t.Context(), dup, "usr-2", "reenvio de la misma parrilla"); err != nil {
+		t.Fatalf("Resolver: %v", err)
+	}
+	entregas.usos = entregas.usos[:1]
+	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, ""); err != nil {
+		t.Fatalf("reevaluar: %v", err)
+	}
+	for _, a := range alertas.filas {
+		if a.ID == dup && (a.Autocerrada || a.ResueltaPor != "usr-2") {
+			t.Fatalf("la resolucion humana se piso: %+v", a)
+		}
 	}
 }
 

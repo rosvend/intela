@@ -1017,14 +1017,11 @@ type Calendario interface {
 // unica forma de que quien llama pueda decir "esta pasada encontro tres
 // anomalias que antes no estaban".
 //
-// # Una alerta ya resuelta NO se reabre
+// # Reapertura
 //
-// Volver a detectar algo que una persona marco como resuelto deja la fila como
-// esta. Es deliberado: la resolucion de #39 actua sobre el REGISTRO OFENSOR
-// -asignar la obra, descartar la fila-, asi que si la anomalia sigue ahi es
-// porque el registro sigue igual, y reabrirla borraria la decision de quien la
-// cerro sin que nadie lo pidiera. Queda escrito como limitacion conocida en el
-// ADR 0021.
+// Una alerta que cerro una PERSONA no se reabre al volver a detectarla; una que autocerro el
+// sistema si (ADR 0021).
+//
 // # Los metodos llevan "Alerta(s)" en el nombre y no es redundancia
 //
 // `Listar`, `Guardar` y `Resolver` a secas serian mas cortos y no caben: el
@@ -1061,6 +1058,10 @@ type RepositorioAlertas interface {
 	// que no es lo mismo: lo primero es un id equivocado, lo segundo es una
 	// carrera entre dos personas mirando el mismo tablero.
 	ResolverAlerta(ctx context.Context, id, actorID, nota string, cuando time.Time) (Alerta, error)
+
+	// AutocerrarAlertas cierra a nombre del sistema las abiertas del periodo que no estan en vigentes
+	// (misma clave natural) y devuelve las que cerro.
+	AutocerrarAlertas(ctx context.Context, periodo string, vigentes []Alerta, nota string, cuando time.Time) ([]Alerta, error)
 
 	// ContarAlertasSinResolver cuenta las abiertas de un periodo entre los
 	// tipos que se le pidan. Una lista de tipos vacia cuenta TODOS.

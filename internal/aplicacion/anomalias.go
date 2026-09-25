@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rosvend/intela/internal/dominio/anomalias"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
@@ -24,7 +25,12 @@ const (
 	HechoAnomaliasEvaluadas = "anomalias.evaluadas"
 	// HechoAlertaResuelta es la decision humana sobre una alerta.
 	HechoAlertaResuelta = "alerta.resuelta"
+	// HechoAlertaAutocerrada: una reevaluacion ya no detecto la anomalia y el sistema la cerro.
+	HechoAlertaAutocerrada = "alerta.autocerrada"
 )
+
+// notaAutocierre es la nota que deja el sistema al autocerrar una alerta.
+const notaAutocierre = "cerrada por el sistema: la reevaluacion del periodo ya no la detecta"
 
 // RefPeriodo y RefAlerta son los tipos de referencia de esos dos asientos.
 //
@@ -119,6 +125,9 @@ type ResumenEvaluacion struct {
 	// bloquea la distribucion. Es lo que lee la compuerta ([Anomalias.Bloqueantes]).
 	CriticasAbiertas int
 
+	// Autocerradas son las abiertas que esta pasada ya no detecto y el sistema cerro.
+	Autocerradas int
+
 	// UsosSinCotejar son las filas del periodo a las que no se les pudo
 	// componer clave de registro, asi que el detector de duplicados no las
 	// comparo con ninguna otra ([anomalias.SinClaveDeRegistro]).
@@ -203,17 +212,29 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		}
 		resumen.Nuevas = nuevas
 
+		cerradas, err := a.Alertas.AutocerrarAlertas(ctx, periodo, alertas, notaAutocierre, ahora)
+		if err != nil {
+			return fmt.Errorf("autocerrar las alertas rancias de %q: %w", periodo, err)
+		}
+		resumen.Autocerradas = len(cerradas)
+		for _, c := range cerradas {
+			if err := a.asentarAutocierre(ctx, c, ahora); err != nil {
+				return err
+			}
+		}
+
 		payload, err := json.Marshal(struct {
 			Periodo        string         `json:"periodo"`
 			Detectadas     int            `json:"detectadas"`
 			Nuevas         int            `json:"nuevas"`
+			Autocerradas   int            `json:"autocerradas"`
 			PorTipo        map[string]int `json:"por_tipo"`
 			Usos           int            `json:"usos_evaluados"`
 			Obras          int            `json:"obras_evaluadas"`
 			Entregas       int            `json:"entregas_cotejadas"`
 			UsosSinCotejar int            `json:"usos_sin_cotejar"`
 		}{
-			Periodo: periodo, Detectadas: resumen.Detectadas, Nuevas: nuevas, PorTipo: porTipo,
+			Periodo: periodo, Detectadas: resumen.Detectadas, Nuevas: nuevas, Autocerradas: resumen.Autocerradas, PorTipo: porTipo,
 			Usos: len(armado.Usos), Obras: len(armado.Obras), Entregas: len(armado.Entregas),
 			// El tamano del punto ciego queda en el asiento y no solo en la
 			// respuesta: quien audite la pasada dentro de diez anos tiene que
@@ -244,6 +265,36 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		return ResumenEvaluacion{}, err
 	}
 	return resumen, nil
+}
+
+// asentarAutocierre deja el asiento de una alerta que cerro el sistema (actor de sistema, ADR 0006).
+func (a Anomalias) asentarAutocierre(ctx context.Context, c Alerta, ahora time.Time) error {
+	payload, err := json.Marshal(struct {
+		Tipo       string `json:"tipo"`
+		Periodo    string `json:"periodo"`
+		RefTipo    string `json:"ref_tipo"`
+		RefID      string `json:"ref_id"`
+		RefTitular string `json:"ref_titular,omitempty"`
+		Detalle    string `json:"detalle"`
+		Nota       string `json:"nota"`
+	}{
+		Tipo: c.Tipo, Periodo: c.Periodo, RefTipo: c.RefTipo, RefID: c.RefID,
+		RefTitular: c.RefTitular, Detalle: c.Detalle, Nota: c.Nota,
+	})
+	if err != nil {
+		return fmt.Errorf("serializar el autocierre de la alerta %q: %w", c.ID, err)
+	}
+	if err := a.Bitacora.Asentar(ctx, Asiento{
+		Hecho:   HechoAlertaAutocerrada,
+		RefTipo: RefAlerta,
+		RefID:   c.ID,
+		ActorID: actorSistema,
+		Payload: payload,
+		Cuando:  ahora,
+	}); err != nil {
+		return fmt.Errorf("asentar el autocierre de la alerta %q: %w", c.ID, err)
+	}
+	return nil
 }
 
 // armarPeriodo reune lo que los detectores necesitan. Es la unica parte de

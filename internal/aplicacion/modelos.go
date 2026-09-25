@@ -426,6 +426,8 @@ type Alerta struct {
 	ResueltaPor string
 	ResueltaEn  *time.Time
 	Nota        string
+	// Autocerrada: la cerro el sistema porque una reevaluacion ya no la detecto (ResueltaPor vacio).
+	Autocerrada bool
 }
 
 // FiltroAlertas recorta el listado de alertas. Un campo en su valor cero NO

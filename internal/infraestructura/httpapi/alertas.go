@@ -68,6 +68,7 @@ type alertaJSON struct {
 	ResueltaPor string     `json:"resuelta_por,omitempty"`
 	ResueltaEn  *time.Time `json:"resuelta_en,omitempty"`
 	Nota        string     `json:"nota,omitempty"`
+	Autocerrada bool       `json:"autocerrada"`
 }
 
 // resumenEvaluacionJSON es lo que devuelve una pasada de deteccion.
@@ -80,6 +81,7 @@ type resumenEvaluacionJSON struct {
 	Periodo          string         `json:"periodo"`
 	Detectadas       int            `json:"detectadas"`
 	Nuevas           int            `json:"nuevas"`
+	Autocerradas     int            `json:"autocerradas"`
 	PorTipo          map[string]int `json:"por_tipo"`
 	CriticasAbiertas int            `json:"criticas_abiertas"`
 	UsosSinCotejar   int            `json:"usos_sin_cotejar"`
@@ -128,6 +130,7 @@ func aAlertaJSON(a aplicacion.Alerta) alertaJSON {
 		ResueltaPor: a.ResueltaPor,
 		ResueltaEn:  a.ResueltaEn,
 		Nota:        a.Nota,
+		Autocerrada: a.Autocerrada,
 	}
 }
 
@@ -264,6 +267,7 @@ func (a *API) evaluarAnomalias(w http.ResponseWriter, r *http.Request) {
 		Periodo:          resumen.Periodo,
 		Detectadas:       resumen.Detectadas,
 		Nuevas:           resumen.Nuevas,
+		Autocerradas:     resumen.Autocerradas,
 		PorTipo:          resumen.PorTipo,
 		CriticasAbiertas: resumen.CriticasAbiertas,
 		UsosSinCotejar:   resumen.UsosSinCotejar,

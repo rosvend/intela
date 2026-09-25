@@ -692,3 +692,73 @@ func TestCoautoresDeObras(t *testing.T) {
 		t.Fatal("CoautoresDeObras(nil) devolvio nil en vez de un mapa vacio")
 	}
 }
+
+// Alertas rancias (revision de #158, punto 7): arreglado el dato, la reevaluacion autocierra la
+// alerta con actor de sistema y asiento; si la anomalia vuelve, la alerta se reabre.
+func TestReevaluarAutocierraYReabreContraLaBase(t *testing.T) {
+	s, pool := sembrarPeriodoConAnomalias(t)
+	ctx := t.Context()
+	svc := servicioDeAnomalias(s, instanteAlertas)
+	primera, err := svc.Evaluar(ctx, periodoAlertas, usuarioAdmin)
+	if err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+
+	// Se corrige el dato: la fila duplicada sale del periodo.
+	if _, err := pool.Exec(ctx, `UPDATE usos SET fecha = '2025-01-09' WHERE id = 'u-dup2'`); err != nil {
+		t.Fatalf("corregir el uso: %v", err)
+	}
+	segunda, err := svc.Evaluar(ctx, periodoAlertas, "")
+	if err != nil {
+		t.Fatalf("reevaluar: %v", err)
+	}
+	if segunda.Autocerradas != 1 || segunda.CriticasAbiertas != primera.CriticasAbiertas-1 {
+		t.Fatalf("autocerradas = %d, criticas %d -> %d", segunda.Autocerradas, primera.CriticasAbiertas, segunda.CriticasAbiertas)
+	}
+	var (
+		autocerrada bool
+		porNulo     bool
+		nota        string
+	)
+	if err := pool.QueryRow(ctx,
+		`SELECT autocerrada, resuelta_por IS NULL, nota FROM alertas
+		  WHERE tipo = 'duplicado_registro' AND ref_id = 'u-dup2'`).Scan(&autocerrada, &porNulo, &nota); err != nil {
+		t.Fatalf("leer la alerta: %v", err)
+	}
+	if !autocerrada || !porNulo || nota == "" {
+		t.Fatalf("autocerrada=%v resuelta_por_nulo=%v nota=%q", autocerrada, porNulo, nota)
+	}
+	var asientos int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM asientos WHERE hecho = $1 AND actor_id IS NULL`, aplicacion.HechoAlertaAutocerrada).Scan(&asientos); err != nil {
+		t.Fatalf("contar asientos: %v", err)
+	}
+	if asientos != 1 {
+		t.Fatalf("asientos de autocierre = %d, se esperaba 1 con actor de sistema", asientos)
+	}
+
+	// El dato vuelve a estar mal: la alerta se reabre y vuelve a bloquear.
+	if _, err := pool.Exec(ctx, `UPDATE usos SET fecha = '2025-01-02' WHERE id = 'u-dup2'`); err != nil {
+		t.Fatalf("revertir el uso: %v", err)
+	}
+	tercera, err := svc.Evaluar(ctx, periodoAlertas, "")
+	if err != nil {
+		t.Fatalf("tercera pasada: %v", err)
+	}
+	if tercera.CriticasAbiertas != primera.CriticasAbiertas || tercera.Nuevas != 1 {
+		t.Fatalf("criticas = %d nuevas = %d, se esperaban %d y 1", tercera.CriticasAbiertas, tercera.Nuevas, primera.CriticasAbiertas)
+	}
+}
+
+// Una alerta no puede estar autocerrada Y firmada por una persona.
+func TestElEsquemaNoMezclaAutocierreYFirma(t *testing.T) {
+	s, pool := sembrarPeriodoConAnomalias(t)
+	if _, err := servicioDeAnomalias(s, instanteAlertas).Evaluar(t.Context(), periodoAlertas, usuarioAdmin); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	_, err := pool.Exec(t.Context(),
+		`UPDATE alertas SET resuelta = TRUE, autocerrada = TRUE, resuelta_por = $1, resuelta_en = now(), nota = 'x'`, usuarioAdmin)
+	if err == nil || !strings.Contains(err.Error(), "alerta_resuelta_tiene_firma") {
+		t.Fatalf("se esperaba alerta_resuelta_tiene_firma, fue %v", err)
+	}
+}

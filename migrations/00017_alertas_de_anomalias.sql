@@ -143,14 +143,17 @@ CREATE TABLE alertas (
   resuelta_por TEXT REFERENCES usuarios(id),
   resuelta_en  TIMESTAMPTZ,
   nota         TEXT NOT NULL DEFAULT '',
+  -- Cerrada por el sistema porque una reevaluacion ya no la detecto (ADR 0021).
+  autocerrada  BOOLEAN NOT NULL DEFAULT FALSE,
 
-  -- Una alerta resuelta dice quien y cuando. Sin esto se puede marcar como
-  -- resuelta sin firma, que es justo lo que el ADR 0006 no admite de una
-  -- decision manual; y al reves, una sin resolver no puede traer firma.
+  -- Una alerta resuelta dice quien y cuando: una persona (resuelta_por) o el
+  -- sistema (autocerrada), nunca las dos ni ninguna. Sin resolver, nada.
   CONSTRAINT alerta_resuelta_tiene_firma
     CHECK (
-      (resuelta AND resuelta_por IS NOT NULL AND resuelta_en IS NOT NULL)
-      OR (NOT resuelta AND resuelta_por IS NULL AND resuelta_en IS NULL)
+      (resuelta AND resuelta_en IS NOT NULL
+        AND ((resuelta_por IS NOT NULL AND NOT autocerrada)
+          OR (resuelta_por IS NULL AND autocerrada)))
+      OR (NOT resuelta AND NOT autocerrada AND resuelta_por IS NULL AND resuelta_en IS NULL)
     ),
 
   -- Resolver exige nota: es la justificacion auditable (ADR 0021).

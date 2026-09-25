@@ -24,36 +24,32 @@ var _ aplicacion.RepositorioAlertas = (*Store)(nil)
 // puntero en el modelo, y por eso NO lleva COALESCE: un cero de time.Time
 // seria un instante del ano 1 indistinguible de un dato mal escrito.
 const columnasAlerta = `id::text, periodo, tipo, ref_tipo, ref_id, ref_titular, detalle,
-	detectada, resuelta, COALESCE(resuelta_por, ''), resuelta_en, nota`
+	detectada, resuelta, COALESCE(resuelta_por, ''), resuelta_en, nota, autocerrada`
 
 // GuardarAlertas escribe el lote en UNA sentencia (INSERT ... SELECT FROM unnest) y devuelve cuantas entraron.
 //
-// ON CONFLICT DO NOTHING sobre la clave natural hace la idempotencia en la base, sin carrera.
+// ON CONFLICT sobre la clave natural hace la idempotencia en la base, sin carrera. Una alerta que el
+// sistema autocerro y vuelve a aparecer se REABRE (cuenta como nueva); una que cerro una persona no se toca.
 // Participa en la unidad de trabajo abierta si la hay (enTransaccionDe).
 func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta) (int, error) {
+	alertas = sinClavesRepetidas(alertas)
 	if len(alertas) == 0 {
 		return 0, nil
 	}
-
-	n := len(alertas)
-	periodos, tipos := make([]string, n), make([]string, n)
-	refTipos, refIDs, refTitulares := make([]string, n), make([]string, n), make([]string, n)
-	detalles, detectadas := make([]string, n), make([]time.Time, n)
-	for i, a := range alertas {
-		periodos[i], tipos[i] = a.Periodo, a.Tipo
-		refTipos[i], refIDs[i], refTitulares[i] = a.RefTipo, a.RefID, a.RefTitular
-		detalles[i], detectadas[i] = a.Detalle, a.Detectada
-	}
+	c := columnasDeLote(alertas)
 
 	nuevas := 0
 	err := s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		etiqueta, err := tx.Exec(ctx,
 			`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, ref_titular, detalle, detectada)
 			 SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[])
-			 ON CONFLICT ON CONSTRAINT alerta_unica_por_hallazgo DO NOTHING`,
-			periodos, tipos, refTipos, refIDs, refTitulares, detalles, detectadas)
+			 ON CONFLICT ON CONSTRAINT alerta_unica_por_hallazgo DO UPDATE
+			    SET resuelta = FALSE, autocerrada = FALSE, resuelta_por = NULL, resuelta_en = NULL,
+			        nota = '', detalle = EXCLUDED.detalle, detectada = EXCLUDED.detectada
+			  WHERE alertas.autocerrada`,
+			c.periodos, c.tipos, c.refTipos, c.refIDs, c.refTitulares, c.detalles, c.detectadas)
 		if err != nil {
-			return traducirError(err, "guardar %d alertas del periodo %q", n, alertas[0].Periodo)
+			return traducirError(err, "guardar %d alertas del periodo %q", len(alertas), alertas[0].Periodo)
 		}
 		nuevas = int(etiqueta.RowsAffected())
 		return nil
@@ -62,6 +58,75 @@ func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta)
 		return 0, err
 	}
 	return nuevas, nil
+}
+
+// AutocerrarAlertas cierra, a nombre del sistema, las abiertas del periodo que no estan en vigentes.
+func (s *Store) AutocerrarAlertas(
+	ctx context.Context, periodo string, vigentes []aplicacion.Alerta, nota string, cuando time.Time,
+) ([]aplicacion.Alerta, error) {
+	c := columnasDeLote(vigentes)
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
+		`UPDATE alertas a
+		    SET resuelta = TRUE, autocerrada = TRUE, resuelta_en = $6, nota = $7
+		  WHERE a.periodo = $1 AND NOT a.resuelta
+		    AND NOT EXISTS (
+		      SELECT 1 FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS v(tipo, ref_tipo, ref_id, ref_titular)
+		       WHERE v.tipo = a.tipo AND v.ref_tipo = a.ref_tipo AND v.ref_id = a.ref_id AND v.ref_titular = a.ref_titular)
+		  RETURNING `+columnasAlerta,
+		periodo, c.tipos, c.refTipos, c.refIDs, c.refTitulares, cuando, nota)
+	if err != nil {
+		return nil, traducirError(err, "autocerrar alertas de %q", periodo)
+	}
+	defer filas.Close()
+
+	cerradas := make([]aplicacion.Alerta, 0)
+	for filas.Next() {
+		a, err := escanearAlerta(filas)
+		if err != nil {
+			return nil, traducirError(err, "escanear alerta autocerrada")
+		}
+		cerradas = append(cerradas, a)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "autocerrar alertas de %q", periodo)
+	}
+	return cerradas, nil
+}
+
+// loteDeAlertas son las columnas de un lote, una por arreglo, para unnest.
+type loteDeAlertas struct {
+	periodos, tipos, refTipos, refIDs, refTitulares, detalles []string
+	detectadas                                                []time.Time
+}
+
+func columnasDeLote(alertas []aplicacion.Alerta) loteDeAlertas {
+	n := len(alertas)
+	c := loteDeAlertas{
+		periodos: make([]string, n), tipos: make([]string, n), refTipos: make([]string, n),
+		refIDs: make([]string, n), refTitulares: make([]string, n), detalles: make([]string, n),
+		detectadas: make([]time.Time, n),
+	}
+	for i, a := range alertas {
+		c.periodos[i], c.tipos[i] = a.Periodo, a.Tipo
+		c.refTipos[i], c.refIDs[i], c.refTitulares[i] = a.RefTipo, a.RefID, a.RefTitular
+		c.detalles[i], c.detectadas[i] = a.Detalle, a.Detectada
+	}
+	return c
+}
+
+// sinClavesRepetidas deja la primera alerta de cada clave natural: ON CONFLICT DO UPDATE no admite tocar la misma fila dos veces.
+func sinClavesRepetidas(alertas []aplicacion.Alerta) []aplicacion.Alerta {
+	vistas := make(map[[5]string]bool, len(alertas))
+	out := make([]aplicacion.Alerta, 0, len(alertas))
+	for _, a := range alertas {
+		k := [5]string{a.Periodo, a.Tipo, a.RefTipo, a.RefID, a.RefTitular}
+		if vistas[k] {
+			continue
+		}
+		vistas[k] = true
+		out = append(out, a)
+	}
+	return out
 }
 
 // ListarAlertas sirve la bandeja, de la mas reciente a la mas antigua.
@@ -219,7 +284,7 @@ func escanearAlerta(fila pgx.Row) (aplicacion.Alerta, error) {
 	var a aplicacion.Alerta
 	err := fila.Scan(
 		&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
-		&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota,
+		&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada,
 	)
 	return a, err
 }

@@ -182,11 +182,18 @@ adaptadores para que no puedan separarse.
   o la entrega, asignar la obra o el tipo) es de #39; la issue de seguimiento esta redactada en
   `docs/planes/37/issues-de-seguimiento.md`.
 
-- **Una alerta resuelta no se reabre**, aunque una pasada posterior vuelva a detectar la misma
-  anomalia (`ON CONFLICT DO NOTHING`, no `DO UPDATE`). Es deliberado: la resolucion de #39 actua
-  sobre el registro ofensor, asi que si la anomalia sigue ahi es porque el registro sigue igual, y
-  reabrirla borraria la decision de quien la cerro. La contrapartida es real y queda declarada: una
-  alerta cerrada por error hay que reabrirla a mano en la base hasta que #39 traiga esa operacion.
+- **Alertas rancias: autocierre y reapertura.** Cada pasada de `Evaluar`, en la misma unidad que
+  guarda las alertas, cierra a nombre del sistema las abiertas del periodo que ya no detecta
+  (`autocerrada = true`, `resuelta_por` NULL, nota fija) y deja un asiento `alerta.autocerrada`
+  con el actor de sistema por cada una. Asi una critica ya arreglada deja de bloquear la
+  compuerta sin que nadie la cierre a mano. Si la anomalia vuelve, la fila autocerrada **se
+  reabre** (`ON CONFLICT ... DO UPDATE ... WHERE autocerrada`) y cuenta en `nuevas`.
+
+  Una alerta que cerro una **persona** no se toca en ninguno de los dos sentidos: no se reabre
+  aunque la anomalia siga, porque reabrirla borraria una decision firmada. La contrapartida queda
+  declarada: una alerta cerrada por error hay que reabrirla a mano en la base hasta que #39
+  traiga esa operacion. Tampoco se reescribe el `detalle` de una alerta que sigue abierta: es el
+  de la primera deteccion.
 
 - El detector de `tipo_obra_sin_mapear` levanta **una alerta por fila**, no por obra. Sobre la
   parrilla real de Caracol eso son tantas alertas como filas identificadas, porque su mapa de
