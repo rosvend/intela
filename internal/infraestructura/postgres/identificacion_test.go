@@ -616,7 +616,7 @@ func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersis
 func (i ingestaDePrueba) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
-func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
+func (i ingestaDePrueba) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
 
