@@ -779,6 +779,10 @@ export interface paths {
          *     dejar pasar. Al entrar a `importe_obra` del circuito nacional invoca
          *     el motor puro de valorizacion; el internacional nunca la alcanza
          *     (`RD 7.4`).
+         *
+         *     Al salir de `deducciones` (hacia `importe_obra` o
+         *     `liquidacion_parcial`) evalua las anomalias del periodo y no deja
+         *     pasar si queda alguna critica sin resolver (ADR 0021).
          */
         post: operations["avanzarEtapaProceso"];
         delete?: never;
@@ -4763,6 +4767,9 @@ export interface operations {
              *     Tambien 409 si otra transicion escribio la fila entre que este
              *     request la leyo y la escribio (control de concurrencia
              *     optimista): releer el proceso y reintentar resuelve esto.
+             *
+             *     Y 409 si el periodo tiene anomalias criticas sin resolver al
+             *     salir de `deducciones`: se resuelven en `/alertas`.
              */
             409: {
                 headers: {

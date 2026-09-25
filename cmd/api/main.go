@@ -190,6 +190,7 @@ func ejecutar(log *slog.Logger) error {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Anomalias:     anomalias,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{

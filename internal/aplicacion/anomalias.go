@@ -85,11 +85,7 @@ type LectorDeCoautores interface {
 // `internal/dominio/anomalias` y `R-04` lo decide
 // [repertorio.Declaracion.Completa]. No toca dinero y no reparte.
 //
-// No bloquea nada por si sola tampoco: [Anomalias.CriticasAbiertas] expone el
-// predicado, y quien lo consume es la compuerta de #34 -- que hoy no existe:
-// `/admin/pipeline` es un stub y `cmd/worker` registra el trabajo de reparto
-// como pendiente. Inventarle aqui el cableado seria cablear contra una firma
-// que todavia no esta escrita.
+// Es ademas la [CompuertaAnomalias] que [Procesos] consulta antes de calcular (ver [Anomalias.Bloqueantes]).
 type Anomalias struct {
 	Entregas LecturaDeEntregas
 	// Declaraciones es el MISMO puerto estrecho que usa el catalogo: la
@@ -120,7 +116,7 @@ type ResumenEvaluacion struct {
 	PorTipo map[string]int
 
 	// CriticasAbiertas son las alertas sin resolver del periodo cuyo tipo
-	// bloquea la distribucion. Es el predicado que consumira #34.
+	// bloquea la distribucion. Es lo que lee la compuerta ([Anomalias.Bloqueantes]).
 	CriticasAbiertas int
 
 	// UsosSinCotejar son las filas del periodo a las que no se les pudo
@@ -499,19 +495,16 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 	return resuelta, nil
 }
 
-// CriticasAbiertas cuenta las alertas sin resolver de un periodo cuyo tipo
-// BLOQUEA la distribucion.
-//
-// Es el predicado de la compuerta de OE-5 -- "resolver antes del reparto" -- y
-// esta expuesto aqui, suelto, a proposito: quien lo tiene que consumir es el
-// proceso de reparto de #33/#34, que hoy no existe (`/admin/pipeline` es un
-// stub y `cmd/worker` registra TrabajoEjecutarReparto como pendiente).
-// Cablearlo ahora seria cablearlo contra una firma que nadie ha escrito; lo
-// que si se puede dejar hecho es la pregunta, con su criterio en el dominio.
-//
-// Que tipos bloquean lo decide [anomalias.EsCritica] y no este metodo: la
-// lista viaja al adaptador como parametro para que no haya un segundo
-// criterio en el SQL.
+// Bloqueantes implementa [CompuertaAnomalias]: evalua el periodo AHORA y luego cuenta las criticas abiertas.
+func (a Anomalias) Bloqueantes(ctx context.Context, periodo string) (int, error) {
+	resumen, err := a.Evaluar(ctx, periodo, actorSistema)
+	if err != nil {
+		return 0, fmt.Errorf("compuerta de anomalias de %q: %w", periodo, err)
+	}
+	return resumen.CriticasAbiertas, nil
+}
+
+// CriticasAbiertas cuenta las alertas guardadas sin resolver de tipo critico ([anomalias.EsCritica]); no evalua.
 func (a Anomalias) CriticasAbiertas(ctx context.Context, periodo string) (int, error) {
 	periodo, err := recaudo.ValidarPeriodo(periodo)
 	if err != nil {

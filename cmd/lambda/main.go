@@ -224,6 +224,7 @@ func construir() (http.Handler, error) {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Anomalias:     anomalias,
 	}
 
 	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.

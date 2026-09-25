@@ -637,6 +637,11 @@ type FilaParametro struct {
 	Reglamento      string
 }
 
+// CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo; nunca cuenta sin mirar (ADR 0021).
+type CompuertaAnomalias interface {
+	Bloqueantes(ctx context.Context, periodo string) (int, error)
+}
+
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
 //
 // Nombres largos y no Guardar/PorID a secas, por la misma razon que

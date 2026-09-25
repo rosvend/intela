@@ -76,6 +76,22 @@ func TestLambdaCableaLosMismosCasosQueLaAPI(t *testing.T) {
 // que este test tiene que distinguir de un cableado de verdad.
 func camposDeCasos(t *testing.T, nombreLogico, ruta string) []string {
 	t.Helper()
+	return camposDeLiteral(t, nombreLogico, ruta, "httpapi", "Casos")
+}
+
+// TestAmbosBinariosCableanLaCompuertaDeAnomalias: sin `Anomalias` en Procesos la corrida no sale de deducciones (#37).
+func TestAmbosBinariosCableanLaCompuertaDeAnomalias(t *testing.T) {
+	for _, ruta := range []string{"../api/main.go", "main.go"} {
+		campos := camposDeLiteral(t, ruta, ruta, "aplicacion", "Procesos")
+		if !slices.Contains(campos, "Anomalias") {
+			t.Errorf("%s: aplicacion.Procesos{...} no cablea Anomalias (compuerta de #37); campos: %v", ruta, campos)
+		}
+	}
+}
+
+// camposDeLiteral devuelve los nombres de campo del literal `paquete.Tipo{...}` de un main.
+func camposDeLiteral(t *testing.T, nombreLogico, ruta, paqueteBuscado, tipoBuscado string) []string {
+	t.Helper()
 
 	fichero, err := parser.ParseFile(token.NewFileSet(), ruta, nil, 0)
 	if err != nil {
@@ -89,11 +105,11 @@ func camposDeCasos(t *testing.T, nombreLogico, ruta string) []string {
 			return true
 		}
 		sel, ok := lit.Type.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Casos" {
+		if !ok || sel.Sel.Name != tipoBuscado {
 			return true
 		}
 		paquete, ok := sel.X.(*ast.Ident)
-		if !ok || paquete.Name != "httpapi" {
+		if !ok || paquete.Name != paqueteBuscado {
 			return true
 		}
 		for _, elem := range lit.Elts {

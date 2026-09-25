@@ -156,13 +156,22 @@ adaptadores para que no puedan separarse.
   contabilidad veria la entrada de menu y comeria 403 -- y `web/src/tablero/ausente.ts` deja escrito
   que un 403 *"es un bug de permisos y debe verse"*, o sea banner rojo.
 
-- `GET /alertas` es una lectura pura. Nada puebla la tabla hasta que alguien llama a
-  `POST /alertas/evaluacion`, que es el disparador MANUAL mientras la compuerta de #34 no exista.
+- `GET /alertas` es una lectura pura. `POST /alertas/evaluacion` sigue siendo el disparador
+  manual para mirar el tablero antes de tiempo.
 
-- **La compuerta de #34 no se cablea aqui.** `/admin/pipeline` es un andamio (`superficieOK`) y
-  `cmd/worker` registra `TrabajoEjecutarReparto` como pendiente: no hay donde enchufarla. Lo que si
-  queda hecho es la pregunta — `Anomalias.CriticasAbiertas(periodo)` — con su criterio en el
-  dominio. #34 la consume; hasta entonces la cifra viaja en la respuesta de la evaluacion.
+- **La compuerta de dinero vive en `Procesos.AvanzarEtapa` (#34).** Al salir de `deducciones`
+  (hacia `importe_obra` en el nacional, `liquidacion_parcial` en el internacional) el proceso
+  consulta el puerto `CompuertaAnomalias`. Su implementacion, `Anomalias.Bloqueantes`, **evalua
+  primero** el periodo con el actor de sistema y despues cuenta las criticas abiertas: un periodo
+  nunca evaluado, o que recibio entregas despues de la ultima pasada, no puede dar "0 porque nadie
+  miro". Si queda alguna, `ErrAnomaliasCriticasAbiertas` y la API responde 409. Sin la compuerta
+  cableada la transicion falla (cerrada, no abierta); `cmd/api` y `cmd/lambda` la cablean y
+  `cmd/lambda/cableado_test.go` lo vigila sobre el AST. `cmd/worker` no la necesita: solo abre
+  corridas, nunca avanza.
+
+  La compuerta es por **periodo**, no por bolsa: una critica de cualquier fuente del periodo
+  detiene todas sus corridas. Es mas estricto de lo necesario para una bolsa de otro canal, y es
+  lo que se puede afirmar hoy sin una relacion alerta -> bolsa.
 
 - **Una alerta resuelta no se reabre**, aunque una pasada posterior vuelva a detectar la misma
   anomalia (`ON CONFLICT DO NOTHING`, no `DO UPDATE`). Es deliberado: la resolucion de #39 actua

@@ -347,6 +347,9 @@ var (
 	// releer el estado actual y decidir de nuevo, no sobreescribir a ciegas
 	// lo que la primera ya guardo.
 	ErrProcesoConflictoDeConcurrencia = errors.New("el proceso cambio de estado mientras se procesaba esta peticion, vuelva a intentar")
+
+	// ErrAnomaliasCriticasAbiertas: el periodo tiene alertas criticas sin resolver y la corrida no puede entrar a calcular (#37, ADR 0021).
+	ErrAnomaliasCriticasAbiertas = errors.New("el periodo tiene anomalias criticas sin resolver")
 )
 
 // ErrorParametroAusente nombra las clausulas normativas que no tienen valor

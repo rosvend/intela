@@ -672,6 +672,25 @@ func TestCriticasAbiertasSoloCuentaLosTiposQueBloquean(t *testing.T) {
 	}
 }
 
+func TestBloqueantesEvaluaAntesDeContar(t *testing.T) {
+	svc, entregas, alertas, bitacora, _ := servicioSembrado()
+
+	// Periodo nunca evaluado: la bandeja esta vacia y aun asi no puede dar 0.
+	n, err := svc.Bloqueantes(t.Context(), periodoDePrueba)
+	if err != nil {
+		t.Fatalf("Bloqueantes: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("Bloqueantes = %d, se esperaban 3 criticas tras evaluar", n)
+	}
+	if alertas.guardados != 1 || entregas.periodoDeUsos != periodoDePrueba {
+		t.Fatalf("la compuerta no evaluo el periodo (guardados=%d, periodo=%q)", alertas.guardados, entregas.periodoDeUsos)
+	}
+	if len(bitacora.asientos) == 0 || bitacora.asientos[0].ActorID != actorSistema {
+		t.Fatalf("la pasada de la compuerta debe asentarse con el actor de sistema: %+v", bitacora.asientos)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cableado
 
