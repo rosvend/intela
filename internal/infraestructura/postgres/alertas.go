@@ -266,9 +266,7 @@ func (s *Store) ResolverAlerta(
 		return a, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		// Un id que no es un UUID entra por aqui (SQLSTATE 22P02) y sale como
-		// error de formato, no como 404: la ruta es /alertas/{id} y un id
-		// inventado no tiene por que parecer un fallo del servidor.
+		// La API corta un id no UUID en el handler (400); si otro llamador lo pasa, el cast falla aqui (22P02) y no es ErrNoEncontrado.
 		return aplicacion.Alerta{}, traducirError(err, "resolver la alerta %q", id)
 	}
 

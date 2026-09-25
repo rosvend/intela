@@ -414,8 +414,8 @@ func (a Anomalias) obrasDelPeriodo(ctx context.Context, usos []anomalias.Uso) ([
 		// persona le falta UNA vez.
 		//
 		// Sin compactar, esa obra levantaba DOS hallazgos identicos. El segundo
-		// no llega a la tabla -- la clave natural (periodo, tipo, ref_tipo,
-		// ref_id, ref_titular) lo absorbe con ON CONFLICT DO NOTHING -- pero SI
+		// no llega a la tabla -- GuardarAlertas deduplica el lote por la clave
+		// natural (periodo, tipo, ref_tipo, ref_id, ref_titular) -- pero SI
 		// cuenta en Detectadas y en PorTipo, asi que el resumen decia 2 donde la
 		// bandeja tiene 1. Y ese resumen se serializa en el asiento de la
 		// bitacora, que es append-only y no se corrige nunca (ADR 0006).
