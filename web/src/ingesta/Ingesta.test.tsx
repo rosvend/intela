@@ -112,6 +112,72 @@ describe("ListaCargas", () => {
     vi.unstubAllGlobals();
   });
 
+  it("pide la primera pagina del listado con limite y desplazamiento", async () => {
+    vi.mocked(fetch).mockResolvedValue(json([]));
+
+    render(<ListaCargas periodo="" />);
+
+    await screen.findByText("Aún no hay cargas registradas.");
+    expect(pedido(0)).toBe("/api/reportes?limite=100&desplazamiento=0");
+  });
+
+  it("el listado se pagina y cada pagina dice su tramo", async () => {
+    const paginaLlena = Array.from({ length: 100 }, (_, i) => ({
+      ...cargaConRechazos,
+      id: `rep-${i}`,
+      rechazados: 0,
+    }));
+    // Respuesta fresca por llamada, como `simularServidor`: un `Response`
+    // preconstruido y grande se sirve una vez y el cuerpo no se deja leer
+    // despues (jsdom), que es justo el fallo que esta prueba no busca.
+    vi.mocked(fetch).mockImplementation(async (entrada) => {
+      const url = String(entrada);
+      if (url.includes("desplazamiento=100")) return json([]);
+      return json(paginaLlena);
+    });
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 100", {}, { timeout: 3000 });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de cargas" }),
+    );
+    await screen.findByText("No hay más cargas.");
+    expect(pedido(1)).toBe("/api/reportes?limite=100&desplazamiento=100");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página anterior de cargas" }),
+    );
+    await screen.findByText("Cargas 1 a 100");
+    expect(pedido(2)).toBe("/api/reportes?limite=100&desplazamiento=0");
+  });
+
+  it("una pagina corta es la ultima: sin boton de siguiente", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json([{ ...cargaConRechazos, rechazados: 0 }]),
+    );
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 1");
+
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de cargas" }),
+    ).toHaveProperty("disabled", true);
+  });
+
+  it("en la primera pagina el boton Atras esta deshabilitado", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json([{ ...cargaConRechazos, rechazados: 0 }]),
+    );
+
+    render(<ListaCargas periodo="" />);
+    await screen.findByText("Cargas 1 a 1");
+
+    expect(
+      screen.getByRole("button", { name: "Página anterior de cargas" }),
+    ).toHaveProperty("disabled", true);
+  });
+
   it("pide las cargas del periodo en la query", async () => {
     vi.mocked(fetch).mockResolvedValue(json([]));
 
@@ -120,7 +186,9 @@ describe("ListaCargas", () => {
     await screen.findByText(
       "No hay cargas registradas para el periodo 2026-01.",
     );
-    expect(pedido(0)).toBe("/api/reportes?periodo=2026-01");
+    expect(pedido(0)).toBe(
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    );
   });
 
   it("codifica el periodo para que no parta la query", async () => {
@@ -129,7 +197,9 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="2026-01&fuente=x" />);
 
     await screen.findByText(/No hay cargas registradas/);
-    expect(pedido(0)).toBe("/api/reportes?periodo=2026-01%26fuente%3Dx");
+    expect(pedido(0)).toBe(
+      "/api/reportes?periodo=2026-01%26fuente%3Dx&limite=100&desplazamiento=0",
+    );
   });
 
   it("sin periodo pide todas las cargas y lo dice si no hay ninguna", async () => {
@@ -138,7 +208,7 @@ describe("ListaCargas", () => {
     render(<ListaCargas periodo="" />);
 
     await screen.findByText("Aún no hay cargas registradas.");
-    expect(pedido(0)).toBe("/api/reportes");
+    expect(pedido(0)).toBe("/api/reportes?limite=100&desplazamiento=0");
   });
 
   it("mientras llega la respuesta muestra que esta cargando", () => {
@@ -379,14 +449,12 @@ describe("ListaCargas", () => {
     // que casualmente llegaron".
     expect(screen.getByText("Rechazos 1 a 3 de 3")).toBeTruthy();
     // En la ultima pagina no hay a donde seguir, y hacia atras no hay nada.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    expect(screen.getByRole("button", { name: "Anterior" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.getByRole("button", { name: "Página anterior de rechazos" }),
+    ).toHaveProperty("disabled", true);
     // La columna "Id" pinta el id entero, con sus 64 hex de huella: es la
     // unica vista que lo muestra a su ancho real (~70 caracteres).
     expect(within(log).getByText(rechazos[0].id)).toBeTruthy();
@@ -439,30 +507,34 @@ describe("ListaCargas", () => {
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=0`,
     );
     // Hay mas, asi que se puede seguir.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    );
     await screen.findByText("Rechazos 101 a 200 de 250");
     expect(pedido(2)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    );
     await screen.findByText("Rechazos 201 a 250 de 250");
     expect(pedido(3)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=200`,
     );
     // Ultima pagina: se apaga el siguiente y se puede volver.
-    expect(screen.getByRole("button", { name: "Siguiente" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      screen.getByRole("button", { name: "Página siguiente de rechazos" }),
+    ).toHaveProperty("disabled", true);
     // Volver atras pide la pagina anterior otra vez: no hay cache.
     vi.mocked(fetch).mockResolvedValueOnce(json(pagina(100, 100)));
-    fireEvent.click(screen.getByRole("button", { name: "Anterior" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Página anterior de rechazos" }),
+    );
     await screen.findByText("Rechazos 101 a 200 de 250");
     expect(pedido(4)).toBe(
       `/api/reportes/${ID_NETFLIX}/rechazos?limite=100&desplazamiento=100`,
@@ -765,7 +837,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
     ).toBeNull();
     expect(screen.getByLabelText("Mes")).toHaveProperty("value", "2026-01");
     await screen.findByText(VACIO_2026_01);
-    expect(getsDelListado()).toEqual(["/api/reportes?periodo=2026-01"]);
+    expect(getsDelListado()).toEqual([
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    ]);
 
     // Si la URL cambia por fuera del campo (aqui, el enlace de la nav), el
     // campo la sigue en vez de ensenar un periodo que ya no se aplica.
@@ -814,7 +888,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
     // El listado se remonta al subir, vuelve a pedirse y trae la carga nueva.
     await screen.findByRole("table", { name: "Cargas hechas" });
     expect(getsDelListado()).toHaveLength(pedidosAntes + 1);
-    expect(getsDelListado().at(-1)).toBe("/api/reportes?periodo=2026-01");
+    expect(getsDelListado().at(-1)).toBe(
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
+    );
   });
 
   it("un archivo mal formado muestra el 400 tal cual, sin recargar ni navegar", async () => {
@@ -1063,7 +1139,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
 
     montarApp("/ingesta");
     await screen.findByText("Aún no hay cargas registradas.");
-    expect(getsDelListado()).toEqual(["/api/reportes"]);
+    expect(getsDelListado()).toEqual([
+      "/api/reportes?limite=100&desplazamiento=0",
+    ]);
 
     elegirFuente("caracol");
     elegirArchivo(archivoCaracol());
@@ -1082,8 +1160,8 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(screen.queryByText(ERROR_SIN_PERIODO)).toBeNull();
     await screen.findByText(VACIO_2026_01);
     expect(getsDelListado()).toEqual([
-      "/api/reportes",
-      "/api/reportes?periodo=2026-01",
+      "/api/reportes?limite=100&desplazamiento=0",
+      "/api/reportes?periodo=2026-01&limite=100&desplazamiento=0",
     ]);
 
     // Vaciarlo lo quita de la URL y el listado vuelve a traer todo.
@@ -1106,8 +1184,8 @@ describe("pantalla de ingesta (integracion con App)", () => {
     expect(ubicacion()).toBe("/ingesta?periodo=2026");
     await screen.findByText("No hay cargas registradas para el periodo 2026.");
     expect(getsDelListado()).toEqual([
-      "/api/reportes",
-      "/api/reportes?periodo=2026",
+      "/api/reportes?limite=100&desplazamiento=0",
+      "/api/reportes?periodo=2026&limite=100&desplazamiento=0",
     ]);
     expect(botonSubir().textContent).toBe("Subir a 2026");
     expect(botonSubir()).toHaveProperty("disabled", false);
@@ -1162,7 +1240,9 @@ describe("pantalla de ingesta (integracion con App)", () => {
       // El periodo de la URL se consulta y el listado trae el 400.
       expect(ubicacion()).toBe(`/ingesta?periodo=${periodo}`);
       await vi.waitFor(() =>
-        expect(getsDelListado()).toContain(`/api/reportes?periodo=${periodo}`),
+        expect(getsDelListado()).toContain(
+          `/api/reportes?periodo=${periodo}&limite=100&desplazamiento=0`,
+        ),
       );
       const alertas = await screen.findAllByRole("alert");
       expect(alertas.some((a) => a.textContent?.includes(mensaje))).toBe(true);

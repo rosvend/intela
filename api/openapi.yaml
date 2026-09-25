@@ -2347,6 +2347,10 @@ paths:
         Es la unica lectura que responde "¿entro completo lo que subi?": el
         recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
 
+        Va paginado con la misma forma que el resto de listados (limite y
+        desplazamiento, mismo defecto y mismo techo): el listado crece sin
+        cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+
         Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
         de la que salio (`sha256`, `clave_objeto`), que es lo que permite
         volver al archivo EXACTO que pondero una corrida y no "al archivo de
@@ -2373,6 +2377,29 @@ paths:
             type: string
             pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: 2026-01
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+            la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
           description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
@@ -2383,7 +2410,8 @@ paths:
                 items:
                   $ref: "#/components/schemas/Carga"
         "400":
-          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe.
+          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe,
+            o el limite y el desplazamiento no son enteros validos.
           content:
             application/json:
               schema:
@@ -2520,8 +2548,7 @@ paths:
         "409":
           description: |
             Esa fuente ya entrego exactamente esos bytes -lo decide el
-            UNIQUE (sha256, fuente), no el nombre del archivo-, o la boveda ya
-            tiene contenido distinto bajo esa huella.
+            UNIQUE (sha256, fuente), no el nombre del archivo-.
           content:
             application/json:
               schema:
@@ -2540,6 +2567,22 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: el archivo pasa de 32 MiB
+        "500":
+          description: |
+            Incidente del servidor al recibir o registrar la entrega: el
+            temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+            permiso o lleno), fallo la lectura del archivo ya recibido, o la
+            boveda ya tiene contenido distinto bajo esa huella (evidencia
+            corrupta). No es un conflicto que el cliente pueda resolver
+            reintentando con otro archivo: hay que avisar a operacion. El
+            detalle queda en el log a nivel Error; el cuerpo no filtra la
+            causa interna.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la boveda ya tiene contenido distinto bajo esa huella; avise a operacion
         "503":
           description: Esta instalacion no cablea la ingesta.
           content:
