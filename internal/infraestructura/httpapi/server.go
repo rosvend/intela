@@ -64,6 +64,7 @@ type API struct {
 	recaudo       Recaudo
 	procesos      Procesos
 	cola          ColaRevision
+	anomalias     Anomalias
 	auditoria     Auditoria
 	opts          Opciones
 	log           *slog.Logger
@@ -87,12 +88,11 @@ type Casos struct {
 	Recaudo       Recaudo
 	Procesos      Procesos
 	Cola          ColaRevision
+	Anomalias     Anomalias
 	Auditoria     Auditoria
 }
 
-// ColaRevision lista lo que espera ojo humano: filas que no se pudieron
-// normalizar, y mas adelante las anomalias del #37. Se declara en el
-// consumidor, igual que [Catalogo].
+// ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
@@ -119,6 +119,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		recaudo:       casos.Recaudo,
 		procesos:      casos.Procesos,
 		cola:          casos.Cola,
+		anomalias:     casos.Anomalias,
 		auditoria:     casos.Auditoria,
 		opts:          opts,
 		log:           log,
@@ -235,6 +236,24 @@ func (a *API) Router() http.Handler {
 			))
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
+		})
+
+		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
+		protegido.Route("/alertas", func(al chi.Router) {
+			al.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.conAnomalias(a.listarAlertas))
+			})
+			al.Group(func(escritura chi.Router) {
+				escritura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+				))
+				escritura.Post("/evaluacion", a.conAnomalias(a.evaluarAnomalias))
+				escritura.Post("/{id}/resolver", a.conAnomalias(a.resolverAlerta))
+			})
 		})
 
 		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,

@@ -328,18 +328,20 @@ func (d *Dataset) reportes() {
 	// Las filas de TV reproducen el ejemplo numerico de formulas.md / RD 9.1.1
 	// (Pelicula X, Serie Y) y anaden unitario y sketch para ejercitar la
 	// tabla de ponderacion completa (5.0 / 2.8 / 1.3 / 0.8).
+	// Fecha y hora de emision: son parte de la clave de registro de Caracol, y sin ellas el
+	// detector de duplicados no coteja estas filas (revision de #158, punto 8).
 	tv := []aplicacion.UsoPersistido{
-		usoTV(FuenteTV, ObraCine, "Pelicula X", "PX-1", "cinematografica", "70", 1, "4.5"),
-		usoTV(FuenteTV, ObraSerie, "Serie Y", "SY-1", "serie", "48", 10, "9.0"),
-		usoTV(FuenteTV, ObraUnitario, "El Tercer Acto", "ETA-1", "unitario", "48", 1, "3.0"),
-		usoTV(FuenteTV, ObraSketch, "Minuto Comico", "MC-1", "sketches", "10", 2, "2.0"),
+		emitido(usoTV(FuenteTV, ObraCine, "Pelicula X", "PX-1", "cinematografica", "70", 1, "4.5"), "2025-01-04", "21:00:00"),
+		emitido(usoTV(FuenteTV, ObraSerie, "Serie Y", "SY-1", "serie", "48", 10, "9.0"), "2025-01-06", "20:00:00"),
+		emitido(usoTV(FuenteTV, ObraUnitario, "El Tercer Acto", "ETA-1", "unitario", "48", 1, "3.0"), "2025-01-11", "22:00:00"),
+		emitido(usoTV(FuenteTV, ObraSketch, "Minuto Comico", "MC-1", "sketches", "10", 2, "2.0"), "2025-01-18", "19:30:00"),
 	}
 	// El segundo canal emite MENOS repertorio con una bolsa igual de grande:
 	// asi su valor punto sale distinto del de Caracol y la prueba de #119 no
 	// puede pasar por casualidad.
 	tvSegundo := []aplicacion.UsoPersistido{
-		usoTV(FuenteTVSegundo, ObraSerie, "Serie Y", "SY-9", "serie", "48", 4, "6.0"),
-		usoTV(FuenteTVSegundo, ObraUnitario, "El Tercer Acto", "ETA-9", "unitario", "48", 1, "2.0"),
+		emitido(usoTV(FuenteTVSegundo, ObraSerie, "Serie Y", "SY-9", "serie", "48", 4, "6.0"), "2025-01-07", "20:00:00"),
+		emitido(usoTV(FuenteTVSegundo, ObraUnitario, "El Tercer Acto", "ETA-9", "unitario", "48", 1, "2.0"), "2025-01-12", "21:00:00"),
 	}
 	// Espectadores ademas de taquilla: el ejemplo de `RD 9.2` reparte por
 	// espectadores mientras su prosa dice taquilla, y el motor elige con
@@ -377,7 +379,12 @@ func (d *Dataset) reportes() {
 		for j := range r.Usos {
 			u := &r.Usos[j]
 			valor := u.IDsFuente
-			ids, err := aplicacion.EscribirIDsFuente(aplicacion.IDFuente{Clave: r.TipoID, Valor: valor})
+			idsFila := []aplicacion.IDFuente{{Clave: r.TipoID, Valor: valor}}
+			// Netflix identifica el registro por episodio (netflix_id), no por show.
+			if r.Fuente == FuenteOTT {
+				idsFila = append(idsFila, aplicacion.IDFuente{Clave: aplicacion.ClaveNetflixID, Valor: valor + "-e1"})
+			}
+			ids, err := aplicacion.EscribirIDsFuente(idsFila...)
 			if err != nil {
 				// Como en coautor: el dataset es una constante del binario, y un
 				// id que no cumple el contrato es un error de programacion.
@@ -573,6 +580,12 @@ func usoTV(canal, obraID, titulo, idFuente, tipo, duracion string, emisiones int
 	return u
 }
 
+// emitido fija fecha y hora de emision de una fila de TV.
+func emitido(u aplicacion.UsoPersistido, fecha, hora string) aplicacion.UsoPersistido {
+	u.Fecha, u.Hora = fecha, hora
+	return u
+}
+
 // usoCine, usoOTT y usoTransporte llevan el canal explicito por la misma razon
 // que usoTV: sin el, UsosDeCanal (#119) no encuentra estas filas al filtrar
 // por el pagador de la bolsa, y la bolsa de ese pagador queda sin nada que
@@ -621,11 +634,11 @@ func usoIdentificado(obraID, titulo, idFuente string, modalidad reparto.Modalida
 
 func csvDe(usos []aplicacion.UsoPersistido) []byte {
 	var b strings.Builder
-	b.WriteString("titulo,ids_fuente,modalidad,tipo_obra,canal_id,duracion_min,emisiones," +
+	b.WriteString("titulo,ids_fuente,modalidad,tipo_obra,canal_id,fecha,hora,duracion_min,emisiones," +
 		"rating,taquilla,espectadores,exhibiciones,vistas,minutos_vistos,pb\n")
 	for _, u := range usos {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%d,%s,%s,%s,%d,%s,%s,%s\n",
-			u.Titulo, u.IDsFuente, u.Modalidad, u.TipoObra, u.CanalID,
+		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%d,%s,%s,%s,%d,%s,%s,%s\n",
+			u.Titulo, strings.ReplaceAll(u.IDsFuente, "\n", ";"), u.Modalidad, u.TipoObra, u.CanalID, u.Fecha, u.Hora,
 			u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores,
 			u.Exhibiciones, u.Vistas, u.MinutosVistos, u.PB)
 	}

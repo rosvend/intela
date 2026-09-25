@@ -13,6 +13,7 @@ require (
 	// en el grafo por testcontainers.
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/go-chi/chi/v5 v5.2.2
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/pressly/goose/v3 v3.24.3
 	github.com/shopspring/decimal v1.4.0
@@ -51,7 +52,6 @@ require (
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	// Fijada a proposito. v2.30.0 declara `go 1.25.0`, y basta con que este en
 	// el grafo para que `go mod tidy` suba la directiva `go` de este modulo a
 	// 1.25 -lo que rompe el Dockerfile (golang:1.24-bookworm) y cambia la

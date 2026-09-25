@@ -220,6 +220,36 @@ linters:
             - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
               desc: "ADR 0003: the manual queue does not touch money."
 
+        # Anomalias inspects an assembled period BEFORE it is distributed and
+        # names what blocks or falsifies the run: ONI, duplicate deliveries,
+        # duplicate records, missing declared shares, obras retained under
+        # R-04, and rows with no RD 9.1.1 category.
+        #
+        # It reads two vocabularies and touches no money. `repertorio` gives it
+        # Declaracion.Completa(), the single criterion for R-04 (re-summing
+        # here would open a second one). `identificacion` gives it the escalon
+        # constants, so that "oni" and "excluido" are never re-spelled as
+        # literals. Both edges point the same way the pipeline runs.
+        #
+        # What it must never import is the money side: an alerta says a row is
+        # not fit to weight, never how much it is worth. The day a detector can
+        # reach reparto, "this obra is retained" becomes one import away from
+        # "this obra is retained for $N", which is a figure no reglamento
+        # backs.
+        modulos-anomalias:
+          files:
+            - "**/internal/dominio/anomalias/*.go"
+            - "**/internal/dominio/anomalias/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: detecting an anomaly does not touch money. The engine consumes the period; this inspects it."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: an anomaly knows nothing of bolsas, tarifas or convenios."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: liquidacion consumes a corrida that has not run yet when this pass executes."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: an anticipo settles against a liquidacion, not against a pre-distribution check."
+
         # Afiliacion keeps the padron: who is a Socio and who a Titular
         # Administrado. Existing in the padron is independent of anything
         # collected or paid.

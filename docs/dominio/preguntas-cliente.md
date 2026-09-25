@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-21
+actualizado: 2026-09-25
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -54,6 +54,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
 | P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
 | P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
+| P-21 | Clave de registro por fuente para el detector de duplicados (#37): `cine`, `rcn`, `expreso-bolivariano` | @rosvend | Provisional (`cine`) / **Abierta** (`rcn`, transporte) |
 
 ## Respuestas
 
@@ -193,6 +194,22 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   alguien mantenga -- toda fila real de TV llega con `canal_id` vacio, y `RD 9.1` no se
   puede repartir por canal sobre datos de produccion. `aplicacion.Reparto.UsosSinCanal`
   cuenta el hueco mientras la respuesta no llega; no lo cierra.
+
+### P-21 Clave de registro por fuente (detector `duplicado_registro`, #37)
+
+`duplicado_registro` es una anomalia **critica**: bloquea la salida de `deducciones` de toda
+corrida del periodo (ADR 0021). Su clave por fuente vive en `aplicacion.clavesDeRegistro`.
+
+- **`cine: {id_pelicula}` es Provisional.** El formato de salas es sintetico
+  (`MapaCine`). Con esa clave, dos exhibiciones legitimas de la misma pelicula en dos entregas
+  del mismo periodo (dos salas, o dos cortes de taquilla) saldrian como duplicado critico.
+  Hay que confirmar con REDES que identifica una fila de cine (sala, funcion, fecha) antes de
+  tratar ese detector como defendible para cine.
+- **`rcn` y `expreso-bolivariano` no tienen clave, a proposito.** No hay formato del cliente
+  para ninguna de las dos: solo existen en el sembrador. Declararles una clave seria inventar el
+  criterio de un detector que bloquea el pago. Mientras tanto sus filas cuentan en
+  `usos_sin_cotejar` (en el seed, 4 de 10), que es el tamano del punto ciego y viaja en la
+  respuesta de `POST /alertas/evaluacion` y en su asiento.
 
 ## Agenda para la reunion con REDES
 

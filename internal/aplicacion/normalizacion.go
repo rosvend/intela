@@ -13,8 +13,15 @@ import (
 )
 
 // Origenes de la cola de revision. El listado es uno; el tipo dice de cual
-// detector salio la fila. "anomalia" lo rellena el #37. "adaptador" son los
-// rechazos del mapa de columnas (#25): no se afirman como normalizacion.
+// detector salio la fila. "adaptador" son los rechazos del mapa de columnas
+// (#25): no se afirman como normalizacion.
+//
+// "anomalia" NO lo rellena nadie, y el comentario anterior decia que lo haria
+// el #37. No fue asi: las anomalias de un periodo aterrizaron en su propia
+// tabla y su propio recurso (`/alertas`, ADR 0021), porque necesitan estado de
+// resolucion y esta cola no lo tiene. El valor se conserva porque el CHECK de
+// `usos_rechazados.tipo` lo admite desde la migracion 00010 y quitarlo seria
+// un cambio de esquema sin motivo.
 const (
 	TipoRevisionNormalizacion = "normalizacion"
 	TipoRevisionAnomalia      = "anomalia"
@@ -129,9 +136,8 @@ func (n Normalizacion) ProcesarYGuardar(
 	return resultado, nil
 }
 
-// ListarRevision es la cola compartida con las anomalias del #37.
-// tipo y codigo salen de columnas propias, no se re-derivan del texto del
-// motivo (B3). Un listado vacio es una lista vacia, no nil.
+// ListarRevision lista los rechazos de normalizacion y del adaptador; las anomalias del #37 van por
+// `/alertas`. tipo y codigo salen de columnas propias (B3). Vacio es lista vacia, no nil.
 func (n Normalizacion) ListarRevision(ctx context.Context) ([]ItemRevision, error) {
 	if n.Reportes == nil {
 		return []ItemRevision{}, nil

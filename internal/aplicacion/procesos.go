@@ -36,6 +36,8 @@ type Procesos struct {
 	// que un reintento volveria a valorizar -- doble escritura del mismo
 	// dinero. Solo hace falta cuando AvanzarEtapa entra a valorizar.
 	Unidad UnidadDeTrabajo
+	// Anomalias es la compuerta de #37: sin ella la corrida no sale de deducciones (falla cerrada).
+	Anomalias CompuertaAnomalias
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -161,6 +163,11 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 	if err != nil {
 		return ProcesoVista{}, err
 	}
+	if v.Etapa == reparto.EtapaDeducciones {
+		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
+			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
+		}
+	}
 
 	if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
 		// Valorizar y guardar la nueva etapa son un solo hecho: sin la unidad,
@@ -186,6 +193,21 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// compuertaAnomalias bloquea la salida de deducciones (hacia importe_obra o liquidacion_parcial) si el periodo tiene criticas abiertas.
+func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
+	if uc.Anomalias == nil {
+		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
+	}
+	n, err := uc.Anomalias.Bloqueantes(ctx, periodo)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, n, periodo)
+	}
+	return nil
 }
 
 // valorizar reune bolsa, usos y declaraciones y llama al motor puro de #33,

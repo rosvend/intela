@@ -183,6 +183,25 @@ type CargaReporte struct {
 	Rechazados int
 }
 
+// EntregaRecibida es el acuse de un reporte con lo JUSTO para cotejar sus
+// bytes contra los de otra entrega: quien la entrego, de que periodo y que
+// huella trae.
+//
+// Existe aparte de [CargaReporte] por coste, no por gusto. La deteccion de
+// anomalias pide TODAS las entregas conocidas en cada pasada -- el
+// UNIQUE (sha256, fuente) de `reportes` no lleva el periodo, asi que la otra
+// pata de una colision puede estar en otro mes -- y de cada una solo mira estos
+// cuatro campos. `ListarCargas` ademas calcula dos COUNT correlacionados por
+// fila (usos y usos_rechazados) que esta lectura DESCARTA: medido sobre 5.001
+// reportes y 50.000 usos son 130,8 ms contra 4,8 ms sin ellos, en cada pasada y
+// creciendo para siempre.
+type EntregaRecibida struct {
+	ID      string
+	Fuente  string
+	Periodo string
+	SHA256  string
+}
+
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
 // resultado de la identificacion.
 //
@@ -288,11 +307,21 @@ type ResumenUsosDeCanal struct {
 }
 
 // ItemRevision es una fila de la cola de revision: lo que no se pudo
-// normalizar, y mas adelante las anomalias del #37.
+// normalizar, y los rechazos del adaptador de formato.
 //
-// Tipo discrimina el origen ("normalizacion" | "anomalia") para que un solo
-// listado sirva a las dos colas sin mezclar los vocabularios. Codigo es el
-// motivo tipado; Motivo es el texto que nombra el campo.
+// Tipo discrimina el origen ("normalizacion" | "adaptador" | "anomalia") para
+// que un solo listado sirva sin mezclar los vocabularios. Codigo es el motivo
+// tipado; Motivo es el texto que nombra el campo.
+//
+// # Las anomalias del #37 NO salen por aqui
+//
+// El comentario anterior decia que llegarian, y no llegaron: una anomalia
+// necesita estado de resolucion -- actor e instante -- y este tipo no lo
+// tiene; y `/admin/cola-revision` es solo de `administrador` mientras el
+// tablero de anomalias lo miran ademas `distribucion` y `auditor`. Viven en
+// [Alerta], con tabla y recurso propios (ADR 0021). El valor "anomalia" se
+// queda en el vocabulario porque la columna `usos_rechazados.tipo` lo admite
+// desde la migracion 00010.
 type ItemRevision struct {
 	ID        string
 	Tipo      string
@@ -345,10 +374,84 @@ type Asiento struct {
 	Cuando  time.Time
 }
 
+// Alerta es una anomalia de un periodo tal como queda persistida (#37).
+//
+// Es la forma de ESTADO del [anomalias.Hallazgo], que es la forma de HECHO: el
+// hallazgo lo produce el dominio sin identidad ni instante, y esto es lo que
+// la fila anade -- quien es, cuando se detecto y si alguien ya la resolvio.
+//
+// # No es un asiento, y por eso si se actualiza
+//
+// La bitacora del ADR 0006 es append-only y `asientos` lo impone por trigger;
+// esta tabla no. La diferencia no es de rigor: un asiento registra que algo
+// PASO, y una alerta registra que algo SIGUE pasando. Resolver una alerta es
+// cambiar ese estado, y el rastro de quien lo cambio y cuando va donde tiene
+// que ir -- a un asiento, escrito en la misma unidad de trabajo que el UPDATE
+// (ver [Anomalias.Resolver]).
 type Alerta struct {
-	ID      string
-	Tipo    string
+	ID string
+
+	// Periodo al que pertenece la evaluacion que la levanto, en la forma
+	// `AAAA` o `AAAA-MM`. Va en la fila y no se deduce del registro ofensor
+	// porque una misma obra puede quedar retenida en dos periodos seguidos, y
+	// cada periodo tiene su propia alerta que perseguir.
+	Periodo string
+
+	// Tipo es uno de los seis de [anomalias.Tipos].
+	Tipo string
+
+	// RefTipo, RefID y RefTitular apuntan al registro EXACTO que la disparo.
+	// Mismo par polimorfico que `asientos` (migracion 00001); RefTitular es la
+	// segunda coordenada y solo la usa `titular_sin_porcentaje`.
+	RefTipo    string
+	RefID      string
+	RefTitular string
+
 	Detalle string
+
+	// Critica es DERIVADO ([anomalias.EsCritica]) y no una columna.
+	//
+	// Persistirlo congelaria la clasificacion en el momento de detectar: el
+	// dia que el Consejo decida que un tipo pasa a bloquear, habria que migrar
+	// las filas ya escritas o convivir con dos criterios. Derivarlo al leer
+	// hace que la regla viva en un solo sitio, que es el dominio.
+	Critica bool
+
+	Detectada time.Time
+
+	// Resuelta, ResueltaPor, ResueltaEn y Nota son la decision humana (#39).
+	// ResueltaEn es puntero: nil es "sin resolver", y un cero de time.Time
+	// seria un instante del ano 1 indistinguible de un dato mal escrito.
+	Resuelta    bool
+	ResueltaPor string
+	ResueltaEn  *time.Time
+	Nota        string
+	// Autocerrada: la cerro el sistema porque una reevaluacion ya no la detecto (ResueltaPor vacio).
+	Autocerrada bool
+}
+
+// FiltroAlertas recorta el listado de alertas. Un campo en su valor cero NO
+// filtra, y los que vienen se combinan con Y, igual que [FiltroObras].
+//
+// Resueltas es PUNTERO por lo mismo que `FiltroTitulares.PersonaNatural`: con
+// un bool a secas, "no filtrar" y "solo las resueltas" serian el mismo valor
+// cero y no habria forma de pedir el historial de lo ya cerrado.
+type FiltroAlertas struct {
+	Periodo   string
+	Tipo      string
+	Resueltas *bool
+
+	// Paginacion, con la MISMA forma que `/obras`, `/titulares` y el historial
+	// de declaraciones, y por la misma razon de la nota 4 de #86: los listados
+	// de este sistema paginan juntos, no cada uno a su aire.
+	//
+	// Aqui hace falta ademas por volumen. `oni`, `duplicado_registro` y
+	// `tipo_obra_sin_mapear` emiten UNA alerta por fila de uso, y la meta KR-1
+	// habla de lotes de 10.000 registros: una evaluacion real puede dejar del
+	// orden de 10.000 alertas en un periodo. Sin paginar, `GET /alertas`
+	// devolvia ese array entero -- del orden de 4 MB -- y el panel de #104
+	// sondea cada 15 segundos.
+	Paginacion
 }
 
 type Anticipo struct {

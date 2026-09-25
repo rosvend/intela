@@ -541,6 +541,7 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		Usos:       &usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("z", reparto.TV, "")}},
 		Resultados: &repositorioResultadosFalso{},
 		Unidad:     &unidadFalsa{},
+		Anomalias:  &compuertaFalsa{},
 	}
 
 	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
@@ -571,7 +572,7 @@ func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
 	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	uc := Procesos{Repo: repo} // sin Unidad
+	uc := Procesos{Repo: repo, Anomalias: &compuertaFalsa{}} // sin Unidad
 
 	_, err = uc.AvanzarEtapa(t.Context(), "proc-1")
 	if err == nil {
@@ -592,7 +593,7 @@ func TestAvanzarEtapaInternacionalNuncaValoriza(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
-	uc := Procesos{Repo: repo, Resultados: resultados}
+	uc := Procesos{Repo: repo, Resultados: resultados, Anomalias: &compuertaFalsa{}}
 
 	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
 	if err != nil {
@@ -700,5 +701,105 @@ func TestListarProcesosDelegaAlRepositorio(t *testing.T) {
 	}
 	if len(lista) != 1 {
 		t.Fatalf("lista = %v, se esperaba un proceso", lista)
+	}
+}
+
+// compuertaFalsa es una CompuertaAnomalias con respuesta fija.
+type compuertaFalsa struct {
+	criticas int
+	err      error
+	pedidos  []string
+}
+
+func (c *compuertaFalsa) Bloqueantes(_ context.Context, periodo string) (int, error) {
+	c.pedidos = append(c.pedidos, periodo)
+	return c.criticas, c.err
+}
+
+func procesoEnDeducciones(t *testing.T, circuito reparto.Circuito) *repositorioProcesosFalso {
+	t.Helper()
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", circuito, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = reparto.EtapaDeducciones
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	return repo
+}
+
+func TestAvanzarEtapaConCriticasAbiertasNoSaleDeDeducciones(t *testing.T) {
+	t.Parallel()
+
+	for _, circuito := range []reparto.Circuito{reparto.Nacional, reparto.Internacional} {
+		repo := procesoEnDeducciones(t, circuito)
+		resultados := &repositorioResultadosFalso{}
+		compuerta := &compuertaFalsa{criticas: 2}
+		uc := Procesos{Repo: repo, Resultados: resultados, Unidad: &unidadFalsa{}, Anomalias: compuerta}
+
+		_, err := uc.AvanzarEtapa(t.Context(), "proc-1")
+		if !errors.Is(err, ErrAnomaliasCriticasAbiertas) {
+			t.Fatalf("%s: err = %v, se esperaba ErrAnomaliasCriticasAbiertas", circuito, err)
+		}
+		if len(compuerta.pedidos) != 1 || compuerta.pedidos[0] != "2026-01" {
+			t.Fatalf("%s: la compuerta se consulto con %v, se esperaba [2026-01]", circuito, compuerta.pedidos)
+		}
+		if got := repo.procesos["proc-1"].Etapa; got != reparto.EtapaDeducciones {
+			t.Fatalf("%s: etapa = %q, el proceso no debio moverse", circuito, got)
+		}
+		if resultados.procesoID != "" {
+			t.Fatalf("%s: se valorizo con criticas abiertas", circuito)
+		}
+	}
+}
+
+func TestAvanzarEtapaSinCompuertaFallaCerrada(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnDeducciones(t, reparto.Internacional)
+	uc := Procesos{Repo: repo, Resultados: &repositorioResultadosFalso{}}
+
+	if _, err := uc.AvanzarEtapa(t.Context(), "proc-1"); err == nil {
+		t.Fatal("sin compuerta cableada la corrida no puede salir de deducciones")
+	}
+	if got := repo.procesos["proc-1"].Etapa; got != reparto.EtapaDeducciones {
+		t.Fatalf("etapa = %q, el proceso no debio moverse", got)
+	}
+}
+
+func TestAvanzarEtapaPropagaElFalloDeLaCompuerta(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnDeducciones(t, reparto.Internacional)
+	falla := errors.New("base caida")
+	uc := Procesos{Repo: repo, Anomalias: &compuertaFalsa{err: falla}}
+
+	if _, err := uc.AvanzarEtapa(t.Context(), "proc-1"); !errors.Is(err, falla) {
+		t.Fatalf("err = %v, se esperaba el fallo de la compuerta", err)
+	}
+}
+
+func TestLaCompuertaSoloSeConsultaAlSalirDeDeducciones(t *testing.T) {
+	t.Parallel()
+
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Internacional, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	compuerta := &compuertaFalsa{criticas: 5}
+	uc := Procesos{Repo: repo, Anomalias: compuerta}
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1") // recaudo -> deducciones
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaDeducciones || len(compuerta.pedidos) != 0 {
+		t.Fatalf("etapa = %q, pedidos = %v: recaudo->deducciones no pasa por la compuerta", v.Etapa, compuerta.pedidos)
 	}
 }
