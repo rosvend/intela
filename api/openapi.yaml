@@ -117,10 +117,10 @@ tags:
 
       **No es la cola de revision.** `/admin/cola-revision` lista filas que no
       se pudieron NORMALIZAR y no tiene estado de resolucion; esto lista
-      anomalias del periodo, se resuelve con firma y lo miran tres roles
+      anomalias del periodo, se resuelve con firma y lo miran cuatro roles
       distintos. Son dos colas y dos recursos (ADR 0021).
 
-      Lee `administrador`, `distribucion` y `auditor`. Resuelve solo
+      Lee `administrador`, `distribucion`, `contabilidad` y `auditor`. Resuelve solo
       `administrador` y `distribucion`: el Revisor Fiscal lee todo y no opera
       el pipeline ni firma, y cerrar una alerta es una decision sobre a quien
       se le paga.
@@ -496,7 +496,7 @@ paths:
         prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
         necesita estado de resolucion y este schema no lo tiene, y este prefijo
         es solo de `administrador` mientras el tablero de anomalias lo miran
-        ademas `distribucion` y `auditor`. Viven en `/alertas` (ADR 0021).
+        ademas `distribucion`, `contabilidad` y `auditor`. Viven en `/alertas` (ADR 0021).
 
         Un solo listado y un solo schema. `tipo` discrimina el origen
         (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
@@ -2003,7 +2003,7 @@ paths:
       operationId: listarAlertas
       security:
         - bearerAuth: []
-      x-required-roles: [administrador, distribucion, auditor]
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
       parameters:
         - name: periodo
           in: query

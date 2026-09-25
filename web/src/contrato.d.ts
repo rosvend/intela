@@ -180,7 +180,7 @@ export interface paths {
          *     prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
          *     necesita estado de resolucion y este schema no lo tiene, y este prefijo
          *     es solo de `administrador` mientras el tablero de anomalias lo miran
-         *     ademas `distribucion` y `auditor`. Viven en `/alertas` (ADR 0021).
+         *     ademas `distribucion`, `contabilidad` y `auditor`. Viven en `/alertas` (ADR 0021).
          *
          *     Un solo listado y un solo schema. `tipo` discrimina el origen
          *     (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo

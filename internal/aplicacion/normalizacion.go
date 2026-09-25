@@ -136,9 +136,8 @@ func (n Normalizacion) ProcesarYGuardar(
 	return resultado, nil
 }
 
-// ListarRevision es la cola compartida con las anomalias del #37.
-// tipo y codigo salen de columnas propias, no se re-derivan del texto del
-// motivo (B3). Un listado vacio es una lista vacia, no nil.
+// ListarRevision lista los rechazos de normalizacion y del adaptador; las anomalias del #37 van por
+// `/alertas`. tipo y codigo salen de columnas propias (B3). Vacio es lista vacia, no nil.
 func (n Normalizacion) ListarRevision(ctx context.Context) ([]ItemRevision, error) {
 	if n.Reportes == nil {
 		return []ItemRevision{}, nil
