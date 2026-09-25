@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,5 +260,14 @@ func TestCriticasDelResumenSeCuentanDentroDeLaUnidad(t *testing.T) {
 	}
 	if r.CriticasAbiertas == 0 {
 		t.Fatalf("criticas abiertas = 0 con el duplicado detectado en la pasada (%+v): se contaron fuera de la unidad", r)
+	}
+}
+
+// Fuera de una unidad el cerrojo se soltaria al volver de la sentencia: tiene que fallar, no proteger en falso (MENOR 2).
+func TestBloquearAlertasDePeriodoFueraDeUnidadFalla(t *testing.T) {
+	s, _ := sembrarProcesoNacionalListoParaValorizar(t)
+	err := s.BloquearAlertasDePeriodo(t.Context(), "2026-01")
+	if !errors.Is(err, errFueraDeUnidad) {
+		t.Fatalf("BloquearAlertasDePeriodo sin unidad = %v; se esperaba errFueraDeUnidad", err)
 	}
 }
