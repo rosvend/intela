@@ -65,7 +65,7 @@ type splitJSON struct {
 	Version    int    `json:"version"`
 }
 
-type deduccionJSON struct {
+type deduccionLineaJSON struct {
 	Concepto   string `json:"concepto"`
 	Porcentaje string `json:"porcentaje"`
 	Monto      string `json:"monto"`
@@ -80,7 +80,7 @@ type explicacionJSON struct {
 	Obra        obraLinajeJSON  `json:"obra"`
 	Regla       reglaJSON       `json:"regla"`
 	Split       splitJSON       `json:"split"`
-	Deducciones []deduccionJSON `json:"deducciones"`
+	Deducciones []deduccionLineaJSON `json:"deducciones"`
 }
 
 func aIngresoJSON(i aplicacion.Ingreso) ingresoJSON {
@@ -95,9 +95,9 @@ func aIngresoJSON(i aplicacion.Ingreso) ingresoJSON {
 }
 
 func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
-	ded := make([]deduccionJSON, 0, len(x.Deducciones))
+	ded := make([]deduccionLineaJSON, 0, len(x.Deducciones))
 	for _, d := range x.Deducciones {
-		ded = append(ded, deduccionJSON{
+		ded = append(ded, deduccionLineaJSON{
 			Concepto:   d.Concepto,
 			Porcentaje: d.Porcentaje.StringFixed(2),
 			Monto:      dinero(d.Monto),
