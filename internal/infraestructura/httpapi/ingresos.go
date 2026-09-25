@@ -72,14 +72,14 @@ type deduccionLineaJSON struct {
 }
 
 type explicacionJSON struct {
-	Ref         string          `json:"ref"`
-	Neto        string          `json:"neto"`
-	Bruto       string          `json:"bruto"`
-	Corrida     corridaJSON     `json:"corrida"`
-	Reporte     reporteJSON     `json:"reporte"`
-	Obra        obraLinajeJSON  `json:"obra"`
-	Regla       reglaJSON       `json:"regla"`
-	Split       splitJSON       `json:"split"`
+	Ref         string               `json:"ref"`
+	Neto        string               `json:"neto"`
+	Bruto       string               `json:"bruto"`
+	Corrida     corridaJSON          `json:"corrida"`
+	Reporte     reporteJSON          `json:"reporte"`
+	Obra        obraLinajeJSON       `json:"obra"`
+	Regla       reglaJSON            `json:"regla"`
+	Split       splitJSON            `json:"split"`
 	Deducciones []deduccionLineaJSON `json:"deducciones"`
 }
 
