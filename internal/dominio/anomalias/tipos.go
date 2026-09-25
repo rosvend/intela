@@ -187,14 +187,29 @@ const (
 // Ante la duda se avisa, que es el lado ruidoso -- callar dejaria pasar en
 // silencio justamente la fila de la que no se sabe nada.
 func ModalidadPonderaPorTipoObra(modalidad string) bool {
-	switch modalidad {
-	case ModalidadTV, ModalidadSuscripcion, ModalidadHotel:
-		return true
-	case "cine", "teatro", "transporte", "ott":
-		return false
-	default:
-		return true
+	pondera, conocida := ponderaPorTipoObra[modalidad]
+	return pondera || !conocida
+}
+
+// ModalidadesClasificadas devuelve, ordenadas, las modalidades de [ponderaPorTipoObra]; la prueba de aplicacion las cruza con reparto.
+func ModalidadesClasificadas() []string {
+	out := make([]string, 0, len(ponderaPorTipoObra))
+	for m := range ponderaPorTipoObra {
+		out = append(out, m)
 	}
+	slices.Sort(out)
+	return out
+}
+
+// ponderaPorTipoObra clasifica cada modalidad de `reparto` (copiada en strings: este paquete no puede importarlo).
+var ponderaPorTipoObra = map[string]bool{
+	ModalidadTV:          true,
+	ModalidadSuscripcion: true,
+	ModalidadHotel:       true,
+	"cine":               false,
+	"teatro":             false,
+	"transporte":         false,
+	"ott":                false,
 }
 
 // Uso es una fila de reporte tal como la mira este paquete.
