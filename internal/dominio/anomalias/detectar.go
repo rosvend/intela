@@ -285,7 +285,7 @@ func aQuienReclamar(o Obra) string {
 // 6. tipo_obra sin mapear (RD 9.1.1)
 
 // tipoObraSinMapear alerta la fila identificada sin tipo_obra en una modalidad cuyo motor lo lee (D6).
-// TODO(#37): enlazar aqui la issue de tipo_obra/canal_id/rating cuando se abra (#NNN); texto en docs/planes/37/issues-de-seguimiento.md (B).
+// TODO(#165): tipo_obra/canal_id/rating sin mapear en las fuentes reales; texto en docs/planes/37/issues-de-seguimiento.md (B).
 func tipoObraSinMapear(usos []Uso) []Hallazgo {
 	out := make([]Hallazgo, 0)
 	for _, u := range usos {
