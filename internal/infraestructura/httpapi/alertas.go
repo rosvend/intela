@@ -276,9 +276,7 @@ func (a *API) evaluarAnomalias(w http.ResponseWriter, r *http.Request) {
 // permitiria firmar la decision a nombre de otro, y el asiento del ADR 0006
 // tiene que nombrar a quien la tomo de verdad.
 //
-// El cuerpo es opcional -- la nota lo es -- asi que un POST sin cuerpo se
-// acepta: `io.EOF` al decodificar no es un cuerpo mal formado, es la ausencia
-// de cuerpo, y rechazarla obligaria a mandar `{}` para no decir nada.
+// Un POST sin cuerpo llega al caso de uso con nota vacia y sale 400 por ErrNotaObligatoria.
 func (a *API) resolverAlerta(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoAlertas)
 
@@ -297,6 +295,9 @@ func (a *API) resolverAlerta(w http.ResponseWriter, r *http.Request) {
 	alerta, err := a.anomalias.Resolver(r.Context(), chi.URLParam(r, "id"), usuario.ID, cuerpo.Nota)
 	switch {
 	case err == nil:
+	case errors.Is(err, aplicacion.ErrNotaObligatoria):
+		escribirError(w, http.StatusBadRequest, aplicacion.ErrNotaObligatoria.Error())
+		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa alerta no existe")
 		return

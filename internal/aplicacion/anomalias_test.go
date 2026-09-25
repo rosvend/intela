@@ -608,6 +608,29 @@ func TestResolverExigeActorAntesDeEscribir(t *testing.T) {
 	}
 }
 
+func TestResolverExigeNotaAntesDeEscribir(t *testing.T) {
+	svc, _, alertas, _, unidad := servicioSembrado()
+	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	entradasAntes := unidad.entradas
+	for _, a := range alertas.filas {
+		for _, nota := range []string{"", "  \n\t"} {
+			if _, err := svc.Resolver(t.Context(), a.ID, "usr-2", nota); !errors.Is(err, ErrNotaObligatoria) {
+				t.Fatalf("Resolver %s (%s) con nota %q dio %v", a.ID, a.Tipo, nota, err)
+			}
+		}
+	}
+	if unidad.entradas != entradasAntes {
+		t.Fatal("se abrio una transaccion pese a faltar la nota")
+	}
+	for _, a := range alertas.filas {
+		if a.Resuelta {
+			t.Fatalf("la alerta %s quedo resuelta sin nota", a.ID)
+		}
+	}
+}
+
 func TestResolverDistingueNoExisteDeYaResuelta(t *testing.T) {
 	svc, _, alertas, _, _ := servicioSembrado()
 	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
@@ -615,15 +638,15 @@ func TestResolverDistingueNoExisteDeYaResuelta(t *testing.T) {
 	}
 	id := alertas.filas[0].ID
 
-	if _, err := svc.Resolver(t.Context(), "no-existe", "usr-2", ""); !errors.Is(err, ErrNoEncontrado) {
+	if _, err := svc.Resolver(t.Context(), "no-existe", "usr-2", "nota de prueba"); !errors.Is(err, ErrNoEncontrado) {
 		t.Fatalf("un id inventado dio %v", err)
 	}
-	if _, err := svc.Resolver(t.Context(), id, "usr-2", ""); err != nil {
+	if _, err := svc.Resolver(t.Context(), id, "usr-2", "nota de prueba"); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	// Dos personas mirando el mismo tablero es el caso normal: quien llega
 	// segundo tiene que saber que la firma escrita no es la suya.
-	if _, err := svc.Resolver(t.Context(), id, "usr-3", ""); !errors.Is(err, ErrAlertaYaResuelta) {
+	if _, err := svc.Resolver(t.Context(), id, "usr-3", "nota de prueba"); !errors.Is(err, ErrAlertaYaResuelta) {
 		t.Fatalf("la segunda resolucion dio %v", err)
 	}
 }
@@ -658,13 +681,13 @@ func TestCriticasAbiertasSoloCuentaLosTiposQueBloquean(t *testing.T) {
 			informativa = a.ID
 		}
 	}
-	if _, err := svc.Resolver(t.Context(), informativa, "usr-2", ""); err != nil {
+	if _, err := svc.Resolver(t.Context(), informativa, "usr-2", "nota de prueba"); err != nil {
 		t.Fatalf("Resolver informativa: %v", err)
 	}
 	if n, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba); n != 3 {
 		t.Fatalf("resolver una informativa dejo %d criticas, se esperaban 3", n)
 	}
-	if _, err := svc.Resolver(t.Context(), critica, "usr-2", ""); err != nil {
+	if _, err := svc.Resolver(t.Context(), critica, "usr-2", "nota de prueba"); err != nil {
 		t.Fatalf("Resolver critica: %v", err)
 	}
 	if n, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba); n != 2 {
@@ -706,7 +729,7 @@ func TestUnServicioMalCableadoFallaAntesDeTocarLaBase(t *testing.T) {
 			if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err == nil {
 				t.Fatal("Evaluar no fallo con el servicio a medias")
 			}
-			if _, err := svc.Resolver(t.Context(), "al-1", "usr-1", ""); err == nil {
+			if _, err := svc.Resolver(t.Context(), "al-1", "usr-1", "nota de prueba"); err == nil {
 				t.Fatal("Resolver no fallo con el servicio a medias")
 			}
 		})

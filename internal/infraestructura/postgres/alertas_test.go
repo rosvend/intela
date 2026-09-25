@@ -400,7 +400,7 @@ func TestResolverAlertaYSuAsientoSonUnaSolaTransaccion(t *testing.T) {
 	// Un actor que no esta en `usuarios` revienta la FK de `asientos`, que es
 	// la SEGUNDA escritura: si las dos no compartieran transaccion, la alerta
 	// quedaria resuelta y sin asiento.
-	if _, err := svc.Resolver(t.Context(), id, "usr-fantasma", ""); err == nil {
+	if _, err := svc.Resolver(t.Context(), id, "usr-fantasma", "nota de prueba"); err == nil {
 		t.Fatal("Resolver no fallo con un actor que no existe")
 	}
 
@@ -440,12 +440,12 @@ func TestResolverAlertaFirmaYDistingueLaSegundaVez(t *testing.T) {
 
 	// Dos personas mirando el mismo tablero es el caso normal. Quien llega
 	// segundo tiene que saber que la firma escrita no es la suya.
-	if _, err := svc.Resolver(t.Context(), id, usuarioTitular, ""); !errors.Is(err, aplicacion.ErrAlertaYaResuelta) {
+	if _, err := svc.Resolver(t.Context(), id, usuarioTitular, "nota de prueba"); !errors.Is(err, aplicacion.ErrAlertaYaResuelta) {
 		t.Fatalf("la segunda resolucion dio %v", err)
 	}
 	// Y un id que no existe no es lo mismo.
 	const idInventado = "00000000-0000-0000-0000-000000000000"
-	if _, err := svc.Resolver(t.Context(), idInventado, usuarioAdmin, ""); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := svc.Resolver(t.Context(), idInventado, usuarioAdmin, "nota de prueba"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("un id inventado dio %v", err)
 	}
 }
@@ -503,7 +503,7 @@ func TestListarAlertasFiltra(t *testing.T) {
 		t.Fatalf("sin resolver hay %d alertas, se esperaban 6", len(sinResolver))
 	}
 
-	if _, err := svc.Resolver(t.Context(), sinResolver[0].ID, usuarioAdmin, ""); err != nil {
+	if _, err := svc.Resolver(t.Context(), sinResolver[0].ID, usuarioAdmin, "nota de prueba"); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	cerradas := true
@@ -564,6 +564,24 @@ func TestElEsquemaExigeFirmaEnUnaAlertaResuelta(t *testing.T) {
 		t.Fatal("el esquema dejo marcar una alerta como resuelta sin firma")
 	}
 	if !strings.Contains(err.Error(), "alerta_resuelta_tiene_firma") {
+		t.Fatalf("fallo por otra restriccion: %v", err)
+	}
+}
+
+// Resolver sin nota tampoco cabe en la base (revision de #158, punto 4).
+func TestElEsquemaExigeNotaEnUnaAlertaResuelta(t *testing.T) {
+	s, pool := sembrarPeriodoConAnomalias(t)
+	svc := servicioDeAnomalias(s, instanteAlertas)
+	if _, err := svc.Evaluar(t.Context(), periodoAlertas, usuarioAdmin); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+
+	_, err := pool.Exec(t.Context(),
+		`UPDATE alertas SET resuelta = TRUE, resuelta_por = $1, resuelta_en = now(), nota = '  '`, usuarioAdmin)
+	if err == nil {
+		t.Fatal("el esquema dejo resolver una alerta sin nota")
+	}
+	if !strings.Contains(err.Error(), "alerta_resuelta_tiene_nota") {
 		t.Fatalf("fallo por otra restriccion: %v", err)
 	}
 }

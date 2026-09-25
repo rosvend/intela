@@ -2232,10 +2232,11 @@ paths:
             format: uuid
           example: 3f1d0a4e-0000-4000-8000-000000000001
       requestBody:
-        required: false
+        required: true
         description: |
-          Opcional. La nota es informacion para quien lea el tablero despues;
-          el dato obligatorio -quien resolvio- sale de la sesion.
+          La nota es obligatoria: es la justificacion auditable de la
+          decision y viaja al asiento `alerta.resuelta`. Quien resolvio sale
+          de la sesion.
         content:
           application/json:
             schema:
@@ -2266,13 +2267,13 @@ paths:
                 resuelta_en: "2026-05-03T14:05:00Z"
                 nota: hablado con la autora, declara esta semana
         "400":
-          description: El cuerpo no es un JSON valido.
+          description: El cuerpo no es un JSON valido, o la nota falta o esta vacia.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
-                error: el cuerpo tiene que ser un JSON con la nota
+                error: la nota es obligatoria para resolver una alerta
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -3962,7 +3963,9 @@ components:
           description: Instante de la resolucion, tomado del reloj del nucleo.
         nota:
           type: string
-          description: Lo que quien resolvio quiso dejar escrito. Opcional.
+          description: |
+            Justificacion de quien la resolvio. Vacia solo mientras la alerta
+            esta abierta.
 
     PedidoDeEvaluacion:
       type: object
@@ -3979,13 +3982,15 @@ components:
 
     ResolucionDeAlerta:
       type: object
+      required: [nota]
       description: |
-        La nota de quien resuelve. Todo lo demas -quien y cuando- lo pone el
-        servidor: la firma sale de la sesion y el instante del reloj del
-        nucleo.
+        La nota de quien resuelve, obligatoria. Todo lo demas -quien y
+        cuando- lo pone el servidor: la firma sale de la sesion y el instante
+        del reloj del nucleo.
       properties:
         nota:
           type: string
+          minLength: 1
           example: hablado con la autora, declara esta semana
 
     ResumenDeEvaluacion:

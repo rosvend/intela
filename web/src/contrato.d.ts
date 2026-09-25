@@ -1704,7 +1704,10 @@ export interface components {
              * @description Instante de la resolucion, tomado del reloj del nucleo.
              */
             resuelta_en?: string;
-            /** @description Lo que quien resolvio quiso dejar escrito. Opcional. */
+            /**
+             * @description Justificacion de quien la resolvio. Vacia solo mientras la alerta
+             *     esta abierta.
+             */
             nota?: string;
         };
         /**
@@ -1717,13 +1720,13 @@ export interface components {
             periodo: string;
         };
         /**
-         * @description La nota de quien resuelve. Todo lo demas -quien y cuando- lo pone el
-         *     servidor: la firma sale de la sesion y el instante del reloj del
-         *     nucleo.
+         * @description La nota de quien resuelve, obligatoria. Todo lo demas -quien y
+         *     cuando- lo pone el servidor: la firma sale de la sesion y el instante
+         *     del reloj del nucleo.
          */
         ResolucionDeAlerta: {
             /** @example hablado con la autora, declara esta semana */
-            nota?: string;
+            nota: string;
         };
         /** @description Recuento de una pasada de deteccion. */
         ResumenDeEvaluacion: {
@@ -4372,10 +4375,11 @@ export interface operations {
             cookie?: never;
         };
         /**
-         * @description Opcional. La nota es informacion para quien lea el tablero despues;
-         *     el dato obligatorio -quien resolvio- sale de la sesion.
+         * @description La nota es obligatoria: es la justificacion auditable de la
+         *     decision y viaja al asiento `alerta.resuelta`. Quien resolvio sale
+         *     de la sesion.
          */
-        requestBody?: {
+        requestBody: {
             content: {
                 /**
                  * @example {
@@ -4412,7 +4416,7 @@ export interface operations {
                     "application/json": components["schemas"]["Alerta"];
                 };
             };
-            /** @description El cuerpo no es un JSON valido. */
+            /** @description El cuerpo no es un JSON valido, o la nota falta o esta vacia. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4420,7 +4424,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "error": "el cuerpo tiene que ser un JSON con la nota"
+                     *       "error": "la nota es obligatoria para resolver una alerta"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

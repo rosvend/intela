@@ -348,6 +348,9 @@ var (
 	// lo que la primera ya guardo.
 	ErrProcesoConflictoDeConcurrencia = errors.New("el proceso cambio de estado mientras se procesaba esta peticion, vuelva a intentar")
 
+	// ErrNotaObligatoria: resolver una alerta exige una nota; es la justificacion auditable de la decision (ADR 0021).
+	ErrNotaObligatoria = errors.New("la nota es obligatoria para resolver una alerta")
+
 	// ErrAnomaliasCriticasAbiertas: el periodo tiene alertas criticas sin resolver y la corrida no puede entrar a calcular (#37, ADR 0021).
 	ErrAnomaliasCriticasAbiertas = errors.New("el periodo tiene anomalias criticas sin resolver")
 )

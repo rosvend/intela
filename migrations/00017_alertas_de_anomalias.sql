@@ -153,6 +153,10 @@ CREATE TABLE alertas (
       OR (NOT resuelta AND resuelta_por IS NULL AND resuelta_en IS NULL)
     ),
 
+  -- Resolver exige nota: es la justificacion auditable (ADR 0021).
+  CONSTRAINT alerta_resuelta_tiene_nota
+    CHECK (NOT resuelta OR btrim(nota) <> ''),
+
   -- ref_titular es exclusiva de una anomalia. Deja escrito en el esquema lo
   -- que si no seria una convencion: que la segunda coordenada pertenece al
   -- detector de titulares y a ningun otro.

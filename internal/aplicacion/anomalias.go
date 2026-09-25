@@ -432,6 +432,8 @@ func (a Anomalias) Listar(ctx context.Context, f FiltroAlertas) ([]Alerta, error
 // del nuevo, porque `alertas` se sobreescribe: si no queda en el payload, no
 // queda en ningun sitio.
 //
+// La nota es obligatoria (ErrNotaObligatoria) en todas, no solo en las criticas.
+//
 // Resolver NO toca el registro ofensor. Asignar la obra de un ONI o descartar
 // una fila es #39, con su propio caso de uso y su propio asiento; esto solo
 // dice que alguien se hizo cargo.
@@ -440,6 +442,10 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 	if err := exigirActor(actorID, fmt.Sprintf("resolver la alerta %q", id)); err != nil {
 		return Alerta{}, err
 	}
+	nota = strings.TrimSpace(nota)
+	if nota == "" {
+		return Alerta{}, fmt.Errorf("resolver la alerta %q: %w", id, ErrNotaObligatoria)
+	}
 	if id == "" {
 		return Alerta{}, fmt.Errorf("resolver una alerta: %w", ErrNoEncontrado)
 	}
@@ -447,7 +453,6 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 		return Alerta{}, err
 	}
 
-	nota = strings.TrimSpace(nota)
 	ahora := a.Reloj.Ahora()
 
 	var resuelta Alerta
@@ -467,7 +472,7 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 			RefID      string `json:"ref_id"`
 			RefTitular string `json:"ref_titular,omitempty"`
 			Detalle    string `json:"detalle"`
-			Nota       string `json:"nota,omitempty"`
+			Nota       string `json:"nota"`
 		}{
 			Tipo: resuelta.Tipo, Periodo: resuelta.Periodo,
 			RefTipo: resuelta.RefTipo, RefID: resuelta.RefID, RefTitular: resuelta.RefTitular,

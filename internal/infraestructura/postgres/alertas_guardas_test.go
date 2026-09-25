@@ -130,7 +130,7 @@ func TestEvaluarDevuelveLasCriticasAbiertasDelPeriodo(t *testing.T) {
 	if i < 0 {
 		t.Fatal("ninguna alerta llego marcada como critica")
 	}
-	if _, err := svc.Resolver(t.Context(), alertas[i].ID, usuarioAdmin, ""); err != nil {
+	if _, err := svc.Resolver(t.Context(), alertas[i].ID, usuarioAdmin, "nota de prueba"); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	despues, err := svc.CriticasAbiertas(t.Context(), periodoAlertas)

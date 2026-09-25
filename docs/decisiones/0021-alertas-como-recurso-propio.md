@@ -173,6 +173,15 @@ adaptadores para que no puedan separarse.
   detiene todas sus corridas. Es mas estricto de lo necesario para una bolsa de otro canal, y es
   lo que se puede afirmar hoy sin una relacion alerta -> bolsa.
 
+- **Que significa "resuelta" para el dinero.** Resolver exige una nota no vacia
+  (`ErrNotaObligatoria` -> 400, y el CHECK `alerta_resuelta_tiene_nota`), que viaja al asiento
+  `alerta.resuelta`: es la justificacion auditable de la decision. Pero **resolver no cambia los
+  datos que pondera el reparto**: la fila o la entrega duplicada sigue ponderando, y una obra sin
+  `tipo_obra` sigue sin poder ponderarse. "Resuelta" solo afirma que una persona, con nombre y
+  razon escrita, acepta que el periodo avance tal como esta. La accion correctiva (excluir la fila
+  o la entrega, asignar la obra o el tipo) es de #39; la issue de seguimiento esta redactada en
+  `docs/planes/37/issues-de-seguimiento.md`.
+
 - **Una alerta resuelta no se reabre**, aunque una pasada posterior vuelva a detectar la misma
   anomalia (`ON CONFLICT DO NOTHING`, no `DO UPDATE`). Es deliberado: la resolucion de #39 actua
   sobre el registro ofensor, asi que si la anomalia sigue ahi es porque el registro sigue igual, y

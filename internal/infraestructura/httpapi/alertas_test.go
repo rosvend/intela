@@ -319,15 +319,14 @@ func TestResolverAlertaDevuelveLaAlertaCerrada(t *testing.T) {
 	}
 }
 
-// La nota es opcional, asi que un POST sin cuerpo se acepta: io.EOF al
-// decodificar no es un cuerpo mal formado, es la ausencia de cuerpo.
-func TestResolverAlertaAceptaUnPostSinCuerpo(t *testing.T) {
-	falso := &anomaliasFalsas{alerta: alertaDeEjemplo()}
+// Sin cuerpo la nota llega vacia al caso de uso, que la rechaza: 400, no 200 (revision de #158, punto 4).
+func TestResolverAlertaSinCuerpoPasaLaNotaVaciaYEs400(t *testing.T) {
+	falso := &anomaliasFalsas{errResolver: fmt.Errorf("resolver: %w", aplicacion.ErrNotaObligatoria)}
 	h := servidorConAnomalias(t, aplicacion.RolAdministrador, falso)
 
 	rec := pedir(t, h, http.MethodPost, "/alertas/al-1/resolver", "", "tok")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
 	}
 	if falso.notaRecibida != "" {
 		t.Fatalf("nota recibida = %q", falso.notaRecibida)
@@ -340,6 +339,7 @@ func TestResolverAlertaTraduceLosCentinelas(t *testing.T) {
 		err    error
 		codigo int
 	}{
+		{"sin nota", aplicacion.ErrNotaObligatoria, http.StatusBadRequest},
 		{"no existe", aplicacion.ErrNoEncontrado, http.StatusNotFound},
 		// Llegar segundo no es un fallo del servidor ni un exito: quien pulso
 		// el boton tiene que saber que la firma escrita no es la suya.
