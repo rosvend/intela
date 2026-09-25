@@ -19,14 +19,14 @@ func TestMatrizRolRuta(t *testing.T) {
 		"/admin/pipeline":                       http.StatusNoContent,
 		"/auditoria/asientos":                   http.StatusOK,
 		"/auditoria/obra/obra-1":                http.StatusOK,
-		"/mis-liquidaciones":                    http.StatusOK,
+		"/mis-liquidaciones/obras":              http.StatusOK,
 		"/mis-liquidaciones/export?formato=pdf": http.StatusOK,
 	}
 	permitido := map[string][]aplicacion.Rol{
 		"/admin/pipeline":                       {aplicacion.RolAdministrador},
 		"/auditoria/asientos":                   {aplicacion.RolAuditor, aplicacion.RolAdministrador},
 		"/auditoria/obra/obra-1":                {aplicacion.RolAuditor, aplicacion.RolAdministrador},
-		"/mis-liquidaciones":                    {aplicacion.RolTitular},
+		"/mis-liquidaciones/obras":              {aplicacion.RolTitular},
 		"/mis-liquidaciones/export?formato=pdf": {aplicacion.RolTitular},
 	}
 	roles := []aplicacion.Rol{
@@ -44,7 +44,7 @@ func TestMatrizRolRuta(t *testing.T) {
 		h := Nueva(Casos{
 			Auth:      auth,
 			Auditoria: &auditoriaFalsa{},
-			Liquidaciones: &liquidacionesFalsa{
+			Reporte: &liquidacionesFalsa{
 				archivo: aplicacion.Archivo{Nombre: "liq.pdf", TipoMIME: "application/pdf", Contenido: []byte("%PDF")},
 			},
 		}, Opciones{}).Router()
@@ -72,7 +72,7 @@ func TestMatrizRolRuta(t *testing.T) {
 func TestRutaConRolSinSesionEs401(t *testing.T) {
 	h := servidor(t, &autenticacionFalsa{})
 
-	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1", "/mis-liquidaciones"} {
+	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1", "/mis-liquidaciones", "/mis-liquidaciones/obras", "/mis-liquidaciones/export"} {
 		t.Run(ruta, func(t *testing.T) {
 			rec := pedir(t, h, http.MethodGet, ruta, "", "")
 			if rec.Code != http.StatusUnauthorized {

@@ -2,171 +2,192 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 )
 
-type liquidacionesFalsa struct {
-	liq     aplicacion.Liquidacion
-	archivo aplicacion.Archivo
-	err     error
-
-	vistoActor   aplicacion.Usuario
-	vistoPeriodo string
-	vistoFormato string
+type liquidacionesFalsas struct {
+	vistas      []aplicacion.OrdenVista
+	errListar   error
+	errTitular  error
+	actorListar aplicacion.Usuario
+	actorMia    aplicacion.Usuario
 }
 
-func (l *liquidacionesFalsa) Consultar(_ context.Context, actor aplicacion.Usuario, periodo string) (aplicacion.Liquidacion, error) {
-	l.vistoActor = actor
-	l.vistoPeriodo = periodo
-	return l.liq, l.err
+func (l *liquidacionesFalsas) Listar(_ context.Context, actor aplicacion.Usuario) ([]aplicacion.OrdenVista, error) {
+	l.actorListar = actor
+	return l.vistas, l.errListar
 }
 
-func (l *liquidacionesFalsa) Exportar(_ context.Context, actor aplicacion.Usuario, periodo, formato string) (aplicacion.Archivo, error) {
-	l.vistoActor = actor
-	l.vistoPeriodo = periodo
-	l.vistoFormato = formato
-	return l.archivo, l.err
+func (l *liquidacionesFalsas) DeTitular(_ context.Context, actor aplicacion.Usuario) ([]aplicacion.OrdenVista, error) {
+	l.actorMia = actor
+	return l.vistas, l.errTitular
 }
 
-func titularAna() aplicacion.Usuario {
-	return aplicacion.Usuario{ID: "usr-ana", Email: "ana@redes.co", Nombre: "Ana", Rol: aplicacion.RolTitular, TitularID: "tit-ana"}
-}
-
-func servidorConLiq(t *testing.T, auth Autenticacion, liq Liquidaciones) http.Handler {
+func servidorConLiq(t *testing.T, auth Autenticacion, liq ConsultaLiquidaciones) http.Handler {
 	t.Helper()
-	return Nueva(Casos{Auth: auth, Liquidaciones: liq}, Opciones{}).Router()
+	return Nueva(Casos{Auth: auth, Ordenes: liq}, Opciones{}).Router()
 }
 
-func TestConsultarLiquidacionesDevuelveElPanel(t *testing.T) {
-	liq := aplicacion.Liquidacion{
-		TitularID: "tit-ana",
-		Periodo:   "2026-01",
-		Lineas: []aplicacion.LineaLiquidacion{{
-			Periodo: "2026-01", ObraID: "obra-1", Titulo: "La Casa",
-			Bruto: decimal.RequireFromString("6000"), Admin: decimal.RequireFromString("1200"),
-			Social: decimal.RequireFromString("600"), Reserva: decimal.RequireFromString("300"),
-			Neto: decimal.RequireFromString("3900"),
-		}},
-		Totales: aplicacion.TotalesLiquidacion{
-			Bruto: decimal.RequireFromString("6000"), Neto: decimal.RequireFromString("3900"),
-			Admin: decimal.RequireFromString("1200"), Social: decimal.RequireFromString("600"),
-			Reserva: decimal.RequireFromString("300"),
+func ordenVistaPrueba() aplicacion.OrdenVista {
+	return aplicacion.OrdenVista{
+		Orden: liquidacion.OrdenDePago{
+			ID:        "liq-2026-nacional-tit-ana",
+			ProcesoID: "prc-1",
+			Procesos:  []string{"prc-1", "prc-2"},
+			TitularID: "tit-ana",
+			Periodo:   "2026",
+			Circuito:  "nacional",
+			Bruto:     decimal.RequireFromString("1000.00"),
+			Deducciones: []liquidacion.Deduccion{
+				{Concepto: liquidacion.ConceptoAdministracion, Monto: decimal.RequireFromString("200.00")},
+				{Concepto: liquidacion.ConceptoSocial, Monto: decimal.RequireFromString("100.00")},
+			},
+			Neto:       decimal.RequireFromString("700.00"),
+			Estado:     liquidacion.EstadoAceptadaPorSilencio,
+			EnviadaDia: "2026-01-01",
 		},
-	}
-	fake := &liquidacionesFalsa{liq: liq}
-	auth := &autenticacionFalsa{usuario: titularAna()}
-
-	rec := pedir(t, servidorConLiq(t, auth, fake), http.MethodGet, "/mis-liquidaciones?periodo=2026-01", "", "tok")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
-	}
-	if fake.vistoPeriodo != "2026-01" {
-		t.Fatalf("periodo = %q", fake.vistoPeriodo)
-	}
-	if fake.vistoActor.TitularID != "tit-ana" {
-		t.Fatal("el titular tiene que salir de la sesion")
-	}
-	cuerpo := rec.Body.String()
-	if !strings.Contains(cuerpo, `"neto":"3900.00"`) || !strings.Contains(cuerpo, `"bruto":"6000.00"`) {
-		t.Fatalf("el panel no lleva bruto/neto: %s", cuerpo)
+		Pagable: true,
 	}
 }
 
-func TestExportarLiquidacionPDFCabecerasYCuerpo(t *testing.T) {
-	fake := &liquidacionesFalsa{archivo: aplicacion.Archivo{
-		Nombre:    "liquidacion-2026-01.pdf",
-		TipoMIME:  "application/pdf",
-		Contenido: []byte("%PDF-1.4 embebido 3900.00"),
+func TestGetLiquidacionesAdmin(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{
+		ID: "usr-admin", Rol: aplicacion.RolAdministrador,
 	}}
-	auth := &autenticacionFalsa{usuario: titularAna()}
+	liq := &liquidacionesFalsas{vistas: []aplicacion.OrdenVista{ordenVistaPrueba()}}
+	h := servidorConLiq(t, auth, liq)
 
-	rec := pedir(t, servidorConLiq(t, auth, fake), http.MethodGet,
-		"/mis-liquidaciones/export?periodo=2026-01&formato=pdf", "", "tok")
-
+	rec := pedir(t, h, http.MethodGet, "/liquidaciones", "", "tok")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body.String())
 	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/pdf" {
-		t.Fatalf("Content-Type = %q", ct)
+	if liq.actorListar.Rol != aplicacion.RolAdministrador {
+		t.Fatalf("el caso de uso no recibio al admin: %+v", liq.actorListar)
 	}
-	cd := rec.Header().Get("Content-Disposition")
-	if !strings.Contains(cd, "liquidacion-2026-01.pdf") {
-		t.Fatalf("Content-Disposition = %q", cd)
+
+	var cuerpo listadoJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("json: %v", err)
 	}
-	if !strings.HasPrefix(rec.Body.String(), "%PDF") {
-		t.Fatalf("cuerpo = %q", rec.Body)
+	if len(cuerpo.Liquidaciones) != 1 {
+		t.Fatalf("len = %d", len(cuerpo.Liquidaciones))
 	}
-	if fake.vistoFormato != "pdf" || fake.vistoPeriodo != "2026-01" {
-		t.Fatalf("visto formato=%q periodo=%q", fake.vistoFormato, fake.vistoPeriodo)
+	o := cuerpo.Liquidaciones[0]
+	if o.Bruto != "1000.00" || o.Neto != "700.00" {
+		t.Fatalf("bruto/neto = %s/%s", o.Bruto, o.Neto)
+	}
+	if len(o.Deducciones) != 2 {
+		t.Fatalf("deducciones = %d, tienen que ir itemizadas", len(o.Deducciones))
+	}
+	if o.Deducciones[0].Concepto != liquidacion.ConceptoAdministracion || o.Deducciones[0].Monto != "200.00" {
+		t.Fatalf("primera deduccion = %+v", o.Deducciones[0])
+	}
+	if o.Estado != string(liquidacion.EstadoAceptadaPorSilencio) {
+		t.Fatalf("estado = %q", o.Estado)
+	}
+	// El circuito es parte de la identidad de la orden desde el ADR 0019, y las
+	// corridas que aportaron son lo que explica un bruto agregado.
+	if o.Circuito != "nacional" {
+		t.Fatalf("circuito = %q", o.Circuito)
+	}
+	if len(o.Procesos) != 2 {
+		t.Fatalf("procesos = %v, tienen que viajar las dos corridas", o.Procesos)
+	}
+	if !o.Pagable {
+		t.Fatal("pagable tiene que viajar en el JSON")
+	}
+	if rec.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("content-type = %q", rec.Header().Get("Content-Type"))
 	}
 }
 
-func TestExportarLiquidacionExcelCabeceras(t *testing.T) {
-	fake := &liquidacionesFalsa{archivo: aplicacion.Archivo{
-		Nombre:    "liquidacion-2026-01.xlsx",
-		TipoMIME:  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		Contenido: []byte("PK"),
+func TestGetMisLiquidacionesTitular(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{
+		ID: "usr-titular", Rol: aplicacion.RolTitular, TitularID: "tit-ana",
 	}}
-	auth := &autenticacionFalsa{usuario: titularAna()}
+	liq := &liquidacionesFalsas{vistas: []aplicacion.OrdenVista{ordenVistaPrueba()}}
+	h := servidorConLiq(t, auth, liq)
 
-	rec := pedir(t, servidorConLiq(t, auth, fake), http.MethodGet,
-		"/mis-liquidaciones/export?formato=xlsx", "", "tok")
-
+	rec := pedir(t, h, http.MethodGet, "/mis-liquidaciones", "", "tok")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("codigo = %d", rec.Code)
+		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Header().Get("Content-Type"), "spreadsheetml") {
-		t.Fatalf("Content-Type = %q", rec.Header().Get("Content-Type"))
+	if liq.actorMia.TitularID != "tit-ana" {
+		t.Fatalf("el caso de uso no recibio al titular de la sesion: %+v", liq.actorMia)
 	}
 }
 
-func TestExportarFormatoInvalidoEs400(t *testing.T) {
-	fake := &liquidacionesFalsa{err: aplicacion.ErrFormatoInvalido}
-	auth := &autenticacionFalsa{usuario: titularAna()}
-
-	rec := pedir(t, servidorConLiq(t, auth, fake), http.MethodGet,
-		"/mis-liquidaciones/export?formato=csv", "", "tok")
-
-	if rec.Code != http.StatusBadRequest {
+func TestGetLiquidacionesSinTokenEs401(t *testing.T) {
+	h := servidorConLiq(t, &autenticacionFalsa{}, &liquidacionesFalsas{})
+	rec := pedir(t, h, http.MethodGet, "/liquidaciones", "", "")
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("codigo = %d", rec.Code)
 	}
 }
 
-func TestExportarPeriodoInvalidoEs400(t *testing.T) {
-	fake := &liquidacionesFalsa{err: aplicacion.ErrPeriodoInvalido}
-	auth := &autenticacionFalsa{usuario: titularAna()}
+func TestGetLiquidacionesTitularEs403(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{
+		ID: "usr-titular", Rol: aplicacion.RolTitular, TitularID: "tit-ana",
+	}}
+	liq := &liquidacionesFalsas{errListar: aplicacion.ErrNoAutorizado}
+	h := servidorConLiq(t, auth, liq)
 
-	rec := pedir(t, servidorConLiq(t, auth, fake), http.MethodGet,
-		"/mis-liquidaciones/export?periodo=enero&formato=pdf", "", "tok")
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("codigo = %d", rec.Code)
+	rec := pedir(t, h, http.MethodGet, "/liquidaciones", "", "tok")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestMisLiquidacionesSinSesionEs401(t *testing.T) {
-	h := servidorConLiq(t, &autenticacionFalsa{}, &liquidacionesFalsa{})
-	for _, ruta := range []string{"/mis-liquidaciones", "/mis-liquidaciones/export?formato=pdf"} {
-		rec := pedir(t, h, http.MethodGet, ruta, "", "")
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("%s dio %d, se esperaba 401", ruta, rec.Code)
-		}
-	}
-}
-
-func TestMisLiquidacionesConOtroRolEs403(t *testing.T) {
-	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolAdministrador}}
-	h := servidorConLiq(t, auth, &liquidacionesFalsa{})
+func TestGetMisLiquidacionesAdminEs403(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{
+		ID: "usr-admin", Rol: aplicacion.RolAdministrador,
+	}}
+	liq := &liquidacionesFalsas{errTitular: aplicacion.ErrNoAutorizado}
+	h := servidorConLiq(t, auth, liq)
 
 	rec := pedir(t, h, http.MethodGet, "/mis-liquidaciones", "", "tok")
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("codigo = %d, se esperaba 403", rec.Code)
+		t.Fatalf("codigo = %d", rec.Code)
+	}
+}
+
+func TestGetLiquidacionesListaVaciaEsArray(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{Rol: aplicacion.RolAuditor}}
+	liq := &liquidacionesFalsas{vistas: []aplicacion.OrdenVista{}}
+	h := servidorConLiq(t, auth, liq)
+
+	rec := pedir(t, h, http.MethodGet, "/liquidaciones", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d", rec.Code)
+	}
+	var cuerpo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	arr, ok := cuerpo["liquidaciones"].([]any)
+	if !ok {
+		t.Fatalf("liquidaciones no es array: %#v", cuerpo["liquidaciones"])
+	}
+	if arr == nil {
+		t.Fatal("liquidaciones null; tiene que ser []")
+	}
+}
+
+func TestGetLiquidacionesFalloDeInfraestructuraEs500(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{Rol: aplicacion.RolAuditor}}
+	liq := &liquidacionesFalsas{errListar: errors.New("connection refused")}
+	h := servidorConLiq(t, auth, liq)
+
+	rec := pedir(t, h, http.MethodGet, "/liquidaciones", "", "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d", rec.Code)
 	}
 }

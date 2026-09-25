@@ -56,12 +56,13 @@ type Opciones struct {
 type API struct {
 	salud         Salud
 	auth          Autenticacion
+	ordenes       ConsultaLiquidaciones
 	catalogo      Catalogo
 	padron        Padron
 	ingesta       Ingesta
 	declaraciones Declaraciones
 	recaudo       Recaudo
-	liq           Liquidaciones
+	reporte       ReporteLiquidaciones
 	procesos      Procesos
 	cola          ColaRevision
 	auditoria     Auditoria
@@ -79,12 +80,13 @@ type API struct {
 type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
+	Ordenes       ConsultaLiquidaciones
 	Catalogo      Catalogo
 	Padron        Padron
 	Ingesta       Ingesta
 	Declaraciones Declaraciones
 	Recaudo       Recaudo
-	Liquidaciones Liquidaciones
+	Reporte       ReporteLiquidaciones
 	Procesos      Procesos
 	Cola          ColaRevision
 	Auditoria     Auditoria
@@ -111,12 +113,13 @@ func Nueva(casos Casos, opts Opciones) *API {
 	return &API{
 		salud:         casos.Salud,
 		auth:          casos.Auth,
+		ordenes:       casos.Ordenes,
 		catalogo:      casos.Catalogo,
 		padron:        casos.Padron,
 		ingesta:       casos.Ingesta,
 		declaraciones: casos.Declaraciones,
 		recaudo:       casos.Recaudo,
-		liq:           casos.Liquidaciones,
+		reporte:       casos.Reporte,
 		procesos:      casos.Procesos,
 		cola:          casos.Cola,
 		auditoria:     casos.Auditoria,
@@ -157,6 +160,10 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		// Ordenes de pago (ADR 0019). El rol lo decide el caso de uso:
+		// /liquidaciones es staff y /mis-liquidaciones es el titular.
+		protegido.Get("/liquidaciones", a.listarLiquidaciones)
+		protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
@@ -233,7 +240,9 @@ func (a *API) Router() http.Handler {
 		})
 		protegido.Group(func(titular chi.Router) {
 			titular.Use(requiereRol(aplicacion.RolTitular))
-			titular.Get("/mis-liquidaciones", a.consultarLiquidaciones)
+			// El desglose por obra y su export (#43). No pisa
+			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
+			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
 			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
 		})
 

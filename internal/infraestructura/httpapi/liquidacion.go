@@ -3,127 +3,130 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
-
-	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
-// Liquidaciones es lo que la capa HTTP necesita del nucleo para el panel
-// y el export. Se declara en el consumidor, igual que [Autenticacion].
-type Liquidaciones interface {
-	Consultar(ctx context.Context, actor aplicacion.Usuario, periodo string) (aplicacion.Liquidacion, error)
-	Exportar(ctx context.Context, actor aplicacion.Usuario, periodo, formato string) (aplicacion.Archivo, error)
+var _ ConsultaLiquidaciones = aplicacion.Liquidaciones{}
+
+// ConsultaLiquidaciones es lo que la capa HTTP necesita del nucleo para
+// servir liquidaciones. Se declara aqui, igual que [Autenticacion]: el
+// adaptador depende de dos metodos, no del struct que los implementa.
+type ConsultaLiquidaciones interface {
+	Listar(ctx context.Context, actor aplicacion.Usuario) ([]aplicacion.OrdenVista, error)
+	DeTitular(ctx context.Context, actor aplicacion.Usuario) ([]aplicacion.OrdenVista, error)
 }
 
-type montoJSON string
-
-func aMonto(d decimal.Decimal) montoJSON {
-	return montoJSON(d.StringFixed(2))
+type deduccionJSON struct {
+	Concepto string `json:"concepto"`
+	Monto    string `json:"monto"`
 }
 
-type lineaLiquidacionJSON struct {
-	Periodo string    `json:"periodo"`
-	ObraID  string    `json:"obra_id"`
-	Titulo  string    `json:"titulo"`
-	Bruto   montoJSON `json:"bruto"`
-	Admin   montoJSON `json:"admin"`
-	Social  montoJSON `json:"social"`
-	Reserva montoJSON `json:"reserva"`
-	Neto    montoJSON `json:"neto"`
+type ordenJSON struct {
+	ID string `json:"id"`
+
+	// ProcesoID es la corrida de REFERENCIA y Procesos la lista completa de las
+	// que aportaron: desde el ADR 0019 una orden agrega todas las corridas de su
+	// periodo y circuito, asi que `proceso_id` a secas afirmaria que todo vino
+	// de una sola.
+	ProcesoID string   `json:"proceso_id"`
+	Procesos  []string `json:"procesos"`
+
+	TitularID   string          `json:"titular_id"`
+	Periodo     string          `json:"periodo"`
+	Circuito    string          `json:"circuito"`
+	Bruto       string          `json:"bruto"`
+	Deducciones []deduccionJSON `json:"deducciones"`
+	Neto        string          `json:"neto"`
+	Estado      string          `json:"estado"`
+	Pagable     bool            `json:"pagable"`
+	Enviada     string          `json:"enviada"`
 }
 
-type totalesJSON struct {
-	Bruto   montoJSON `json:"bruto"`
-	Admin   montoJSON `json:"admin"`
-	Social  montoJSON `json:"social"`
-	Reserva montoJSON `json:"reserva"`
-	Neto    montoJSON `json:"neto"`
+type listadoJSON struct {
+	Liquidaciones []ordenJSON `json:"liquidaciones"`
 }
 
-type liquidacionJSON struct {
-	TitularID string                 `json:"titular_id"`
-	Periodo   string                 `json:"periodo"`
-	Lineas    []lineaLiquidacionJSON `json:"lineas"`
-	Totales   totalesJSON            `json:"totales"`
-}
-
-func aLiquidacionJSON(l aplicacion.Liquidacion) liquidacionJSON {
-	lineas := make([]lineaLiquidacionJSON, 0, len(l.Lineas))
-	for _, ln := range l.Lineas {
-		lineas = append(lineas, lineaLiquidacionJSON{
-			Periodo: ln.Periodo,
-			ObraID:  ln.ObraID,
-			Titulo:  ln.Titulo,
-			Bruto:   aMonto(ln.Bruto),
-			Admin:   aMonto(ln.Admin),
-			Social:  aMonto(ln.Social),
-			Reserva: aMonto(ln.Reserva),
-			Neto:    aMonto(ln.Neto),
+func aOrdenJSON(v aplicacion.OrdenVista) ordenJSON {
+	o := v.Orden
+	deducciones := make([]deduccionJSON, 0, len(o.Deducciones))
+	for _, d := range o.Deducciones {
+		deducciones = append(deducciones, deduccionJSON{
+			Concepto: d.Concepto,
+			Monto:    d.Monto.StringFixed(2),
 		})
 	}
-	return liquidacionJSON{
-		TitularID: l.TitularID,
-		Periodo:   l.Periodo,
-		Lineas:    lineas,
-		Totales: totalesJSON{
-			Bruto:   aMonto(l.Totales.Bruto),
-			Admin:   aMonto(l.Totales.Admin),
-			Social:  aMonto(l.Totales.Social),
-			Reserva: aMonto(l.Totales.Reserva),
-			Neto:    aMonto(l.Totales.Neto),
-		},
+	procesos := o.Procesos
+	if procesos == nil {
+		// Nil se serializa a null y el contrato dice array: un cliente que
+		// itere sobre null falla, y "no hay procesos" no es un caso posible.
+		procesos = []string{}
+	}
+	return ordenJSON{
+		ID:          o.ID,
+		ProcesoID:   o.ProcesoID,
+		Procesos:    procesos,
+		TitularID:   o.TitularID,
+		Periodo:     o.Periodo,
+		Circuito:    o.Circuito,
+		Bruto:       o.Bruto.StringFixed(2),
+		Deducciones: deducciones,
+		Neto:        o.Neto.StringFixed(2),
+		Estado:      string(o.Estado),
+		Pagable:     v.Pagable,
+		Enviada:     o.EnviadaDia,
 	}
 }
 
-func (a *API) consultarLiquidaciones(w http.ResponseWriter, r *http.Request) {
-	actor, ok := UsuarioDe(r.Context())
-	if !ok {
+func aListadoJSON(vistas []aplicacion.OrdenVista) listadoJSON {
+	ordenes := make([]ordenJSON, 0, len(vistas))
+	for _, v := range vistas {
+		ordenes = append(ordenes, aOrdenJSON(v))
+	}
+	return listadoJSON{Liquidaciones: ordenes}
+}
+
+func (a *API) listarLiquidaciones(w http.ResponseWriter, r *http.Request) {
+	if a.ordenes == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"las liquidaciones no estan configuradas en esta instalacion")
+		return
+	}
+	a.servirLiquidaciones(w, r, a.ordenes.Listar)
+}
+
+func (a *API) misLiquidaciones(w http.ResponseWriter, r *http.Request) {
+	if a.ordenes == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"las liquidaciones no estan configuradas en esta instalacion")
+		return
+	}
+	a.servirLiquidaciones(w, r, a.ordenes.DeTitular)
+}
+
+func (a *API) servirLiquidaciones(w http.ResponseWriter, r *http.Request, fn func(context.Context, aplicacion.Usuario) ([]aplicacion.OrdenVista, error)) {
+	actor, hay := UsuarioDe(r.Context())
+	if !hay {
 		noAutenticado(w, "sesion invalida o expirada")
 		return
 	}
-	liq, err := a.liq.Consultar(r.Context(), actor, r.URL.Query().Get("periodo"))
-	if !escribirErrorLiquidacion(w, err) {
-		return
-	}
-	escribirJSON(w, http.StatusOK, aLiquidacionJSON(liq))
-}
 
-func (a *API) exportarLiquidaciones(w http.ResponseWriter, r *http.Request) {
-	actor, ok := UsuarioDe(r.Context())
-	if !ok {
-		noAutenticado(w, "sesion invalida o expirada")
-		return
-	}
-	q := r.URL.Query()
-	archivo, err := a.liq.Exportar(r.Context(), actor, q.Get("periodo"), q.Get("formato"))
-	if !escribirErrorLiquidacion(w, err) {
-		return
-	}
-
-	h := w.Header()
-	h.Set("Content-Type", archivo.TipoMIME)
-	h.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, archivo.Nombre))
-	h.Set("Content-Length", fmt.Sprintf("%d", len(archivo.Contenido)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(archivo.Contenido)
-}
-
-func escribirErrorLiquidacion(w http.ResponseWriter, err error) bool {
-	if err == nil {
-		return true
-	}
+	vistas, err := fn(r.Context(), actor)
 	switch {
+	case err == nil:
 	case errors.Is(err, aplicacion.ErrNoAutorizado):
-		escribirError(w, http.StatusForbidden, aplicacion.ErrNoAutorizado.Error())
-	case errors.Is(err, aplicacion.ErrFormatoInvalido):
-		escribirError(w, http.StatusBadRequest, "formato tiene que ser pdf o xlsx")
-	case errors.Is(err, aplicacion.ErrPeriodoInvalido):
-		escribirError(w, http.StatusBadRequest, "periodo tiene que ser YYYY o YYYY-MM")
+		escribirError(w, http.StatusForbidden, "no autorizado")
+		return
+	case errors.Is(err, aplicacion.ErrParametroAusente):
+		a.log.ErrorContext(r.Context(), "parametro normativo ausente", slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "parametro normativo ausente")
+		return
 	default:
-		escribirError(w, http.StatusInternalServerError, "no se pudo generar la liquidacion")
+		a.log.ErrorContext(r.Context(), "no se pudieron leer las liquidaciones", slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "no se pudieron leer las liquidaciones")
+		return
 	}
-	return false
+	escribirJSON(w, http.StatusOK, aListadoJSON(vistas))
 }

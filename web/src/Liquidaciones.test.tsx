@@ -55,7 +55,7 @@ describe("Liquidaciones", () => {
     expect(await screen.findByText("La Casa de las Dos Palmas")).toBeTruthy();
     expect(screen.getAllByText("6000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("3900.00").length).toBeGreaterThan(0);
-    expect(vi.mocked(api)).toHaveBeenCalledWith("/api/mis-liquidaciones");
+    expect(vi.mocked(api)).toHaveBeenCalledWith("/api/mis-liquidaciones/obras");
   });
 
   it("filtra por periodo antes de exportar", async () => {
@@ -69,7 +69,7 @@ describe("Liquidaciones", () => {
 
     await waitFor(() => {
       expect(vi.mocked(api)).toHaveBeenCalledWith(
-        "/api/mis-liquidaciones?periodo=2026-01",
+        "/api/mis-liquidaciones/obras?periodo=2026-01",
       );
     });
   });

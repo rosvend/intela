@@ -53,9 +53,9 @@ func TestExportarYPanelCompartenTotales(t *testing.T) {
 		},
 	}
 	auth := &autenticacionFalsa{usuario: titularAna()}
-	h := servidorConLiq(t, auth, svc)
+	h := servidorConReporte(t, auth, svc)
 
-	panel := pedir(t, h, http.MethodGet, "/mis-liquidaciones?periodo=2026-01", "", "tok")
+	panel := pedir(t, h, http.MethodGet, "/mis-liquidaciones/obras?periodo=2026-01", "", "tok")
 	if panel.Code != http.StatusOK {
 		t.Fatalf("panel: %d %s", panel.Code, panel.Body)
 	}
@@ -179,7 +179,7 @@ type repoLiquidacionHTTP struct {
 	filas []aplicacion.FilaLiquidacion
 }
 
-func (r repoLiquidacionHTTP) DeTitular(_ context.Context, _, periodo string) ([]aplicacion.FilaLiquidacion, error) {
+func (r repoLiquidacionHTTP) FilasDeTitular(_ context.Context, _, periodo string) ([]aplicacion.FilaLiquidacion, error) {
 	if periodo == "" {
 		return r.filas, nil
 	}

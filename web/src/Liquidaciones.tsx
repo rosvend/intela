@@ -38,7 +38,7 @@ export default function Liquidaciones() {
     setError("");
     const q = queryPeriodo(p);
     const data = (await api(
-      `/api/mis-liquidaciones${q ? `?${q}` : ""}`,
+      `/api/mis-liquidaciones/obras${q ? `?${q}` : ""}`,
     )) as Liquidacion;
     setLiq(data);
   }, []);

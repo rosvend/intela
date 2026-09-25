@@ -31,6 +31,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -136,6 +137,19 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	ordenes := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: registro},
+		Bitacora:    store,
+		Unidad:      store,
+	}
+
 	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
 	// UnidadDeTrabajo y -por el puerto GestionDeclaraciones- la lectura de la
 	// declaracion vigente que el catalogo necesita para decir en que estado
@@ -179,7 +193,7 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
-	liquidaciones := aplicacion.ServicioLiquidacion{
+	reporte := aplicacion.ServicioLiquidacion{
 		Repo: store,
 		Exportador: exportacion.Combinado{
 			XLSX: exportacion.GeneradorExcel{},
@@ -212,11 +226,12 @@ func construir() (http.Handler, error) {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
+		Ordenes:       ordenes,
 		Catalogo:      catalogo,
 		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
-		Liquidaciones: liquidaciones,
+		Reporte:       reporte,
 		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 		Auditoria:     aplicacion.Auditoria{Bitacora: store},
