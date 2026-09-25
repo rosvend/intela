@@ -226,3 +226,40 @@ func TestActualizarPendienteNoPisaUnaAdmitida(t *testing.T) {
 		t.Fatal("ActualizarPendiente piso el IPI de una solicitud ya admitida")
 	}
 }
+
+func TestAdmitirSolicitudNoPisaUnaRechazada(t *testing.T) {
+	// El WHERE estado = 'pendiente' cierra la carrera al reves: si se
+	// rechazo entre la lectura y la admision, la fila no puede quedar
+	// admitida ni entrar al padron.
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	a := solicitudDePrueba("afil-carrera-rechazo")
+	if err := s.GuardarSolicitud(ctx, a, hashBcrypt); err != nil {
+		t.Fatalf("GuardarSolicitud: %v", err)
+	}
+	rechazada, err := a.Rechazar()
+	if err != nil {
+		t.Fatalf("Rechazar: %v", err)
+	}
+	if err := s.ActualizarPendiente(ctx, rechazada); err != nil {
+		t.Fatalf("ActualizarPendiente: %v", err)
+	}
+
+	admitida, err := a.Admitir("tit-tarde")
+	if err != nil {
+		t.Fatalf("Admitir: %v", err)
+	}
+	if err := s.AdmitirSolicitud(ctx, admitida); !errors.Is(err, afiliacion.ErrEstadoInvalido) {
+		t.Fatalf("se esperaba ErrEstadoInvalido, se obtuvo %v", err)
+	}
+	got, err := s.SolicitudPorID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("SolicitudPorID: %v", err)
+	}
+	if got.Estado != afiliacion.EstadoRechazado {
+		t.Fatalf("Estado = %q, la carrera no debia admitir una rechazada", got.Estado)
+	}
+	if got.TitularID != "" {
+		t.Fatalf("titular_id = %q, una rechazada no entra al padron", got.TitularID)
+	}
+}

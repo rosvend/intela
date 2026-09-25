@@ -1,11 +1,18 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import {
   type DatosAlta,
   datosVacios,
   errorDelPaso,
   conflictoExclusividad,
 } from "./reglas";
+
+const altaEnLineaCerrada = "El alta en línea no está disponible todavía.";
+
+function mensajeDeAlta(err: unknown, porDefecto: string): string {
+  if (err instanceof ApiError && err.status === 503) return altaEnLineaCerrada;
+  return err instanceof Error ? err.message : porDefecto;
+}
 
 const PASOS = [
   "Identidad",
@@ -87,7 +94,7 @@ export default function WizardAfiliacion() {
       })) as AfiliacionCreada;
       setCreada(r);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo enviar.");
+      setError(mensajeDeAlta(err, "No se pudo enviar."));
     } finally {
       setEnviando(false);
     }
@@ -479,9 +486,7 @@ function FormularioIPI({
       )) as AfiliacionCreada;
       onCompletada(r);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "No se pudo completar el IPI.",
-      );
+      setError(mensajeDeAlta(err, "No se pudo completar el IPI."));
     } finally {
       setEnviando(false);
     }

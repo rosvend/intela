@@ -200,6 +200,36 @@ describe("WizardAfiliacion", () => {
     );
   });
 
+  it("traduce el 503 de la instalacion sin boveda y no da el alta por hecha", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error:
+            "el alta de afiliacion no esta configurada en esta instalacion",
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    render(<WizardAfiliacion />);
+    await completarHasta(3);
+    fireEvent.click(
+      screen.getByRole("radio", { name: /no pertenezco a otra SGC/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /siguiente/i }));
+    fireEvent.click(screen.getByRole("button", { name: /enviar solicitud/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /no está disponible todavía/i,
+      );
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(
+      screen.queryByText(/no esta configurada en esta instalacion/i),
+    ).toBeNull();
+  });
+
   it("muestra la explicacion del servidor ante un 409 de exclusividad", async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(

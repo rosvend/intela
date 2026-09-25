@@ -100,6 +100,8 @@ func (s *Store) AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) err
 			return traducirError(err, "crear usuario de titular %q", usuarioID)
 		}
 
+		// El WHERE cierra la carrera con ActualizarPendiente: si la fila se
+		// rechazo entre la lectura y este UPDATE, no se admite.
 		tag, err := tx.Exec(ctx, `
 			UPDATE afiliaciones
 			   SET estado = $2, titular_id = $3, resuelto = now()

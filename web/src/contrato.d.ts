@@ -2155,6 +2155,24 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     completarIPI: {
@@ -2241,6 +2259,24 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "demasiadas solicitudes, reintente en un momento"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
@@ -2355,6 +2391,24 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     rechazarAfiliacion: {
@@ -2445,6 +2499,24 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

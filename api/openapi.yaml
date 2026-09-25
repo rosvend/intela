@@ -379,6 +379,17 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: demasiadas solicitudes, reintente en un momento
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
 
   /afiliaciones/{id}/ipi:
     patch:
@@ -449,6 +460,17 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: demasiadas solicitudes, reintente en un momento
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
 
   /afiliaciones/{id}/aprobar:
     post:
@@ -530,6 +552,17 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: la solicitud no esta pendiente de admision
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
 
   /afiliaciones/{id}/rechazar:
     post:
@@ -599,6 +632,17 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: la solicitud no esta pendiente de admision
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
 
   /liquidaciones:
     get:
