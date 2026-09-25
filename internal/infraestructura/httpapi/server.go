@@ -92,14 +92,7 @@ type Casos struct {
 	Auditoria     Auditoria
 }
 
-// ColaRevision lista las filas que no se pudieron normalizar y esperan ojo
-// humano. Se declara en el consumidor, igual que [Catalogo].
-//
-// NO lleva las anomalias del #37, aunque un comentario anterior lo anunciara:
-// aterrizaron en su propio recurso, `/alertas`, porque necesitan estado de
-// resolucion y `ItemRevision` no lo tiene, y porque `/admin/*` es solo de
-// `administrador` y el tablero de anomalias lo miran tambien `distribucion` y
-// `auditor` (ADR 0021).
+// ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
 }
@@ -245,40 +238,7 @@ func (a *API) Router() http.Handler {
 			bol.Get("/{id}", a.bolsaPorID)
 		})
 
-		// La bandeja de anomalias de un periodo (#37). Recurso de nivel
-		// superior y NO bajo `/admin/*`, que es solo `administrador`: el
-		// tablero de anomalias lo miran los tres roles que operan o auditan
-		// el reparto, y meterlo ahi dejaria en 403 permanente al panel de
-		// #104 para `distribucion` y `auditor` (ADR 0021).
-		//
-		// Dos sub-grupos y NO un chequeo a mano dentro del handler, porque
-		// ver y resolver no piden lo mismo. `auditor` lee todo y no opera el
-		// pipeline ni firma (docs/architecture/roles.md), asi que puede mirar
-		// la bandeja y no puede cerrar una alerta: cerrarla es una decision
-		// sobre a quien se le paga. `distribucion` si, porque es quien
-		// persigue estas alertas con los autores (`RD 13.5`). Escribir el
-		// chequeo en el handler es justo el fallo que rbac.go existe para que
-		// se pueda auditar en un solo sitio (#47).
-		//
-		// `contabilidad` LEE y no escribe, por el mismo patron que `/bolsas`
-		// justo arriba. Es la segunda firma de la compuerta --
-		// `docs/architecture/roles.md` la llama "La otra firma de las mismas
-		// compuertas" y el ADR 0008 cita `RD 13.8.6`, el control del dinero de
-		// las ONI con aval de Contabilidad --, y lo que esta bandeja le da es
-		// justo lo que necesita ANTES de firmar: cuantas alertas criticas
-		// siguen abiertas en el periodo. Fuera de escritura porque perseguir la
-		// anomalia con los autores es trabajo de `distribucion`, no suyo.
-		//
-		// En ESTA rama, `web/src/navegacion.ts` todavia declara `/anomalias`
-		// para tres roles y contabilidad no esta: quien la anade es la PR #104,
-		// SIN mergear, cuyo fichero lleva el comentario "Contabilidad es la
-		// segunda firma de la compuerta: sin /anomalias no ve el aviso de
-		// alertas abiertas antes de firmar. Roles a alinear con el
-		// `requiereRol` de #17 cuando aterrice el middleware". El middleware es
-		// este, y se alinea con lo que #104 va a traer -- si el backend
-		// esperara a verlo mergeado, contabilidad veria la entrada de menu y
-		// comeria 403, que `web/src/tablero/ausente.ts` pinta en rojo a
-		// proposito.
+		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
 		protegido.Route("/alertas", func(al chi.Router) {
 			al.Group(func(lectura chi.Router) {
 				lectura.Use(requiereRol(
