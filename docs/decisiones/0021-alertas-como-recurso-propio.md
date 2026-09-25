@@ -195,6 +195,13 @@ adaptadores para que no puedan separarse.
   traiga esa operacion. Tampoco se reescribe el `detalle` de una alerta que sigue abierta: es el
   de la primera deteccion.
 
+  Las pasadas de un mismo periodo se **serializan** con un cerrojo de aviso
+  (`pg_advisory_xact_lock`, clave FNV-1a de `alertas` + periodo) que se toma al abrir la unidad, y
+  la foto del periodo (usos, entregas, declaraciones) se lee **dentro** de ella, despues del
+  cerrojo. Sin eso, una pasada que leyo el periodo antes de que otra guardara un duplicado podia
+  autocerrarlo con su foto vieja y asentar un `alerta.autocerrada` falso. El conteo de criticas
+  que devuelve la pasada tambien se hace dentro del cerrojo.
+
 - El detector de `tipo_obra_sin_mapear` levanta **una alerta por fila**, no por obra. Sobre la
   parrilla real de Caracol eso son tantas alertas como filas identificadas, porque su mapa de
   columnas deja `tipo_obra` vacio a proposito hasta que el cliente conteste la pregunta P-05. Es la

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -91,6 +92,25 @@ func (s *Store) AutocerrarAlertas(
 		return nil, traducirError(err, "autocerrar alertas de %q", periodo)
 	}
 	return cerradas, nil
+}
+
+// BloquearAlertasDePeriodo toma el cerrojo de aviso de las alertas de un periodo hasta que la transaccion termine.
+func (s *Store) BloquearAlertasDePeriodo(ctx context.Context, periodo string) error {
+	tx, hay := txDe(ctx)
+	if !hay {
+		return fmt.Errorf("bloquear las alertas de %s: %w", periodo, errFueraDeUnidad)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, claveCerrojoAlertas(periodo)); err != nil {
+		return traducirError(err, "bloquear las alertas de %s", periodo)
+	}
+	return nil
+}
+
+// claveCerrojoAlertas es la clave de aviso del periodo, con namespace propio (mismo criterio que claveCerrojoPeriodo).
+func claveCerrojoAlertas(periodo string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("alertas\x00" + periodo))
+	return int64(h.Sum64())
 }
 
 // loteDeAlertas son las columnas de un lote, una por arreglo, para unnest.

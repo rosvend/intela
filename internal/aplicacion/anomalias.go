@@ -176,36 +176,41 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		return ResumenEvaluacion{}, err
 	}
 
-	armado, err := a.armarPeriodo(ctx, periodo)
-	if err != nil {
-		return ResumenEvaluacion{}, err
-	}
-
-	hallazgos := anomalias.Detectar(armado)
+	var resumen ResumenEvaluacion
 	ahora := a.Reloj.Ahora()
-	alertas := make([]Alerta, 0, len(hallazgos))
-	porTipo := conteoVacioPorTipo()
-	for _, h := range hallazgos {
-		porTipo[h.Tipo]++
-		alertas = append(alertas, Alerta{
-			Periodo:    periodo,
-			Tipo:       h.Tipo,
-			RefTipo:    h.RefTipo,
-			RefID:      h.RefID,
-			RefTitular: h.RefTitular,
-			Detalle:    h.Detalle,
-			Detectada:  ahora,
-		})
-	}
-
-	resumen := ResumenEvaluacion{
-		Periodo:        periodo,
-		Detectadas:     len(hallazgos),
-		PorTipo:        porTipo,
-		UsosSinCotejar: anomalias.SinClaveDeRegistro(armado.Usos),
-	}
-
 	err = a.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		// Cerrojo por periodo ANTES de leer: la foto y el autocierre salen de la misma pasada serializada (ADR 0021).
+		if err := a.Alertas.BloquearAlertasDePeriodo(ctx, periodo); err != nil {
+			return fmt.Errorf("serializar la evaluacion de %q: %w", periodo, err)
+		}
+		armado, err := a.armarPeriodo(ctx, periodo)
+		if err != nil {
+			return err
+		}
+
+		hallazgos := anomalias.Detectar(armado)
+		alertas := make([]Alerta, 0, len(hallazgos))
+		porTipo := conteoVacioPorTipo()
+		for _, h := range hallazgos {
+			porTipo[h.Tipo]++
+			alertas = append(alertas, Alerta{
+				Periodo:    periodo,
+				Tipo:       h.Tipo,
+				RefTipo:    h.RefTipo,
+				RefID:      h.RefID,
+				RefTitular: h.RefTitular,
+				Detalle:    h.Detalle,
+				Detectada:  ahora,
+			})
+		}
+
+		resumen = ResumenEvaluacion{
+			Periodo:        periodo,
+			Detectadas:     len(hallazgos),
+			PorTipo:        porTipo,
+			UsosSinCotejar: anomalias.SinClaveDeRegistro(armado.Usos),
+		}
+
 		nuevas, err := a.Alertas.GuardarAlertas(ctx, alertas)
 		if err != nil {
 			return fmt.Errorf("guardar las alertas de %q: %w", periodo, err)
@@ -218,7 +223,7 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		}
 		resumen.Autocerradas = len(cerradas)
 		for _, c := range cerradas {
-			if err := a.asentarAutocierre(ctx, c, ahora); err != nil {
+			if err := a.asentarDecisionDeSistema(ctx, HechoAlertaAutocerrada, c, ahora); err != nil {
 				return err
 			}
 		}
@@ -254,21 +259,18 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		}); err != nil {
 			return fmt.Errorf("asentar la evaluacion de %q: %w", periodo, err)
 		}
-		return nil
+		// Se cuenta dentro del cerrojo: otra pasada no puede cambiar la bandeja entre guardar y contar.
+		resumen.CriticasAbiertas, err = a.CriticasAbiertas(ctx, periodo)
+		return err
 	})
-	if err != nil {
-		return ResumenEvaluacion{}, err
-	}
-
-	resumen.CriticasAbiertas, err = a.CriticasAbiertas(ctx, periodo)
 	if err != nil {
 		return ResumenEvaluacion{}, err
 	}
 	return resumen, nil
 }
 
-// asentarAutocierre deja el asiento de una alerta que cerro el sistema (actor de sistema, ADR 0006).
-func (a Anomalias) asentarAutocierre(ctx context.Context, c Alerta, ahora time.Time) error {
+// asentarDecisionDeSistema deja el asiento de una alerta que el sistema autocerro o reabrio (actor de sistema, ADR 0006).
+func (a Anomalias) asentarDecisionDeSistema(ctx context.Context, hecho string, c Alerta, ahora time.Time) error {
 	payload, err := json.Marshal(struct {
 		Tipo       string `json:"tipo"`
 		Periodo    string `json:"periodo"`
@@ -276,23 +278,23 @@ func (a Anomalias) asentarAutocierre(ctx context.Context, c Alerta, ahora time.T
 		RefID      string `json:"ref_id"`
 		RefTitular string `json:"ref_titular,omitempty"`
 		Detalle    string `json:"detalle"`
-		Nota       string `json:"nota"`
+		Nota       string `json:"nota,omitempty"`
 	}{
 		Tipo: c.Tipo, Periodo: c.Periodo, RefTipo: c.RefTipo, RefID: c.RefID,
 		RefTitular: c.RefTitular, Detalle: c.Detalle, Nota: c.Nota,
 	})
 	if err != nil {
-		return fmt.Errorf("serializar el autocierre de la alerta %q: %w", c.ID, err)
+		return fmt.Errorf("serializar %s de la alerta %q: %w", hecho, c.ID, err)
 	}
 	if err := a.Bitacora.Asentar(ctx, Asiento{
-		Hecho:   HechoAlertaAutocerrada,
+		Hecho:   hecho,
 		RefTipo: RefAlerta,
 		RefID:   c.ID,
 		ActorID: actorSistema,
 		Payload: payload,
 		Cuando:  ahora,
 	}); err != nil {
-		return fmt.Errorf("asentar el autocierre de la alerta %q: %w", c.ID, err)
+		return fmt.Errorf("asentar %s de la alerta %q: %w", hecho, c.ID, err)
 	}
 	return nil
 }

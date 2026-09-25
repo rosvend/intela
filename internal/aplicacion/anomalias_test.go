@@ -83,6 +83,17 @@ type alertasFalsas struct {
 	guardados int
 	err       error
 	errGuarda error
+	// bloqueos apunta cada cerrojo de periodo; alBloquear corre justo despues (orden cerrojo -> foto).
+	bloqueos   []string
+	alBloquear func()
+}
+
+func (f *alertasFalsas) BloquearAlertasDePeriodo(_ context.Context, periodo string) error {
+	f.bloqueos = append(f.bloqueos, periodo)
+	if f.alBloquear != nil {
+		f.alBloquear()
+	}
+	return nil
 }
 
 func claveNatural(a Alerta) string {
@@ -903,5 +914,45 @@ func TestElMismoIPIEnDosRolesCuentaUnaSolaVez(t *testing.T) {
 	if resumen.Nuevas != len(alertas.filas) {
 		t.Fatalf("Nuevas = %d y entraron %d filas en la primera pasada sobre un tablero vacio",
 			resumen.Nuevas, len(alertas.filas))
+	}
+}
+
+// La foto del periodo se arma DESPUES del cerrojo: una pasada que espero el cerrojo mientras otra
+// guardaba un duplicado no puede autocerrarlo con lo que habia leido antes (MENOR 1, verificacion 2).
+func TestEvaluarArmaLaFotoDespuesDelCerrojoDelPeriodo(t *testing.T) {
+	svc, entregas, alertas, bitacora, _ := servicioSembrado()
+	conDup := entregas.usos
+	// Pasada B: el duplicado ya esta en los datos y en la bandeja.
+	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
+		t.Fatalf("pasada B: %v", err)
+	}
+	antes, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba)
+
+	// Pasada A: antes del cerrojo veria el periodo sin el duplicado; al obtenerlo, B ya confirmo.
+	var sinDup []UsoPersistido
+	for _, u := range conDup {
+		if u.ID != "u-dup2" {
+			sinDup = append(sinDup, u)
+		}
+	}
+	entregas.usos = sinDup
+	alertas.bloqueos = nil
+	alertas.alBloquear = func() { entregas.usos = conDup }
+
+	resumen, err := svc.Evaluar(t.Context(), periodoDePrueba, "")
+	if err != nil {
+		t.Fatalf("pasada A: %v", err)
+	}
+	if !slices.Equal(alertas.bloqueos, []string{periodoDePrueba}) {
+		t.Fatalf("cerrojos = %v, se esperaba uno sobre %q", alertas.bloqueos, periodoDePrueba)
+	}
+	if resumen.Autocerradas != 0 || resumen.CriticasAbiertas != antes {
+		t.Fatalf("autocerradas = %d, criticas = %d (se esperaban 0 y %d): la foto se leyo antes del cerrojo",
+			resumen.Autocerradas, resumen.CriticasAbiertas, antes)
+	}
+	for _, a := range bitacora.asientos {
+		if a.Hecho == HechoAlertaAutocerrada {
+			t.Fatalf("asiento de autocierre falso: %+v", a)
+		}
 	}
 }

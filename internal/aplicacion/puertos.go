@@ -1107,6 +1107,9 @@ type RepositorioAlertas interface {
 	// (misma clave natural) y devuelve las que cerro.
 	AutocerrarAlertas(ctx context.Context, periodo string, vigentes []Alerta, nota string, cuando time.Time) ([]Alerta, error)
 
+	// BloquearAlertasDePeriodo serializa las evaluaciones de un periodo hasta que la unidad termine; exige unidad abierta.
+	BloquearAlertasDePeriodo(ctx context.Context, periodo string) error
+
 	// ContarAlertasSinResolver cuenta las abiertas de un periodo entre los
 	// tipos que se le pidan. Una lista de tipos vacia cuenta TODOS.
 	//
