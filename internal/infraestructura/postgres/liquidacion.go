@@ -552,6 +552,11 @@ func (s *Store) deduccionesDe(ctx context.Context, ids []string) (map[string][]l
 //
 // El titularID lo pone el caso de uso desde la sesion. Aqui no hay forma de
 // pedir "los de otro": la consulta lleva WHERE titular_id = $1.
+//
+// La fuente es la del canal de la bolsa de ESA corrida (ADR 0019: una
+// corrida = una bolsa = un canal), el mismo corte que [Store.UsosDeCanal].
+// Filtrar solo por obra y periodo mezclaria el dinero de otra bolsa que
+// uso la misma obra en el mismo periodo.
 func (s *Store) IngresosDe(ctx context.Context, titularID string, f aplicacion.FiltroIngresos) ([]aplicacion.Ingreso, error) {
 	filas, err := s.pool.Query(ctx, `
 		SELECT
@@ -567,10 +572,12 @@ func (s *Store) IngresosDe(ctx context.Context, titularID string, f aplicacion.F
 				JOIN reportes r ON r.id = u.reporte_id
 				WHERE u.obra_id = rt.obra_id
 				  AND r.periodo = p.periodo
+				  AND u.canal_id = b.usuario_id
 				  AND NOT u.oni
 			), '') AS fuente
 		FROM resultados_titular rt
 		JOIN procesos p ON p.id = rt.proceso_id
+		JOIN bolsas b ON b.id = p.bolsa_id
 		JOIN obras o ON o.id = rt.obra_id
 		WHERE rt.titular_id = $1
 		  AND ($2 = '' OR rt.obra_id = $2)
@@ -582,6 +589,7 @@ func (s *Store) IngresosDe(ctx context.Context, titularID string, f aplicacion.F
 		            JOIN reportes r ON r.id = u.reporte_id
 		            WHERE u.obra_id = rt.obra_id
 		              AND r.periodo = p.periodo
+		              AND u.canal_id = b.usuario_id
 		              AND r.fuente = $4
 		              AND NOT u.oni
 		        )
@@ -639,19 +647,11 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 			rt.titular_id, rt.ipi, rt.porcentaje, rt.importe,
 			p.id, p.periodo, p.circuito, COALESCE(p.snapshot_id, ''), p.reglamento,
 			o.id, o.titulo,
-			rp.bruto, rp.admin, rp.social, rp.reserva, rp.neto,
-			COALESCE(d.version, 1)
+			rp.bruto, rp.admin, rp.social, rp.reserva, rp.neto
 		FROM resultados_titular rt
 		JOIN procesos p ON p.id = rt.proceso_id
 		JOIN obras o ON o.id = rt.obra_id
 		JOIN resultados_proceso rp ON rp.proceso_id = rt.proceso_id
-		-- Desde 00008 hay varias filas por (obra_id, titular_id). Sin filtrar
-		-- la version abierta, QueryRow devolveria mas de una y el Scan
-		-- abortaria. Mismo criterio que clausulaVigente en repertorio.go.
-		LEFT JOIN declaracion_versiones dv
-		  ON dv.obra_id = rt.obra_id AND dv.vigente_hasta IS NULL
-		LEFT JOIN declaraciones d
-		  ON d.obra_id = dv.obra_id AND d.version = dv.version AND d.titular_id = rt.titular_id
 		WHERE rt.proceso_id = $1 AND rt.obra_id = $2 AND rt.titular_id = $3`,
 		procesoID, obraID, titularID,
 	).Scan(
@@ -660,7 +660,6 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 		&x.Regla.SnapshotID, &x.Regla.Reglamento,
 		&x.Obra.ID, &x.Obra.Titulo,
 		&bolsaBruto, &admin, &social, &reserva, &bolsaNeto,
-		&x.Split.Version,
 	)
 	if err != nil {
 		return aplicacion.Explicacion{}, traducirError(err,
@@ -668,6 +667,9 @@ func (s *Store) PorLinea(ctx context.Context, procesoID, obraID, titularID strin
 	}
 	x.Ref = aplicacion.FormarRef(procesoID, obraID, titularID)
 	x.Split.TitularID = x.TitularID
+	// resultados_titular no guarda la version de la declaracion con la que
+	// se repartio. La abierta de hoy no es esa, y un 1 por defecto pareceria
+	// cierto (ADR 0006). Version queda nil hasta que la corrida la persista.
 
 	linea := liquidacion.ProrratearLinea(x.Neto, admin, social, reserva, bolsaNeto)
 	x.Bruto = linea.Bruto
@@ -707,18 +709,23 @@ func deduccionesDeLinea(
 // origenDeObra rellena reporte, escalon y puntaje. Sin uso la cifra sigue
 // existiendo: el origen queda vacio, no se convierte un 200 en 404.
 //
-// Si la obra pondero por varias fuentes en el periodo, fuente lista todas
-// (ordenadas, separadas por coma). id/sha256/escalon/puntaje quedan del
-// uso de mayor puntaje — el reporte "principal" — sin ocultar las demas
-// fuentes en silencio.
+// Solo entran los usos del canal de la bolsa de la corrida, igual que
+// [Store.UsosDeCanal]. Varias fuentes se listan (ordenadas, separadas por
+// coma) cuando caen en ESE canal; una bolsa distinta del mismo periodo no
+// cuenta. id/sha256/escalon/puntaje quedan del uso de mayor puntaje.
 func (s *Store) origenDeObra(ctx context.Context, x *aplicacion.Explicacion, obraID string) error {
 	filas, err := s.pool.Query(ctx, `
 		SELECT r.id, r.fuente, r.sha256, u.escalon, u.puntaje
 		FROM usos u
 		JOIN reportes r ON r.id = u.reporte_id
-		WHERE u.obra_id = $1 AND r.periodo = $2 AND NOT u.oni
+		JOIN procesos p ON p.id = $2
+		JOIN bolsas b ON b.id = p.bolsa_id
+		WHERE u.obra_id = $1
+		  AND r.periodo = p.periodo
+		  AND u.canal_id = b.usuario_id
+		  AND NOT u.oni
 		ORDER BY u.puntaje DESC, r.id`,
-		obraID, x.Corrida.Periodo,
+		obraID, x.Corrida.ProcesoID,
 	)
 	if err != nil {
 		return traducirError(err, "uso de obra %q periodo %q", obraID, x.Corrida.Periodo)

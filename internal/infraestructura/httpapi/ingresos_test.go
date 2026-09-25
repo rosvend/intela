@@ -54,6 +54,7 @@ func filaAna() aplicacion.Ingreso {
 }
 
 func linajeAna() aplicacion.Explicacion {
+	version := 1
 	return aplicacion.Explicacion{
 		Ref:       filaAna().Ref,
 		TitularID: "tit-ana",
@@ -63,7 +64,7 @@ func linajeAna() aplicacion.Explicacion {
 		Reporte:   aplicacion.ReporteLinaje{ID: "rpt-caracol-2026-01", Fuente: "caracol", SHA256: "aa"},
 		Obra:      aplicacion.ObraLinaje{ID: "obra-completa", Titulo: "La Casa de las Dos Palmas", Escalon: "alias", Puntaje: decimal.RequireFromString("1")},
 		Regla:     aplicacion.ReglaLinaje{SnapshotID: "snap-2026-01", Reglamento: "RD-IX"},
-		Split:     aplicacion.SplitLinaje{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("60"), Version: 1},
+		Split:     aplicacion.SplitLinaje{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("60"), Version: &version},
 		Deducciones: []aplicacion.Deduccion{
 			{Concepto: "gastos administrativos", Porcentaje: decimal.RequireFromString("10.00"), Monto: decimal.RequireFromString("480.00")},
 		},
@@ -168,7 +169,7 @@ func TestExplicarDevuelveElLinaje(t *testing.T) {
 	if cuerpo.Reporte.Fuente != "caracol" || cuerpo.Obra.Escalon != "alias" {
 		t.Fatalf("origen = %+v %+v", cuerpo.Reporte, cuerpo.Obra)
 	}
-	if cuerpo.Regla.SnapshotID != "snap-2026-01" || cuerpo.Split.Version != 1 {
+	if cuerpo.Regla.SnapshotID != "snap-2026-01" || cuerpo.Split.Version == nil || *cuerpo.Split.Version != 1 {
 		t.Fatalf("regla/split = %+v %+v", cuerpo.Regla, cuerpo.Split)
 	}
 	if len(cuerpo.Deducciones) != 1 || cuerpo.Deducciones[0].Concepto != "gastos administrativos" {

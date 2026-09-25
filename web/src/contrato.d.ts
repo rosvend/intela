@@ -1628,8 +1628,13 @@ export interface components {
             ipi: string;
             /** @description Porcentaje de la declaracion de obra, cuatro decimales. */
             porcentaje: string;
-            /** @description Version de la declaracion usada en la corrida. */
-            version: number;
+            /**
+             * @description Version de la declaracion con la que se repartio la corrida.
+             *     Null mientras esa version no este persistida en la corrida:
+             *     la vigente de hoy no es la que se uso, y no se inventa un 1
+             *     (ADR 0006).
+             */
+            version?: number | null;
         };
         /**
          * @description Deduccion de una linea del panel de ingresos. A diferencia de
@@ -2648,7 +2653,7 @@ export interface operations {
                      *         "titular_id": "tit-ana",
                      *         "ipi": "IPI-00000001",
                      *         "porcentaje": "60.0000",
-                     *         "version": 1
+                     *         "version": null
                      *       },
                      *       "deducciones": [
                      *         {

@@ -22,6 +22,7 @@ func (r *repoExplicacion) PorLinea(_ context.Context, procesoID, obraID, titular
 }
 
 func cifraAna() Explicacion {
+	version := 1
 	return Explicacion{
 		Ref:       FormarRef("proc-2026-01", "obra-completa", "tit-ana"),
 		TitularID: "tit-ana",
@@ -31,7 +32,7 @@ func cifraAna() Explicacion {
 		Reporte:   ReporteLinaje{ID: "rpt-caracol-2026-01", Fuente: "caracol", SHA256: "aa"},
 		Obra:      ObraLinaje{ID: "obra-completa", Titulo: "La Casa de las Dos Palmas", Escalon: "alias", Puntaje: decimal.RequireFromString("1.00000")},
 		Regla:     ReglaLinaje{SnapshotID: "snap-2026-01", Reglamento: "RD-IX"},
-		Split:     SplitLinaje{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("60.0000"), Version: 1},
+		Split:     SplitLinaje{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("60.0000"), Version: &version},
 		Deducciones: []Deduccion{
 			{Concepto: "gastos administrativos", Porcentaje: decimal.RequireFromString("10.00"), Monto: decimal.RequireFromString("600.00")},
 		},

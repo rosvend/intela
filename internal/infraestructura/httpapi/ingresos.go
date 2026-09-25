@@ -62,7 +62,7 @@ type splitJSON struct {
 	TitularID  string `json:"titular_id"`
 	IPI        string `json:"ipi"`
 	Porcentaje string `json:"porcentaje"`
-	Version    int    `json:"version"`
+	Version    *int   `json:"version"`
 }
 
 type deduccionLineaJSON struct {

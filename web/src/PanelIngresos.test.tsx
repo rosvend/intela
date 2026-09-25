@@ -97,6 +97,18 @@ describe("PanelExplicacion", () => {
     expect(panel.textContent).toContain("bienestar social");
     expect(panel.textContent).toContain("reserva");
   });
+
+  it("no inventa una version de declaracion cuando la corrida no la persistio", () => {
+    render(
+      <PanelExplicacion
+        cifra={{ ...linaje, split: { ...linaje.split, version: null } }}
+      />,
+    );
+    const panel = screen.getByRole("region", {
+      name: "Explicacion de la cifra",
+    });
+    expect(panel.textContent).not.toContain("declaracion v");
+  });
 });
 
 describe("FilaIngreso", () => {

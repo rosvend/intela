@@ -53,7 +53,7 @@ export type Explicacion = {
     titular_id: string;
     ipi: string;
     porcentaje: string;
-    version: number;
+    version: number | null;
   };
   deducciones: Deduccion[];
 };

@@ -807,10 +807,12 @@ func sembrarCorridas(t *testing.T) *Store {
 	            ($2, 'netflix', '2026-02', $4, 'obj/rpt-2', 64)`,
 		rptCaracol, rptNetflix, sha64, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
-	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra) VALUES
-	            ('uso-1', $1, 'caracol', 'La Casa de las Dos Palmas', $3, 'alias',  'alias conocido', 1.00000, FALSE, 'tv',  'serie'),
-	            ('uso-2', $1, 'caracol', 'El Segundo Guion',          $4, 'difuso', 'similitud',      0.87000, FALSE, 'tv',  'serie'),
-	            ('uso-3', $2, 'netflix', 'La Casa de las Dos Palmas', $3, 'id_global', 'IDA',         1.00000, FALSE, 'ott', 'serie')`,
+	// canal_id es el usuario de la bolsa: sin el, UsosDeCanal no pondera la
+	// corrida y el panel no puede atribuir la fuente a ese canal.
+	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra, canal_id) VALUES
+	            ('uso-1', $1, 'caracol', 'La Casa de las Dos Palmas', $3, 'alias',  'alias conocido', 1.00000, FALSE, 'tv',  'serie', 'usr-caracol'),
+	            ('uso-2', $1, 'caracol', 'El Segundo Guion',          $4, 'difuso', 'similitud',      0.87000, FALSE, 'tv',  'serie', 'usr-caracol'),
+	            ('uso-3', $2, 'netflix', 'La Casa de las Dos Palmas', $3, 'id_global', 'IDA',         1.00000, FALSE, 'ott', 'serie', 'usr-netflix')`,
 		rptCaracol, rptNetflix, obraCompleta, obraAna2)
 
 	return s
@@ -951,7 +953,9 @@ func TestPorLineaLinajeCompleto(t *testing.T) {
 	if x.Regla.SnapshotID != "snap-2026-01" || x.Regla.Reglamento != "RD-IX" {
 		t.Fatalf("regla = %+v", x.Regla)
 	}
-	if x.Split.Version != 1 || !x.Split.Porcentaje.Equal(decimal.RequireFromString("60")) {
+	// La declaracion abierta es la v1, pero la corrida no la persistio.
+	// Mostrarla seria decir que se repartio con la vigente de hoy.
+	if x.Split.Version != nil || !x.Split.Porcentaje.Equal(decimal.RequireFromString("60")) {
 		t.Fatalf("split = %+v", x.Split)
 	}
 	if len(x.Deducciones) != 3 {
@@ -1005,38 +1009,166 @@ func TestPorLineaIdentidadCierraConCentavosReales(t *testing.T) {
 	}
 }
 
-// Si la obra pondero por varias fuentes en el periodo, "explicar esta cifra"
-// tiene que listarlas todas — no quedarse con un solo reporte en silencio.
-func TestPorLineaListaTodasLasFuentesDelPeriodo(t *testing.T) {
+// Varias fuentes se listan solo si ponderaron el canal de esta corrida.
+// Una bolsa distinta del mismo periodo no entra en el linaje.
+func TestPorLineaListaTodasLasFuentesDelCanal(t *testing.T) {
 	s := sembrarCorridas(t)
 	ctx := t.Context()
-	const rptExtra = "rpt-netflix-2026-01"
-	shaExtra := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	const rptRCN = "rpt-rcn-2026-01"
+	const rptNetflixEnero = "rpt-netflix-2026-01"
+	shaRCN := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	shaNetflix := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
-		VALUES ($1, 'netflix', '2026-01', $2, 'obj/rpt-extra', 32)`,
-		rptExtra, shaExtra,
+		INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes) VALUES
+		  ($1, 'rcn',     '2026-01', $3, 'obj/rpt-rcn', 32),
+		  ($2, 'netflix', '2026-01', $4, 'obj/rpt-nf',  32)`,
+		rptRCN, rptNetflixEnero, shaRCN, shaNetflix,
 	); err != nil {
-		t.Fatalf("insertar reporte extra: %v", err)
+		t.Fatalf("insertar reportes: %v", err)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra)
-		VALUES ('uso-extra', $1, 'netflix', 'La Casa de las Dos Palmas', $2, 'id_global', 'IDA', 0.50000, FALSE, 'ott', 'serie')`,
-		rptExtra, obraCompleta,
+		INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra, canal_id) VALUES
+		  ('uso-rcn', $1, 'rcn',     'La Casa de las Dos Palmas', $3, 'alias',     'alias', 0.50000, FALSE, 'tv',  'serie', 'usr-caracol'),
+		  ('uso-nf',  $2, 'netflix', 'La Casa de las Dos Palmas', $3, 'id_global', 'IDA',   0.90000, FALSE, 'ott', 'serie', 'usr-netflix')`,
+		rptRCN, rptNetflixEnero, obraCompleta,
 	); err != nil {
-		t.Fatalf("insertar uso extra: %v", err)
+		t.Fatalf("insertar usos: %v", err)
 	}
 
 	x, err := s.PorLinea(ctx, procEnero, obraCompleta, titularAna)
 	if err != nil {
 		t.Fatalf("PorLinea: %v", err)
 	}
-	if x.Reporte.Fuente != "caracol, netflix" {
-		t.Fatalf("fuente = %q, se esperaban ambas", x.Reporte.Fuente)
+	if x.Reporte.Fuente != "caracol, rcn" {
+		t.Fatalf("fuente = %q, se esperaban las del canal caracol", x.Reporte.Fuente)
 	}
-	// El reporte principal sigue siendo el de mayor puntaje (caracol = 1.0).
-	if x.Reporte.ID != rptCaracol {
-		t.Fatalf("reporte principal = %q, se esperaba %q", x.Reporte.ID, rptCaracol)
+	// El reporte principal sigue siendo el de mayor puntaje del canal (caracol = 1.0).
+	// El de Netflix puntua 0.9 pero es otra bolsa.
+	if x.Reporte.ID != rptCaracol || x.Obra.Escalon != "alias" {
+		t.Fatalf("reporte = %+v escalon = %q", x.Reporte, x.Obra.Escalon)
+	}
+}
+
+// Dos corridas del mismo periodo y la misma obra, cada una con su canal.
+// El filtro Netflix no puede devolver el neto de Caracol, y explicar la
+// cifra de Netflix no puede citar el reporte ni el escalon de Caracol.
+func TestIngresosDeDosCorridasDelMismoPeriodoNoMezclanFuente(t *testing.T) {
+	s := sembrarCorridas(t)
+	ctx := t.Context()
+	const (
+		procNF  = "proc-nf-01"
+		bolsaNF = "bolsa-nf-01"
+		rptNF   = "rpt-nf-01"
+		shaNF   = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	)
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("sembrar segunda corrida: %v", err)
+		}
+	}
+	exec(`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto) VALUES
+	        ($1, 'usr-netflix', '2026-01', 'nacional', 750.00)`, bolsaNF)
+	exec(`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento) VALUES
+	        ($1, 'nacional', 'liquidacion_final', '2026-01', $2, 'snap-nf', 'RD-IX')`,
+		procNF, bolsaNF)
+	exec(`INSERT INTO resultados_proceso
+	        (proceso_id, bruto, admin, social, reserva, neto, retenido, residuo, valor_punto, snapshot_id, reglamento)
+	      VALUES ($1, 750.00, 100.00, 50.00, 150.00, 450.00, 0, 0, 1, 'snap-nf', 'RD-IX')`, procNF)
+	exec(`INSERT INTO resultados_obra (proceso_id, obra_id, puntos, importe, retenida) VALUES
+	        ($1, $2, 10, 450.00, FALSE)`, procNF, obraCompleta)
+	exec(`INSERT INTO resultados_titular (proceso_id, obra_id, titular_id, ipi, porcentaje, importe) VALUES
+	        ($1, $2, $3, 'IPI-00000001', 60.0000, 450.00)`,
+		procNF, obraCompleta, titularAna)
+	exec(`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes) VALUES
+	        ($1, 'netflix', '2026-01', $2, 'obj/rpt-nf-01', 16)`, rptNF, shaNF)
+	exec(`INSERT INTO usos (id, reporte_id, fuente, titulo, obra_id, escalon, evidencia, puntaje, oni, modalidad, tipo_obra, canal_id) VALUES
+	        ('uso-nf-01', $1, 'netflix', 'La Casa de las Dos Palmas', $2, 'id_global', 'IDA', 1.00000, FALSE, 'ott', 'serie', 'usr-netflix')`,
+		rptNF, obraCompleta)
+
+	filas, err := s.IngresosDe(ctx, titularAna, aplicacion.FiltroIngresos{})
+	if err != nil {
+		t.Fatalf("IngresosDe: %v", err)
+	}
+	porRef := map[string]aplicacion.Ingreso{}
+	for _, f := range filas {
+		porRef[f.Ref] = f
+	}
+	caracol := porRef[aplicacion.FormarRef(procEnero, obraCompleta, titularAna)]
+	if caracol.Fuente != "caracol" || !caracol.Neto.Equal(decimal.RequireFromString("3600.00")) {
+		t.Fatalf("corrida caracol = %+v", caracol)
+	}
+	netflix := porRef[aplicacion.FormarRef(procNF, obraCompleta, titularAna)]
+	if netflix.Fuente != "netflix" || !netflix.Neto.Equal(decimal.RequireFromString("450.00")) {
+		t.Fatalf("corrida netflix = %+v", netflix)
+	}
+
+	filtradas, err := s.IngresosDe(ctx, titularAna, aplicacion.FiltroIngresos{
+		Fuente: "netflix", Periodo: "2026-01",
+	})
+	if err != nil {
+		t.Fatalf("filtro netflix: %v", err)
+	}
+	if len(filtradas) != 1 || filtradas[0].Ref != netflix.Ref || !filtradas[0].Neto.Equal(decimal.RequireFromString("450.00")) {
+		t.Fatalf("filtro netflix = %+v; el neto de Caracol no puede colarse", filtradas)
+	}
+
+	x, err := s.PorLinea(ctx, procNF, obraCompleta, titularAna)
+	if err != nil {
+		t.Fatalf("PorLinea netflix: %v", err)
+	}
+	if x.Reporte.ID != rptNF || x.Reporte.Fuente != "netflix" || x.Obra.Escalon != "id_global" {
+		t.Fatalf("linaje netflix = reporte %+v escalon %q", x.Reporte, x.Obra.Escalon)
+	}
+}
+
+func TestPorLineaNoInventaLaVersionDeLaDeclaracion(t *testing.T) {
+	// Abrir la v2 con Ana: el join a la vigente de hoy diria v2.
+	t.Run("vigente nueva", func(t *testing.T) {
+		s := sembrarCorridas(t)
+		abrirVersion(t, s, obraAna2, titularAna)
+		x, err := s.PorLinea(t.Context(), procEnero, obraAna2, titularAna)
+		if err != nil {
+			t.Fatalf("PorLinea: %v", err)
+		}
+		if x.Split.Version != nil {
+			t.Fatalf("version = %d; la corrida no la persistio, no puede ser la vigente de hoy", *x.Split.Version)
+		}
+	})
+	// Abrir la v2 sin Ana: COALESCE(d.version, 1) diria v1.
+	t.Run("titular ausente de la vigente", func(t *testing.T) {
+		s := sembrarCorridas(t)
+		abrirVersion(t, s, obraAna2, titularBeto)
+		x, err := s.PorLinea(t.Context(), procEnero, obraAna2, titularAna)
+		if err != nil {
+			t.Fatalf("PorLinea: %v", err)
+		}
+		if x.Split.Version != nil {
+			t.Fatalf("version = %d; no hay version persistida, un 1 por defecto es falso", *x.Split.Version)
+		}
+	})
+}
+
+func abrirVersion(t *testing.T, s *Store, obraID, titularID string) {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE declaracion_versiones
+		   SET vigente_hasta = vigente_desde + interval '1 day'
+		 WHERE obra_id = $1 AND version = 1 AND vigente_hasta IS NULL`, obraID); err != nil {
+		t.Fatalf("cerrar version 1: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO declaracion_versiones (obra_id, version, vigente_desde)
+		SELECT $1, 2, vigente_hasta FROM declaracion_versiones
+		 WHERE obra_id = $1 AND version = 1`, obraID); err != nil {
+		t.Fatalf("abrir version 2: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO declaraciones (obra_id, version, titular_id, ipi, porcentaje)
+		VALUES ($1, 2, $2, 'IPI-00000002', 100.0000)`, obraID, titularID); err != nil {
+		t.Fatalf("partes de la version 2: %v", err)
 	}
 }

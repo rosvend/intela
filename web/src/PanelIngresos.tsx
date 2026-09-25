@@ -276,8 +276,10 @@ export function PanelExplicacion({ cifra }: { cifra: Explicacion }) {
         </dd>
         <dt>Split</dt>
         <dd>
-          {cifra.split.porcentaje}% · IPI {cifra.split.ipi} · declaracion v
-          {cifra.split.version}
+          {cifra.split.porcentaje}% · IPI {cifra.split.ipi}
+          {typeof cifra.split.version === "number"
+            ? ` · declaracion v${cifra.split.version}`
+            : ""}
         </dd>
       </dl>
       <h2>Deducciones (bruto a neto)</h2>

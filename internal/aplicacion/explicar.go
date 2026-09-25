@@ -59,7 +59,10 @@ type SplitLinaje struct {
 	TitularID  string
 	IPI        string
 	Porcentaje decimal.Decimal
-	Version    int
+	// Version es la de la declaracion persistida en la corrida. Nil mientras
+	// resultados_titular no la guarde: la vigente de hoy, o un 1 inventado,
+	// atribuiria un split que esa corrida no uso (ADR 0006).
+	Version *int
 }
 
 // Deduccion es un recorte legal aplicado sobre el bruto del titular.
