@@ -125,3 +125,54 @@ func Prorratear(
 func NetoDeCorrida(bruto, admin, social, reserva decimal.Decimal) decimal.Decimal {
 	return bruto.Sub(admin).Sub(social).Sub(reserva)
 }
+
+// Linea es la participacion de un titular en una obra, con las deducciones
+// del proceso ya prorrateadas sobre su neto.
+//
+// La identidad que hay que conservar, la misma que exige resultados_proceso:
+//
+//	Neto == Bruto - Admin - Social - Reserva
+//
+// Admin es R-06 (gastos administrativos), Social es R-06 (bienestar social)
+// y Reserva es R-07 (errores tecnicos). El motor de reparto las descuenta
+// de la bolsa ANTES de partir por obra; aqui solo se reparte esa resta
+// sobre la linea del titular, para que el panel / reporte pueda mostrar
+// bruto, cada deduccion y neto por obra sin recalcular la corrida.
+type Linea struct {
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// ProrratearLinea asigna las deducciones de un proceso a una sola linea de
+// titular. Es el caso de un titular de [Prorratear]: la misma tasa y el
+// mismo redondeo, para el panel de ingresos (#42).
+//
+// neto es lo que ya le toca al titular (resultados_titular.importe). El
+// resto son los totales del proceso. Si el neto del proceso no es positivo,
+// o el del titular es cero, no hay proporcion que aplicar y se devuelve la
+// linea vacia. Liquidacion no recalcula el reparto (ADR 0003); solo deshace
+// la resta para mostrarla.
+//
+// El bruto se reconstruye desde el neto y las deducciones ya redondeadas
+// para que la identidad de la linea cierre al centavo (RD 16).
+func ProrratearLinea(neto, admin, social, reserva, netoProc decimal.Decimal) Linea {
+	if !netoProc.IsPositive() || neto.IsZero() {
+		return Linea{}
+	}
+	porTitular, _ := Prorratear(
+		map[string]decimal.Decimal{"titular": neto},
+		admin, social, reserva, netoProc,
+	)
+	ds := porTitular["titular"]
+	a, s, r := ds[0].Monto, ds[1].Monto, ds[2].Monto
+	return Linea{
+		Bruto:   neto.Add(a).Add(s).Add(r),
+		Admin:   a,
+		Social:  s,
+		Reserva: r,
+		Neto:    neto,
+	}
+}

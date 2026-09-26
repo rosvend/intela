@@ -88,10 +88,25 @@ describe("Inicio — seleccion de tablero por rol", () => {
     ).toBeNull();
   });
 
-  it("el titular ve su liquidacion y no los KPIs de administrador", async () => {
+  it("el titular ve su liquidacion y el panel de ingresos montado en #ingresos", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
-      if (String(input) === "/api/auth/session") {
+      const url = String(input);
+      if (url === "/api/auth/session") {
         return json(usuario("titular", "Ana Escritora"));
+      }
+      if (url.startsWith("/api/mis-ingresos")) {
+        return json({
+          ingresos: [
+            {
+              ref: "proc-2026-01:obra-completa:tit-1",
+              obra_id: "obra-completa",
+              obra: "La Casa de las Dos Palmas",
+              fuente: "caracol",
+              periodo: "2026-01",
+              neto: "3600.00",
+            },
+          ],
+        });
       }
       return json({ error: "ruta no encontrada" }, 404);
     });
@@ -106,7 +121,14 @@ describe("Inicio — seleccion de tablero por rol", () => {
     expect(screen.getByText("Ana Escritora")).toBeTruthy();
     expect(screen.getByText("Mis obras")).toBeTruthy();
     expect(screen.getByText("Última liquidación")).toBeTruthy();
-    expect(screen.getByText("Detalle por obra")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Mis ingresos" })).toBeTruthy();
+    expect(
+      await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Explicar esta cifra" }),
+    ).toBeTruthy();
+    expect(document.getElementById("ingresos")).toBeTruthy();
     expect(screen.queryByText("Cargas pendientes")).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Panel de control" }),

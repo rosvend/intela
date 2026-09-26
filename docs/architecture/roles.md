@@ -22,6 +22,8 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | ------- | ----- |
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
+| `/mis-ingresos` | `titular` |
+| `/explicar/{ref}` | `titular`, `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
@@ -59,7 +61,9 @@ el menu del cliente.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
-`TitularID`, no el id de usuario.
+`TitularID`, no el id de usuario. En `/mis-ingresos` el recorte es el
+`TitularID` de la sesion (nunca un parametro). En `/explicar/{ref}` una
+cifra de otro titular responde 403.
 
 `/procesos/*` es el flujo de aprobaciones de `RD 13.5` (#34), y se parte en
 tres grupos por la misma razon que `/recaudo` y `/bolsas`: `administrador`

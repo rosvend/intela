@@ -50,4 +50,11 @@
 //     respuesta, el monto se arrastra al siguiente periodo.
 //
 // R-12 (RUT y certificacion bancaria) no impide liquidar: impide pagar.
+//
+// # El panel de ingresos
+//
+// [ProrratearLinea] es el mismo prorrateo para UNA linea de titular, el que
+// muestra el panel (#42): bruto, cada deduccion y neto con identidad al
+// centavo (RD 16). No sustituye a [Prorratear], que reparte una corrida
+// entera y deja el residuo explicito.
 package liquidacion

@@ -772,7 +772,11 @@ type RepositorioResultados interface {
 }
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
-// corrida. DeTitular es el camino del panel del titular (#42).
+// corrida.
+//
+// El panel de cifras netas por obra (#42) no pasa por este puerto: usa
+// [RepositorioIngresos] y [RepositorioExplicacion]. DeTitular lista las
+// ordenes de pago del titular, no las lineas de ese panel.
 //
 // EmitirOrdenes y TransicionarOrdenes y no un Guardar: el mismo *Store
 // satisface tambien [GestionDeclaraciones], que ya tiene un Guardar con otra
@@ -913,6 +917,25 @@ type InsumoLiquidacion struct {
 	Social    decimal.Decimal
 	Reserva   decimal.Decimal
 	Titulares []reparto.LineaTitular
+}
+
+// RepositorioIngresos lista las cifras netas del panel del titular (OE-6).
+//
+// El recorte es por titularID, que el caso de uso toma de la sesion y nunca
+// de un parametro de la peticion. Filtrar por obra, fuente o periodo recorta
+// esa lista; no amplia el alcance.
+type RepositorioIngresos interface {
+	IngresosDe(ctx context.Context, titularID string, f FiltroIngresos) ([]Ingreso, error)
+}
+
+// RepositorioExplicacion reconstruye el linaje de una cifra (ADR 0006).
+//
+// ExplicarCifra es el unico productor de esta vista: el portal del titular
+// y el de auditoria la consumen sin recomputar. La autorizacion vive en el
+// caso de uso, no aqui. El prorrateo bruto/deducciones vive en
+// dominio/liquidacion.ProrratearLinea; este puerto solo lee lo persistido.
+type RepositorioExplicacion interface {
+	PorLinea(ctx context.Context, procesoID, obraID, titularID string) (Explicacion, error)
 }
 
 // RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.

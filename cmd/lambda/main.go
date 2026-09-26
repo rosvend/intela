@@ -218,6 +218,8 @@ func construir() (http.Handler, error) {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
+		Ingresos:      aplicacion.ConsultaIngresos{Repo: store},
+		Explicar:      aplicacion.ExplicarCifra{Repo: store},
 		Liq:           liquidaciones,
 		Catalogo:      catalogo,
 		Padron:        padron,

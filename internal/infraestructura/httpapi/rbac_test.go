@@ -61,7 +61,7 @@ func TestMatrizRolRuta(t *testing.T) {
 func TestRutaConRolSinSesionEs401(t *testing.T) {
 	h := servidor(t, &autenticacionFalsa{})
 
-	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1"} {
+	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1", "/mis-ingresos", "/explicar/a:b:c", "/obras"} {
 		t.Run(ruta, func(t *testing.T) {
 			rec := pedir(t, h, http.MethodGet, ruta, "", "")
 			if rec.Code != http.StatusUnauthorized {
