@@ -72,7 +72,7 @@ var _ aplicacion.Reloj = (*relojEnPasos)(nil)
 // *Store satisface los cuatro puertos, y el nucleo sigue viendo cuatro.
 func catalogoConBitacora(s *Store) aplicacion.Catalogo {
 	return aplicacion.Catalogo{
-		Obras:         s,
+		Obras:         s.CatalogoObras(),
 		Declaraciones: s,
 		Bitacora:      s,
 		Unidad:        s,
@@ -133,7 +133,7 @@ func TestRegistrarObraAsientaElAlta(t *testing.T) {
 	// La obra esta, con sus coautores: la lectura la reconstruye por el mismo
 	// constructor del dominio, asi que esto tambien prueba que no quedo a
 	// medias dentro de la unidad.
-	if _, err := s.PorID(ctx, obraNueva); err != nil {
+	if _, err := s.CatalogoObras().PorID(ctx, obraNueva); err != nil {
 		t.Fatalf("PorID despues del alta: %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestRegistrarObraRevierteLaObraSiElAsientoFalla(t *testing.T) {
 		t.Fatal("se esperaba que el asiento fallara por el actor inexistente")
 	}
 
-	if _, err := s.PorID(ctx, obraNueva); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := s.CatalogoObras().PorID(ctx, obraNueva); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("la obra quedo huerfana: PorID devolvio %v", err)
 	}
 	// Y tampoco quedaron los coautores, que es la otra mitad de la escritura.
@@ -295,7 +295,7 @@ func TestActualizarMetadatosObraRevierteLosMetadatosSiElAsientoFalla(t *testing.
 		t.Fatal("se esperaba que el asiento fallara por el actor inexistente")
 	}
 
-	obra, err := s.PorID(ctx, obraNueva)
+	obra, err := s.CatalogoObras().PorID(ctx, obraNueva)
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestEnUnidadEsReentrante(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnUnidad anidada: %v", err)
 	}
-	if _, err := s.PorID(ctx, obraNueva); err != nil {
+	if _, err := s.CatalogoObras().PorID(ctx, obraNueva); err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
 }
@@ -464,7 +464,7 @@ func TestEnUnidadRevierteLaAnidadaConLaDeFuera(t *testing.T) {
 		t.Fatalf("se esperaba el error de fuera, se obtuvo %v", err)
 	}
 
-	if _, err := s.PorID(ctx, obraNueva); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := s.CatalogoObras().PorID(ctx, obraNueva); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("la obra sobrevivio al rollback de la unidad de fuera: %v", err)
 	}
 	asientos, err := s.De(ctx, aplicacion.RefObra, obraNueva)
@@ -605,7 +605,7 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 	defer liberarUnaVez()
 
 	cat1 := aplicacion.Catalogo{
-		Obras:         s,
+		Obras:         s.CatalogoObras(),
 		Declaraciones: s,
 		Bitacora:      &bitacoraConPausa{Store: s, listo: listoT1, seguir: liberarT1},
 		Unidad:        s,
@@ -680,7 +680,7 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 		t.Fatalf("T2.antes = %+v, se esperaba %q (el despues de T1)", p2.Antes, "Version-T1")
 	}
 
-	final, err := s.PorID(ctx, obraNueva)
+	final, err := s.CatalogoObras().PorID(ctx, obraNueva)
 	if err != nil {
 		t.Fatalf("PorID final: %v", err)
 	}

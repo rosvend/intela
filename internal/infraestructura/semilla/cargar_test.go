@@ -310,10 +310,11 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 		t.Fatalf("Cargar: %v", err)
 	}
 
-	// Los dos puertos van cableados: el catalogo compone el estado de la
-	// declaracion de cada obra al leerla, y sin Declaraciones ese puerto queda
-	// nil y la lectura revienta.
-	catalogo := aplicacion.Catalogo{Obras: store, Declaraciones: store}
+	// *Store no es CatalogoObras: PorID ya es el de la bitacora (Asiento).
+	// El adaptador catalogo tapa ese metodo con el de la obra. Declaraciones
+	// si va al store: el catalogo compone el estado de la declaracion de cada
+	// obra al leerla, y sin ese puerto la lectura revienta.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
 	if err != nil {

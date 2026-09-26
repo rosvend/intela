@@ -4,6 +4,7 @@ import {
   ErrorDeCuerpoIlegible,
   ErrorDeRed,
   api,
+  apiPublica,
   setToken,
   setUnauthorizedHandler,
 } from "./api";
@@ -384,6 +385,19 @@ describe("api", () => {
     await expect(
       api("/api/auth/session", { method: "DELETE" }),
     ).resolves.not.toThrow();
+  });
+
+  it("apiPublica no adjunta token ni redirige ante 404", async () => {
+    setToken("token-de-prueba");
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("no hay listado", { status: 404 }),
+    );
+
+    await expect(apiPublica("/api/publico/oni")).resolves.toBeNull();
+
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init?.headers).toBeUndefined();
+    expect(localStorage.getItem("intela.token")).toBe("token-de-prueba");
   });
 
   it("extrae el campo error de un cuerpo JSON", async () => {

@@ -29,11 +29,12 @@ const codigoUnicidad = "23505"
 // No vive dentro de traducirError, y es deliberado: "ya existe una fila igual"
 // no significa lo mismo en todas las tablas. En `reportes` es la deteccion de
 // duplicado por huella, que es una respuesta del negocio; en `obras` es un alta
-// repetida; en otra tabla puede ser un identificador mal generado, que si es un
-// fallo. Traducirlo a un unico centinela desde el traductor general convertiria
-// el ultimo caso en los primeros sin que nadie lo notara. Asi que cada sitio de
-// llamada decide: pregunta por esto ANTES de pasar por traducirError y pone el
-// nombre que la violacion tiene en SU tabla.
+// repetida; en la publicacion ONI es ErrYaPublicado (republicar reescribiria
+// el ancla de R-19); en otra tabla puede ser un identificador mal generado,
+// que si es un fallo. Traducirlo a un unico centinela desde el traductor
+// general convertiria el ultimo caso en los primeros sin que nadie lo notara.
+// Asi que cada sitio de llamada decide: pregunta por esto ANTES de pasar por
+// traducirError y pone el nombre que la violacion tiene en SU tabla.
 //
 // errors.As y no una asercion de tipo: pgx envuelve el *pgconn.PgError cuando
 // el error sale de un lote o de una transaccion.

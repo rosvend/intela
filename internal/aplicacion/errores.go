@@ -34,6 +34,17 @@ var (
 	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
+	// ErrPeriodoInvalido: el periodo no tiene la forma YYYY o YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
+
+	// ErrYaPublicado: ese periodo ya tiene listado ONI. Re-publicar
+	// reescribiria el ancla de R-19.
+	ErrYaPublicado = errors.New("el listado ONI de ese periodo ya fue publicado")
+
+	// ErrDireccionPublicacionAusente: no hay direccion fisica o electronica
+	// configurada, y RD 13.8.4.3 las exige en el listado.
+	ErrDireccionPublicacionAusente = errors.New("faltan las direcciones de publicacion ONI")
+
 	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
 	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
 	// admitida). En titulares, el IPI no vacio es unico. Distinto de

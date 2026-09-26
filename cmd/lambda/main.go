@@ -149,14 +149,15 @@ func construir() (http.Handler, error) {
 		Unidad:      store,
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
-	// UnidadDeTrabajo y -por el puerto GestionDeclaraciones- la lectura de la
-	// declaracion vigente que el catalogo necesita para decir en que estado
-	// esta cada obra. El nucleo sigue viendo puertos separados: que el
-	// adaptador sea uno solo es asunto suyo, y es lo que permite que el
-	// asiento del alta comparta transaccion con la obra (ADR 0006, #91).
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91). Mismo cableado que cmd/api.
 	catalogo := aplicacion.Catalogo{
-		Obras:         store,
+		Obras:         store.CatalogoObras(),
 		Bitacora:      store,
 		Unidad:        store,
 		Reloj:         reloj.Sistema{},
@@ -168,10 +169,6 @@ func construir() (http.Handler, error) {
 	// al contrario que la boveda de la ingesta de abajo.
 	padron := aplicacion.Titulares{Padron: store}
 
-	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
-	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
-	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
-	//
 	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
 	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
 	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
@@ -216,10 +213,19 @@ func construir() (http.Handler, error) {
 	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
 	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
+		Salud:      store,
+		Auth:       autenticacion,
+		Liq:        liquidaciones,
+		Catalogo:   catalogo,
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
 		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,

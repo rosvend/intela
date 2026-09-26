@@ -7,6 +7,7 @@ import Inicio from "./Inicio";
 import Layout from "./Layout";
 import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
+import ListadoONI from "./pages/ListadoONI";
 import RutaProtegida from "./RutaProtegida";
 import Auditoria from "./auditoria/Auditoria";
 import HistoriaObra from "./auditoria/HistoriaObra";
@@ -82,11 +83,16 @@ const SUBRUTAS_AUDITORIA: readonly { path: string; element: ReactElement }[] = [
  * <EnConstruccion> mientras su pantalla no exista. Las tres sub-rutas del
  * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`, y la historia de una obra
  * en `SUBRUTAS_AUDITORIA`.
+ *
+ * `/publico/oni` queda FUERA de `RutaProtegida`: R-18 es publicacion en la
+ * web, no un informe interno. Montarla detras del login convertiria la
+ * obligacion legal en una pagina de la intranet.
  */
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/publico/oni" element={<ListadoONI />} />
       <Route path="/afiliacion" element={<WizardAfiliacion />} />
       <Route element={<RutaProtegida />}>
         <Route element={<Layout />}>

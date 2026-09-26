@@ -87,6 +87,20 @@ func ejecutar(log *slog.Logger) error {
 		Claves:      cripto.Bcrypt{},
 	}
 
+	// La ingesta de reportes de uso: la base para el acuse y las filas, la
+	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
+	// formato para leer lo que llega.
+	//
+	// El catalogo se construye AL ARRANCAR y su error tumba el proceso. Un mapa
+	// de columnas mal escrito es un defecto del programa, no de la entrega:
+	// descubrirlo aqui cuesta un arranque fallido, y descubrirlo en la primera
+	// subida cuesta una entrega perdida con el cliente esperando.
+	lectores, err := ingesta.CatalogoDelCliente()
+	if err != nil {
+		return fmt.Errorf("construir los adaptadores de ingesta: %w", err)
+	}
+	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
+
 	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
 	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
@@ -100,14 +114,15 @@ func ejecutar(log *slog.Logger) error {
 		Unidad:      store,
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
-	// UnidadDeTrabajo y -por el puerto GestionDeclaraciones- la lectura de la
-	// declaracion vigente que el catalogo necesita para decir en que estado
-	// esta cada obra. El nucleo sigue viendo puertos separados: que el
-	// adaptador sea uno solo es asunto suyo, y es lo que permite que el
-	// asiento del alta comparta transaccion con la obra (ADR 0006, #91).
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91).
 	catalogo := aplicacion.Catalogo{
-		Obras:         store,
+		Obras:         store.CatalogoObras(),
 		Bitacora:      store,
 		Unidad:        store,
 		Reloj:         reloj.Sistema{},
@@ -119,9 +134,9 @@ func ejecutar(log *slog.Logger) error {
 	// la primera lectura de `titulares` en produccion.
 	padron := aplicacion.Titulares{Padron: store}
 
-	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
-	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
-	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	// El asiento de auditoria de declaraciones y recaudo lo escribe el
+	// propio adaptador dentro de la misma transaccion -no un
+	// BitacoraAuditoria aparte-, ver puertos.go.
 	//
 	// El guardia de R-01 apunta al STORE, no a `padron`. Es el mismo adaptador
 	// -por eso los dos satisfacen el puerto-, pero no es el mismo camino:
@@ -140,28 +155,11 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
-	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
-	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
-	// por que poder registrar dinero.
 	recaudo := aplicacion.Recaudo{
 		Bolsas:  store,
 		Gestion: store,
 		Reloj:   reloj.Sistema{},
 	}
-
-	// La ingesta de reportes de uso: la base para el acuse y las filas, la
-	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
-	// formato para leer lo que llega.
-	//
-	// El catalogo se construye AL ARRANCAR y su error tumba el proceso. Un mapa
-	// de columnas mal escrito es un defecto del programa, no de la entrega:
-	// descubrirlo aqui cuesta un arranque fallido, y descubrirlo en la primera
-	// subida cuesta una entrega perdida con el cliente esperando.
-	lectores, err := ingesta.CatalogoDelCliente()
-	if err != nil {
-		return fmt.Errorf("construir los adaptadores de ingesta: %w", err)
-	}
-	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
 
 	recepcion := aplicacion.Ingesta{
 		Reportes:              store,
@@ -184,11 +182,20 @@ func ejecutar(log *slog.Logger) error {
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Admision:      admision,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
+		Salud:      store,
+		Auth:       autenticacion,
+		Admision:   admision,
+		Liq:        liquidaciones,
+		Catalogo:   catalogo,
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
 		Padron:        padron,
 		Ingesta:       recepcion,
 		Declaraciones: declaraciones,

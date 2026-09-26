@@ -12,7 +12,20 @@ import (
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
-var _ aplicacion.CatalogoObras = (*Store)(nil)
+// catalogo presenta *Store como [aplicacion.CatalogoObras].
+//
+// *Store no puede satisfacer CatalogoObras y BitacoraAuditoria a la vez:
+// ambos puertos declaran PorID y Go no admite dos metodos con el mismo
+// nombre y distinta firma. Registrar, Actualizar y Buscar se promocionan
+// del embed; PorID se define aqui y tapa el de la bitacora.
+type catalogo struct{ *Store }
+
+var _ aplicacion.CatalogoObras = catalogo{}
+
+// CatalogoObras es *Store visto por el puerto del catalogo maestro.
+func (s *Store) CatalogoObras() aplicacion.CatalogoObras {
+	return catalogo{s}
+}
 
 // columnasCatalogo es la obra ENTERA, la que reconstruye la entidad.
 //
@@ -171,18 +184,18 @@ func (s *Store) Bloquear(ctx context.Context, id string) error {
 // PorID reconstruye una obra del catalogo en una sola sentencia: metadatos y
 // coautores salen de la misma instantanea (issue #90).
 //
-// Lee por [Store.ejecutorDe] y no por el pool porque esta lectura tambien
-// ocurre DENTRO de una unidad: [Catalogo.ActualizarMetadatosObra] la usa para
-// saber que habia antes y poder asentar que cambio. Por el pool leeria en otra
-// conexion, fuera de la transaccion que esta a punto de reescribir esa misma
-// fila.
-func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
+// Lee por el ejecutor de la unidad y no por el pool porque esta lectura
+// tambien ocurre DENTRO de una unidad: [Catalogo.ActualizarMetadatosObra] la
+// usa para saber que habia antes y poder asentar que cambio. Por el pool
+// leeria en otra conexion, fuera de la transaccion que esta a punto de
+// reescribir esa misma fila.
+func (c catalogo) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
 		fl            fila
 		tipo          string
 		coautoresJSON []byte
 	)
-	err := s.ejecutorDe(ctx).QueryRow(ctx,
+	err := c.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
 		   FROM obras o`+lateralCoautores+`
 		  WHERE o.id = $1`, id).

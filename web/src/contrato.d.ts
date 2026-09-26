@@ -192,6 +192,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/publico/oni": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listado publico de ONI
+         * @description Publica el listado de obras no identificadas (R-18, RD 13.8.1 a
+         *     13.8.4): titulos e informacion identificatoria, **sin montos**, con
+         *     la fecha del proceso, el periodo y las direcciones fisica y
+         *     electronica a las que se allega documentacion.
+         *
+         *     Esta publicacion arranca el reloj de prescripcion de tres anos
+         *     (R-19, RD 13.8.7). Por eso la ruta no pide autenticacion: `security: []`.
+         *
+         *     Sin `periodo` devuelve la publicacion mas reciente. Con `periodo`
+         *     (YYYY o YYYY-MM) filtra a esa instantanea.
+         */
+        get: operations["listadoONIPublico"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oni/publicaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publicar el listado ONI de un periodo
+         * @description Congela la cola viva de ONI del periodo como listado publico, registra
+         *     la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
+         *     asiento en la bitacora.
+         *
+         *     Solo `administrador` y `distribucion`. Republicar el mismo periodo
+         *     responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+         */
+        post: operations["publicarListadoONI"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/liquidaciones": {
         parameters: {
             query?: never;
@@ -1086,6 +1140,52 @@ export interface components {
              */
             expira: string;
             usuario: components["schemas"]["Usuario"];
+        };
+        PublicarONI: {
+            /** @description Periodo que se publica, YYYY o YYYY-MM. */
+            periodo: string;
+        };
+        /**
+         * @description Proyeccion publica de un uso en ONI. Titulo e informacion
+         *     identificatoria. No hay, y no va a haber, campo de dinero (R-18,
+         *     RD 13.8.2).
+         */
+        ObraONIPublica: {
+            /** @description Identificador del uso, opaco. */
+            id: string;
+            /** @description Titulo tal como vino en el reporte. */
+            titulo: string;
+            /** @description Fuente del reporte (canal, OTT, exhibidor). */
+            fuente: string;
+            /** @description Identificadores que trajo la fuente, si los hay. */
+            ids_fuente: string;
+            /**
+             * @description Modalidad de comunicacion publica (RD 8).
+             * @enum {string}
+             */
+            modalidad: "tv" | "cine" | "ott" | "hotel";
+        };
+        /**
+         * @description Instantanea publicada del listado ONI. La fecha_proceso es el ancla
+         *     de los tres anos de R-19.
+         */
+        ListadoONI: {
+            periodo: string;
+            /**
+             * Format: date-time
+             * @description Fecha de la publicacion, RFC 3339. No se reescribe.
+             */
+            fecha_proceso: string;
+            /** @description Direccion fisica a la que se allega documentacion (RD 13.8.4.3). */
+            direccion_fisica: string;
+            /** @description Direccion electronica a la que se allega documentacion (RD 13.8.4.3). */
+            direccion_electronica: string;
+            /**
+             * @description Explicacion del proceso de Distribucion en el que se incluyen
+             *     los derechos de las ONI (RD 13.8.4.4).
+             */
+            explicacion: string;
+            obras: components["schemas"]["ObraONIPublica"][];
         };
         /**
          * @description Quien escribio la obra, tal como lo registra el catalogo.
@@ -2517,6 +2617,163 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listadoONIPublico: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo de la publicacion. Vacio = la mas reciente.
+                 * @example 2026-01
+                 */
+                periodo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Listado publicado. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2026-01",
+                     *       "fecha_proceso": "2026-08-31T12:00:00Z",
+                     *       "direccion_fisica": "Calle 74 #7-35, Bogota D.C.",
+                     *       "direccion_electronica": "oni@redescritores.com",
+                     *       "explicacion": "REDES SGC publica este listado de obras no identificadas (ONI) para que los titulares documenten su autoria.\n",
+                     *       "obras": [
+                     *         {
+                     *           "id": "uso-1",
+                     *           "titulo": "Serie Desconocida",
+                     *           "fuente": "caracol",
+                     *           "ids_fuente": "ID-99",
+                     *           "modalidad": "tv"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoONI"];
+                };
+            };
+            /** @description El periodo no tiene la forma YYYY o YYYY-MM. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "periodo invalido"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay listado publicado (o no hay uno de ese periodo). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no hay listado ONI publicado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    publicarListadoONI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "periodo": "2026-01"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PublicarONI"];
+            };
+        };
+        responses: {
+            /** @description Listado publicado. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListadoONI"];
+                };
+            };
+            /** @description Falta el periodo o no tiene la forma YYYY o YYYY-MM. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "periodo invalido"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol no basta para publicar. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Ese periodo ya tiene listado publicado. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el listado ONI de ese periodo ya fue publicado"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
