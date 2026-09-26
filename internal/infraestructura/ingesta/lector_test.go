@@ -1,12 +1,16 @@
 package ingesta
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -297,6 +301,92 @@ func TestNetflixJSONSigueElMismoMapaQueSuXLSX(t *testing.T) {
 	if !strings.Contains(usos[3].RechazoMotivo, "vistas") {
 		t.Errorf("el cuarto trae stream_starts en letras: %q", usos[3].RechazoMotivo)
 	}
+}
+
+// La reproduccion de #167 contra MapaCine: 4 filas de datos, la tercera abre
+// una comilla y no la cierra. Antes salian 2 usos y C y D desaparecian. La
+// entrega entera se rechaza, y el mensaje nombra la linea 3 y la comilla: no
+// el "trae 1 campos ... coma perdida" que enganaba.
+func TestCineCSVRechazaLaComillaQueSeTragaElRestoDelArchivo(t *testing.T) {
+	t.Parallel()
+
+	datos := "titulo,id,taquilla\n" +
+		"A,PX-1,1\n" +
+		"\"Sin cerrar,PX-2,2\n" +
+		"C,PX-3,3\n" +
+		"D,PX-4,4\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(datos))
+	if !errors.Is(err, aplicacion.ErrReporteInvalido) {
+		t.Fatalf("err = %v, se esperaba rechazar la entrega", err)
+	}
+	if usos != nil {
+		t.Fatalf("una entrega rechazada no puede devolver usos: %+v", usos)
+	}
+	if !strings.Contains(err.Error(), "linea 3") || !strings.Contains(err.Error(), "comilla") {
+		t.Fatalf("el error no nombra la linea 3 ni la comilla: %v", err)
+	}
+	if strings.Contains(err.Error(), "coma sin entrecomillar") {
+		t.Fatalf("el motivo habla de una coma y el problema es la comilla: %v", err)
+	}
+}
+
+// Los CSV exportados desde los .xlsx reales entran enteros. La parrilla de
+// Netflix trae comillas, y el export las escribe cerradas: rechazar la comilla
+// que no se cierra no puede tumbar ese archivo.
+func TestLosCSVExportadosDeLosXLSXRealesEntranEnteros(t *testing.T) {
+	t.Parallel()
+
+	reales := []struct {
+		nombre string
+		ruta   string
+		mapa   Mapa
+		filas  int
+	}{
+		{"caracol", rutaCaracol, MapaCaracol(), filasCaracol},
+		{"netflix", rutaNetflix, MapaNetflix(), filasNetflix},
+	}
+	for _, r := range reales {
+		t.Run(r.nombre, func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, r.mapa, aplicacion.FormatoCSV).Leer(csvDeXLSX(t, r.ruta))
+			if err != nil {
+				t.Fatalf("Leer: %v", err)
+			}
+			if len(usos) != r.filas {
+				t.Fatalf("usos = %d, se esperaban %d", len(usos), r.filas)
+			}
+			for i, u := range usos {
+				if u.RechazoMotivo != "" {
+					t.Fatalf("fila %d rechazada: %s", i, u.RechazoMotivo)
+				}
+			}
+		})
+	}
+}
+
+func csvDeXLSX(t *testing.T, ruta string) []byte {
+	t.Helper()
+	libro, err := excelize.OpenFile(ruta)
+	if err != nil {
+		t.Fatalf("abrir %s: %v", ruta, err)
+	}
+	t.Cleanup(func() { _ = libro.Close() })
+	filas, err := libro.GetRows(libro.GetSheetList()[0])
+	if err != nil {
+		t.Fatalf("GetRows: %v", err)
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	for _, f := range filas {
+		if err := w.Write(f); err != nil {
+			t.Fatalf("csv: %v", err)
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		t.Fatalf("csv: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func TestCineCSVEsLaTerceraModalidad(t *testing.T) {
