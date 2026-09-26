@@ -258,6 +258,11 @@ func usoBueno(titulo string) UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 1,
+		// canal_id y rating no salen del mapa de Caracol, pero una fila de TV
+		// sin ellos ya no es canonica (#165). Quien quiera el rechazo los deja
+		// en cero a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -1020,7 +1025,10 @@ func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 func TestGuardarUsosNoConfundeElEscalonVacioConUnoAdelantado(t *testing.T) {
 	ingesta, repo, _ := nuevaIngesta()
 
-	recien := UsoPersistido{Titulo: "Recien Parseada", Modalidad: reparto.TV}
+	recien := UsoPersistido{
+		Titulo: "Recien Parseada", Modalidad: reparto.TV,
+		CanalID: "caracol", Rating: decimal.NewFromInt(1),
+	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
 	if err != nil {
@@ -1118,6 +1126,8 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(48),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), rep, []UsoPersistido{recien})
@@ -1146,6 +1156,45 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 	}
 	if guardado.ReporteID != rep.ID {
 		t.Errorf("ReporteID = %q, se esperaba %q", guardado.ReporteID, rep.ID)
+	}
+}
+
+// Una fila de TV sin canal no pondera, y una con canal pero sin rating pondera
+// cero. Las dos se rechazan y el motivo nombra el campo. Cine no multiplica
+// por rating: con canal, rating 0 sigue siendo canonica (#165).
+func TestGuardarUsosRechazaFilaSinCanalYFilaSinRating(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	sinCanal := usoBueno("Sin canal")
+	sinCanal.CanalID = ""
+	sinRating := usoBueno("Sin rating")
+	sinRating.Rating = decimal.Zero
+	cine := usoBueno("Pelicula")
+	cine.Modalidad = reparto.Cine
+	cine.Rating = decimal.Zero
+	buena := usoBueno("Con canal y rating")
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{
+		sinCanal, sinRating, cine, buena,
+	})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 2 {
+		t.Fatalf("rechazados = %d, se esperaban 2: %+v", len(rechazados), rechazados)
+	}
+	motivos := map[string]string{}
+	for _, u := range rechazados {
+		motivos[u.Titulo] = u.RechazoMotivo
+	}
+	if !strings.Contains(motivos["Sin canal"], "canal_id") {
+		t.Fatalf("sin canal: motivo = %q", motivos["Sin canal"])
+	}
+	if !strings.Contains(motivos["Sin rating"], "rating") {
+		t.Fatalf("sin rating: motivo = %q", motivos["Sin rating"])
+	}
+	if len(repo.canonicos()) != 2 {
+		t.Fatalf("canonicas = %d, se esperaban la de cine y la buena", len(repo.canonicos()))
 	}
 }
 
