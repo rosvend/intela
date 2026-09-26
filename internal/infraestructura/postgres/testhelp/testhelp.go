@@ -85,12 +85,17 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	// quien lo agota sino la siguiente prueba del binario. Salio asi en CI,
 	// como `too many clients already (SQLSTATE 53300)` en sesiones_test.go.
 	//
-	// Dos bastan: ninguna prueba de este paquete usa concurrencia contra su
+	// Uno basta: ninguna prueba de este paquete usa concurrencia contra su
 	// propio pool -las que tocan Pool no pueden llamar a t.Parallel()-, y
 	// acotarlo aqui lo arregla para todas de una vez en vez de pedirle a cada
 	// prueba que se acuerde. Ademas hace mas fiable el DROP DATABASE de
 	// Restore, que no convive con conexiones vivas.
-	pool, err := pgxpool.New(t.Context(), d+"&pool_max_conns=2")
+	//
+	// context.Background y no t.Context(): Go cancela el contexto de la
+	// prueba justo ANTES de los Cleanup. Si el pool nace atado a ese
+	// contexto, el cierre corre sobre un ctx ya muerto y en CI con -race
+	// quedan sesiones colgadas que acaban en 53300 en la prueba siguiente.
+	pool, err := pgxpool.New(context.Background(), d+"&pool_max_conns=1")
 	if err != nil {
 		t.Fatalf("abrir pool: %v", err)
 	}
@@ -188,6 +193,12 @@ func arrancar() {
 		// initdb, asi que la primera conexion corre contra el servidor que se
 		// esta apagando.
 		tcpostgres.BasicWaitStrategies(),
+		// Margen frente a 53300 en CI: go test ./... levanta varios
+		// contenedores y el techo por defecto (100) se agota si alguna
+		// prueba deja sesiones colgadas bajo -race. No importamos
+		// docker/docker solo para subir shm: go mod tidy lo promoveria a
+		// dependencia directa.
+		testcontainers.WithCmdArgs("-c", "max_connections=200"),
 	)
 	contenedor = ctr
 	if err != nil {

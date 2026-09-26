@@ -205,15 +205,16 @@ func construir() (http.Handler, error) {
 		Unidad:        store,
 	}
 
-	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
+	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
 	//
-	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
-	// exige inmutabilidad y retencion. El sistema de ficheros de Lambda es de
-	// solo lectura salvo /tmp, y /tmp se recicla con el contenedor: montar la
-	// boveda ahi daria un acuse que certifica una evidencia que desaparece a la
+	// La boveda (reportes crudos y documentos de afiliacion) es hoy
+	// `objetos.Disco`, y el ADR 0006 le exige inmutabilidad y retencion. El
+	// sistema de ficheros de Lambda es de solo lectura salvo /tmp, y /tmp se
+	// recicla con el contenedor: montar la boveda ahi daria un acuse (o una
+	// solicitud admitida) que certifica una evidencia que desaparece a la
 	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
-	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
-	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
+	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
+	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,

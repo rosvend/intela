@@ -214,4 +214,17 @@ func (d Disco) Obtener(ctx context.Context, clave string) ([]byte, error) {
 	return b, err
 }
 
+// Borrar quita el fichero. Una clave que no existe no es error: la
+// compensacion del alta tiene que poder llamarlo dos veces.
+func (d Disco) Borrar(_ context.Context, clave string) error {
+	destino, err := d.ruta(clave)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 var _ aplicacion.AlmacenObjetos = Disco{}
