@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-21
+actualizado: 2026-09-26
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -106,6 +106,10 @@ Drama son `serie`; Magazine, Noticiero, Agro, Entretenimientos y Religioso **no 
 la columna `TIPO` da `cinematografica`, `unitario` y `sketches`.
 El mas dudoso es **Entretenimientos**: si son shows con libretista de planta, si son repertorio y
 hay que asignarles ponderacion. Preguntarlo explicitamente.
+Consecuencia (#165): mientras P-05 no este confirmada, el mapa de Caracol **no**
+escribe `tipo_obra`. Una fila ya identificada toma el tipo de `obras.tipo`. Una
+fila sin obra y sin tipo sigue vacia, y el detector `tipo_obra_sin_mapear` (#37)
+solo mira las identificadas.
 
 ### P-06 Proveedor y formato del rating por franja
 Estado: **Parcial**. El formato quedo definido; el proveedor no.
@@ -114,6 +118,9 @@ Respuesta: el dato se indexa por **(canal, franja horaria, ano)**. Es lo que enc
 canales haria ponderar igual a dos canales con audiencias muy distintas.
 Sigue abierto: **quien es el proveedor**, en que formato entrega y con que periodicidad real
 -el glosario dice anual-.
+Consecuencia (#165): la parrilla no es ese feed. Una fila de TV, hotel o
+suscripcion con `rating` 0 se rechaza en la ingesta. Si se guardara, `RD 9.1.1`
+la ponderaria como audiencia cero y el neto iria a `NoDistribuido` sin error.
 
 ### P-07 Export de Declaraciones de Obra desde REDES-SYS
 Estado: **Provisional**.
@@ -188,11 +195,11 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   `Resultado.NoDistribuido` con motivo, no en el residuo de redondeo.
 - **P-20** Quien puebla `usos.canal_id` en produccion. Los adaptadores de ingesta reales
   (`MapaCaracol`, `MapaNetflix`, `MapaCine`) no mapean ninguna columna del archivo del
-  cliente a esa columna: hoy solo la puebla el sembrador sintetico. Sin una columna del
-  cliente que identifique el canal -- o una tabla de correspondencia (fuente, canal) que
-  alguien mantenga -- toda fila real de TV llega con `canal_id` vacio, y `RD 9.1` no se
-  puede repartir por canal sobre datos de produccion. `aplicacion.Reparto.UsosSinCanal`
-  cuenta el hueco mientras la respuesta no llega; no lo cierra.
+  cliente a esa columna. Desde #165 la ingesta **rechaza** la fila sin `canal_id`
+  (va a `usos_rechazados` y el motivo nombra el campo) en vez de guardarla y
+  dejarla fuera de `UsosDeCanal` sin error. Sigue abierto que columna -- o que
+  tabla de correspondencia -- identifica el canal que pago. El seed si lo trae,
+  porque no pasa por esos mapas.
 
 ## Agenda para la reunion con REDES
 

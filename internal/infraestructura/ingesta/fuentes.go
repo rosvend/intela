@@ -47,14 +47,14 @@ func CatalogoDelCliente() (map[aplicacion.ClaveLector]aplicacion.LectorReporte, 
 //   - `tipo_obra`. La parrilla trae `TIPO` (PR/SE/PE) y `SubGenero`
 //     (Telenovela, Magazine, Noticiero, Agro...), y NINGUNA de las dos es la
 //     clasificacion del reglamento -- cinematografica, unitario, serie,
-//     telenovela, sketches --. La tabla de correspondencia es la pregunta 5 de
-//     `docs/dominio/fuentes-datos.md` y todavia no la ha contestado el cliente.
-//     Escribir `SubGenero` en `tipo_obra` inventaria esa correspondencia y
-//     despues no habria forma de distinguir lo mapeado de lo supuesto; la
-//     columna se queda en su DEFAULT vacio hasta que la respuesta llegue.
-//   - `rating`. La parrilla NO lo trae, y es lo que bloquea `RD 9.1.1`
-//     completo: hace falta el feed del proveedor de audiencia, que es la
-//     pregunta 3.
+//     telenovela, sketches --. La tabla de correspondencia es P-05 y sigue
+//     sin confirmacion del cliente, asi que este mapa no la escribe. Cuando
+//     la cascada identifica la fila, `tipo_obra` sale de `obras.tipo` (#165).
+//   - `canal_id`. La parrilla no trae el canal que pago (P-20). La ingesta
+//     rechaza la fila en vez de guardarla vacia: sin canal no entra en
+//     UsosDeCanal.
+//   - `rating`. La parrilla NO lo trae. El dato es el feed de P-06. Una fila
+//     de TV con rating 0 se rechaza: RD 9.1.1 lo usaria como peso cero.
 //   - Los cuatro campos de episodio (`Titulo_capitulo`, `Temporada`,
 //     `ID_Ficha_Capitulo`, `Numero_Capitulo`) estan vacios al 100% pese a que
 //     18 filas son series. Hoy solo se puede identificar el programa.

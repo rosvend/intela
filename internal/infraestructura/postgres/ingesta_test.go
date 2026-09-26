@@ -68,6 +68,10 @@ func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 3,
+		// Sin canal o sin rating la ingesta rechaza la fila (#165). Los tests
+		// que quieren ese hueco lo vacian a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -608,6 +612,8 @@ func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(52),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{recien})

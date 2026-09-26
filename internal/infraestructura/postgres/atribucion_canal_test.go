@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -9,17 +10,11 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 )
 
-// TestElMapaDeCaracolNoPueblaCanalIDYElHuecoEsObservable fija el estado real
-// de la ingesta: MapaCaracol, MapaNetflix y MapaCine no mapean ninguna columna
-// a CampoCanalID, asi que TODA fila que entra por el camino real de ingesta
-// (IngerirReporte, no GuardarUsos con filas armadas a mano) llega con
-// `canal_id = ”`. Sin un mecanismo aparte, UsosDeCanal("2025-02", "caracol")
-// devuelve 0 usos SIN error, indistinguible de "el canal no emitio". Esta
-// prueba comprueba que el hueco -- que sigue sin cablearse, P-20 en
-// docs/dominio/preguntas-cliente.md -- es observable y que un canal vacio no
-// se puede confundir con "todos los canales".
-func TestElMapaDeCaracolNoPueblaCanalIDYElHuecoEsObservable(t *testing.T) {
-	s, _ := sembrarReportes(t)
+// TestElMapaDeCaracolRechazaLaFilaSinCanal: MapaCaracol no mapea canal_id.
+// Antes la fila entraba a `usos` y UsosDeCanal la perdia sin error. Ahora el
+// acuse la rechaza y nombra el campo (#165, P-20).
+func TestElMapaDeCaracolRechazaLaFilaSinCanal(t *testing.T) {
+	s, pool := sembrarReportes(t)
 	ctx := t.Context()
 
 	cat, err := ingesta.Catalogo(ingesta.MapaCaracol())
@@ -33,45 +28,42 @@ func TestElMapaDeCaracolNoPueblaCanalIDYElHuecoEsObservable(t *testing.T) {
 		Lectores: cat,
 	}
 
-	// Cabecera real de la parrilla de Caracol (fuentes.go): Titulo e ID_Ficha
-	// son requeridas; Duracion_total tambien. Dos filas, un solo ID_Ficha
-	// (misma obra, dos emisiones), como en la parrilla real.
 	csv := []byte("Titulo,ID_Ficha,Duracion_total,Fecha,Hora\n" +
 		"La Casa de las Dos Palmas,1234,52,20260201,1930\n" +
 		"La Casa de las Dos Palmas,1234,52,20260202,1930\n")
 
 	const periodo = "2026-02"
-	if _, err := ing.IngerirReporte(ctx, "caracol", "csv", periodo, csv); err != nil {
+	rec, err := ing.IngerirReporte(ctx, "caracol", "csv", periodo, csv)
+	if err != nil {
 		t.Fatalf("IngerirReporte con el mapa real de Caracol: %v", err)
 	}
+	if rec.Aceptados != 0 || len(rec.Rechazados) != 2 {
+		t.Fatalf("aceptados=%d rechazados=%d, se esperaban 0 y 2", rec.Aceptados, len(rec.Rechazados))
+	}
+	for _, u := range rec.Rechazados {
+		if !strings.Contains(u.RechazoMotivo, "canal_id") {
+			t.Fatalf("motivo = %q, tenia que nombrar canal_id", u.RechazoMotivo)
+		}
+	}
 
-	// 1. El hueco real: las filas que entraron por el camino de produccion
-	// llegan sin canal.
+	var enUsos int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM usos`).Scan(&enUsos); err != nil {
+		t.Fatalf("contar usos: %v", err)
+	}
+	if enUsos != 0 {
+		t.Fatalf("usos = %d, se esperaban 0: una fila sin canal no entra al reparto", enUsos)
+	}
+
 	sinCanal, err := s.UsosSinCanal(ctx, periodo)
 	if err != nil {
 		t.Fatalf("UsosSinCanal: %v", err)
 	}
-	if sinCanal != 2 {
-		t.Fatalf("UsosSinCanal = %d, se esperaban 2: MapaCaracol no puebla canal_id "+
-			"hasta que P-20 se resuelva", sinCanal)
+	if sinCanal != 0 {
+		t.Fatalf("UsosSinCanal = %d, se esperaba 0: el rechazo no deja la fila en usos", sinCanal)
 	}
 
-	// 2. Pedir el canal real por su nombre da vacio -- correcto, porque
-	// efectivamente ninguna fila lo declara -- pero por si solo es ambiguo con
-	// "el canal no emitio". Es el paso (1) el que lo desambigua.
 	r := aplicacion.Reparto{Usos: s}
-	usos, _, err := r.UsosDeCanal(ctx, periodo, "caracol")
-	if err != nil {
-		t.Fatalf("UsosDeCanal(canal real): %v", err)
-	}
-	if len(usos) != 0 {
-		t.Fatalf("usos = %d, se esperaban 0: ninguna fila de esta entrega declara canal_id=%q",
-			len(usos), "caracol")
-	}
-
-	// 3. Lo que NO puede pasar: pedir "el canal vacio" y que eso devuelva las
-	// dos filas sin atribuir como si fueran de un pagador real.
 	if _, _, err := r.UsosDeCanal(ctx, periodo, ""); !errors.Is(err, aplicacion.ErrCanalVacio) {
-		t.Fatalf("UsosDeCanal(\"\") se esperaba ErrCanalVacio, se obtuvo (usos=%v, err=%v)", usos, err)
+		t.Fatalf("UsosDeCanal(\"\") se esperaba ErrCanalVacio, se obtuvo %v", err)
 	}
 }

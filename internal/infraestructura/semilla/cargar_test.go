@@ -632,6 +632,51 @@ func TestHashearRechazaClavesRepetidas(t *testing.T) {
 		t.Fatalf("claves distintas: %v", err)
 	}
 }
+
+func TestCargarNoDejaTipoObraVacioEnCaracolIdentificado(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	// El detector tipo_obra_sin_mapear (#37) cuenta filas identificadas, de una
+	// modalidad que pondera por tipo, con tipo_obra vacio. Sobre el seed de
+	// Caracol tiene que dar 0: el archivo no lo trae y el catalogo si (#165).
+	var sinMapear int
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM usos u
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE r.fuente = 'caracol'
+		   AND u.obra_id IS NOT NULL
+		   AND btrim(u.tipo_obra) = ''
+		   AND u.modalidad IN ('tv', 'hotel', 'suscripcion')`).Scan(&sinMapear)
+	if err != nil {
+		t.Fatalf("contar tipo_obra vacio: %v", err)
+	}
+	if sinMapear != 0 {
+		t.Fatalf("tipo_obra_sin_mapear = %d, se esperaba 0", sinMapear)
+	}
+
+	var distintos int
+	err = pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM usos u
+		  JOIN obras o ON o.id = u.obra_id
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE r.fuente = 'caracol'
+		   AND u.modalidad = 'tv'
+		   AND u.tipo_obra <> o.tipo`).Scan(&distintos)
+	if err != nil {
+		t.Fatalf("comparar con obras.tipo: %v", err)
+	}
+	if distintos != 0 {
+		t.Fatalf("%d filas de Caracol no copiaron obras.tipo", distintos)
+	}
+}
+
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testhelp.Pool(t)

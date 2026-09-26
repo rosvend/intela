@@ -25,10 +25,12 @@ func TestNormalizarUnLoteMixtoDejaCanonicasYRevision(t *testing.T) {
 		{
 			ID: "tv-ok", Fuente: "caracol", Modalidad: "tv",
 			Titulo: "Serie Y", Fecha: "20241231", Duracion: "60",
+			CanalID: "caracol", Rating: "4.5",
 		},
 		{
 			ID: "cine-ok", Fuente: "caracol", Modalidad: "cine",
 			Titulo: "Pelicula X", Fecha: "2024-06-01", Taquilla: "100", Moneda: "COP",
+			CanalID: "procinal",
 		},
 		{
 			ID: "tv-fecha", Fuente: "caracol", Modalidad: "tv",
