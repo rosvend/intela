@@ -57,6 +57,7 @@ type API struct {
 	salud         Salud
 	auth          Autenticacion
 	ordenes       ConsultaLiquidaciones
+	admision      Admision
 	catalogo      Catalogo
 	padron        Padron
 	ingesta       Ingesta
@@ -81,6 +82,7 @@ type Casos struct {
 	Salud         Salud
 	Auth          Autenticacion
 	Ordenes       ConsultaLiquidaciones
+	Admision      Admision
 	Catalogo      Catalogo
 	Padron        Padron
 	Ingesta       Ingesta
@@ -102,9 +104,9 @@ type ColaRevision interface {
 // Nueva construye el adaptador.
 //
 // Un caso de uso nil no es un fallo de arranque: su ruta responde 503. Ver
-// [API.conIngesta]. Es lo que permite que un binario que todavia no cablea la
-// boveda -- cmd/lambda, cuyo sistema de ficheros es de solo lectura -- siga
-// sirviendo el resto de la API.
+// [API.conIngesta] y [API.conAdmision]. Es lo que permite que un binario que
+// todavia no cablea la boveda -- cmd/lambda, cuyo sistema de ficheros es de
+// solo lectura -- siga sirviendo el resto de la API.
 func Nueva(casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
@@ -114,6 +116,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		salud:         casos.Salud,
 		auth:          casos.Auth,
 		ordenes:       casos.Ordenes,
+		admision:      casos.Admision,
 		catalogo:      casos.Catalogo,
 		padron:        casos.Padron,
 		ingesta:       casos.Ingesta,
@@ -164,6 +167,8 @@ func (a *API) Router() http.Handler {
 		// /liquidaciones es staff y /mis-liquidaciones es el titular.
 		protegido.Get("/liquidaciones", a.listarLiquidaciones)
 		protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
+		protegido.Post("/afiliaciones/{id}/aprobar", a.conAdmision(a.aprobarAfiliacion))
+		protegido.Post("/afiliaciones/{id}/rechazar", a.conAdmision(a.rechazarAfiliacion))
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
@@ -288,6 +293,17 @@ func (a *API) Router() http.Handler {
 		})
 	})
 
+	// El alta la rellena quien todavia no es afiliado, asi que va sin
+	// sesion. Completar el IPI tambien: el identificador de la solicitud
+	// es el token. Ambas llevan rate limit porque aceptan trafico anonimo
+	// y la primera escribe a disco. conAdmision contesta 503 si el binario
+	// no cableo la boveda (cmd/lambda hoy); sin eso seria un 404 o un 500.
+	r.Group(func(alta chi.Router) {
+		alta.Use(limitarPorIP(10, time.Minute))
+		alta.Post("/afiliaciones", a.conAdmision(a.solicitarAfiliacion))
+		alta.Patch("/afiliaciones/{id}/ipi", a.conAdmision(a.completarIPI))
+	})
+
 	return r
 }
 
@@ -302,6 +318,23 @@ func (a *API) conIngesta(h http.HandlerFunc) http.HandlerFunc {
 		if a.ingesta == nil {
 			escribirError(w, http.StatusServiceUnavailable,
 				"la ingesta de reportes no esta configurada en esta instalacion")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// conAdmision responde 503 si el binario no cableo el caso de uso de admision.
+//
+// Misma razon que [API.conIngesta]: sin boveda durable (objetos.Disco no sirve
+// en Lambda) el alta no puede guardar RUT ni certificacion bancaria. Mejor un
+// 503 honesto que un 500 por mkdir en FS de solo lectura, o un 404 porque la
+// ruta ni se registro.
+func (a *API) conAdmision(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.admision == nil {
+			escribirError(w, http.StatusServiceUnavailable,
+				"el alta de afiliacion no esta configurada en esta instalacion")
 			return
 		}
 		h(w, r)

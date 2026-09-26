@@ -81,6 +81,13 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	admision := aplicacion.Admision{
+		Solicitudes: store,
+		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		IDs:         cripto.TokensAleatorios{},
+		Claves:      cripto.Bcrypt{},
+	}
+
 	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
 	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
@@ -189,6 +196,7 @@ func ejecutar(log *slog.Logger) error {
 		Salud:         store,
 		Auth:          autenticacion,
 		Ordenes:       ordenes,
+		Admision:      admision,
 		Catalogo:      catalogo,
 		Padron:        padron,
 		Ingesta:       recepcion,
