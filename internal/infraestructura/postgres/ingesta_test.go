@@ -33,8 +33,17 @@ const (
 // sembrarReportes deja dos reportes de periodos distintos y devuelve el Store.
 func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-
 	pool := testhelp.Pool(t)
+	return sembrarReportesEn(t, pool), pool
+}
+
+// sembrarReportesEn siembra los dos reportes sobre un pool ya abierto.
+//
+// Existe para la sonda de la unidad de trabajo, que no puede usar
+// [testhelp.Pool]: ese deja MaxConns=1 y la lectura desde fuera de la
+// transaccion abierta se interbloquea.
+func sembrarReportesEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 
@@ -46,7 +55,7 @@ func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 		shaOtro, "reportes/"+shaOtro, 256); err != nil {
 		t.Fatalf("sembrar reporte de febrero: %v", err)
 	}
-	return s, pool
+	return s
 }
 
 func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
@@ -1525,14 +1534,30 @@ func TestListarCargasFiltradaPagina(t *testing.T) {
 // que separo la consulta en dos ramas revirtio s.ejecutorDe a s.pool; esta
 // sonda es lo que evita que vuelva a pasar en silencio.
 func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
-	s, pool := sembrarReportes(t)
+	// Dos conexiones: EnUnidad ocupa una con la transaccion y el conteo de
+	// fuera (pool directo) pide otra. Con el MaxConns=1 de testhelp.Pool la
+	// segunda espera al pool mientras la unidad espera a la segunda: el
+	// timeout de 10 minutos del paquete. Mismo arreglo que
+	// TestCandidatosParticipaEnLaUnidad.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool de dos conexiones: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool de dos conexiones: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	s := sembrarReportesEn(t, pool)
 	const (
 		idSonda  = "rep-sonda"
 		periodo  = "2026-03"
 		shaSonda = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	)
 
-	err := s.EnUnidad(t.Context(), func(ctx context.Context) error {
+	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
 		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
 			shaSonda, "reportes/"+shaSonda, 32); err != nil {
 			return err
