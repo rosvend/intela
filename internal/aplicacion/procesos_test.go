@@ -737,7 +737,8 @@ func TestAvanzarEtapaConCriticasAbiertasNoSaleDeDeducciones(t *testing.T) {
 		repo := procesoEnDeducciones(t, circuito)
 		resultados := &repositorioResultadosFalso{}
 		compuerta := &compuertaFalsa{criticas: 2}
-		uc := Procesos{Repo: repo, Resultados: resultados, Unidad: &unidadFalsa{}, Anomalias: compuerta}
+		unidad := &unidadFalsa{}
+		uc := Procesos{Repo: repo, Resultados: resultados, Unidad: unidad, Anomalias: compuerta}
 
 		_, err := uc.AvanzarEtapa(t.Context(), "proc-1")
 		if !errors.Is(err, ErrAnomaliasCriticasAbiertas) {
@@ -751,6 +752,15 @@ func TestAvanzarEtapaConCriticasAbiertasNoSaleDeDeducciones(t *testing.T) {
 		}
 		if resultados.procesoID != "" {
 			t.Fatalf("%s: se valorizo con criticas abiertas", circuito)
+		}
+		// El nacional evalua DENTRO de la unidad y la confirma: revertirla
+		// borraria las alertas y el 409 apuntaria a una bandeja vacia (#166).
+		if circuito == reparto.Nacional {
+			if unidad.entradas != 1 || !unidad.confirmo {
+				t.Fatalf("nacional: entradas=%d confirmo=%v, la evaluacion tiene que confirmarse", unidad.entradas, unidad.confirmo)
+			}
+		} else if unidad.entradas != 0 {
+			t.Fatalf("internacional: entradas=%d, la compuerta no abre unidad", unidad.entradas)
 		}
 	}
 }
@@ -801,5 +811,34 @@ func TestLaCompuertaSoloSeConsultaAlSalirDeDeducciones(t *testing.T) {
 	}
 	if v.Etapa != reparto.EtapaDeducciones || len(compuerta.pedidos) != 0 {
 		t.Fatalf("etapa = %q, pedidos = %v: recaudo->deducciones no pasa por la compuerta", v.Etapa, compuerta.pedidos)
+	}
+}
+
+func TestAvanzarEtapaRepiteLaCompuertaAlEntrarAVerificacion(t *testing.T) {
+	t.Parallel()
+
+	for _, circuito := range []reparto.Circuito{reparto.Nacional, reparto.Internacional} {
+		repo := nuevoRepositorioProcesosFalso()
+		p, err := reparto.AbrirProceso("proc-1", "2026-01", circuito, "bolsa-1", "snap-1", "IX")
+		if err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		p.Etapa = reparto.EtapaLiquidacionParcial
+		if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		compuerta := &compuertaFalsa{criticas: 1}
+		uc := Procesos{Repo: repo, Anomalias: compuerta}
+
+		_, err = uc.AvanzarEtapa(t.Context(), "proc-1")
+		if !errors.Is(err, ErrAnomaliasCriticasAbiertas) {
+			t.Fatalf("%s: err = %v, se esperaba ErrAnomaliasCriticasAbiertas", circuito, err)
+		}
+		if len(compuerta.pedidos) != 1 || compuerta.pedidos[0] != "2026-01" {
+			t.Fatalf("%s: pedidos = %v, se esperaba volver a evaluar 2026-01", circuito, compuerta.pedidos)
+		}
+		if got := repo.procesos["proc-1"].Etapa; got != reparto.EtapaLiquidacionParcial {
+			t.Fatalf("%s: etapa = %q, no debio entrar a verificacion con criticas", circuito, got)
+		}
 	}
 }

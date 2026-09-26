@@ -120,6 +120,13 @@ func (s *Store) BloquearAlertasDePeriodo(ctx context.Context, periodo string) er
 	if !hay {
 		return fmt.Errorf("bloquear las alertas de %s: %w", periodo, errFueraDeUnidad)
 	}
+	return bloquearAlertasEn(ctx, tx, periodo)
+}
+
+// bloquearAlertasEn toma el cerrojo de aviso sobre una transaccion ya abierta.
+// La ingesta lo usa al empezar a escribir: es la misma clave que Evaluar, y
+// pg_advisory_xact_lock se suelta solo al terminar esa transaccion.
+func bloquearAlertasEn(ctx context.Context, tx pgx.Tx, periodo string) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, claveCerrojoAlertas(periodo)); err != nil {
 		return traducirError(err, "bloquear las alertas de %s", periodo)
 	}

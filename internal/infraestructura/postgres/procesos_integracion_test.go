@@ -3,14 +3,17 @@ package postgres
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 )
 
 // sembrarProcesoNacionalListoParaValorizar deja una bolsa, un uso
@@ -21,7 +24,17 @@ import (
 // contra Postgres real.
 func sembrarProcesoNacionalListoParaValorizar(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-	s, pool := sembrarReportes(t) // reporteEnero: fuente caracol, periodo 2026-01
+	pool := testhelp.Pool(t)
+	return sembrarProcesoNacionalEn(t, pool), pool
+}
+
+// sembrarProcesoNacionalEn es [sembrarProcesoNacionalListoParaValorizar] sobre
+// un pool ya abierto. La prueba del cerrojo de periodo necesita MaxConns>1:
+// el pool de testhelp deja 1 y la entrega concurrente se quedaria esperando
+// una conexion, no el cerrojo.
+func sembrarProcesoNacionalEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
+	s := sembrarReportesEn(t, pool)
 	ctx := t.Context()
 
 	// El usuario de recaudo de television ES el canal (ADR 0019): "caracol"
@@ -78,7 +91,7 @@ func sembrarProcesoNacionalListoParaValorizar(t *testing.T) (*Store, *pgxpool.Po
 	}
 
 	sembrarParametros(t, pool, "2026-01-01")
-	return s, pool
+	return s
 }
 
 // TestProcesoNacionalDePuntaAPunta es la prueba de verificacion manual del
@@ -419,4 +432,169 @@ func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
 	if p.Etapa != reparto.EtapaImporteObra {
 		t.Fatalf("etapa = %q, se esperaba importe_obra", p.Etapa)
 	}
+}
+
+// poolDePrueba abre un pool con mas de una conexion. testhelp.Pool deja
+// MaxConns=1, y una prueba que fuerza dos transacciones a la vez se quedaria
+// esperando el pool, no el cerrojo.
+func poolDePrueba(t *testing.T, max int32) *pgxpool.Pool {
+	t.Helper()
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool: %v", err)
+	}
+	cfg.MaxConns = max
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestEntregaDuranteValorizarEsperaElCerrojoYNoPondera cierra el TOCTOU de #166.
+//
+// La compuerta y la valorizacion comparten el cerrojo de alertas. Esta prueba
+// fuerza la ventana: la valorizacion queda esperando la fila del proceso
+// (con el cerrojo de alertas ya tomado) y la entrega no puede confirmarse
+// hasta que esa unidad termina. El resultado no incluye la obra que la
+// entrega traia.
+func TestEntregaDuranteValorizarEsperaElCerrojoYNoPondera(t *testing.T) {
+	pool := poolDePrueba(t, 4)
+	s := sembrarProcesoNacionalEn(t, pool)
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO obras (id, titulo, genero, anio, tipo) VALUES ('obra-z', 'Obra Z', 'Drama', 2021, 'serie')`); err != nil {
+		t.Fatalf("sembrar obra-z: %v", err)
+	}
+
+	uc := aplicacion.Procesos{
+		Repo: s, Parametros: s, Bolsas: s, Declaraciones: s, Usos: s, Resultados: s, Unidad: s,
+		Anomalias: servicioDeAnomalias(s, time.Now()),
+	}
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
+		t.Fatalf("iniciar proceso: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err != nil {
+		t.Fatalf("avanzar a deducciones: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("abrir la transaccion que retiene el proceso: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT id FROM procesos WHERE id = 'proc-y' FOR UPDATE`); err != nil {
+		t.Fatalf("retener el proceso: %v", err)
+	}
+
+	var grupo sync.WaitGroup
+	avanceErr := make(chan error, 1)
+	grupo.Add(1)
+	go func() {
+		defer grupo.Done()
+		_, err := uc.AvanzarEtapa(ctx, "proc-y")
+		avanceErr <- err
+	}()
+	esperarConsultaBloqueada(t, s, "INSERT INTO resultados_proceso")
+
+	uso := usoPendiente("uso-z", "rep-durante-valorizar", "Obra Z")
+	uso.CanalID = "caracol"
+	uso.TipoObra = "serie"
+	uso.Emisiones = 100
+	uso.DuracionMin = dec("48")
+	uso.Rating = dec("9")
+	uso.Escalon = "alias"
+	uso.ONI = false
+	uso.ObraID = "obra-z"
+	uso.Evidencia = "alias caracol/obra-z"
+	rep := aplicacion.Reporte{
+		ID: "rep-durante-valorizar", Fuente: "caracol", Periodo: "2026-01",
+		SHA256:      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		ClaveObjeto: "reportes/d.csv", NBytes: 64,
+	}
+	entregaErr := make(chan error, 1)
+	grupo.Add(1)
+	go func() {
+		defer grupo.Done()
+		entregaErr <- s.GuardarEntrega(ctx, rep, []aplicacion.UsoPersistido{uso})
+	}()
+	esperarCerrojoDeAvisoEnEspera(t, s)
+
+	var yaEscrita int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM usos WHERE id = 'uso-z'`).Scan(&yaEscrita); err != nil {
+		t.Fatalf("contar uso-z mientras espera: %v", err)
+	}
+	if yaEscrita != 0 {
+		t.Fatal("la entrega se confirmo con el cerrojo de alertas tomado por la valorizacion")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("soltar el proceso: %v", err)
+	}
+	grupo.Wait()
+	if err := <-avanceErr; err != nil {
+		t.Fatalf("avanzar a importe_obra: %v", err)
+	}
+	if err := <-entregaErr; err != nil {
+		t.Fatalf("guardar la entrega tardia: %v", err)
+	}
+
+	var enResultado int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM resultados_obra WHERE proceso_id = 'proc-y' AND obra_id = 'obra-z'`).Scan(&enResultado); err != nil {
+		t.Fatalf("leer el resultado: %v", err)
+	}
+	if enResultado != 0 {
+		t.Fatal("obra-z pondero: la entrega entro entre evaluar y valorizar")
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM usos WHERE id = 'uso-z'`).Scan(&yaEscrita); err != nil {
+		t.Fatalf("contar uso-z al final: %v", err)
+	}
+	if yaEscrita != 1 {
+		t.Fatal("la entrega no quedo escrita despues de soltar el cerrojo")
+	}
+}
+
+// esperarConsultaBloqueada espera a que alguna sesion este de verdad parada en
+// un Lock con esa sentencia, no un sleep a ciegas.
+func esperarConsultaBloqueada(t *testing.T, s *Store, fragmento string) {
+	t.Helper()
+	conn, err := pgx.ConnectConfig(t.Context(), s.pool.Config().ConnConfig.Copy())
+	if err != nil {
+		t.Fatalf("conexion de observacion: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	limite := time.Now().Add(15 * time.Second)
+	for time.Now().Before(limite) {
+		var bloqueada bool
+		err := conn.QueryRow(t.Context(),
+			`SELECT EXISTS (
+			   SELECT 1 FROM pg_stat_activity
+			    WHERE wait_event_type = 'Lock' AND query ILIKE '%' || $1 || '%'
+			 )`, fragmento).Scan(&bloqueada)
+		if err != nil {
+			t.Fatalf("consultar pg_stat_activity: %v", err)
+		}
+		if bloqueada {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("nadie quedo bloqueado en %q\n%s", fragmento, actividad(t, conn))
+}
+
+func actividad(t *testing.T, conn *pgx.Conn) string {
+	t.Helper()
+	var dump string
+	err := conn.QueryRow(context.Background(),
+		`SELECT coalesce(string_agg(
+		    pid::text || ' ' || state || ' ' || coalesce(wait_event_type,'-') || '/' || coalesce(wait_event,'-')
+		    || E'\n' || left(query, 300), E'\n---\n'), '')
+		   FROM pg_stat_activity WHERE datname = current_database()`).Scan(&dump)
+	if err != nil {
+		return err.Error()
+	}
+	return dump
 }

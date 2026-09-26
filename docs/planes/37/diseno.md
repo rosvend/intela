@@ -7,7 +7,7 @@ actualizado: 2026-09-25
 
 La decision de fondo (recurso propio, tabla, roles, compuerta, que significa "resuelta") esta en
 [ADR 0021](../../decisiones/0021-alertas-como-recurso-propio.md). Aqui va el porque de cada
-detector de `internal/dominio/anomalias` y de la migracion `00017_alertas_de_anomalias.sql`. El
+detector de `internal/dominio/anomalias` y de la migracion `00019_alertas_de_anomalias.sql`. El
 codigo remite aqui en vez de repetirlo.
 
 ## D0. Orden y determinismo
@@ -93,7 +93,7 @@ Critica = dejarla sin resolver hace que las cifras salgan mal:
 `TipoReservaDeclaracionIncompleta` se llama asi por el contrato de #104; lo que mide es la
 RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 
-## D8. La migracion 00017
+## D8. La migracion 00019
 
 - Tabla propia y no `usos_rechazados`: sus FK son de fila de reporte, no tiene estado ni periodo
   (ADR 0021, punto 2).

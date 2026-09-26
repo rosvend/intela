@@ -39,7 +39,10 @@ func esperarCerrojoDeAvisoEnEspera(t *testing.T, s *Store) {
 // Dos evaluaciones del mismo periodo se serializan y la segunda arma su foto despues del cerrojo:
 // no autocierra la critica que la primera guardo mientras ella esperaba (MENOR 1, verificacion 2).
 func TestEvaluacionesConcurrentesNoAutocierranUnaAlertaVigente(t *testing.T) {
-	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	// MaxConns>1: la pasada A tiene que conseguir su conexion mientras B
+	// retiene la suya, o esperaria el pool y no el cerrojo de aviso.
+	pool := poolDePrueba(t, 3)
+	s := sembrarProcesoNacionalEn(t, pool)
 	ctx := t.Context()
 	anomalias := servicioDeAnomalias(s, time.Now())
 
@@ -127,7 +130,8 @@ func (r *relojQueAvanza) Ahora() time.Time {
 // La pasada que espera el cerrojo lee el reloj DESPUES de tomarlo: si reabre una alerta que la pasada
 // ganadora autocerro, el asiento de reapertura queda despues del de autocierre (MENOR 1, verificacion 3).
 func TestReaperturaTrasEsperarElCerrojoQuedaDespuesDelAutocierre(t *testing.T) {
-	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	pool := poolDePrueba(t, 3)
+	s := sembrarProcesoNacionalEn(t, pool)
 	ctx := t.Context()
 	anomalias := servicioDeAnomalias(s, time.Time{})
 	anomalias.Reloj = &relojQueAvanza{base: instanteAlertas}
