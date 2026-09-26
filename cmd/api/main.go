@@ -170,6 +170,22 @@ func ejecutar(log *slog.Logger) error {
 		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}
 
+	// La deteccion de anomalias de un periodo (#37). Seis puertos del mismo
+	// *Store, y tres de ellos son ESTRECHOS a proposito: `Entregas` solo lee
+	// -- no puede llamar a GuardarEntrega, que quema la huella de un archivo
+	// --, `Declaraciones` es el mismo LectorDeDeclaraciones que usa el
+	// catalogo y `Coautores` es una sola consulta. La unidad de trabajo esta
+	// porque las alertas y su asiento tienen que ser un solo hecho (ADR 0006).
+	anomalias := aplicacion.Anomalias{
+		Entregas:      store,
+		Declaraciones: store,
+		Coautores:     store,
+		Alertas:       store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
 	// El flujo de aprobaciones de RD 13.5 (#34). Seis puertos, un solo
 	// *Store: es el mismo patron que declaraciones/recaudo de mas arriba,
 	// aplicado a un agregado con mas costuras.
@@ -181,6 +197,7 @@ func ejecutar(log *slog.Logger) error {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Anomalias:     anomalias,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
@@ -195,6 +212,7 @@ func ejecutar(log *slog.Logger) error {
 		Recaudo:       recaudo,
 		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Anomalias:     anomalias,
 		Auditoria:     aplicacion.Auditoria{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),

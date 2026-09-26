@@ -36,6 +36,8 @@ type Procesos struct {
 	// que un reintento volveria a valorizar -- doble escritura del mismo
 	// dinero. Solo hace falta cuando AvanzarEtapa entra a valorizar.
 	Unidad UnidadDeTrabajo
+	// Anomalias es la compuerta de #37: sin ella la corrida no sale de deducciones (falla cerrada).
+	Anomalias CompuertaAnomalias
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -152,6 +154,22 @@ func (uc Procesos) AbrirCorridaDelPeriodo(ctx context.Context, periodo string, c
 // AvanzarEtapa mueve el proceso a la siguiente etapa y la persiste. Al
 // entrar a EtapaImporteObra del circuito nacional invoca el motor puro de
 // #33 -- el internacional nunca la alcanza (RD 7.4), asi que nunca valoriza.
+//
+// Al salir de deducciones hacia importe_obra la compuerta y la valorizacion
+// comparten la misma unidad. La compuerta toma el cerrojo de periodo
+// (`BloquearAlertasDePeriodo`) y, como la unidad es reentrante, ese cerrojo
+// sigue tomado mientras se ponderan los usos. La ingesta pide el mismo
+// cerrojo antes de escribir: una entrega que llegue en el intervalo no puede
+// confirmarse, asi que no pondera sin haber pasado por la compuerta (#166).
+//
+// Si la compuerta encuentra criticas, la unidad CONFIRMA igual. Revertirla
+// borraria las alertas recien evaluadas y el 409 mandaria a revisar una
+// bandeja vacia. Valorizar solo entra cuando la cuenta es cero; un fallo
+// ahi si revierte la unidad, y el reintento vuelve a evaluar.
+//
+// El internacional no valoriza y no abre esa unidad. La mitigacion es
+// repetir la compuerta al entrar a verificacion, en los dos circuitos: una
+// entrega que entro despues de la primera pasada se ve antes de la firma.
 func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoVista, error) {
 	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
@@ -162,30 +180,70 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 		return ProcesoVista{}, err
 	}
 
-	if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
-		// Valorizar y guardar la nueva etapa son un solo hecho: sin la unidad,
-		// un fallo entre las dos escrituras deja un resultado ya guardado pero
-		// el proceso todavia en deducciones, y un reintento lo volveria a
-		// valorizar -- doble escritura del mismo dinero.
-		if uc.Unidad == nil {
-			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta UnidadDeTrabajo", procesoID)
-		}
-		err := uc.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
-			if err := uc.valorizar(ctx, p); err != nil {
-				return err
-			}
-			return uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision)
-		})
-		if err != nil {
+	if v.Etapa == reparto.EtapaDeducciones && p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
+		return uc.valorizarBajoCompuerta(ctx, procesoID, v, p)
+	}
+	if v.Etapa == reparto.EtapaDeducciones || p.Etapa == reparto.EtapaVerificacion {
+		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
-		return aProcesoVista(p), nil
 	}
 
 	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// valorizarBajoCompuerta evalua el periodo y, si no hay criticas abiertas,
+// pondera y avanza a importe_obra en la misma unidad. El cerrojo que toma
+// Evaluar queda tomado hasta el commit, y la ingesta espera ese commit.
+func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, procesoID string, v ProcesoVista, p reparto.ProcesoDeReparto) (ProcesoVista, error) {
+	if uc.Unidad == nil {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta UnidadDeTrabajo", procesoID)
+	}
+	if uc.Anomalias == nil {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta la compuerta de anomalias", procesoID)
+	}
+
+	criticas := 0
+	err := uc.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		n, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			criticas = n
+			return nil
+		}
+		if err := uc.valorizar(ctx, p); err != nil {
+			return err
+		}
+		return uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision)
+	})
+	if err != nil {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
+	}
+	if criticas > 0 {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w: %d en %q, resuelvalas en /alertas", procesoID, ErrAnomaliasCriticasAbiertas, criticas, p.Periodo)
+	}
+	return aProcesoVista(p), nil
+}
+
+// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas.
+// Se consulta al salir de deducciones (internacional) y al entrar a verificacion.
+func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
+	if uc.Anomalias == nil {
+		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
+	}
+	n, err := uc.Anomalias.Bloqueantes(ctx, periodo)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, n, periodo)
+	}
+	return nil
 }
 
 // valorizar reune bolsa, usos y declaraciones y llama al motor puro de #33,

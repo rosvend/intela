@@ -16,6 +16,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 func TestCargarSiembraElJuegoCompleto(t *testing.T) {
@@ -582,6 +583,8 @@ func TestIdentificarEsAtomico(t *testing.T) {
 // ese camino -de la fila de uso a la fila de alias por (fuente, tipo=valor)- y
 // con la tabla vacia no casa ninguna.
 //
+// Una fila puede traer varias lineas (Netflix: show_id y netflix_id); basta con que una case.
+//
 // ids_fuente se compara contra "tipo_id=valor" y no contra el valor solo: es
 // el formato del contrato (ADR 0018), el que lee la cascada. Un seed que
 // volviera a escribir el valor sin clave dejaria todos los usos huerfanos.
@@ -600,7 +603,7 @@ func TestCargarSiembraElAliasDeCadaUso(t *testing.T) {
 		   AND NOT EXISTS (
 		         SELECT 1 FROM alias_obra a
 		          WHERE a.fuente  = u.fuente
-		            AND a.tipo_id || '=' || a.valor = u.ids_fuente
+		            AND a.tipo_id || '=' || a.valor = ANY (string_to_array(u.ids_fuente, E'\n'))
 		            AND a.obra_id = u.obra_id)`).Scan(&huerfanos); err != nil {
 		t.Fatalf("cruzar usos con alias_obra: %v", err)
 	}
@@ -632,6 +635,31 @@ func TestHashearRechazaClavesRepetidas(t *testing.T) {
 		t.Fatalf("claves distintas: %v", err)
 	}
 }
+
+// El detector de duplicados coteja el seed salvo rcn y expreso-bolivariano, que no tienen clave de
+// registro declarada (revision de #158, punto 8; ver preguntas-cliente.md P-21).
+func TestElSeedEsCotejablePorElDetectorDeDuplicados(t *testing.T) {
+	store, _ := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+	svc := aplicacion.Anomalias{
+		Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
+		Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+	}
+	resumen, err := svc.Evaluar(ctx, Periodo, "")
+	if err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	if resumen.UsosSinCotejar != 4 {
+		t.Fatalf("usos_sin_cotejar = %d, se esperaban 4 (2 de rcn y 2 de expreso-bolivariano)", resumen.UsosSinCotejar)
+	}
+	if n := resumen.PorTipo["duplicado_registro"]; n != 0 {
+		t.Fatalf("el seed no tiene duplicados y salieron %d", n)
+	}
+}
+
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testhelp.Pool(t)

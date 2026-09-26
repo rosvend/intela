@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -111,6 +112,13 @@ func traducirErrorDeReporte(err error, fuente, periodo string) error {
 // Es la misma forma que [Store.Registrar] con la obra y sus coautores.
 func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
 	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
+		// El cerrojo va ANTES del INSERT. AvanzarEtapa lo tiene tomado desde
+		// que Evaluar miro el periodo hasta que termina de valorizar (#166):
+		// si esta entrega confirmara en ese intervalo, sus filas ponderarian
+		// sin haber pasado por la compuerta.
+		if err := bloquearPeriodosDeEntrega(ctx, tx, rep.Periodo, usos); err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, sqlInsertarReporte,
 			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
 		if err != nil {
@@ -191,6 +199,54 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 	return cargas, nil
 }
 
+// EntregasRecibidas devuelve todas las entregas con lo justo para cotejar sus
+// huellas, SIN los dos recuentos de [Store.ListarCargas].
+//
+// # Por que una consulta aparte y no reusar ListarCargas
+//
+// Porque los dos COUNT correlacionados de aquella -- uno sobre `usos` y otro
+// sobre `usos_rechazados`, por cada reporte -- son el 96% de su coste y esta
+// lectura los descarta enteros: la deteccion de anomalias solo mira id, fuente,
+// periodo y sha256. Medido sobre 5.001 reportes y 50.000 usos, `ListarCargas`
+// tarda 130,8 ms y esta 4,8 ms. Y no es un coste que se pague una vez: la
+// evaluacion pide TODAS las entregas conocidas en cada pasada de cada periodo,
+// asi que crece con el historico para siempre.
+//
+// Sin filtro de periodo, y no es un olvido: el UNIQUE (sha256, fuente) de
+// `reportes` no lleva el periodo, asi que la otra pata de una colision puede
+// estar en otro mes. Ver [aplicacion.Anomalias.Evaluar].
+//
+// El orden es el mismo que el de ListarCargas -- `creado` DESC con desempate
+// por id -- porque el dominio recorre esta lista para nombrar "la otra
+// entrega" en el detalle de la alerta, y sin orden total ese mensaje cambia
+// entre pasadas (ADR 0005).
+func (s *Store) EntregasRecibidas(ctx context.Context) ([]aplicacion.EntregaRecibida, error) {
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
+		SELECT r.id, r.fuente, r.periodo, r.sha256
+		  FROM reportes r
+		 ORDER BY r.creado DESC, r.id`)
+	if err != nil {
+		return nil, traducirError(err, "listar las entregas recibidas")
+	}
+	defer filas.Close()
+
+	entregas := make([]aplicacion.EntregaRecibida, 0)
+	for filas.Next() {
+		var e aplicacion.EntregaRecibida
+		if err := filas.Scan(&e.ID, &e.Fuente, &e.Periodo, &e.SHA256); err != nil {
+			return nil, traducirError(err, "escanear entrega recibida")
+		}
+		entregas = append(entregas, e)
+	}
+	// Igual que en ListarCargas: sin esto una lista TRUNCADA por un fallo a
+	// mitad de stream pasa por lista completa, y aqui eso se lee como "esa
+	// huella no habia llegado antes".
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "listar las entregas recibidas")
+	}
+	return entregas, nil
+}
+
 // GuardarUsos escribe un lote de filas, canonicas y rechazadas.
 //
 // # Es transaccional por contrato
@@ -218,8 +274,71 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 	}
 
 	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
+		if err := bloquearPeriodosDeEntrega(ctx, tx, "", usos); err != nil {
+			return err
+		}
 		return escribirLote(ctx, tx, usos)
 	})
+}
+
+// bloquearPeriodosDeEntrega toma el cerrojo de alertas de cada periodo que
+// esta entrega va a tocar, en orden, antes de escribir. Es el mismo cerrojo
+// que Evaluar (`alertas\x00`+periodo): mientras AvanzarEtapa valoriza, esta
+// transaccion espera, y lo que confirme ya no entra en ese reparto (#166).
+//
+// El periodo del acuse se suma al de los reportes ya guardados: GuardarEntrega
+// todavia no inserto la fila, y GuardarUsos no trae el periodo en el lote.
+// Ordenados: dos entregas que toquen los mismos periodos no se interbloquean
+// por pedirlos en distinto orden.
+func bloquearPeriodosDeEntrega(ctx context.Context, tx pgx.Tx, periodo string, usos []aplicacion.UsoPersistido) error {
+	ids := make([]string, 0)
+	visto := make(map[string]struct{})
+	for _, u := range usos {
+		if _, ok := visto[u.ReporteID]; ok {
+			continue
+		}
+		visto[u.ReporteID] = struct{}{}
+		ids = append(ids, u.ReporteID)
+	}
+
+	periodos := make([]string, 0, len(ids)+1)
+	if periodo != "" {
+		periodos = append(periodos, periodo)
+	}
+	if len(ids) > 0 {
+		filas, err := tx.Query(ctx, `SELECT DISTINCT periodo FROM reportes WHERE id = ANY($1)`, ids)
+		if err != nil {
+			return traducirError(err, "leer el periodo de la entrega")
+		}
+		defer filas.Close()
+		for filas.Next() {
+			var p string
+			if err := filas.Scan(&p); err != nil {
+				return traducirError(err, "leer el periodo de la entrega")
+			}
+			periodos = append(periodos, p)
+		}
+		if err := filas.Err(); err != nil {
+			return traducirError(err, "leer el periodo de la entrega")
+		}
+	}
+
+	vistos := make(map[string]struct{}, len(periodos))
+	unicos := make([]string, 0, len(periodos))
+	for _, p := range periodos {
+		if _, ok := vistos[p]; ok {
+			continue
+		}
+		vistos[p] = struct{}{}
+		unicos = append(unicos, p)
+	}
+	sort.Strings(unicos)
+	for _, p := range unicos {
+		if err := bloquearAlertasEn(ctx, tx, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // escribirLote encamina cada fila a su tabla, DENTRO de la transaccion que le

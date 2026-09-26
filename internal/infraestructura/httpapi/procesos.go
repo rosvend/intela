@@ -209,6 +209,9 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		// recurso -la bolsa referenciada, o un proceso que ya existe con
 		// otros datos bajo el mismo id.
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas):
+		// 409: el periodo tiene criticas abiertas; se resuelven en /alertas (#37, ADR 0021).
+		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
 		// 409 tambien, pero es control de concurrencia optimista, no un
 		// conflicto de negocio: otra transicion escribio primero. El mensaje
