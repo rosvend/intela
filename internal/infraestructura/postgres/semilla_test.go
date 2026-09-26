@@ -45,8 +45,15 @@ const (
 // limpieza que gestionar.
 func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-
 	pool := testhelp.Pool(t)
+	return sembrarEn(t, pool), pool
+}
+
+// sembrarEn es [sembrar] sobre un pool ya abierto. Lo usa la prueba de
+// concurrencia del catalogo, que necesita MaxConns=2: con el 1 de
+// [testhelp.Pool], T2 espera la conexion del pool y no el cerrojo de fila.
+func sembrarEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	ctx := t.Context()
 
 	ejecutar := func(sql string, args ...any) {
@@ -128,5 +135,5 @@ func sembrar(t *testing.T) (*Store, *pgxpool.Pool) {
 
 	// obraSinDeclaracion se queda sin filas en declaraciones a proposito.
 
-	return &Store{pool: pool}, pool
+	return &Store{pool: pool}
 }

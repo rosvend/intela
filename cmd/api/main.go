@@ -80,6 +80,13 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	admision := aplicacion.Admision{
+		Solicitudes: store,
+		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		IDs:         cripto.TokensAleatorios{},
+		Claves:      cripto.Bcrypt{},
+	}
+
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
 	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
@@ -177,6 +184,7 @@ func ejecutar(log *slog.Logger) error {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
+		Admision:   admision,
 		Liq:        liquidaciones,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},

@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 )
 
 // sembrarUmbrales deja dos vigencias contiguas de `matching.umbral`, la segunda
@@ -119,9 +121,25 @@ func TestParametroVigenteComparaPorDiaUTC(t *testing.T) {
 // (doc.go, "Limites de transaccion"): ve lo que la unidad escribio y todavia no
 // esta confirmado, y desde fuera no se ve.
 func TestParametroVigenteParticipaEnLaUnidad(t *testing.T) {
-	store, _ := colaVacia(t)
+	// Dos conexiones: EnUnidad ocupa una con la transaccion y la lectura de
+	// fuera (t.Context, sin tx) pide otra. Con el MaxConns=1 de testhelp.Pool
+	// la segunda espera al pool mientras la primera espera a la segunda: un
+	// interbloqueo que en CI se ve como el timeout de 10 minutos del paquete.
+	// Mismo arreglo que TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool de dos conexiones: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool de dos conexiones: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	store := Nuevo(pool)
 
-	err := store.EnUnidad(t.Context(), func(ctx context.Context) error {
+	err = store.EnUnidad(t.Context(), func(ctx context.Context) error {
 		if _, err := store.ejecutorDe(ctx).Exec(ctx,
 			`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
 			 VALUES ('matching.umbral', 0.70, '2025-01-01'::date, $1, $2)`,

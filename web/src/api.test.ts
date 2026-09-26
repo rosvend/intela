@@ -399,4 +399,17 @@ describe("api", () => {
     expect(init?.headers).toBeUndefined();
     expect(localStorage.getItem("intela.token")).toBe("token-de-prueba");
   });
+
+  it("extrae el campo error de un cuerpo JSON", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "r-28: exclusividad" }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(
+      api("/api/afiliaciones", { method: "POST", body: new FormData() }),
+    ).rejects.toThrow("r-28: exclusividad");
+  });
 });

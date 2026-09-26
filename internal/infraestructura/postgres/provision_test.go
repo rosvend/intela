@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -160,7 +161,10 @@ func TestCrearPrimerAdministradorEsExclusivoBajoConcurrencia(t *testing.T) {
 
 	stores := make([]*Store, n)
 	for i := range stores {
-		pool, err := pgxpool.New(t.Context(), dsn)
+		// Misma cota que testhelp.Pool: sin pool_max_conns, pgx abre
+		// max(4, NumCPU) por pool y cuatro pools agotan el contenedor en CI
+		// (SQLSTATE 53300) mucho antes de llegar a la barrera.
+		pool, err := pgxpool.New(context.Background(), dsn+"&pool_max_conns=2")
 		if err != nil {
 			t.Fatalf("abrir pool %d: %v", i, err)
 		}

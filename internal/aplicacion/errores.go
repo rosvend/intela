@@ -45,6 +45,23 @@ var (
 	// configurada, y RD 13.8.4.3 las exige en el listado.
 	ErrDireccionPublicacionAusente = errors.New("faltan las direcciones de publicacion ONI")
 
+	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
+	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
+	// admitida). En titulares, el IPI no vacio es unico. Distinto de
+	// ErrNoEncontrado: aqui la consulta encontro de mas, no de menos.
+	ErrConflicto = errors.New("ya existe una solicitud o afiliacion con esos datos")
+
+	// ErrClaveInvalida: la clave del alta no cumple el minimo. Se distingue
+	// de ErrDocumentoInvalido porque quien la recibe tiene que saber que
+	// campo rehacer, y de ErrCredenciales porque aqui todavia no hay
+	// sesion que rechazar.
+	ErrClaveInvalida = errors.New("la clave tiene que tener entre 8 y 72 caracteres")
+
+	// ErrDocumentoInvalido: el adjunto no es un PDF o una imagen, o viene
+	// vacio. El dominio no mira bytes; esto lo decide el caso de uso antes
+	// de mandarlos al almacen.
+	ErrDocumentoInvalido = errors.New("el documento tiene que ser un pdf o una imagen y no puede estar vacio")
+
 	// ErrSnapshotCorrupto: bajo ese id hay filas congeladas que no forman el
 	// snapshot que el id anuncia.
 	//
