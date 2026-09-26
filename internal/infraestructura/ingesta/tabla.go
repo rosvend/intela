@@ -198,7 +198,24 @@ func filaFisica(rows *excelize.Rows) (int, error) {
 // coma sin entrecomillar en un rechazo de fila y no en un identificador
 // persistido.
 func TablaCSV(datos []byte) (Tabla, error) {
-	lector := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(datos), bom)))
+	texto := strings.TrimPrefix(string(datos), bom)
+	// LazyQuotes se queda: una sinopsis con una comilla a medias DENTRO del
+	// campo -- `dijo "hola" y siguio` -- es texto, no estructura, y tumbar el
+	// archivo por ella haria ilegibles las parrillas. Lo que LazyQuotes no
+	// puede hacer es dejar abierta la comilla de arranque hasta el final: en
+	// vez de devolver ErrQuote, encoding/csv mete en ese campo todo lo que
+	// falta del archivo. Las filas de despues no existen, ni siquiera en el log
+	// de rechazos, y el recuento de la entrega no cuadra con el archivo sin que
+	// nadie lo diga (issue #167, la misma regla de ADR 0016: ni se pierde ni se
+	// cuela). Eso ya no es una fila mala. Es un archivo que no se puede contar.
+	// Se mira ANTES de leer y se rechaza la entrega nombrando la linea donde
+	// abre la comilla, que es la que el cliente tiene que corregir.
+	if linea := lineaDeComillaSinCerrar(texto); linea > 0 {
+		return Tabla{}, fmt.Errorf(
+			"%w: la linea %d abre una comilla que no se cierra y el resto del archivo queda dentro de ese campo",
+			ErrFormato, linea)
+	}
+	lector := csv.NewReader(strings.NewReader(texto))
 	lector.FieldsPerRecord = -1
 	// Las parrillas traen texto libre -- sinopsis con comillas dentro -- y un
 	// campo entrecomillado a medias no puede tumbar el archivo.
@@ -211,6 +228,140 @@ func TablaCSV(datos []byte) (Tabla, error) {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer como CSV: %w", ErrFormato, err)
 	}
 	return desdeFilas(filas)
+}
+
+// lineaDeComillaSinCerrar devuelve la linea fisica (la 1 es la primera del
+// archivo) donde empieza un campo cuya comilla de apertura no llega a
+// cerrarse, o 0 si no hay ninguna.
+//
+// Replica el automata de encoding/csv con LazyQuotes, no una lectura RFC
+// estricta. La diferencia importa: con LazyQuotes una comilla suelta en medio
+// de un campo ya entrecomillado es texto, y el campo sigue abierto hasta una
+// comilla seguida de coma, de fin de linea o de fin de archivo. Rechazar esa
+// comilla suelta tumbaria las sinopsis que LazyQuotes esta puesto para
+// aceptar. Lo que se rechaza es llegar al final SIN haber encontrado ese
+// cierre: es el unico caso en el que el lector se traga el resto del archivo.
+//
+// El numero es el de la linea donde ABRE la comilla, no el de la fila del
+// registro. Un campo entrecomillado de verdad puede ocupar varias lineas
+// antes, y la comilla que no cierra puede no ser el primer campo de la suya.
+func lineaDeComillaSinCerrar(datos string) int {
+	if !strings.Contains(datos, `"`) {
+		return 0
+	}
+	c := &cursorCSV{b: []byte(datos)}
+	for {
+		line, err := c.primerRegistro()
+		if err != nil {
+			return 0
+		}
+		for {
+			if len(line) == 0 || line[0] != '"' {
+				coma := bytes.IndexByte(line, ',')
+				if coma < 0 {
+					break
+				}
+				line = line[coma+1:]
+				continue
+			}
+			inicio := c.linea
+			line = line[1:]
+			sigue := false
+			for {
+				q := bytes.IndexByte(line, '"')
+				if q < 0 {
+					if len(line) == 0 {
+						// EOF dentro del campo: la comilla de arranque no
+						// llego a cerrarse.
+						return inicio
+					}
+					line, err = c.leerLinea()
+					if err != nil {
+						return inicio
+					}
+					continue
+				}
+				line = line[q+1:]
+				if len(line) > 0 && line[0] == '"' {
+					// `""` es una comilla literal. El campo sigue abierto.
+					line = line[1:]
+					continue
+				}
+				if len(line) > 0 && line[0] == ',' {
+					line = line[1:]
+					sigue = true
+					break
+				}
+				if len(line) == longitudFinDeLinea(line) {
+					// La comilla cierra el campo y el registro.
+					break
+				}
+				// LazyQuotes: la comilla es texto. Sigue buscando el cierre.
+				continue
+			}
+			if !sigue {
+				break
+			}
+		}
+	}
+}
+
+// cursorCSV recorre los bytes con la misma nocion de linea que encoding/csv:
+// corta por '\n', un "\r\n" es una sola linea, y un '\r' pegado al final
+// antes de EOF no abre una linea vacia.
+type cursorCSV struct {
+	b     []byte
+	i     int
+	linea int
+}
+
+func (c *cursorCSV) primerRegistro() ([]byte, error) {
+	for {
+		line, err := c.leerLinea()
+		if err != nil {
+			return nil, err
+		}
+		// encoding/csv descarta las lineas fisicamente vacias ENTRE registros.
+		// Dentro de un campo entrecomillado no: ahi el salto es contenido, y
+		// lo consume [cursorCSV.leerLinea] desde el bucle de la comilla.
+		if len(line) == longitudFinDeLinea(line) {
+			continue
+		}
+		return line, nil
+	}
+}
+
+func (c *cursorCSV) leerLinea() ([]byte, error) {
+	if c.i >= len(c.b) {
+		return nil, io.EOF
+	}
+	ini := c.i
+	for c.i < len(c.b) && c.b[c.i] != '\n' {
+		c.i++
+	}
+	var line []byte
+	if c.i < len(c.b) && c.b[c.i] == '\n' {
+		line = c.b[ini : c.i+1]
+		c.i++
+		// No se muta el buffer de origen: la linea puede seguir apuntando a el.
+		if n := len(line); n >= 2 && line[n-2] == '\r' {
+			line = append(append([]byte{}, line[:n-2]...), '\n')
+		}
+	} else {
+		line = c.b[ini:c.i]
+		if n := len(line); n > 0 && line[n-1] == '\r' {
+			line = line[:n-1]
+		}
+	}
+	c.linea++
+	return line, nil
+}
+
+func longitudFinDeLinea(line []byte) int {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		return 1
+	}
+	return 0
 }
 
 // TablaJSON lee un array de objetos planos.
