@@ -265,6 +265,8 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"anticipos",
 		"calendario",
 		"cola_trabajos",
+		"resultados_parte_no_distribuida",
+		"resultados_grupo",
 		"resultados_titular",
 		"resultados_obra",
 		"resultados_proceso",
