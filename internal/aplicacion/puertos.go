@@ -771,6 +771,30 @@ type RepositorioResultados interface {
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
+// RepositorioReporteLiquidacion lee las lineas de corrida del titular para
+// el panel y el export por obra (#43): bruto, deducciones y neto. Es
+// lectura de resultados_titular + resultados_proceso; el prorrateo vive
+// en dominio.
+//
+// No es [RepositorioLiquidacion]. Ese puerto es el de las ordenes de pago
+// (ADR 0019) y su DeTitular no filtra por periodo ni devuelve el desglose
+// por obra. El mismo *Store satisface los dos, con nombres distintos, por
+// la misma razon por la que AsientoPorID no se llama PorID.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
+type RepositorioReporteLiquidacion interface {
+	FilasDeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
+}
+
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
 // corrida. DeTitular es el camino del panel del titular (#42).
 //

@@ -25,6 +25,8 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/obras/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+| `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo |
+| `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` |
 | `/reportes/*` | `administrador` |
 | `GET /procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
 | `POST /procesos`, `POST /procesos/{id}/avanzar` | `administrador` |
@@ -41,7 +43,10 @@ compuertas del `RD 13.5`, y una sola persona no puede ostentar las dos: quien
 co-firma la salida del dinero no debe poder declarar cuanto entro.
 
 `titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
-participa (`OE-6`), no el ingreso de la sociedad.
+participa (`OE-6`), no el ingreso de la sociedad. El panel por obra y el
+export (`/mis-liquidaciones/obras`, `/mis-liquidaciones/export`) son la
+excepcion: ahi ve su propio neto, no el bruto de la sociedad. Las ordenes
+de pago van por `/mis-liquidaciones`.
 
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
 LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo

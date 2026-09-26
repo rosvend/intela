@@ -33,7 +33,7 @@ func (l *liquidacionesFalsas) DeTitular(_ context.Context, actor aplicacion.Usua
 
 func servidorConLiq(t *testing.T, auth Autenticacion, liq ConsultaLiquidaciones) http.Handler {
 	t.Helper()
-	return Nueva(Casos{Auth: auth, Liq: liq}, Opciones{}).Router()
+	return Nueva(Casos{Auth: auth, Ordenes: liq}, Opciones{}).Router()
 }
 
 func ordenVistaPrueba() aplicacion.OrdenVista {

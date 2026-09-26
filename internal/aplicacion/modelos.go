@@ -358,6 +358,75 @@ type Anticipo struct {
 	Estado    string
 }
 
+// Formatos de exportacion que entiende [Exportador]. Cualquier otro es
+// ErrFormatoInvalido. FormatoXLSX vive en puertos.go (mismo paquete).
+const (
+	FormatoPDF = "pdf"
+)
+
+// FilaLiquidacion es lo que el repositorio lee de una corrida: el neto del
+// titular en una obra y los totales del proceso, todavia sin prorratear.
+//
+// El prorrateo vive en dominio/liquidacion, no aqui ni en el SQL: si una
+// cifra se puede calcular mal, se calcula una sola vez (postgres/doc.go).
+//
+// NetosProceso e Indice permiten [liquidacion.ProrratearProceso]: todos los
+// importes del proceso, ordenados de forma estable, y la posicion de esta
+// fila. Vacios → el caso de uso prorratea solo esta linea (tests en memoria).
+type FilaLiquidacion struct {
+	Periodo        string
+	ObraID         string
+	Titulo         string
+	Neto           decimal.Decimal
+	ProcesoID      string
+	ProcesoBruto   decimal.Decimal
+	ProcesoAdmin   decimal.Decimal
+	ProcesoSocial  decimal.Decimal
+	ProcesoReserva decimal.Decimal
+	ProcesoNeto    decimal.Decimal
+	NetosProceso   []decimal.Decimal
+	Indice         int
+}
+
+// LineaLiquidacion es una obra en el reporte del titular, con bruto,
+// cada deduccion y neto ya prorrateados.
+type LineaLiquidacion struct {
+	Periodo string
+	ObraID  string
+	Titulo  string
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// TotalesLiquidacion suma las lineas. Es lo que el panel y el archivo
+// exportado tienen que coincidir.
+type TotalesLiquidacion struct {
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// Liquidacion es el reporte de un titular, filtrado por periodo si viene.
+type Liquidacion struct {
+	TitularID string
+	Periodo   string
+	Lineas    []LineaLiquidacion
+	Totales   TotalesLiquidacion
+}
+
+// Archivo es un PDF o un Excel ya renderizado. Lleva las cifras embebidas:
+// abrirlo sin red muestra la liquidacion completa (OE-6).
+type Archivo struct {
+	Nombre    string
+	TipoMIME  string
+	Contenido []byte
+}
+
 // SolicitudAfiliacion es lo que el asistente de alta manda al caso de uso.
 //
 // Los documentos van en bytes, no en claves: quien llama no conoce el
