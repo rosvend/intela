@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
@@ -95,8 +97,14 @@ func TestResultadosGuardarYPorProcesoReproducenLasProporciones(t *testing.T) {
 
 	if !leido.Neto.Equal(r.Neto) || !leido.Admin.Equal(r.Admin) || !leido.Social.Equal(r.Social) ||
 		!leido.Reserva.Equal(r.Reserva) || !leido.Retenido.Equal(r.Retenido) || !leido.Residuo.Equal(r.Residuo) ||
-		!leido.ValorPunto.Equal(r.ValorPunto) {
+		!leido.NoDistribuido.Equal(r.NoDistribuido) || !leido.ValorPunto.Equal(r.ValorPunto) {
 		t.Fatalf("los agregados no cuadran: leido=%+v, original=%+v", leido, r)
+	}
+	// Esta corrida no reparte suscripcion: las tres estructuras viajan vacias
+	// y tienen que volver vacias. Un nil que se vuelve lista inventada
+	// cambiaria el replay.
+	if len(leido.PartesNoDistribuidas) != 0 || len(leido.PorGrupo) != 0 {
+		t.Fatalf("se esperaban partes y grupos vacios, leido=%+v", leido)
 	}
 	if leido.SnapshotID != r.SnapshotID || leido.Reglamento != r.Reglamento {
 		t.Fatalf("procedencia perdida: leido=%+v", leido)
@@ -155,4 +163,125 @@ func TestGuardarResultadoParticipaEnLaUnidadAmbiente(t *testing.T) {
 	if _, err := s.ResultadoPorProceso(ctx, "proceso-1"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("el resultado sobrevivio al rollback de la unidad de fuera: %v", err)
 	}
+}
+
+// TestResultadosRoundTripConservaNoDistribuidoPartesYGrupos es el caso de
+// #162: un importe que el motor no reparte (grupo vacio, exclusion R-27,
+// peso cero) tiene que sobrevivir a Postgres, con cada tramo y con el valor
+// punto de cada grupo. Antes de la migracion 00018 GuardarResultado lo
+// descartaba y la releida volvia con los tres en cero.
+//
+// La suma es la misma que cierra() en el motor de #33:
+//
+//	titulares + retenido + residuo + NoDistribuido == Neto
+//
+// y la suma de las partes tiene que ser exactamente NoDistribuido (RD 16).
+func TestResultadosRoundTripConservaNoDistribuidoPartesYGrupos(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	// 700 de titulares (la corrida base) + 119.99 retenido + 0.01 de
+	// residuo + 30 no distribuidos = 850 de neto.
+	r := resultadoDeCorridaBase()
+	r.Retenido = dec("119.99")
+	r.NoDistribuido = dec("30.00")
+	r.PartesNoDistribuidas = []reparto.ParteNoDistribuida{
+		{
+			Motivo:  reparto.MotivoExclusionR27,
+			Grupo:   reparto.GrupoPrivadosNacionales,
+			ObraID:  "obra-1",
+			Importe: dec("10.00"),
+		},
+		{
+			Motivo:  reparto.MotivoGrupoSinObras,
+			Grupo:   reparto.GrupoEstandar,
+			Importe: dec("15.00"),
+		},
+		{
+			Motivo:  reparto.MotivoPesoCero,
+			Importe: dec("5.00"),
+		},
+	}
+	r.PorGrupo = []reparto.LineaGrupo{
+		{
+			Grupo:       reparto.GrupoPrivadosNacionales,
+			Bolsa:       dec("50.00"),
+			TotalPuntos: dec("2.8"),
+			ValorPunto:  dec("17.85714286"),
+			Residuo:     dec("0.01"),
+		},
+		{
+			Grupo:       reparto.GrupoPremium,
+			Bolsa:       dec("0.00"),
+			TotalPuntos: dec("0"),
+			ValorPunto:  dec("0"),
+			Residuo:     dec("-0.01"),
+		},
+	}
+	assertCierreResultado(t, r)
+
+	if err := s.GuardarResultado(ctx, "proceso-1", r); err != nil {
+		t.Fatalf("guardar resultado: %v", err)
+	}
+	leido, err := s.ResultadoPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer resultado: %v", err)
+	}
+	assertCierreResultado(t, leido)
+
+	if !leido.NoDistribuido.Equal(r.NoDistribuido) {
+		t.Fatalf("NoDistribuido = %s, se esperaba %s", leido.NoDistribuido, r.NoDistribuido)
+	}
+	if len(leido.PartesNoDistribuidas) != len(r.PartesNoDistribuidas) {
+		t.Fatalf("partes = %d, se esperaban %d", len(leido.PartesNoDistribuidas), len(r.PartesNoDistribuidas))
+	}
+	for i, orig := range r.PartesNoDistribuidas {
+		got := leido.PartesNoDistribuidas[i]
+		if got.Motivo != orig.Motivo || got.Grupo != orig.Grupo || got.ObraID != orig.ObraID ||
+			!got.Importe.Equal(orig.Importe) {
+			t.Fatalf("parte %d cambio: leido=%+v, original=%+v", i, got, orig)
+		}
+	}
+	if !sumaPartes(leido.PartesNoDistribuidas).Equal(leido.NoDistribuido) {
+		t.Fatalf("las partes suman %s y NoDistribuido es %s",
+			sumaPartes(leido.PartesNoDistribuidas), leido.NoDistribuido)
+	}
+
+	if len(leido.PorGrupo) != len(r.PorGrupo) {
+		t.Fatalf("grupos = %d, se esperaban %d", len(leido.PorGrupo), len(r.PorGrupo))
+	}
+	for i, orig := range r.PorGrupo {
+		got := leido.PorGrupo[i]
+		if got.Grupo != orig.Grupo || !got.Bolsa.Equal(orig.Bolsa) ||
+			!got.TotalPuntos.Equal(orig.TotalPuntos) || !got.ValorPunto.Equal(orig.ValorPunto) ||
+			!got.Residuo.Equal(orig.Residuo) {
+			t.Fatalf("grupo %d cambio: leido=%+v, original=%+v", i, got, orig)
+		}
+	}
+	// El orden guardado es el del motor, no el alfabetico: premium iria
+	// antes que privados si se ordenara por el nombre del grupo.
+	if leido.PorGrupo[0].Grupo != reparto.GrupoPrivadosNacionales {
+		t.Fatalf("el primer grupo es %q, se esperaba privado_nacional", leido.PorGrupo[0].Grupo)
+	}
+}
+
+func assertCierreResultado(t *testing.T, r reparto.Resultado) {
+	t.Helper()
+	sumaT := decimal.Zero
+	for _, tt := range r.Titulares {
+		sumaT = sumaT.Add(tt.Importe)
+	}
+	got := sumaT.Add(r.Retenido).Add(r.Residuo).Add(r.NoDistribuido)
+	if !got.Equal(r.Neto) {
+		t.Fatalf("cierre: titulares(%s)+retenido(%s)+residuo(%s)+noDist(%s)=%s != neto %s",
+			sumaT, r.Retenido, r.Residuo, r.NoDistribuido, got, r.Neto)
+	}
+}
+
+func sumaPartes(partes []reparto.ParteNoDistribuida) decimal.Decimal {
+	suma := decimal.Zero
+	for _, p := range partes {
+		suma = suma.Add(p.Importe)
+	}
+	return suma
 }
