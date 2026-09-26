@@ -99,6 +99,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		Usos:          s,
 		Resultados:    s,
 		Unidad:        s,
+		Anomalias:     servicioDeAnomalias(s, time.Now()),
 	}
 
 	p, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1")
@@ -285,6 +286,7 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 		Usos:          s,
 		Resultados:    s,
 		Unidad:        s,
+		Anomalias:     servicioDeAnomalias(s, time.Now()),
 	}
 
 	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
@@ -328,5 +330,93 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 	}
 	if len(resultado.Titulares) != 1 || resultado.Titulares[0].Importe.IsZero() {
 		t.Fatalf("resultado tras el reintento = %+v, se esperaba una linea de titular con importe", resultado)
+	}
+}
+
+// TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones: sin evaluar -> evalua y bloquea; resuelta -> avanza (#37).
+func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
+	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+
+	// Un duplicado de registro en 2026-01: la misma emision de caracol en dos entregas.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+		 VALUES ('rep-caracol-enero-bis', 'caracol', '2026-01', repeat('c', 64), 'reportes/c.csv', 64)`); err != nil {
+		t.Fatalf("sembrar la segunda entrega: %v", err)
+	}
+	insertarUsoDeAlertas(t, pool, "u-dup1", reporteEnero, "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+	insertarUsoDeAlertas(t, pool, "u-dup2", "rep-caracol-enero-bis", "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+
+	anomalias := servicioDeAnomalias(s, time.Now())
+	uc := aplicacion.Procesos{
+		Repo:          s,
+		Parametros:    s,
+		Bolsas:        s,
+		Declaraciones: s,
+		Usos:          s,
+		Resultados:    s,
+		Unidad:        s,
+		Anomalias:     anomalias,
+	}
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
+		t.Fatalf("iniciar proceso: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err != nil {
+		t.Fatalf("avanzar a deducciones: %v", err)
+	}
+
+	// Nadie evaluo el periodo: la bandeja esta vacia, y aun asi la compuerta no abre.
+	var guardadas int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM alertas WHERE periodo = '2026-01'`).Scan(&guardadas); err != nil {
+		t.Fatalf("contar alertas: %v", err)
+	}
+	if guardadas != 0 {
+		t.Fatalf("el periodo no deberia estar evaluado todavia, hay %d alertas", guardadas)
+	}
+	_, err := uc.AvanzarEtapa(ctx, "proc-y")
+	if !errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas) {
+		t.Fatalf("err = %v, se esperaba ErrAnomaliasCriticasAbiertas", err)
+	}
+	p, err := s.ProcesoPorID(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("leer proceso: %v", err)
+	}
+	if p.Etapa != reparto.EtapaDeducciones {
+		t.Fatalf("etapa = %q, la compuerta debio dejarlo en deducciones", p.Etapa)
+	}
+	if _, err := s.ResultadoPorProceso(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("se valorizo con criticas abiertas: %v", err)
+	}
+
+	// Un segundo intento sigue bloqueado: la evaluacion es idempotente, no "ya mire".
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas) {
+		t.Fatalf("segundo intento: err = %v, se esperaba seguir bloqueado", err)
+	}
+
+	sinResolver := false
+	criticas, err := anomalias.Listar(ctx, aplicacion.FiltroAlertas{Periodo: "2026-01", Resueltas: &sinResolver})
+	if err != nil {
+		t.Fatalf("listar abiertas: %v", err)
+	}
+	resueltas := 0
+	for _, a := range criticas {
+		if !a.Critica {
+			continue
+		}
+		if _, err := anomalias.Resolver(ctx, a.ID, "actor-dist", "entrega bis es reenvio, se excluye en #39"); err != nil {
+			t.Fatalf("resolver %s: %v", a.ID, err)
+		}
+		resueltas++
+	}
+	if resueltas == 0 {
+		t.Fatal("la evaluacion no dejo ninguna critica que resolver")
+	}
+
+	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("con las criticas resueltas deberia avanzar: %v", err)
+	}
+	if p.Etapa != reparto.EtapaImporteObra {
+		t.Fatalf("etapa = %q, se esperaba importe_obra", p.Etapa)
 	}
 }

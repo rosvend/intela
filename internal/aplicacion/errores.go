@@ -264,6 +264,27 @@ var (
 	// reglamento no reconoce. Ver UsosSinCanal para detectar ese hueco.
 	ErrCanalVacio = errors.New("el canal no puede quedar vacio")
 
+	// ErrFiltroInvalido: un filtro de listado trae un valor que no pertenece a
+	// su vocabulario cerrado.
+	//
+	// Es un 400 y no una lista vacia, por el mismo criterio que `?periodo=` ya
+	// aplica en [Recaudo.Listar]: un filtro invalido que se ignora devuelve
+	// resultados de mas, y uno que devuelve la lista vacia hace pasar una
+	// errata de grafia -- `oni_` por `oni` -- por "no hay nada de eso". Las dos
+	// respuestas son afirmaciones falsas sobre el estado del sistema.
+	ErrFiltroInvalido = errors.New("filtro invalido")
+
+	// ErrAlertaYaResuelta: la alerta existe y alguien ya la cerro.
+	//
+	// No es ErrNoEncontrado y no es un fallo de escritura: distinguirlo es lo
+	// que deja responder 409 -- "llegaste segundo" -- en vez de un 404 que
+	// diria que la alerta no existe, o un 200 que afirmaria que esta
+	// resolucion la hizo quien acaba de pulsar el boton. Dos personas mirando
+	// el mismo tablero es el caso normal, no la excepcion: la resolucion de
+	// una anomalia es una decision humana sobre a quien se le paga, y el
+	// asiento tiene que nombrar a quien la tomo DE VERDAD (ADR 0006).
+	ErrAlertaYaResuelta = errors.New("esa alerta ya estaba resuelta")
+
 	// ErrProcesoNoListo: se pidio liquidar una corrida que todavia no puede
 	// pagar.
 	//
@@ -343,6 +364,12 @@ var (
 	// releer el estado actual y decidir de nuevo, no sobreescribir a ciegas
 	// lo que la primera ya guardo.
 	ErrProcesoConflictoDeConcurrencia = errors.New("el proceso cambio de estado mientras se procesaba esta peticion, vuelva a intentar")
+
+	// ErrNotaObligatoria: resolver una alerta exige una nota; es la justificacion auditable de la decision (ADR 0021).
+	ErrNotaObligatoria = errors.New("la nota es obligatoria para resolver una alerta")
+
+	// ErrAnomaliasCriticasAbiertas: el periodo tiene alertas criticas sin resolver y la corrida no puede entrar a calcular (#37, ADR 0021).
+	ErrAnomaliasCriticasAbiertas = errors.New("el periodo tiene anomalias criticas sin resolver")
 )
 
 // ErrorParametroAusente nombra las clausulas normativas que no tienen valor

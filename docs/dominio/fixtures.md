@@ -253,3 +253,10 @@ espectadores mientras su prosa dice taquilla. La contradiccion es **P-18** y se 
 
 `exhibiciones` es la medida de `RD 9.4` (transporte publico) y es distinta de `emisiones`. El
 reporte de `expreso-bolivariano` la ejercita.
+
+### Clave de registro (detector de duplicados, #37)
+
+Las filas de TV llevan `fecha` y `hora` de emision, y la de Netflix lleva `netflix_id` ademas de
+`show_id`: son los componentes de su clave de registro (`aplicacion.clavesDeRegistro`). `rcn` y
+`expreso-bolivariano` no tienen clave declarada (P-21), asi que sus 4 filas salen en
+`usos_sin_cotejar`. El seed no tiene duplicados: `duplicado_registro` debe dar 0.

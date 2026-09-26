@@ -259,6 +259,9 @@ func (s usosDelPeriodo) UsosDePeriodo(context.Context, string) ([]aplicacion.Uso
 func (s usosDelPeriodo) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
+func (s usosDelPeriodo) EntregasRecibidas(context.Context) ([]aplicacion.EntregaRecibida, error) {
+	return nil, nil
+}
 func (s usosDelPeriodo) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
