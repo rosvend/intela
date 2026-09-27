@@ -26,7 +26,7 @@ type ingestaFalsa struct {
 	err          error
 }
 
-func (i *ingestaFalsa) GuardarReporte(context.Context, string, string, string, string, string, int) error {
+func (i *ingestaFalsa) GuardarReporte(context.Context, string, string, string, string, string, int, string) error {
 	return nil
 }
 func (i *ingestaFalsa) GuardarUsos(context.Context, []UsoPersistido) error { return nil }

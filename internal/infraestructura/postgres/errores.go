@@ -45,7 +45,7 @@ func esClaveDuplicada(err error) bool {
 // codigoForanea es el SQLSTATE 23503, foreign_key_violation.
 const codigoForanea = "23503"
 
-// codigoBitacoraInmutable es el ERRCODE de bitacora_solo_append (migracion 00019).
+// codigoBitacoraInmutable es el ERRCODE de bitacora_solo_append (migracion 00020).
 const codigoBitacoraInmutable = "IN006"
 
 func esBitacoraInmutable(err error) bool {

@@ -626,7 +626,7 @@ type ingestaDePrueba struct {
 	pool *pgxpool.Pool
 }
 
-func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string, string, string, int) error {
+func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string, string, string, int, string) error {
 	return nil
 }
 func (i ingestaDePrueba) GuardarUsos(context.Context, []aplicacion.UsoPersistido) error { return nil }

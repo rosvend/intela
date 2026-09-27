@@ -3,7 +3,7 @@
 -- refiere_a: corregir es escribir otro asiento que referencia al anterior.
 -- ERRCODE IN006: el adaptador reconoce el rechazo append-only sin leer prosa.
 --
--- Numero: 00019, primero libre por encima de 00018 (allowMissing = false).
+-- Numero: 00020, primero libre por encima de 00019 (allowMissing = false).
 -- Solo agrega: una columna nullable y el mismo cuerpo de funcion con codigo.
 
 -- +goose Up
