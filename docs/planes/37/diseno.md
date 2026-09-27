@@ -7,7 +7,7 @@ actualizado: 2026-09-27
 
 La decision de fondo (recurso propio, tabla, roles, compuerta, que significa "resuelta") esta en
 [ADR 0021](../../decisiones/0021-alertas-como-recurso-propio.md). Aqui va el porque de cada
-detector de `internal/dominio/anomalias` y de la migracion `00020_alertas_de_anomalias.sql`. El
+detector de `internal/dominio/anomalias` y de la migracion `00021_alertas_de_anomalias.sql`. El
 codigo remite aqui en vez de repetirlo.
 
 ## D0. Orden y determinismo
@@ -96,7 +96,7 @@ Critica = dejarla sin resolver hace que las cifras salgan mal:
 `TipoReservaDeclaracionIncompleta` se llama asi por el contrato de #104; lo que mide es la
 RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 
-## D8. La migracion 00020
+## D8. La migracion 00021
 
 - Tabla propia y no `usos_rechazados`: sus FK son de fila de reporte, no tiene estado ni periodo
   (ADR 0021, punto 2).
@@ -112,4 +112,5 @@ RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 - Indices: bandeja por periodo, abiertas por periodo y tipo (lo que cuenta la compuerta), y por
   registro ofensor (bandeja de #39).
 - Historia del numero: nacio 00015, paso a 00016 al mergear #144, a 00017 al mergear #80 y a
-  00020 al mergear #88, #168 y #173, que ocuparon 00017-00019 (renumera el que mergea segundo).
+  00021 al mergear #88, #168, #173 y #178, que ocuparon 00017-00020 (renumera el que mergea
+  segundo).
