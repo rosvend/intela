@@ -428,10 +428,8 @@ type RepositorioUsosDeReparto interface {
 	) ([]UsoDeReparto, ResumenUsosDeCanal, error)
 
 	// UsosSinCanal cuenta los usos de un periodo -- de cualquier pagador -- que
-	// llegaron con `canal_id` vacio. Mientras ningun adaptador de ingesta
-	// (`internal/infraestructura/ingesta`) mapee la columna real de canal, esto
-	// es lo unico que distingue "el canal no emitio" (cero filas SUYAS) de "la
-	// fuente no dijo de que canal eran" (filas ajenas a todos los canales).
+	// llegaron con `canal_id` vacio. La ingesta ya no los escribe (#165): un
+	// conteo distinto de cero es una fila que entro por fuera de validarUso.
 	UsosSinCanal(ctx context.Context, periodo string) (int, error)
 }
 
