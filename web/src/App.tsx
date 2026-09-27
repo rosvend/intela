@@ -17,6 +17,8 @@ import EditorReparto from "./catalogo/EditorReparto";
 import HistorialVersiones from "./catalogo/HistorialVersiones";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
+import PanelCorridas from "./reparto/PanelCorridas";
+import TableroAnomalias from "./reparto/TableroAnomalias";
 
 /**
  * Las pantallas reales de los modulos de `RUTAS`, por ruta. Un modulo que no
@@ -27,6 +29,8 @@ import { RUTAS } from "./navegacion";
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
   "/catalogo": <Catalogo />,
+  "/distribucion": <PanelCorridas />,
+  "/anomalias": <TableroAnomalias />,
   "/auditoria": <Auditoria />,
 };
 
@@ -107,6 +111,7 @@ export default function App() {
               }
             />
           ))}
+          <Route path="/distribucion/:id" element={<PanelCorridas />} />
           {SUBRUTAS_DEL_DETALLE.map((subruta) => (
             <Route
               key={subruta.path}

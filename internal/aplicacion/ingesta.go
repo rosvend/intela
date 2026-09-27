@@ -651,6 +651,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		u.Escalon = strings.TrimSpace(u.Escalon)
 		u.Evidencia = strings.TrimSpace(u.Evidencia)
 		u.RechazoMotivo = strings.TrimSpace(u.RechazoMotivo)
+		u.CanalID = strings.TrimSpace(u.CanalID)
 
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
@@ -913,6 +914,21 @@ func validarUso(u UsoPersistido) string {
 			return fmt.Sprintf(
 				"%s %s: la columna es NUMERIC(%d,%d) y no admite mas de %d digitos enteros",
 				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
+		}
+	}
+	// Sin canal la fila no entra en UsosDeCanal y el reparto la pierde sin
+	// error. P-20 sigue abierta (ningun mapa trae la columna); hasta que
+	// llegue, la fila se rechaza y el motivo nombra el campo (#165).
+	if u.CanalID == "" {
+		return "canal_id vacio: sin canal la fila no entra en UsosDeCanal y queda fuera del reparto"
+	}
+	// TV, hotel y suscripcion multiplican por rating (RD 9.1.1). Cero es el
+	// default de una celda que la parrilla no trae, y pondera como si la
+	// audiencia fuera cero. El valor real es el feed de P-06, no este archivo.
+	switch u.Modalidad {
+	case reparto.TV, reparto.Hotel, reparto.Suscripcion:
+		if u.Rating.IsZero() {
+			return "rating vacio: sin rating el peso de audiencia de RD 9.1.1 queda en cero"
 		}
 	}
 	if u.Emisiones < 0 {
