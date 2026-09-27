@@ -50,4 +50,13 @@
 //     respuesta, el monto se arrastra al siguiente periodo.
 //
 // R-12 (RUT y certificacion bancaria) no impide liquidar: impide pagar.
+//
+// # El reporte por obra
+//
+// El panel y el export del titular (#43) reconstruyen bruto y cada
+// deduccion POR OBRA a partir del neto de la linea y de los totales del
+// proceso. [ProrratearLinea] y [ProrratearProceso] cierran esa cuenta con
+// mayor resto, de modo que la suma de cada concepto cuadra con el total
+// del proceso. Es distinto de [Prorratear]: ahi el residuo queda explicito
+// ([ResiduoProrrateo]) y no se absorbe en ninguna orden.
 package liquidacion

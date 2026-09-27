@@ -30,8 +30,11 @@ en ninguna prueba.
 | `/admin/*` | `administrador` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` | — |
 | `/obras/*` | `administrador` | `administrador` |
+| `/identificacion/*` | `administrador` | — |
 | `/recaudo/*` | `contabilidad`, `administrador` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` | — |
+| `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo | — |
+| `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` | — |
 | `/alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador`, `distribucion` |
 | `/reportes/*` | `administrador` | `administrador` |
 | `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
@@ -47,7 +50,10 @@ compuertas del `RD 13.5`, y una sola persona no puede ostentar las dos: quien
 co-firma la salida del dinero no debe poder declarar cuanto entro.
 
 `titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
-participa (`OE-6`), no el ingreso de la sociedad.
+participa (`OE-6`), no el ingreso de la sociedad. El panel por obra y el
+export (`/mis-liquidaciones/obras`, `/mis-liquidaciones/export`) son la
+excepcion: ahi ve su propio neto, no el bruto de la sociedad. Las ordenes
+de pago van por `/mis-liquidaciones`.
 
 `/alertas/*` es la bandeja de anomalias de un periodo (#37, ADR 0021) y, con
 `/procesos/*`, uno de los dos prefijos con las columnas distintas. **Lee** quien tiene que ver que

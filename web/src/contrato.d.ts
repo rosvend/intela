@@ -85,6 +85,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/afiliaciones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Solicitar afiliacion
+         * @description Recibe el alta de un titular nuevo y la deja en estado `pendiente`.
+         *
+         *     Va sin sesion: quien se da de alta todavia no es afiliado.
+         *
+         *     El RUT actualizado y la certificacion bancaria son obligatorios
+         *     (`R-12` / `RD 13.1.6`). El IPI se puede omitir en esta peticion;
+         *     una persona natural no se admite al padron sin el (`RD 3`). Hay
+         *     `PATCH /afiliaciones/{id}/ipi` para completarlo despues.
+         *
+         *     La clave (8 a 72 caracteres) se recoge aqui: al admitir se crea
+         *     la cuenta con la que el titular entra.
+         *
+         *     Este endpoint es publico y esta limitado por IP. Un correo ya
+         *     afiliado no responde 409: enumeraria el padron.
+         *
+         *     Si el aspirante declara pertenecer a otra sociedad de gestion
+         *     colectiva del mismo genero y no adjunta la renuncia, responde 409
+         *     con la explicacion de `R-28`.
+         */
+        post: operations["solicitarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/afiliaciones/{id}/ipi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Completar IPI de una solicitud pendiente
+         * @description Rellena el IPI que el alta permite omitir. Va sin sesion: el
+         *     `{id}` es un token opaco de 256 bits. Una persona natural no se
+         *     admite al padron sin este identificador (`RD 3`).
+         */
+        patch: operations["completarIPI"];
+        trace?: never;
+    };
+    "/afiliaciones/{id}/aprobar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aprobar afiliacion
+         * @description Admite una solicitud pendiente, crea la fila del padron y la
+         *     cuenta en `usuarios` con la clave que el aspirante eligio al
+         *     solicitar.
+         *
+         *     Solo el rol `administrador`, que en este andamiaje representa al
+         *     Consejo Directivo (`RS 5.2`). A partir de la admision el subtipo
+         *     gobierna el derecho a pedir anticipo: solo un Socio lo tiene (`R-30`).
+         */
+        post: operations["aprobarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/afiliaciones/{id}/rechazar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rechazar afiliacion
+         * @description Cierra una solicitud pendiente. Libera el correo y el IPI para
+         *     que el aspirante pueda volver a presentarse. Solo el Consejo
+         *     Directivo (`RS 5.2`).
+         */
+        post: operations["rechazarAfiliacion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/liquidaciones": {
         parameters: {
             query?: never;
@@ -198,6 +305,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/identificacion/casos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Casos de identificacion
+         * @description Lista los usos que la cascada no pudo identificar (`pendiente`,
+         *     escalon `oni`) y los que una persona ya resolvio (`asignado`,
+         *     escalon `manual`), con la evidencia y los candidatos de la banda
+         *     ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
+         *
+         *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
+         *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
+         *
+         *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
+         *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
+         *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
+         *     caso resuelto y el alta del reporte para uno pendiente.
+         *
+         *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un
+         *     filtro mal formado responde 400.
+         */
+        get: operations["listarCasosIdentificacion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auditoria/asientos": {
         parameters: {
             query?: never;
@@ -248,6 +389,56 @@ export interface paths {
          *     403.
          */
         get: operations["auditoriaHistorialDeObra"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones/obras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Panel de liquidacion del titular
+         * @description Devuelve bruto, cada deduccion (admin, bienestar social, reserva) y
+         *     neto por obra del titular autenticado. El filtro `periodo` es el
+         *     mismo que usa el export: panel y archivo no pueden divergir.
+         *
+         *     El titular sale de la sesion, no de un parametro. Sin sesion es 401.
+         *     Con otro rol es 403.
+         */
+        get: operations["consultarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Exportar la liquidacion a PDF o Excel
+         * @description Renderiza la misma liquidacion que `GET /mis-liquidaciones/obras` como
+         *     archivo. Las cifras van embebidas: el fichero se puede abrir sin
+         *     conexion al panel (OE-6).
+         *
+         *     `formato=pdf` usa maroto; `formato=xlsx` usa excelize. Cualquier
+         *     otro valor es 400. El filtro `periodo` es el mismo del panel.
+         */
+        get: operations["exportarLiquidaciones"];
         put?: never;
         post?: never;
         delete?: never;
@@ -860,6 +1051,12 @@ export interface paths {
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
          *     volver al archivo EXACTO que pondero una corrida y no "al archivo de
          *     esa fuente" (ADR 0006).
+         *
+         *     Cada carga dice tambien QUIEN la subio (`subido_por`): es la parte de la
+         *     trazabilidad que faltaba, porque la escritura que decide como se pondera
+         *     la bolsa de un periodo entero era la unica del sistema sin actor. Las
+         *     entregas anteriores a esa columna lo traen vacio, que es "anterior a la
+         *     atribucion" y no un actor desconocido.
          */
         get: operations["listarCargas"];
         put?: never;
@@ -883,6 +1080,11 @@ export interface paths {
          *     `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
          *     que de el sale UNICAMENTE esa decision: la clave del objeto de la
          *     boveda se deriva de la huella del contenido, no del nombre.
+         *
+         *     La entrega queda atribuida al usuario de la SESION, y el actor no viaja
+         *     en el formulario: un campo `subido_por` en el multipart se ignora. Quien
+         *     sube el archivo no elige a nombre de quien queda registrada una entrega
+         *     que pondera la bolsa de un periodo entero.
          */
         post: operations["subirReporte"];
         delete?: never;
@@ -1015,6 +1217,26 @@ export interface components {
              */
             clave_objeto: string;
             nbytes: number;
+            /**
+             * @description Id del usuario autenticado que hizo la entrega (#116). Es la
+             *     respuesta a "quien entrego este archivo", que era lo que faltaba
+             *     para cerrar la cadena: de una entrega se sabia la fuente, el periodo
+             *     y la huella, pero no quien la subio, mientras que `usos.resuelto_por`
+             *     ya registraba el actor de una resolucion manual, que es una accion
+             *     menos consecuente.
+             *
+             *     Sale de la SESION, nunca del formulario: un campo `subido_por` en el
+             *     multipart se ignora. Si valiera, quien sube el archivo elegiria a
+             *     nombre de quien queda registrada la entrega que pondera la bolsa de
+             *     un periodo entero.
+             *
+             *     Cadena vacia cuando no hay actor: las entregas anteriores a la
+             *     columna, que son "anteriores a la atribucion", y las que escribe el
+             *     sembrador. Se persiste como NULL y no se rellena con un usuario
+             *     inventado, porque una atribucion falsa es peor que su ausencia
+             *     declarada.
+             */
+            subido_por: string;
             /**
              * Format: date-time
              * @description Cuando llego. Sale del reloj de la base: es la marca de un hecho de
@@ -1788,6 +2010,128 @@ export interface components {
              */
             usos_sin_cotejar: number;
         };
+        /**
+         * @description Importe en COP con dos decimales, sin separador de miles. Es una
+         *     cadena para no perder centavos en JSON number.
+         * @example 3900.00
+         */
+        Monto: string;
+        TotalesLiquidacion: {
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
+        };
+        LineaLiquidacion: {
+            /** @example 2026-01 */
+            periodo: string;
+            /** @example obra-completa */
+            obra_id: string;
+            /** @example La Casa de las Dos Palmas */
+            titulo: string;
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
+        };
+        Liquidacion: {
+            /**
+             * @description Titular de la sesion, no un parametro de la URL.
+             * @example tit-ana
+             */
+            titular_id: string;
+            /**
+             * @description Filtro aplicado. Cadena vacia si no se filtro.
+             * @example 2026-01
+             */
+            periodo: string;
+            lineas: components["schemas"]["LineaLiquidacion"][];
+            totales: components["schemas"]["TotalesLiquidacion"];
+        };
+        SolicitudAfiliacion: {
+            /** @description Nombre del aspirante. */
+            nombre: string;
+            /**
+             * Format: email
+             * @description Correo al que se comunica la decision del Consejo.
+             */
+            email: string;
+            /** @description Cedula o pasaporte (`RS 5.2` / `RS 5.3`). */
+            documento_identidad: string;
+            /**
+             * @description Identificador IPI de la persona. Opcional en el alta; obligatorio
+             *     para admitir a una persona natural. Se puede completar despues
+             *     con `PATCH /afiliaciones/{id}/ipi`.
+             */
+            ipi?: string;
+            /**
+             * Format: password
+             * @description Clave con la que el titular entra una vez admitido. No se
+             *     devuelve. El hash se guarda con la solicitud y pasa a
+             *     `usuarios` al admitir.
+             */
+            clave: string;
+            /**
+             * @description `socio` es vinculo societario (`RS 4.1`). `administrado` es
+             *     vinculo contractual (`RS 4.2`). Solo el socio admitido puede
+             *     pedir anticipo (`R-30`).
+             * @enum {string}
+             */
+            subtipo: "socio" | "administrado";
+            /**
+             * @description `true` si el aspirante pertenece a otra SGC del mismo genero.
+             *     En ese caso `renuncia` es obligatorio (`R-28`).
+             */
+            pertenece_otra_sgc?: string;
+            /**
+             * Format: binary
+             * @description RUT actualizado (`R-12`). PDF o imagen.
+             */
+            rut: string;
+            /**
+             * Format: binary
+             * @description Certificacion bancaria (`R-12`). PDF o imagen.
+             */
+            certificacion_bancaria: string;
+            /**
+             * Format: binary
+             * @description Documento de renuncia a la otra SGC. Obligatorio si
+             *     `pertenece_otra_sgc` es verdadero.
+             */
+            renuncia?: string;
+        };
+        Afiliacion: {
+            /** @description Identificador de la solicitud, opaco. */
+            id: string;
+            nombre: string;
+            /** Format: email */
+            email: string;
+            documento_identidad: string;
+            /** @description Vacio si se omitio en el alta. */
+            ipi: string;
+            /** @enum {string} */
+            subtipo: "socio" | "administrado";
+            /**
+             * @description Maquina de admision. El alta deja `pendiente`.
+             * @enum {string}
+             */
+            estado: "pendiente" | "admitido" | "rechazado";
+            /**
+             * @description `true` solo si el subtipo es socio y el estado es admitido
+             *     (`R-30`).
+             */
+            elegible_anticipo: boolean;
+            tiene_rut: boolean;
+            tiene_certificacion_bancaria: boolean;
+            tiene_renuncia: boolean;
+            /**
+             * @description Fila del padron, rellenada al admitir. Cadena vacia mientras
+             *     la solicitud esta pendiente.
+             */
+            titular_id: string;
+        };
         Deduccion: {
             /**
              * @description Que se desconto. Los de la corrida son `gastos_administrativos`,
@@ -1925,6 +2269,64 @@ export interface components {
              */
             cuando: string;
         };
+        /** @description Una pagina de la cola manual y el total de pendientes bajo los mismos filtros. */
+        PaginaCasosIdentificacion: {
+            casos: components["schemas"]["CasoIdentificacion"][];
+            /** @description Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion. */
+            pendientes: number;
+        };
+        /**
+         * @description Un uso que la cascada no resolvio, tal como llego, con la evidencia
+         *     para que una persona decida. Sin importes ni medidas (ADR 0007).
+         */
+        CasoIdentificacion: {
+            /** @description Id del uso. */
+            id: string;
+            titulo: string;
+            titulo_original: string;
+            fuente: string;
+            modalidad: string;
+            reporte_id: string;
+            /** @description Periodo del reporte del que salio el uso. */
+            periodo: string;
+            /** @description Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018). */
+            ids_fuente: string;
+            /** @description Por que la cascada no lo resolvio. */
+            evidencia: string;
+            /** @enum {string} */
+            estado: "pendiente" | "asignado";
+            /** @description Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda. */
+            candidatos: components["schemas"]["CandidatoIdentificacion"][];
+            /** @description La obra que una persona le dio al caso. `null` si esta pendiente. */
+            obra_asignada: {
+                id: string;
+                titulo: string;
+            } | null;
+            /** @description Quien resolvio el caso. `null` si esta pendiente. */
+            resuelto_por: {
+                id: string;
+                /** @description Nombre para mostrar del usuario. */
+                nombre: string;
+            } | null;
+            /** Format: date-time */
+            resuelto_en: string | null;
+            /**
+             * Format: date-time
+             * @description `resuelto_en` si esta resuelto; si no, el alta del reporte.
+             */
+            ultima_actualizacion: string;
+        };
+        CandidatoIdentificacion: {
+            obra_id: string;
+            /** @description Titulo de la obra en el catalogo. */
+            titulo: string;
+            anio: number;
+            genero: string;
+            /** @description Similitud del escalon difuso. */
+            puntaje: number;
+            /** @description El titulo del uso con el que se obtuvo el puntaje. */
+            titulo_consultado: string;
+        };
         /**
          * @description Una fila de la cola de revision. Sirve a la normalizacion (OE-1) y a
          *     los rechazos del adaptador de formato (#25): `tipo` dice de cual
@@ -1963,7 +2365,13 @@ export interface components {
         };
     };
     responses: never;
-    parameters: never;
+    parameters: {
+        /**
+         * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+         * @example 2026-01
+         */
+        Periodo: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -2173,6 +2581,473 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    solicitarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["SolicitudAfiliacion"];
+            };
+        };
+        responses: {
+            /** @description Solicitud creada, pendiente de admision. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "pendiente",
+                     *       "elegible_anticipo": false,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": ""
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /**
+             * @description Faltan datos o documentos, el adjunto no es un PDF o una imagen,
+             *     o no se pudo registrar (incluido un correo ya activo: no se
+             *     distingue a proposito).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "r-12: el rut actualizado y la certificacion bancaria son obligatorios"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflicto de exclusividad (`R-28`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "r-28: no se acepta como afiliado a quien pertenezca a otra sociedad de gestion colectiva del mismo genero sin renuncia previa y expresa"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El cuerpo supera 18 MiB (tres documentos de 5 MiB mas el formulario). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el cuerpo supera el tamano maximo permitido"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Demasiadas solicitudes desde la misma IP. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "demasiadas solicitudes, reintente en un momento"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    completarIPI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "ipi": "IPI-00000001"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description Identificador IPI de la persona. */
+                    ipi: string;
+                };
+            };
+        };
+        responses: {
+            /** @description IPI guardado. La solicitud sigue pendiente. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description IPI vacio, o no se pudo completar. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el ipi es obligatorio para admitir a una persona natural"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya no esta pendiente. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Demasiadas solicitudes desde la misma IP. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "demasiadas solicitudes, reintente en un momento"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    aprobarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Solicitud admitida. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "admitido",
+                     *       "elegible_anticipo": true,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": "tit-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description Falta el IPI para admitir a una persona natural. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el ipi es obligatorio para admitir a una persona natural"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya estaba resuelta, o el padron ya tiene esa fila. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rechazarAfiliacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identificador de la solicitud, opaco. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Solicitud rechazada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ",
+                     *       "nombre": "Ana Escritora",
+                     *       "email": "ana@redes.co",
+                     *       "documento_identidad": "12345678",
+                     *       "ipi": "IPI-00000001",
+                     *       "subtipo": "socio",
+                     *       "estado": "rechazado",
+                     *       "elegible_anticipo": false,
+                     *       "tiene_rut": true,
+                     *       "tiene_certificacion_bancaria": true,
+                     *       "tiene_renuncia": false,
+                     *       "titular_id": ""
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Afiliacion"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay una solicitud con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "solicitud no encontrada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La solicitud ya estaba resuelta. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la solicitud no esta pendiente de admision"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+             *     el sistema de ficheros no sirve de boveda para el RUT y la
+             *     certificacion bancaria.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el alta de afiliacion no esta configurada en esta instalacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
@@ -2481,6 +3356,142 @@ export interface operations {
             };
         };
     };
+    listarCasosIdentificacion: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filtra por estado del caso. Si se omite, lista los dos.
+                 * @example pendiente
+                 */
+                estado?: "pendiente" | "asignado";
+                /**
+                 * @description Fuente del uso, exacta.
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo del reporte, `AAAA` o `AAAA-MM` con mes entre 01 y 12.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos casos saltarse. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pagina de casos, en orden de llegada del reporte. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "pendientes": 1,
+                     *       "casos": [
+                     *         {
+                     *           "id": "uso-1",
+                     *           "titulo": "La Casa",
+                     *           "titulo_original": "The House",
+                     *           "fuente": "caracol",
+                     *           "modalidad": "tv",
+                     *           "reporte_id": "rep-1",
+                     *           "periodo": "2025-01",
+                     *           "ids_fuente": "id_ficha=871732",
+                     *           "evidencia": "banda ambigua: 1 candidatos, mejor obra-12 (0.61000) para \"la casa\" bajo umbral 0.85000",
+                     *           "estado": "pendiente",
+                     *           "candidatos": [
+                     *             {
+                     *               "obra_id": "obra-12",
+                     *               "titulo": "La Casa de las Dos Palmas",
+                     *               "anio": 1990,
+                     *               "genero": "Drama",
+                     *               "puntaje": 0.61,
+                     *               "titulo_consultado": "la casa"
+                     *             }
+                     *           ],
+                     *           "obra_asignada": null,
+                     *           "resuelto_por": null,
+                     *           "resuelto_en": null,
+                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PaginaCasosIdentificacion"];
+                };
+            };
+            /** @description Un filtro o la paginacion vienen mal formados. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "filtro de casos invalido: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo la cola de identificacion. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la cola de identificacion no esta disponible"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     auditoriaAsientos: {
         parameters: {
             query?: {
@@ -2647,6 +3658,175 @@ export interface operations {
                 };
             };
             /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    consultarLiquidaciones: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Liquidacion del titular. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "titular_id": "tit-ana",
+                     *       "periodo": "2026-01",
+                     *       "lineas": [
+                     *         {
+                     *           "periodo": "2026-01",
+                     *           "obra_id": "obra-completa",
+                     *           "titulo": "La Casa de las Dos Palmas",
+                     *           "bruto": "6000.00",
+                     *           "admin": "1200.00",
+                     *           "social": "600.00",
+                     *           "reserva": "300.00",
+                     *           "neto": "3900.00"
+                     *         }
+                     *       ],
+                     *       "totales": {
+                     *         "bruto": "6000.00",
+                     *         "admin": "1200.00",
+                     *         "social": "600.00",
+                     *         "reserva": "300.00",
+                     *         "neto": "3900.00"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Liquidacion"];
+                };
+            };
+            /** @description El periodo no es YYYY ni YYYY-MM. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "periodo tiene que ser YYYY o YYYY-MM"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportarLiquidaciones: {
+        parameters: {
+            query: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+                /**
+                 * @description pdf o xlsx.
+                 * @example pdf
+                 */
+                formato: "pdf" | "xlsx";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archivo con la liquidacion embebida. */
+            200: {
+                headers: {
+                    /** @description Nombre del fichero, p. ej. liquidacion-2026-01.pdf */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            /** @description Formato o periodo invalidos. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "formato tiene que ser pdf o xlsx"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -29,6 +29,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -141,7 +142,7 @@ func construir() (http.Handler, error) {
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
-	liquidaciones := aplicacion.Liquidaciones{
+	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: notificaciones.Bitacora{Log: registro},
@@ -213,6 +214,14 @@ func construir() (http.Handler, error) {
 		Reloj:         reloj.Sistema{},
 	}
 
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
 	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
 	// cablear aqui abajo.
@@ -227,27 +236,30 @@ func construir() (http.Handler, error) {
 		Anomalias:     anomalias,
 	}
 
-	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
+	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
 	//
-	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
-	// exige inmutabilidad y retencion. El sistema de ficheros de Lambda es de
-	// solo lectura salvo /tmp, y /tmp se recicla con el contenedor: montar la
-	// boveda ahi daria un acuse que certifica una evidencia que desaparece a la
+	// La boveda (reportes crudos y documentos de afiliacion) es hoy
+	// `objetos.Disco`, y el ADR 0006 le exige inmutabilidad y retencion. El
+	// sistema de ficheros de Lambda es de solo lectura salvo /tmp, y /tmp se
+	// recicla con el contenedor: montar la boveda ahi daria un acuse (o una
+	// solicitud admitida) que certifica una evidencia que desaparece a la
 	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
-	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
-	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
+	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
+	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
-		Padron:        padron,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Anomalias:     anomalias,
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Salud:          store,
+		Auth:           autenticacion,
+		Ordenes:        ordenes,
+		Catalogo:       catalogo,
+		Padron:         padron,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

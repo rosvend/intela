@@ -103,7 +103,20 @@ func (i Ingesta) DeducirFormato(nombre string) string {
 // Por lo mismo del punto 2. Aceptarlo escribiria un acuse con cero usos y
 // dejaria la huella quemada; y un export que salio vacio es exactamente el
 // caso en el que el cliente vuelve a mandar el archivo bueno.
-func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
+//
+// # Quien entrega
+//
+// `usuario` es el actor autenticado y viaja como PARAMETRO, no dentro de
+// `datos`: es una decision de quien llama y no algo que venga en el archivo.
+// Con la atribucion dentro del fichero, quien sube elegiria a su nombre quien
+// queda registrado, que es justo lo contrario de lo que pide la auditoria
+// (RD 16). El adaptador HTTP lo saca de la sesion y no del formulario; ver
+// [httpapi.UsuarioDe] y `subirReporte`.
+//
+// Se persiste en la MISMA transaccion que las filas ([RepositorioIngesta.GuardarEntrega]):
+// una entrega sin su actor, o un actor sin su entrega, es una cadena de
+// trazabilidad rota a medias.
+func (i Ingesta) IngerirReporte(ctx context.Context, usuario Usuario, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
 	// UNA sola normalizacion, y antes de todo lo demas, por lo mismo que en
 	// GuardarReporte: la fuente se usa aqui para BUSCAR el adaptador y se pasa
 	// despues a GuardarReporte, y con dos criterios distintos " caracol " no
@@ -136,7 +149,7 @@ func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo st
 			"%w: la entrega de %q (%s) no trae ninguna fila de datos", ErrReporteInvalido, fuente, formato)
 	}
 
-	rep, err := prepararReporte(fuente, periodo, datos)
+	rep, err := prepararReporte(usuario, fuente, periodo, datos)
 	if err != nil {
 		return Recepcion{}, err
 	}
@@ -326,7 +339,10 @@ func idReporte(fuente, sha string) string {
 // Este metodo se queda para el seed, que construye las filas en Go y las mete
 // aparte.
 func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, datos []byte) (Reporte, error) {
-	rep, err := prepararReporte(fuente, periodo, datos)
+	// Sin actor, y es la verdad: el sembrador no tiene a nadie detras. El
+	// Usuario cero deja SubidoPor vacio, que se persiste como NULL y se lee
+	// como "anterior a la atribucion" (ver [Reporte.SubidoPor]).
+	rep, err := prepararReporte(Usuario{}, fuente, periodo, datos)
 	if err != nil {
 		return Reporte{}, err
 	}
@@ -334,7 +350,7 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 		return Reporte{}, err
 	}
 	if err := i.Reportes.GuardarReporte(
-		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes, rep.SubidoPor,
 	); err != nil {
 		// Envuelto como los demas caminos de este fichero. errors.Is sigue
 		// casando con ErrReporteDuplicado -es lo que comprueban las pruebas-,
@@ -348,10 +364,14 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 
 // prepararReporte valida una entrega y deriva su acuse.
 //
-// No toca nada: es una funcion de (fuente, periodo, bytes) a [Reporte]. Que sea
-// pura es lo que permite que [Ingesta.IngerirReporte] la llame antes de decidir
-// como persiste, sin comprometerse todavia a escribir nada.
-func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
+// No toca nada: es una funcion de (usuario, fuente, periodo, bytes) a [Reporte].
+// Que sea pura es lo que permite que [Ingesta.IngerirReporte] la llame antes de
+// decidir como persiste, sin comprometerse todavia a escribir nada. El usuario
+// entra aqui, y no se estampa despues, para que el acuse lleve su actor desde
+// que existe: si la atribucion se anadiera mas tarde, cualquier camino que
+// devolviera el [Reporte] sin pasar por aqui lo entregaria sin actor y nada
+// fallaria.
+func prepararReporte(usuario Usuario, fuente, periodo string, datos []byte) (Reporte, error) {
 	// UNA sola normalizacion de la fuente, y ANTES de la validacion, por lo
 	// mismo que la de obra_id en GuardarUsos: la fuente se validaba recortada
 	// y se usaba CRUDA en los tres sitios que vienen despues -la fila de
@@ -395,10 +415,11 @@ func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
 	}
 
 	rep := Reporte{
-		Fuente:  fuente,
-		Periodo: periodo,
-		SHA256:  huella(datos),
-		NBytes:  len(datos),
+		Fuente:    fuente,
+		Periodo:   periodo,
+		SHA256:    huella(datos),
+		NBytes:    len(datos),
+		SubidoPor: usuario.ID,
 	}
 	rep.ID = idReporte(fuente, rep.SHA256)
 	rep.ClaveObjeto = claveObjeto(rep.SHA256)
@@ -651,6 +672,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		u.Escalon = strings.TrimSpace(u.Escalon)
 		u.Evidencia = strings.TrimSpace(u.Evidencia)
 		u.RechazoMotivo = strings.TrimSpace(u.RechazoMotivo)
+		u.CanalID = strings.TrimSpace(u.CanalID)
 
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
@@ -913,6 +935,21 @@ func validarUso(u UsoPersistido) string {
 			return fmt.Sprintf(
 				"%s %s: la columna es NUMERIC(%d,%d) y no admite mas de %d digitos enteros",
 				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
+		}
+	}
+	// Sin canal la fila no entra en UsosDeCanal y el reparto la pierde sin
+	// error. P-20 sigue abierta (ningun mapa trae la columna); hasta que
+	// llegue, la fila se rechaza y el motivo nombra el campo (#165).
+	if u.CanalID == "" {
+		return "canal_id vacio: sin canal la fila no entra en UsosDeCanal y queda fuera del reparto"
+	}
+	// TV, hotel y suscripcion multiplican por rating (RD 9.1.1). Cero es el
+	// default de una celda que la parrilla no trae, y pondera como si la
+	// audiencia fuera cero. El valor real es el feed de P-06, no este archivo.
+	switch u.Modalidad {
+	case reparto.TV, reparto.Hotel, reparto.Suscripcion:
+		if u.Rating.IsZero() {
+			return "rating vacio: sin rating el peso de audiencia de RD 9.1.1 queda en cero"
 		}
 	}
 	if u.Emisiones < 0 {

@@ -63,8 +63,8 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 // huella -el id se deriva de ese par-, o sea exactamente en el mismo caso. Por
 // eso basta con mirar el codigo de unicidad y no hace falta distinguir que
 // restriccion salto.
-func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
-	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
+func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error {
+	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes, subidoPor)
 	return traducirErrorDeReporte(err, fuente, periodo)
 }
 
@@ -73,8 +73,14 @@ func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, cl
 // transaccion. Una constante y no dos literales para que no puedan divergir --
 // una columna anadida en un sitio y olvidada en el otro no falla, escribe una
 // entrega incompleta por uno de los dos caminos.
-const sqlInsertarReporte = `INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
-	 VALUES ($1, $2, $3, $4, $5, $6)`
+//
+// NULLIF en subido_por por la misma razon que en el INSERT de asientos: el
+// nucleo dice "sin actor" con la cadena vacia, y la columna lo dice con NULL.
+// Sin el NULLIF, la cadena vacia entraria como valor y la clave foranea a
+// usuarios(id) la rechazaria -- no hay usuario con id "" --, de modo que una
+// entrega sin actor fallaria en vez de quedar sin atribucion.
+const sqlInsertarReporte = `INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes, subido_por)
+	 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`
 
 // traducirErrorDeReporte pone el duplicado por huella en vocabulario del
 // negocio, y lo demas en el traductor general.
@@ -109,10 +115,14 @@ func traducirErrorDeReporte(err error, fuente, periodo string) error {
 // El limite lo elige el caso de uso llamando a este metodo en vez de a los otros
 // dos; la transaccion la abre el adaptador porque el nucleo no puede tocar pgx.
 // Es la misma forma que [Store.Registrar] con la obra y sus coautores.
+//
+// El actor entra en la MISMA transaccion que las filas (#116). Fuera de ella no
+// habria forma de distinguir una entrega atribuida a medias de una entrega sin
+// atribucion: los dos casos se leerian igual, con `subido_por` a NULL.
 func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
 	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, sqlInsertarReporte,
-			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
+			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes, rep.SubidoPor)
 		if err != nil {
 			return traducirErrorDeReporte(err, rep.Fuente, rep.Periodo)
 		}
@@ -149,8 +159,14 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 	if pag.Limite != aplicacion.LimiteSinTope {
 		limite = &pag.Limite
 	}
+	// COALESCE sobre subido_por por la misma razon que sobre obra_id en
+	// columnasUso: la columna es NULL para las entregas anteriores a la
+	// atribucion y para las del sembrador, y sin el COALESCE el escaneo de esas
+	// filas falla. Se lee como "", que es "sin actor" y no "actor desconocido".
 	proyeccion := `
-		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
+		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes,
+		       COALESCE(r.subido_por, ''),
+		       r.creado,
 		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
 		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
 		  FROM reportes r`
@@ -176,7 +192,7 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 	for filas.Next() {
 		var c aplicacion.CargaReporte
 		if err := filas.Scan(
-			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.Recibido,
+			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.SubidoPor, &c.Recibido,
 			&c.Aceptados, &c.Rechazados,
 		); err != nil {
 			return nil, traducirError(err, "escanear carga")
@@ -380,7 +396,7 @@ func valoresRechazo(u aplicacion.UsoPersistido) []any {
 //
 // El filtro es escalon = 'pendiente' y no `oni`: son dos preguntas distintas.
 // Una fila en ONI ya paso por la cascada y no la reconocio nadie -esa cola la
-// sirve RepositorioONI-, mientras que una pendiente ni siquiera se ha
+// sirve RepositorioCasosIdentificacion-, mientras que una pendiente ni siquiera se ha
 // intentado. Ademas hay un indice parcial hecho para este WHERE.
 func (s *Store) UsosSinResolver(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
 	return s.consultarUsos(ctx,

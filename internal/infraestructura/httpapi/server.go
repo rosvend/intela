@@ -54,20 +54,23 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud         Salud
-	auth          Autenticacion
-	liq           ConsultaLiquidaciones
-	catalogo      Catalogo
-	padron        Padron
-	ingesta       Ingesta
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	procesos      Procesos
-	cola          ColaRevision
-	anomalias     Anomalias
-	auditoria     Auditoria
-	opts          Opciones
-	log           *slog.Logger
+	salud          Salud
+	auth           Autenticacion
+	ordenes        ConsultaLiquidaciones
+	admision       Admision
+	catalogo       Catalogo
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	reporte        ReporteLiquidaciones
+	procesos       Procesos
+	cola           ColaRevision
+	anomalias      Anomalias
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Casos agrupa los casos de uso que sirve el adaptador.
@@ -78,18 +81,21 @@ type API struct {
 // pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
 // entorno, esto son dependencias.
 type Casos struct {
-	Salud         Salud
-	Auth          Autenticacion
-	Liq           ConsultaLiquidaciones
-	Catalogo      Catalogo
-	Padron        Padron
-	Ingesta       Ingesta
-	Declaraciones Declaraciones
-	Recaudo       Recaudo
-	Procesos      Procesos
-	Cola          ColaRevision
-	Anomalias     Anomalias
-	Auditoria     Auditoria
+	Salud          Salud
+	Auth           Autenticacion
+	Ordenes        ConsultaLiquidaciones
+	Admision       Admision
+	Catalogo       Catalogo
+	Padron         Padron
+	Ingesta        Ingesta
+	Declaraciones  Declaraciones
+	Recaudo        Recaudo
+	Reporte        ReporteLiquidaciones
+	Procesos       Procesos
+	Cola           ColaRevision
+	Anomalias      Anomalias
+	Auditoria      Auditoria
+	Identificacion CasosIdentificacion
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -100,29 +106,32 @@ type ColaRevision interface {
 // Nueva construye el adaptador.
 //
 // Un caso de uso nil no es un fallo de arranque: su ruta responde 503. Ver
-// [API.conIngesta]. Es lo que permite que un binario que todavia no cablea la
-// boveda -- cmd/lambda, cuyo sistema de ficheros es de solo lectura -- siga
-// sirviendo el resto de la API.
+// [API.conIngesta] y [API.conAdmision]. Es lo que permite que un binario que
+// todavia no cablea la boveda -- cmd/lambda, cuyo sistema de ficheros es de
+// solo lectura -- siga sirviendo el resto de la API.
 func Nueva(casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         casos.Salud,
-		auth:          casos.Auth,
-		liq:           casos.Liq,
-		catalogo:      casos.Catalogo,
-		padron:        casos.Padron,
-		ingesta:       casos.Ingesta,
-		declaraciones: casos.Declaraciones,
-		recaudo:       casos.Recaudo,
-		procesos:      casos.Procesos,
-		cola:          casos.Cola,
-		anomalias:     casos.Anomalias,
-		auditoria:     casos.Auditoria,
-		opts:          opts,
-		log:           log,
+		salud:          casos.Salud,
+		auth:           casos.Auth,
+		ordenes:        casos.Ordenes,
+		admision:       casos.Admision,
+		catalogo:       casos.Catalogo,
+		padron:         casos.Padron,
+		ingesta:        casos.Ingesta,
+		declaraciones:  casos.Declaraciones,
+		recaudo:        casos.Recaudo,
+		reporte:        casos.Reporte,
+		procesos:       casos.Procesos,
+		cola:           casos.Cola,
+		anomalias:      casos.Anomalias,
+		auditoria:      casos.Auditoria,
+		identificacion: casos.Identificacion,
+		opts:           opts,
+		log:            log,
 	}
 }
 
@@ -158,10 +167,12 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
-		if a.liq != nil {
-			protegido.Get("/liquidaciones", a.listarLiquidaciones)
-			protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
-		}
+		// Ordenes de pago (ADR 0019). El rol lo decide el caso de uso:
+		// /liquidaciones es staff y /mis-liquidaciones es el titular.
+		protegido.Get("/liquidaciones", a.listarLiquidaciones)
+		protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
+		protegido.Post("/afiliaciones/{id}/aprobar", a.conAdmision(a.aprobarAfiliacion))
+		protegido.Post("/afiliaciones/{id}/rechazar", a.conAdmision(a.rechazarAfiliacion))
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
@@ -172,12 +183,15 @@ func (a *API) Router() http.Handler {
 			admin.Get("/pipeline", superficieOK)
 			admin.Get("/cola-revision", a.listarColaRevision)
 		})
+		protegido.Route("/identificacion", func(ident chi.Router) {
+			ident.Use(requiereRol(aplicacion.RolAdministrador))
+			ident.Get("/casos", a.listarCasosIdentificacion)
+		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
-
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo
@@ -236,6 +250,13 @@ func (a *API) Router() http.Handler {
 			))
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
+		})
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			// El desglose por obra y su export (#43). No pisa
+			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
+			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
+			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
 		})
 
 		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
@@ -298,6 +319,17 @@ func (a *API) Router() http.Handler {
 		})
 	})
 
+	// El alta la rellena quien todavia no es afiliado, asi que va sin
+	// sesion. Completar el IPI tambien: el identificador de la solicitud
+	// es el token. Ambas llevan rate limit porque aceptan trafico anonimo
+	// y la primera escribe a disco. conAdmision contesta 503 si el binario
+	// no cableo la boveda (cmd/lambda hoy); sin eso seria un 404 o un 500.
+	r.Group(func(alta chi.Router) {
+		alta.Use(limitarPorIP(10, time.Minute))
+		alta.Post("/afiliaciones", a.conAdmision(a.solicitarAfiliacion))
+		alta.Patch("/afiliaciones/{id}/ipi", a.conAdmision(a.completarIPI))
+	})
+
 	return r
 }
 
@@ -312,6 +344,23 @@ func (a *API) conIngesta(h http.HandlerFunc) http.HandlerFunc {
 		if a.ingesta == nil {
 			escribirError(w, http.StatusServiceUnavailable,
 				"la ingesta de reportes no esta configurada en esta instalacion")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// conAdmision responde 503 si el binario no cableo el caso de uso de admision.
+//
+// Misma razon que [API.conIngesta]: sin boveda durable (objetos.Disco no sirve
+// en Lambda) el alta no puede guardar RUT ni certificacion bancaria. Mejor un
+// 503 honesto que un 500 por mkdir en FS de solo lectura, o un 404 porque la
+// ruta ni se registro.
+func (a *API) conAdmision(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.admision == nil {
+			escribirError(w, http.StatusServiceUnavailable,
+				"el alta de afiliacion no esta configurada en esta instalacion")
 			return
 		}
 		h(w, r)
@@ -349,6 +398,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origen)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 			h.Set("Access-Control-Max-Age", "600")
 			// El origen entra en la respuesta, asi que las caches
 			// intermedias tienen que variar por el.

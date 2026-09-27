@@ -21,7 +21,7 @@ import (
 // [aplicacion.Ingesta] la satisface sin nombrarla, y las pruebas pasan un doble
 // sin levantar ni base ni boveda.
 type Ingesta interface {
-	IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error)
+	IngerirReporte(ctx context.Context, usuario aplicacion.Usuario, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error)
 	Cargas(ctx context.Context, periodo string, pag aplicacion.Paginacion) ([]aplicacion.CargaReporte, error)
 	RechazosDeCarga(ctx context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error)
 	DeducirFormato(nombre string) string
@@ -159,6 +159,7 @@ type cargaJSON struct {
 	SHA256      string    `json:"sha256"`
 	ClaveObjeto string    `json:"clave_objeto"`
 	NBytes      int       `json:"nbytes"`
+	SubidoPor   string    `json:"subido_por"`
 	Recibido    time.Time `json:"recibido"`
 	Aceptados   int       `json:"aceptados"`
 	Rechazados  int       `json:"rechazados"`
@@ -182,7 +183,28 @@ type cargaJSON struct {
 // y nada mas --. La clave del objeto de la boveda se deriva de la HUELLA del
 // contenido, no del nombre, asi que no hay forma de que un nombre hostil llegue
 // al sistema de ficheros.
+//
+// # Quien sube lo dice la sesion, no el formulario
+//
+// El actor sale de [UsuarioDe] -el Usuario que `conSesion` dejo en el contexto
+// a partir del token- y viaja al nucleo como parametro. Un campo `subido_por`
+// en el multipart seria una atribucion elegida por quien sube el archivo, que
+// es lo contrario de lo que necesita la auditoria (RD 16); el campo se ignora
+// aunque llegue, y hay una prueba que lo fija.
 func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
+	// Primero de todo, antes incluso del tope del cuerpo: sin sesion no hay
+	// actor, y sin actor esta entrega no se puede registrar. La ruta va detras
+	// de `requiereRol`, que ya exige el Usuario en el contexto, pero eso es un
+	// hecho del cableado del router y no de este handler: el dia que la ruta se
+	// monte sin ese middleware, el Usuario cero subiria un reporte sin
+	// atribucion y nadie se enteraria. Es la misma guarda que
+	// [API.servirLiquidaciones].
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+
 	// ANTES del parseo, que es lo unico que hace que el tope sea un tope. El
 	// argumento de ParseMultipartForm limita lo que se guarda EN MEMORIA y no lo
 	// que se lee: pasado ese numero, `multipart.Reader` sigue leyendo y va
@@ -271,7 +293,7 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := a.ingesta.IngerirReporte(r.Context(), fuente, formato, periodo, datos)
+	rec, err := a.ingesta.IngerirReporte(r.Context(), usuario, fuente, formato, periodo, datos)
 	switch {
 	case err == nil:
 	case errors.Is(err, aplicacion.ErrReporteInvalido):
@@ -304,6 +326,21 @@ func (a *API) subirReporte(w http.ResponseWriter, r *http.Request) {
 		escribirError(w, http.StatusInternalServerError, "no se pudo registrar la entrega")
 		return
 	}
+
+	// El camino de EXITO tambien deja rastro, y con el actor: hasta ahora solo
+	// escribian los caminos de fallo, asi que de una entrega aceptada no
+	// quedaba en el log quien la habia hecho (#116).
+	//
+	// El log es observabilidad, no trazabilidad: la atribucion con valor
+	// probatorio es la columna `reportes.subido_por`, que se acaba de escribir
+	// en la MISMA transaccion que las filas. Esta linea es lo que permite
+	// responder "quien subio esto" sin abrir la base, y por eso lleva el id del
+	// actor y no su nombre.
+	a.log.InfoContext(r.Context(), "entrega de reporte registrada",
+		slog.String("reporte", rec.Reporte.ID),
+		slog.String("fuente", rec.Reporte.Fuente),
+		slog.String("periodo", rec.Reporte.Periodo),
+		slog.String("subido_por", usuario.ID))
 
 	escribirJSON(w, http.StatusCreated, entregaJSON{
 		ID:          rec.Reporte.ID,
@@ -342,8 +379,8 @@ func (a *API) listarCargas(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cargas {
 		cuerpo = append(cuerpo, cargaJSON{
 			ID: c.ID, Fuente: c.Fuente, Periodo: c.Periodo, SHA256: c.SHA256,
-			ClaveObjeto: c.ClaveObjeto, NBytes: c.NBytes, Recibido: c.Recibido,
-			Aceptados: c.Aceptados, Rechazados: c.Rechazados,
+			ClaveObjeto: c.ClaveObjeto, NBytes: c.NBytes, SubidoPor: c.SubidoPor,
+			Recibido: c.Recibido, Aceptados: c.Aceptados, Rechazados: c.Rechazados,
 		})
 	}
 	escribirJSON(w, http.StatusOK, cuerpo)

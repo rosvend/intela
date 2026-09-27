@@ -238,12 +238,12 @@ declaro la fuente aunque el catalogo anual todavia no conozca ese canal. Un cana
 `canales_clasificacion` devuelve grupo vacio, que fuera de suscripcion no se usa y dentro de ella
 falla ruidosamente en el motor.
 
-**El sembrador es la unica fuente que puebla `canal_id` hoy.** Ningun adaptador de ingesta real
-(`MapaCaracol`, `MapaNetflix`, `MapaCine`) mapea una columna del archivo del cliente a
-`CampoCanalID`: quien puebla esta columna en produccion es **P-20**, abierta en
-[`preguntas-cliente.md`](preguntas-cliente.md). Mientras no se resuelva, toda fila que entra por
-`IngerirReporte` llega con `canal_id = ''`, y `UsosSinCanal` es como se detecta ese hueco en vez
-de confundirlo con "el canal no emitio".
+**El sembrador puebla `canal_id` a mano.** Ningun adaptador de ingesta real
+(`MapaCaracol`, `MapaNetflix`, `MapaCine`) mapea una columna del archivo del
+cliente a `CampoCanalID`: quien seria el canal en produccion sigue siendo
+**P-20**. Desde #165 la ingesta **rechaza** esa fila (`usos_rechazados`, el
+motivo nombra `canal_id`) en vez de guardarla y dejarla fuera de `UsosDeCanal`
+sin error. `UsosSinCanal` cuenta las que igual llegaron a `usos`.
 
 ### Medidas de `RD 9.2` y `RD 9.4`
 

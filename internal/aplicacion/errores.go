@@ -34,6 +34,29 @@ var (
 	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
+	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
+	ErrFormatoInvalido = errors.New("formato invalido")
+
+	// ErrPeriodoInvalido: el filtro de periodo no es YYYY ni YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
+
+	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
+	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
+	// admitida). En titulares, el IPI no vacio es unico. Distinto de
+	// ErrNoEncontrado: aqui la consulta encontro de mas, no de menos.
+	ErrConflicto = errors.New("ya existe una solicitud o afiliacion con esos datos")
+
+	// ErrClaveInvalida: la clave del alta no cumple el minimo. Se distingue
+	// de ErrDocumentoInvalido porque quien la recibe tiene que saber que
+	// campo rehacer, y de ErrCredenciales porque aqui todavia no hay
+	// sesion que rechazar.
+	ErrClaveInvalida = errors.New("la clave tiene que tener entre 8 y 72 caracteres")
+
+	// ErrDocumentoInvalido: el adjunto no es un PDF o una imagen, o viene
+	// vacio. El dominio no mira bytes; esto lo decide el caso de uso antes
+	// de mandarlos al almacen.
+	ErrDocumentoInvalido = errors.New("el documento tiene que ser un pdf o una imagen y no puede estar vacio")
+
 	// ErrSnapshotCorrupto: bajo ese id hay filas congeladas que no forman el
 	// snapshot que el id anuncia.
 	//
@@ -116,6 +139,9 @@ var (
 	// es explicita: el mensaje tiene que decir QUE falta o esta mal formateado,
 	// porque es lo que permite volver a pedirle al cliente exactamente eso.
 	ErrReporteInvalido = errors.New("reporte invalido")
+
+	// ErrFiltroCasosInvalido: un filtro de la cola de identificacion no se puede leer (estado o periodo).
+	ErrFiltroCasosInvalido = errors.New("filtro de casos invalido")
 
 	// ErrObjetoYaExiste: esa clave del almacen ya tiene contenido.
 	//

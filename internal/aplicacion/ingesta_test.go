@@ -53,6 +53,11 @@ func (a *almacenMemoria) Obtener(_ context.Context, clave string) ([]byte, error
 	return datos, nil
 }
 
+func (a *almacenMemoria) Borrar(_ context.Context, clave string) error {
+	delete(a.objetos, clave)
+	return nil
+}
+
 // repoIngestaMemoria imita el UNIQUE (sha256, fuente) de la tabla reportes,
 // que es la unica fuente de verdad de "reporte duplicado".
 type repoIngestaMemoria struct {
@@ -64,6 +69,11 @@ type repoIngestaMemoria struct {
 	errUsos    error
 }
 
+// usuarioQueSube es el actor de las entregas de estas pruebas: el Usuario
+// autenticado que el adaptador HTTP saca de la sesion. Reusa el id que ya usa
+// el resto del paquete (catalogo_test.go) en vez de inventar otro.
+var usuarioQueSube = Usuario{ID: actorDePrueba, Rol: RolAdministrador}
+
 func nuevoRepoIngesta() *repoIngestaMemoria {
 	return &repoIngestaMemoria{
 		reportes: map[string]Reporte{},
@@ -71,7 +81,7 @@ func nuevoRepoIngesta() *repoIngestaMemoria {
 	}
 }
 
-func (r *repoIngestaMemoria) GuardarReporte(_ context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
+func (r *repoIngestaMemoria) GuardarReporte(_ context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error {
 	if r.errReporte != nil {
 		return r.errReporte
 	}
@@ -81,7 +91,7 @@ func (r *repoIngestaMemoria) GuardarReporte(_ context.Context, id, fuente, perio
 	r.huellas[fuente+"|"+sha] = true
 	r.reportes[id] = Reporte{
 		ID: id, Fuente: fuente, Periodo: periodo,
-		SHA256: sha, ClaveObjeto: claveObjeto, NBytes: nbytes,
+		SHA256: sha, ClaveObjeto: claveObjeto, NBytes: nbytes, SubidoPor: subidoPor,
 	}
 	return nil
 }
@@ -106,7 +116,7 @@ func (r *repoIngestaMemoria) GuardarEntrega(ctx context.Context, rep Reporte, us
 		return r.errUsos
 	}
 	if err := r.GuardarReporte(
-		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes, rep.SubidoPor,
 	); err != nil {
 		return err
 	}
@@ -253,6 +263,11 @@ func usoBueno(titulo string) UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 1,
+		// canal_id y rating no salen del mapa de Caracol, pero una fila de TV
+		// sin ellos ya no es canonica (#165). Quien quiera el rechazo los deja
+		// en cero a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -1015,7 +1030,10 @@ func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 func TestGuardarUsosNoConfundeElEscalonVacioConUnoAdelantado(t *testing.T) {
 	ingesta, repo, _ := nuevaIngesta()
 
-	recien := UsoPersistido{Titulo: "Recien Parseada", Modalidad: reparto.TV}
+	recien := UsoPersistido{
+		Titulo: "Recien Parseada", Modalidad: reparto.TV,
+		CanalID: "caracol", Rating: decimal.NewFromInt(1),
+	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
 	if err != nil {
@@ -1113,6 +1131,8 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(48),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), rep, []UsoPersistido{recien})
@@ -1141,6 +1161,45 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 	}
 	if guardado.ReporteID != rep.ID {
 		t.Errorf("ReporteID = %q, se esperaba %q", guardado.ReporteID, rep.ID)
+	}
+}
+
+// Una fila de TV sin canal no pondera, y una con canal pero sin rating pondera
+// cero. Las dos se rechazan y el motivo nombra el campo. Cine no multiplica
+// por rating: con canal, rating 0 sigue siendo canonica (#165).
+func TestGuardarUsosRechazaFilaSinCanalYFilaSinRating(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	sinCanal := usoBueno("Sin canal")
+	sinCanal.CanalID = ""
+	sinRating := usoBueno("Sin rating")
+	sinRating.Rating = decimal.Zero
+	cine := usoBueno("Pelicula")
+	cine.Modalidad = reparto.Cine
+	cine.Rating = decimal.Zero
+	buena := usoBueno("Con canal y rating")
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{
+		sinCanal, sinRating, cine, buena,
+	})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 2 {
+		t.Fatalf("rechazados = %d, se esperaban 2: %+v", len(rechazados), rechazados)
+	}
+	motivos := map[string]string{}
+	for _, u := range rechazados {
+		motivos[u.Titulo] = u.RechazoMotivo
+	}
+	if !strings.Contains(motivos["Sin canal"], "canal_id") {
+		t.Fatalf("sin canal: motivo = %q", motivos["Sin canal"])
+	}
+	if !strings.Contains(motivos["Sin rating"], "rating") {
+		t.Fatalf("sin rating: motivo = %q", motivos["Sin rating"])
+	}
+	if len(repo.canonicos()) != 2 {
+		t.Fatalf("canonicas = %d, se esperaban la de cine y la buena", len(repo.canonicos()))
 	}
 }
 
@@ -1577,7 +1636,7 @@ func TestIngerirReporteDejaLaEvidenciaYLasFilasCanonicas(t *testing.T) {
 	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde"), usoBueno("La Casa")}}
 	ingesta, repo, almacen := ingestaConLector(lec)
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
@@ -1592,6 +1651,36 @@ func TestIngerirReporteDejaLaEvidenciaYLasFilasCanonicas(t *testing.T) {
 	}
 	if len(repo.usos) != 2 {
 		t.Errorf("usos guardados = %d, se esperaban 2", len(repo.usos))
+	}
+}
+
+// La entrega queda atribuida a QUIEN la sube (#116), y el actor viaja como
+// parametro: lo elige quien llama -el adaptador HTTP, con el Usuario de la
+// sesion- y no un campo del archivo.
+//
+// El id es distinto del que usan las demas pruebas del paquete a proposito: con
+// el mismo, escribir una constante en vez del parametro dejaria esta prueba en
+// verde. Es el unico sitio del paquete que fija el VALOR de subido_por.
+func TestIngerirReporteAtribuyeLaEntregaAQuienLaSube(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde")}}
+	ingesta, repo, _ := ingestaConLector(lec)
+
+	quienSube := Usuario{ID: "usr-quien-sube", Email: "quien@redes.co", Rol: RolAdministrador}
+	rec, err := ingesta.IngerirReporte(
+		t.Context(), quienSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Reporte.SubidoPor != quienSube.ID {
+		t.Errorf("el acuse devuelto lleva subido_por = %q, se esperaba %q",
+			rec.Reporte.SubidoPor, quienSube.ID)
+	}
+	guardado, hay := repo.reportes[rec.Reporte.ID]
+	if !hay {
+		t.Fatal("no quedo acuse de la entrega")
+	}
+	if guardado.SubidoPor != quienSube.ID {
+		t.Errorf("subido_por persistido = %q, se esperaba %q", guardado.SubidoPor, quienSube.ID)
 	}
 }
 
@@ -1611,7 +1700,7 @@ func TestIngerirReporteAplicaElOchentaPorCientoDeTV(t *testing.T) {
 		}, nil
 	}
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-norm"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx-norm"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
@@ -1636,7 +1725,7 @@ func TestIngerirReporteNoPersisteNadaSiElArchivoNoTieneLaColumna(t *testing.T) {
 		"%w: falta la columna requerida Duracion_total", ErrReporteInvalido)}
 	ingesta, repo, almacen := ingestaConLector(lec)
 
-	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	_, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
 	if !errors.Is(err, ErrReporteInvalido) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
 	}
@@ -1658,7 +1747,7 @@ func TestIngerirReporteGuardaLasBuenasYAnotaLasMalas(t *testing.T) {
 	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Buena"), mala, usoBueno("Otra buena")}}
 	ingesta, repo, _ := ingestaConLector(lec)
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
@@ -1682,7 +1771,7 @@ func TestIngerirReporteGuardaLasBuenasYAnotaLasMalas(t *testing.T) {
 func TestIngerirReporteSinAdaptadorDiceCualesHay(t *testing.T) {
 	ingesta, _, almacen := ingestaConLector(&lectorFalso{})
 
-	_, err := ingesta.IngerirReporte(t.Context(), "hbo", FormatoCSV, "2026-01", []byte("x"))
+	_, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "hbo", FormatoCSV, "2026-01", []byte("x"))
 	if !errors.Is(err, ErrReporteInvalido) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
 	}
@@ -1702,7 +1791,7 @@ func TestIngerirReporteRechazaUnArchivoSinFilas(t *testing.T) {
 	// dejaria la huella quemada.
 	ingesta, repo, almacen := ingestaConLector(&lectorFalso{filas: nil})
 
-	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
+	_, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx"))
 	if !errors.Is(err, ErrReporteInvalido) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
 	}
@@ -1718,7 +1807,7 @@ func TestIngerirReporteRecortaLaFuenteAntesDeBuscarElAdaptador(t *testing.T) {
 	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Rebelde")}}
 	ingesta, _, _ := ingestaConLector(lec)
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "  caracol ", FormatoXLSX, "2026-01", []byte("xlsx"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "  caracol ", FormatoXLSX, "2026-01", []byte("xlsx"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
@@ -1732,10 +1821,10 @@ func TestIngerirReporteRechazaLaResubidaSinVolverAParsear(t *testing.T) {
 	ingesta, _, _ := ingestaConLector(lec)
 	datos := []byte("xlsx")
 
-	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos); err != nil {
+	if _, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", datos); err != nil {
 		t.Fatalf("primera entrega: %v", err)
 	}
-	_, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos)
+	_, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", datos)
 	if !errors.Is(err, ErrReporteDuplicado) {
 		t.Fatalf("err = %v, se esperaba ErrReporteDuplicado", err)
 	}
@@ -1764,7 +1853,7 @@ func TestIngerirReporteNoQuemaLaHuellaSiLasFilasNoEntran(t *testing.T) {
 	datos := []byte("xlsx")
 
 	repo.errUsos = errors.New("la base se cayo a mitad del lote")
-	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos); err == nil {
+	if _, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", datos); err == nil {
 		t.Fatal("se esperaba error: el lote no se pudo guardar")
 	}
 	// Ni acuse ni filas: la entrega no ocurrio.
@@ -1781,7 +1870,7 @@ func TestIngerirReporteNoQuemaLaHuellaSiLasFilasNoEntran(t *testing.T) {
 
 	// El cliente reenvia el MISMO archivo, byte a byte.
 	repo.errUsos = nil
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", datos)
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", datos)
 	if errors.Is(err, ErrReporteDuplicado) {
 		t.Fatal("la huella quedo quemada: la reentrega del mismo archivo choca con el duplicado")
 	}
@@ -1807,11 +1896,11 @@ func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
 	ingesta, _, _ := ingestaConLector(lec)
 
 	if _, err := ingesta.IngerirReporte(
-		t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero")); err != nil {
+		t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("enero")); err != nil {
 		t.Fatalf("enero: %v", err)
 	}
 	if _, err := ingesta.IngerirReporte(
-		t.Context(), "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
+		t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
 		t.Fatalf("febrero: %v", err)
 	}
 
@@ -1869,7 +1958,7 @@ func TestCargasPagina(t *testing.T) {
 
 	for _, periodo := range []string{"2026-01", "2026-02", "2026-03"} {
 		if _, err := ingesta.IngerirReporte(
-			t.Context(), "caracol", FormatoXLSX, periodo, []byte(periodo)); err != nil {
+			t.Context(), usuarioQueSube, "caracol", FormatoXLSX, periodo, []byte(periodo)); err != nil {
 			t.Fatalf("%s: %v", periodo, err)
 		}
 	}
@@ -1934,7 +2023,7 @@ func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
 	lec := &lectorFalso{filas: filas}
 	ingesta, _, _ := ingestaConLector(lec)
 
-	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	enero, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("enero"))
 	if err != nil {
 		t.Fatalf("enero: %v", err)
 	}
@@ -1942,7 +2031,7 @@ func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
 	otra := usoBueno("De febrero")
 	otra.RechazoMotivo = "titulo vacio"
 	lec.filas = []UsoPersistido{otra}
-	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
+	if _, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
 		t.Fatalf("febrero: %v", err)
 	}
 
@@ -1979,7 +2068,7 @@ func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
 	lec := &lectorFalso{filas: filas}
 	ingesta, _, _ := ingestaConLector(lec)
 
-	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	enero, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("enero"))
 	if err != nil {
 		t.Fatalf("enero: %v", err)
 	}

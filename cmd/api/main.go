@@ -20,6 +20,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
@@ -80,12 +81,19 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
+	admision := aplicacion.Admision{
+		Solicitudes: store,
+		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		IDs:         cripto.TokensAleatorios{},
+		Claves:      cripto.Bcrypt{},
+	}
+
 	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
 	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
-	liquidaciones := aplicacion.Liquidaciones{
+	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: notificaciones.Bitacora{Log: log},
@@ -142,6 +150,14 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
 	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
@@ -194,18 +210,21 @@ func ejecutar(log *slog.Logger) error {
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
-		Padron:        padron,
-		Ingesta:       recepcion,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Anomalias:     anomalias,
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Salud:          store,
+		Auth:           autenticacion,
+		Ordenes:        ordenes,
+		Admision:       admision,
+		Catalogo:       catalogo,
+		Padron:         padron,
+		Ingesta:        recepcion,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

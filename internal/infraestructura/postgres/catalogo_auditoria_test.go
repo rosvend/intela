@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 )
 
 // El asiento del ABM del catalogo, contra PostgreSQL de verdad (issue #91).
@@ -552,7 +554,23 @@ func esperarBloqueoPorUpdate(t *testing.T, vigia *pgx.Conn, ctx context.Context)
 // de que su PorID ya hubiera leido de mas-, y asentaria antes=original en vez
 // de antes=Version-T1. Ese es el escenario que esta prueba distingue.
 func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T) {
-	s, pool := sembrar(t)
+	// T1 y T2 necesitan cada una su conexion: [testhelp.Pool] deja MaxConns=1
+	// a proposito (ver su comentario), y con esa cota T2 se queda esperando
+	// el pool -no el cerrojo de fila- y esperarBloqueoPorUpdate nunca ve un
+	// Lock en pg_stat_activity. Aqui se abre un pool de 2 solo para esta
+	// prueba, que es la unica que fuerza dos transacciones concurrentes.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool concurrente: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool concurrente: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	s := sembrarEn(t, pool)
 	ctx := t.Context()
 
 	if _, err := catalogoConBitacora(s).
@@ -560,10 +578,10 @@ func TestActualizarMetadatosObraConcurrenteAsientaLaCadenaCompleta(t *testing.T)
 		t.Fatalf("RegistrarObra: %v", err)
 	}
 
-	// Conexion APARTE del pool de 2 que usan T1 y T2 (ver testhelp.Pool): si la
-	// consulta de vigilancia pidiera del mismo pool, competiria por la unica
-	// conexion libre y podria quedarse esperando detras de las dos
-	// transacciones que esta vigilando -un interbloqueo del propio test-.
+	// Conexion APARTE del pool que usan T1 y T2: si la consulta de vigilancia
+	// pidiera del mismo pool, competiria por las dos conexiones y podria
+	// quedarse esperando detras de las transacciones que esta vigilando
+	// -un interbloqueo del propio test-.
 	vigia, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
 	if err != nil {
 		t.Fatalf("abrir conexion de vigilancia: %v", err)

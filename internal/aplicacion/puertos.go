@@ -42,6 +42,17 @@ type Reloj interface {
 type AlmacenObjetos interface {
 	Poner(ctx context.Context, clave string, datos []byte) error
 	Obtener(ctx context.Context, clave string) ([]byte, error)
+
+	// Borrar quita un objeto. Existe para compensar una escritura que no
+	// llego a convertirse en evidencia: si Poner gano y el INSERT de la
+	// solicitud perdio, el RUT y la certificacion bancaria no pueden
+	// quedarse huerfanos en disco.
+	//
+	// No contradice el ADR 0006. Ese ADR pide que la copia CRUDA ya
+	// retenida sea inmutable; esto borra bytes que nunca tuvieron fila
+	// que los referencie. Borrar una clave inexistente no es error: la
+	// compensacion tiene que ser idempotente.
+	Borrar(ctx context.Context, clave string) error
 }
 
 type Notificador interface {
@@ -109,6 +120,27 @@ type GeneradorTokens interface {
 type RepositorioAfiliacion interface {
 	UsuarioPorEmail(ctx context.Context, email string) (u Usuario, hash string, err error)
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
+}
+
+// RepositorioAdmision cubre el flujo de alta: la solicitud que deja al
+// titular en pendiente y la admision que lo pasa al padron.
+//
+// Vive aparte de RepositorioAfiliacion para no ensanchar el puerto que usa
+// Autenticacion: si GuardarSolicitud viviera ahi, cada doble del login
+// tendria que fingir un metodo que no le compete.
+type RepositorioAdmision interface {
+	// GuardarSolicitud persiste el alta y el hash de la clave con la que
+	// el titular va a entrar una vez admitido. El hash viaja aparte del
+	// Afiliado: el dominio de admision no conoce credenciales.
+	GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado, claveHash string) error
+	SolicitudPorID(ctx context.Context, id string) (afiliacion.Afiliado, error)
+	AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) error
+
+	// ActualizarPendiente persiste cambios sobre una solicitud que TODAVIA
+	// esta pendiente: completar el IPI o rechazarla. El WHERE estado =
+	// 'pendiente' cierra la carrera con una admision concurrente; si no
+	// toco una fila, es ErrEstadoInvalido.
+	ActualizarPendiente(ctx context.Context, a afiliacion.Afiliado) error
 }
 
 // PadronTitulares es la lectura del padron: quien puede figurar como titular
@@ -396,16 +428,22 @@ type RepositorioUsosDeReparto interface {
 	) ([]UsoDeReparto, ResumenUsosDeCanal, error)
 
 	// UsosSinCanal cuenta los usos de un periodo -- de cualquier pagador -- que
-	// llegaron con `canal_id` vacio. Mientras ningun adaptador de ingesta
-	// (`internal/infraestructura/ingesta`) mapee la columna real de canal, esto
-	// es lo unico que distingue "el canal no emitio" (cero filas SUYAS) de "la
-	// fuente no dijo de que canal eran" (filas ajenas a todos los canales).
+	// llegaron con `canal_id` vacio. La ingesta ya no los escribe (#165): un
+	// conteo distinto de cero es una fila que entro por fuera de validarUso.
 	UsosSinCanal(ctx context.Context, periodo string) (int, error)
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
-	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
+	// GuardarReporte escribe SOLO el acuse, sin filas. Antes de usarlo, leer la
+	// advertencia de [Ingesta.GuardarReporte]: la pareja acuse + filas es
+	// [RepositorioIngesta.GuardarEntrega], y este metodo se queda para el seed.
+	//
+	// subidoPor es el id del usuario autenticado que hizo la entrega, o "" si no
+	// hay actor -el seed, o una entrega anterior a la atribucion (#116)-. Vacio
+	// se persiste como NULL y NUNCA como cadena vacia: no hay usuario con id ""
+	// y la clave foranea lo rechazaria.
+	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
 
 	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
@@ -580,10 +618,9 @@ type LectorReporte interface {
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
-// RepositorioONI es la cola manual. Separado de identificacion porque son dos
-// modulos distintos del ADR 0003.
-type RepositorioONI interface {
-	Listar(ctx context.Context) ([]UsoPersistido, error)
+// RepositorioCasosIdentificacion es la lectura de la cola manual (ADR 0007): pagina y conteo de pendientes en una sola lectura.
+type RepositorioCasosIdentificacion interface {
+	ListarCasosIdentificacion(ctx context.Context, q ConsultaCasos) (PaginaCasos, error)
 }
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
@@ -742,6 +779,30 @@ type ProcesoVista struct {
 type RepositorioResultados interface {
 	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+}
+
+// RepositorioReporteLiquidacion lee las lineas de corrida del titular para
+// el panel y el export por obra (#43): bruto, deducciones y neto. Es
+// lectura de resultados_titular + resultados_proceso; el prorrateo vive
+// en dominio.
+//
+// No es [RepositorioLiquidacion]. Ese puerto es el de las ordenes de pago
+// (ADR 0019) y su DeTitular no filtra por periodo ni devuelve el desglose
+// por obra. El mismo *Store satisface los dos, con nombres distintos, por
+// la misma razon por la que AsientoPorID no se llama PorID.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
+type RepositorioReporteLiquidacion interface {
+	FilasDeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
 }
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
