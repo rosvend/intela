@@ -216,16 +216,17 @@ func construir() (http.Handler, error) {
 	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
 	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
-		Padron:        padron,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Salud:          store,
+		Auth:           autenticacion,
+		Liq:            liquidaciones,
+		Catalogo:       catalogo,
+		Padron:         padron,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

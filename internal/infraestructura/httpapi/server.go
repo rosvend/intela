@@ -54,20 +54,21 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud         Salud
-	auth          Autenticacion
-	admision      Admision
-	liq           ConsultaLiquidaciones
-	catalogo      Catalogo
-	padron        Padron
-	ingesta       Ingesta
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	procesos      Procesos
-	cola          ColaRevision
-	auditoria     Auditoria
-	opts          Opciones
-	log           *slog.Logger
+	salud          Salud
+	auth           Autenticacion
+	admision       Admision
+	liq            ConsultaLiquidaciones
+	catalogo       Catalogo
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	procesos       Procesos
+	cola           ColaRevision
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Casos agrupa los casos de uso que sirve el adaptador.
@@ -78,18 +79,19 @@ type API struct {
 // pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
 // entorno, esto son dependencias.
 type Casos struct {
-	Salud         Salud
-	Auth          Autenticacion
-	Admision      Admision
-	Liq           ConsultaLiquidaciones
-	Catalogo      Catalogo
-	Padron        Padron
-	Ingesta       Ingesta
-	Declaraciones Declaraciones
-	Recaudo       Recaudo
-	Procesos      Procesos
-	Cola          ColaRevision
-	Auditoria     Auditoria
+	Salud          Salud
+	Auth           Autenticacion
+	Admision       Admision
+	Liq            ConsultaLiquidaciones
+	Catalogo       Catalogo
+	Padron         Padron
+	Ingesta        Ingesta
+	Declaraciones  Declaraciones
+	Recaudo        Recaudo
+	Procesos       Procesos
+	Cola           ColaRevision
+	Auditoria      Auditoria
+	Identificacion CasosIdentificacion
 }
 
 // ColaRevision lista lo que espera ojo humano: filas que no se pudieron
@@ -111,20 +113,21 @@ func Nueva(casos Casos, opts Opciones) *API {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         casos.Salud,
-		auth:          casos.Auth,
-		admision:      casos.Admision,
-		liq:           casos.Liq,
-		catalogo:      casos.Catalogo,
-		padron:        casos.Padron,
-		ingesta:       casos.Ingesta,
-		declaraciones: casos.Declaraciones,
-		recaudo:       casos.Recaudo,
-		procesos:      casos.Procesos,
-		cola:          casos.Cola,
-		auditoria:     casos.Auditoria,
-		opts:          opts,
-		log:           log,
+		salud:          casos.Salud,
+		auth:           casos.Auth,
+		admision:       casos.Admision,
+		liq:            casos.Liq,
+		catalogo:       casos.Catalogo,
+		padron:         casos.Padron,
+		ingesta:        casos.Ingesta,
+		declaraciones:  casos.Declaraciones,
+		recaudo:        casos.Recaudo,
+		procesos:       casos.Procesos,
+		cola:           casos.Cola,
+		auditoria:      casos.Auditoria,
+		identificacion: casos.Identificacion,
+		opts:           opts,
+		log:            log,
 	}
 }
 
@@ -175,6 +178,10 @@ func (a *API) Router() http.Handler {
 			admin.Use(requiereRol(aplicacion.RolAdministrador))
 			admin.Get("/pipeline", superficieOK)
 			admin.Get("/cola-revision", a.listarColaRevision)
+		})
+		protegido.Route("/identificacion", func(ident chi.Router) {
+			ident.Use(requiereRol(aplicacion.RolAdministrador))
+			ident.Get("/casos", a.listarCasosIdentificacion)
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
