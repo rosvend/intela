@@ -63,6 +63,7 @@ const cargaSinRechazos = {
   // `claveObjeto(sha)` en Go: "reportes/" mas la huella.
   clave_objeto: `reportes/${SHA_CARACOL}`,
   nbytes: 21032,
+  subido_por: "usr-admin",
   recibido: "2026-02-03T14:05:00Z",
   aceptados: 1234,
   rechazados: 0,
@@ -75,6 +76,9 @@ const cargaConRechazos = {
   sha256: SHA_NETFLIX,
   clave_objeto: `reportes/${SHA_NETFLIX}`,
   nbytes: 4096,
+  // Sin actor: una entrega anterior a la atribucion (#116). El listado la
+  // devuelve igual, con `subido_por` vacio.
+  subido_por: "",
   recibido: "2026-02-04T09:30:00Z",
   aceptados: 58,
   rechazados: 3,
