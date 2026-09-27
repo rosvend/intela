@@ -13,6 +13,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
+	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
@@ -612,6 +613,12 @@ func usosCrudos(usos []aplicacion.UsoPersistido) []aplicacion.UsoPersistido {
 		u.Escalon = ""
 		u.Evidencia = ""
 		u.ONI = false
+		// TV no trae tipo_obra en el archivo (P-05). identificar lo copia de
+		// obras.tipo; dejarlo aqui haria pasar el seed por un dato que Caracol
+		// no entrega (#165).
+		if u.Modalidad == reparto.TV {
+			u.TipoObra = ""
+		}
 		out[i] = u
 	}
 	return out
@@ -636,7 +643,11 @@ func identificar(ctx context.Context, store *postgres.Store, reporteID string, u
 				       oni = false,
 				       escalon = 'alias',
 				       evidencia = $3,
-				       puntaje = 1
+				       puntaje = 1,
+				       tipo_obra = CASE
+				         WHEN tipo_obra <> '' THEN tipo_obra
+				         ELSE (SELECT tipo FROM obras WHERE id = $2)
+				       END
 				 WHERE id = $1`,
 				id, u.ObraID, u.Evidencia)
 			if err != nil {

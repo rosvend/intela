@@ -311,21 +311,21 @@ func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 	}
 }
 
-// TestUsosSinCanalCuentaLoQueNingunPagadorReclama: mientras ningun adaptador
-// de ingesta puebla canal_id (P-20), "cero usos de un canal" no se distingue
-// de "el canal no emitio" sin este conteo aparte.
+// TestUsosSinCanalCuentaLoQueNingunPagadorReclama cuenta filas que llegaron
+// a `usos` sin canal. La ingesta ya no las deja pasar (validarUso, #165);
+// este conteo es lo que queda si alguien escribe por el adaptador.
 func TestUsosSinCanalCuentaLoQueNingunPagadorReclama(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
 
-	// Dos filas del mismo periodo sin canal_id -- el estado real de una
-	// entrega de Caracol hoy -- y una con canal, que no debe contarse.
-	usos := []aplicacion.UsoPersistido{
-		usoPendiente("uso-sin-canal-1", reporteEnero, "Sin canal 1"),
-		usoPendiente("uso-sin-canal-2", reporteEnero, "Sin canal 2"),
-	}
+	// Escritura directa (Store.GuardarUsos), no la ingesta: validarUso ya
+	// rechaza canal_id vacio. Este conteo queda para lo que se cuele.
+	sin1 := usoPendiente("uso-sin-canal-1", reporteEnero, "Sin canal 1")
+	sin2 := usoPendiente("uso-sin-canal-2", reporteEnero, "Sin canal 2")
+	sin1.CanalID = ""
+	sin2.CanalID = ""
+	usos := []aplicacion.UsoPersistido{sin1, sin2}
 	conCanal := usoPendiente("uso-con-canal", reporteEnero, "Con canal")
-	conCanal.CanalID = "caracol"
 	usos = append(usos, conCanal)
 
 	if err := s.GuardarUsos(ctx, usos); err != nil {

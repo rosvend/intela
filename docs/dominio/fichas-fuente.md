@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-13
+actualizado: 2026-09-26
 evidencia: uv run --script src/scripts/sample.py sobre data/
 ---
 
@@ -29,6 +29,20 @@ Las preguntas abiertas de cada fuente se rastrean en
 
 Tres de seis no estan disponibles, y son justo las que producen dinero: los splits, el rating y
 el recaudo. Por eso el demo corre sobre fixtures marcadas -- ver [`fixtures.md`](fixtures.md).
+
+## De donde sale cada campo que pondera (#165)
+
+`tipo_obra`, `canal_id` y `rating` no salen todos del mismo sitio. El mapa de
+Caracol los deja vacios a proposito. Lo que hace el codigo con ese vacio:
+
+| Campo | Caracol (TV) | Netflix (OTT) | Cine | Hotel y suscripcion |
+| ----- | ------------ | ------------- | ---- | ------------------- |
+| `tipo_obra` | No sale del mapa. P-05 (generos de parrilla) sigue sin confirmar. Si la fila ya tiene obra y el archivo no trajo tipo, se copia `obras.tipo`. | `RD 9.7` no pondera por tipo. Si se identifica y el archivo no lo trajo, tambien se copia del catalogo. | La columna `tipo_obra` del mapa, si viene. Si no, `obras.tipo` al identificar. | Igual que TV: el motor lo lee. Catalogo al identificar. |
+| `canal_id` | El archivo no trae columna (P-20). La ingesta rechaza la fila. | Igual. | Igual. | Igual. |
+| `rating` | No sale de la parrilla. Es el feed F-05 (P-06). Rating 0 en TV se rechaza: `RD 9.1.1` lo usaria como peso cero. | No entra en la formula. | No entra en la formula. | Mismo rechazo que TV. |
+
+Una fila rechazada queda en `usos_rechazados` con un motivo que nombra el campo.
+No llega a `UsosDeCanal` y no pondera en silencio.
 
 ## F-01 Parrilla de television CARACOL
 
