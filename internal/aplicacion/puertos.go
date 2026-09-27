@@ -739,13 +739,15 @@ type RepositorioProcesos interface {
 	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
 	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
 	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
-	// la escritura; no aplica a un alta nueva, que nunca tiene fila previa
-	// que comparar.
+	// la escritura. Un alta pasa RevisionAlta: si la fila ya existe, es conflicto.
 	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
 	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
 	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
+
+// RevisionAlta como revisionAnterior de GuardarProceso solo inserta: el CHECK revision >= 1 impide que una fila existente la cumpla.
+const RevisionAlta = 0
 
 // ProcesoVista es el proceso tal como se persiste.
 //

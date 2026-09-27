@@ -89,13 +89,8 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	// MISMOS: un id que colisiona con un proceso de otros datos no se
 	// devuelve en silencio, porque el cliente no podria distinguir "se creo"
 	// de "se devolvio otra cosa con este mismo id" (revision de PR #159).
-	if existente, err := uc.Repo.ProcesoPorID(ctx, id); err == nil {
-		if existente.Periodo != periodo || existente.Circuito != circuito || existente.BolsaID != bolsaID {
-			return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoIDReutilizado)
-		}
-		return existente, nil
-	} else if !errors.Is(err, ErrNoEncontrado) {
-		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
+	if existente, hay, err := uc.procesoExistente(ctx, id, periodo, circuito, bolsaID); err != nil || hay {
+		return existente, err
 	}
 
 	fecha, err := fechaDePeriodo(strings.TrimSpace(periodo))
@@ -122,18 +117,38 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	// revisionAnterior no importa aqui: es un alta nueva, nunca hay fila
-	// previa con la que competir.
+	// La guarda de arriba es una lectura: dos aperturas simultaneas la pasan las dos. RevisionAlta hace que solo una inserte.
 	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
-		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), p.Revision); err != nil {
+		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), RevisionAlta); err != nil {
 			return nil, err
 		}
 		return []pendiente{pendienteDeProceso(HechoProcesoAbierto, p, asientoProceso(p, ""))}, nil
 	})
+	if errors.Is(err, ErrProcesoConflictoDeConcurrencia) {
+		// Perdio la carrera: su asiento se deshizo con la unidad y devuelve el proceso del ganador.
+		if existente, hay, errE := uc.procesoExistente(ctx, id, periodo, circuito, bolsaID); errE != nil || hay {
+			return existente, errE
+		}
+	}
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// procesoExistente devuelve el proceso ya abierto con ese id si coincide en periodo, circuito y bolsa (PR #159).
+func (uc Procesos) procesoExistente(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (ProcesoVista, bool, error) {
+	existente, err := uc.Repo.ProcesoPorID(ctx, id)
+	if errors.Is(err, ErrNoEncontrado) {
+		return ProcesoVista{}, false, nil
+	}
+	if err != nil {
+		return ProcesoVista{}, false, fmt.Errorf("iniciar proceso %q: %w", id, err)
+	}
+	if existente.Periodo != periodo || existente.Circuito != circuito || existente.BolsaID != bolsaID {
+		return ProcesoVista{}, false, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoIDReutilizado)
+	}
+	return existente, true, nil
 }
 
 // AbrirCorridaDelPeriodo abre un ProcesoDeReparto por cada bolsa del
