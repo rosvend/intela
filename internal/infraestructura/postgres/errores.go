@@ -45,6 +45,14 @@ func esClaveDuplicada(err error) bool {
 // codigoForanea es el SQLSTATE 23503, foreign_key_violation.
 const codigoForanea = "23503"
 
+// codigoBitacoraInmutable es el ERRCODE de bitacora_solo_append (migracion 00020).
+const codigoBitacoraInmutable = "IN006"
+
+func esBitacoraInmutable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoBitacoraInmutable
+}
+
 // esClaveForanea dice si el error es una violacion de FOREIGN KEY.
 //
 // Misma logica que [esClaveDuplicada] y el mismo motivo para no vivir dentro
@@ -96,6 +104,9 @@ func traducirError(err error, formato string, args ...any) error {
 	contexto := fmt.Sprintf(formato, args...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%s: %w", contexto, aplicacion.ErrNoEncontrado)
+	}
+	if esBitacoraInmutable(err) {
+		return fmt.Errorf("%s: %w: %w", contexto, aplicacion.ErrBitacoraInmutable, err)
 	}
 	// Detail/Where de PgError suelen traer la pista que el Message omite: en
 	// un COPY, "COPY usos, line N" vive en Where (o Detail). Sin esto, un

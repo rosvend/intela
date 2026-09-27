@@ -69,6 +69,7 @@ type API struct {
 	anomalias      Anomalias
 	auditoria      Auditoria
 	identificacion CasosIdentificacion
+	explicar       Explicador
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -96,6 +97,7 @@ type Casos struct {
 	Anomalias      Anomalias
 	Auditoria      Auditoria
 	Identificacion CasosIdentificacion
+	Explicar       Explicador
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -130,6 +132,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		anomalias:      casos.Anomalias,
 		auditoria:      casos.Auditoria,
 		identificacion: casos.Identificacion,
+		explicar:       casos.Explicar,
 		opts:           opts,
 		log:            log,
 	}
@@ -192,6 +195,11 @@ func (a *API) Router() http.Handler {
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
+		if a.explicar != nil {
+			protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+				Get("/explicar/{ref}", a.explicarCifra)
+		}
+
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo

@@ -383,8 +383,10 @@ type Asiento struct {
 	RefTipo string
 	RefID   string
 	ActorID string
-	Payload []byte
-	Cuando  time.Time
+	// RefiereA queda reservado para enlazar una correccion (ADR 0006); ningun caso de uso lo escribe todavia.
+	RefiereA string
+	Payload  []byte
+	Cuando   time.Time
 }
 
 // Alerta es una anomalia de un periodo tal como queda persistida (#37).
