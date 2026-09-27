@@ -1,13 +1,13 @@
 ---
 issue: 37
-actualizado: 2026-09-25
+actualizado: 2026-09-27
 ---
 
 # Deteccion de anomalias: razones de diseno
 
 La decision de fondo (recurso propio, tabla, roles, compuerta, que significa "resuelta") esta en
 [ADR 0021](../../decisiones/0021-alertas-como-recurso-propio.md). Aqui va el porque de cada
-detector de `internal/dominio/anomalias` y de la migracion `00017_alertas_de_anomalias.sql`. El
+detector de `internal/dominio/anomalias` y de la migracion `00020_alertas_de_anomalias.sql`. El
 codigo remite aqui en vez de repetirlo.
 
 ## D0. Orden y determinismo
@@ -68,10 +68,13 @@ Colapsarlas perderia el nombre.
 
 `RD 9.1.1` pondera por cuatro categorias y `usos.tipo_obra` admite vacio (el mapa de Caracol no
 la trae hasta P-05). Desde #120 el motor aborta la corrida (`ErrRepartoInvalido`, `case ""`): la
-alerta es el preaviso. Hoy la parada esta latente porque `MapaCaracol` tampoco mapea `canal_id` y
-`UsosDeCanal` no devuelve esas filas. Rellenar `tipo_obra` desde `obras.tipo` se midio y empeora:
-sin `rating` la corrida reparte cero con error nil. Los tres huecos (`tipo_obra`, `canal_id`,
-`rating`) van en su propia issue (texto en `issues-de-seguimiento.md`, B).
+alerta es el preaviso. Los tres huecos que esto destapo (`tipo_obra`, `canal_id`, `rating`) los
+cerro #165 (PR #169) juntos, que era la condicion: identificar copia `obras.tipo` cuando la fuente
+no trae el tipo, y la ingesta rechaza la fila sin `canal_id` y, en TV, suscripcion y hotel, la de
+`rating` cero. El detector
+queda para lo que eso no cubre: filas identificadas antes de #169, que no reescribio las
+existentes, y cualquier camino de identificacion que no copie el tipo (la asignacion manual de
+#175).
 
 Solo filas con obra identificada (las demas no llegan al motor) y solo modalidades cuyo motor lee
 el campo: `ponderacionTipo` solo la llama `puntosTV`, alcanzado por TV, suscripcion y hotel. Sin
@@ -93,7 +96,7 @@ Critica = dejarla sin resolver hace que las cifras salgan mal:
 `TipoReservaDeclaracionIncompleta` se llama asi por el contrato de #104; lo que mide es la
 RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 
-## D8. La migracion 00017
+## D8. La migracion 00020
 
 - Tabla propia y no `usos_rechazados`: sus FK son de fila de reporte, no tiene estado ni periodo
   (ADR 0021, punto 2).
@@ -108,5 +111,5 @@ RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 - UUID de la base como `id`: un id derivado del hallazgo seria una segunda clave natural.
 - Indices: bandeja por periodo, abiertas por periodo y tipo (lo que cuenta la compuerta), y por
   registro ofensor (bandeja de #39).
-- Historia del numero: nacio 00015, paso a 00016 al mergear #144 y a 00017 al mergear #80
-  (renumera el que mergea segundo).
+- Historia del numero: nacio 00015, paso a 00016 al mergear #144, a 00017 al mergear #80 y a
+  00020 al mergear #88, #168 y #173, que ocuparon 00017-00019 (renumera el que mergea segundo).

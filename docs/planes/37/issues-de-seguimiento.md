@@ -1,14 +1,20 @@
 ---
 issue: 37
-actualizado: 2026-09-25
+actualizado: 2026-09-27
 ---
 
-# Issues de seguimiento de #37 (texto listo, sin abrir)
+# Issues de seguimiento de #37
 
-La revision de la PR #158 pide abrir estas issues. Se dejan redactadas aqui para que quien tenga
-permiso las abra y enlace el numero desde la PR y desde el codigo que las cita.
+La revision de la PR #158 pidio abrir estas issues. Quedan aqui con su texto original y su
+estado, para que el codigo y la PR que las citan tengan donde remitir.
 
-## A. Accion correctiva al resolver una anomalia critica (ligada a #39)
+| Texto | Issue | Estado |
+| ----- | ----- | ------ |
+| A | #164 | Abierta |
+| B | #165 | Cerrada por la PR #169 |
+| — | #166 (limite TOCTOU entre evaluar y valorizar; ver la PR #171) | Abierta |
+
+## A. Accion correctiva al resolver una anomalia critica (ligada a #39) — #164
 
 **Titulo:** `[Backend] Resolver una anomalia critica tiene que corregir el dato, no solo cerrar la alerta (#39)`
 
@@ -36,11 +42,16 @@ permiso las abra y enlace el numero desde la PR y desde el codigo que las cita.
 >
 > Contexto: revision de rosvend a la PR #158, punto 4.
 
-## B. `tipo_obra`, `canal_id` y `rating` sin mapear en las fuentes reales
+## B. `tipo_obra`, `canal_id` y `rating` sin mapear en las fuentes reales — #165, cerrada
+
+Cerrada por la PR #169: identificar copia `obras.tipo` cuando la fuente no trae el tipo
+(`GuardarMatch` y el sembrador), y la ingesta rechaza la fila sin `canal_id` y, en TV,
+suscripcion y hotel, la de `rating` cero. Lo que queda para el detector `tipo_obra_sin_mapear`
+esta en `diseno.md`, D6.
 
 **Titulo:** `[Backend] tipo_obra/canal_id/rating vacios en los mapas de fuente: el motor aborta o pondera mal`
 
-**Cuerpo:**
+**Cuerpo (tal como se abrio):**
 
 > Hallazgo de #37 (detector `tipo_obra_sin_mapear`): el mapa de columnas de Caracol deja
 > `tipo_obra` vacio a proposito hasta que el cliente conteste P-05, y tampoco trae `canal_id` ni

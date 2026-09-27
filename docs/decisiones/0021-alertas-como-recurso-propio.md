@@ -205,9 +205,12 @@ adaptadores para que no puedan separarse.
   autocerrarlo con su foto vieja y asentar un `alerta.autocerrada` falso. El conteo de criticas
   que devuelve la pasada tambien se hace dentro del cerrojo.
 
-- El detector de `tipo_obra_sin_mapear` levanta **una alerta por fila**, no por obra. Sobre la
-  parrilla real de Caracol eso son tantas alertas como filas identificadas, porque su mapa de
-  columnas deja `tipo_obra` vacio a proposito hasta que el cliente conteste la pregunta P-05. Es la
+- El detector de `tipo_obra_sin_mapear` levanta **una alerta por fila**, no por obra. Desde #165
+  (PR #169) identificar una fila copia `obras.tipo` cuando la fuente no trae el tipo, asi que la
+  parrilla de Caracol ya no lo dispara por si sola. Queda para filas identificadas antes de ese
+  cambio -#169 no reescribio las existentes: en una base con historia, la primera evaluacion puede
+  levantar una alerta por cada fila identificada de TV, suscripcion u hotel- y para cualquier camino
+  de identificacion que no copie el tipo (la asignacion manual de #175 tendra que hacerlo). Es la
   cifra correcta — ninguna de esas filas se puede ponderar — pero conviene saberlo antes de mirar el
   tablero.
 

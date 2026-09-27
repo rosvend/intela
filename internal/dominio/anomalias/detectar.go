@@ -285,7 +285,7 @@ func aQuienReclamar(o Obra) string {
 // 6. tipo_obra sin mapear (RD 9.1.1)
 
 // tipoObraSinMapear alerta la fila identificada sin tipo_obra en una modalidad cuyo motor lo lee (D6).
-// TODO(#165): tipo_obra/canal_id/rating sin mapear en las fuentes reales; texto en docs/planes/37/issues-de-seguimiento.md (B).
+// Desde #165 identificar copia obras.tipo: esto caza lo identificado antes o por un camino que no lo copie.
 func tipoObraSinMapear(usos []Uso) []Hallazgo {
 	out := make([]Hallazgo, 0)
 	for _, u := range usos {
@@ -299,7 +299,7 @@ func tipoObraSinMapear(usos []Uso) []Hallazgo {
 			Tipo:    TipoTipoObraSinMapear,
 			RefTipo: RefUso,
 			RefID:   u.ID,
-			// Preaviso: hoy la fila puede no llegar al motor (sin canal_id), por eso "en cuanto entre".
+			// Preaviso: "en cuanto entre", porque la fila puede no estar en ninguna corrida todavia.
 			Detalle: fmt.Sprintf(
 				"el uso %q de la obra %q (fuente %q, modalidad %q) no trae tipo_obra: RD 9.1.1 pondera por cuatro categorias y el motor de %s aborta la corrida entera (ErrRepartoInvalido) en cuanto esta fila entre en una",
 				u.ID, u.ObraID, u.Fuente, u.Modalidad, u.Modalidad),
