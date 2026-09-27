@@ -23,6 +23,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
+| `/identificacion/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
 | `/reportes/*` | `administrador` |
