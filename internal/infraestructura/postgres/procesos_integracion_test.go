@@ -102,6 +102,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		Unidad:        s,
 		Bitacora:      s,
 		Reloj:         reloj.Sistema{},
+		Origen:        s,
 	}
 
 	p, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist")
@@ -290,6 +291,7 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 		Unidad:        s,
 		Bitacora:      s,
 		Reloj:         reloj.Sistema{},
+		Origen:        s,
 	}
 
 	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
@@ -350,7 +352,7 @@ func TestValorizarSinAsientoNoDejaResultado(t *testing.T) {
 
 	uc := aplicacion.Procesos{
 		Repo: s, Parametros: s, Bolsas: s, Declaraciones: s, Usos: s,
-		Resultados: s, Unidad: s, Bitacora: s, Reloj: reloj.Sistema{},
+		Resultados: s, Unidad: s, Bitacora: s, Reloj: reloj.Sistema{}, Origen: s,
 	}
 	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
 		t.Fatalf("iniciar proceso: %v", err)

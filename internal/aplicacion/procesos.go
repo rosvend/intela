@@ -40,6 +40,8 @@ type Procesos struct {
 	// Bitacora y Reloj asientan cada transicion en la misma unidad que la escribe (ADR 0006).
 	Bitacora BitacoraAuditoria
 	Reloj    Reloj
+	// Origen da el archivo exacto y la identificacion de cada uso que pondero.
+	Origen RepositorioOrigenDeUsos
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -177,7 +179,8 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
 		var asientos []pendiente
 		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
-			if err := uc.valorizar(ctx, p); err != nil {
+			var err error
+			if asientos, err = uc.valorizar(ctx, p); err != nil {
 				return nil, err
 			}
 		}
@@ -196,21 +199,21 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 // luego persiste el resultado. El snapshot ya esta congelado desde
 // [Procesos.IniciarProceso]: recalcular lee ESE snapshot, no vuelve a
 // resolverlo (ADR 0004, ADR 0005).
-func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) error {
+func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([]pendiente, error) {
 	bp, err := uc.Bolsas.BolsaPorID(ctx, p.BolsaID)
 	if err != nil {
-		return fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
+		return nil, fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
 	}
 	bolsa, err := recaudo.NuevaBolsa(bp.UsuarioID, bp.Periodo, bp.Circuito, bp.Bruto)
 	if err != nil {
-		return fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
+		return nil, fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
 	}
 
 	// ADR 0019: una corrida = una bolsa = un canal, y el usuario de recaudo de
 	// television ES el canal (ver [recaudo.Usuario]).
-	usos, _, err := (Reparto{Usos: uc.Usos}).UsosDeCanal(ctx, p.Periodo, bp.UsuarioID)
+	usos, filas, _, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
 	if err != nil {
-		return fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
+		return nil, fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
 	}
 
 	obraIDs := make([]string, 0, len(usos))
@@ -224,7 +227,7 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) er
 	}
 	vigentes, err := uc.Declaraciones.VigentesDeObras(ctx, obraIDs)
 	if err != nil {
-		return fmt.Errorf("declaraciones vigentes: %w", err)
+		return nil, fmt.Errorf("declaraciones vigentes: %w", err)
 	}
 	// Una obra ausente del mapa queda fuera de decls a proposito: el motor la
 	// trata como declaracion_incompleta (R-04) y retiene su importe completo,
@@ -238,17 +241,27 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) er
 
 	snap, err := uc.Parametros.SnapshotPorID(ctx, p.SnapshotID)
 	if err != nil {
-		return fmt.Errorf("snapshot %q: %w", p.SnapshotID, err)
+		return nil, fmt.Errorf("snapshot %q: %w", p.SnapshotID, err)
 	}
 
 	resultado, err := reparto.Reparto(bolsa, usos, snap, decls, reparto.Opciones{SnapshotID: p.SnapshotID})
 	if err != nil {
-		return fmt.Errorf("motor de reparto: %w", err)
+		return nil, fmt.Errorf("motor de reparto: %w", err)
 	}
 	if err := uc.Resultados.GuardarResultado(ctx, p.ID, resultado); err != nil {
-		return fmt.Errorf("guardar resultado: %w", err)
+		return nil, fmt.Errorf("guardar resultado: %w", err)
 	}
-	return nil
+	if uc.Origen == nil {
+		return nil, fmt.Errorf("procesos mal cableado: falta Origen")
+	}
+	origen, err := uc.Origen.OrigenDeUsos(ctx, idsDeUsos(filas))
+	if err != nil {
+		return nil, fmt.Errorf("origen de usos: %w", err)
+	}
+	return asientosDeValorizacion(entradaValorizacion{
+		proceso: p, bolsa: bp, snap: snap, resultado: resultado,
+		vigentes: vigentes, usos: filas, origen: origen,
+	})
 }
 
 // Firmar agrega una firma a la compuerta actual del proceso y la persiste.

@@ -714,5 +714,19 @@ func conBitacora(uc Procesos) Procesos {
 	if uc.Unidad == nil {
 		uc.Unidad = &unidadFalsa{}
 	}
+	if uc.Origen == nil {
+		uc.Origen = origenCompleto{}
+	}
 	return uc
+}
+
+// origenCompleto da un origen trivial a todo uso pedido.
+type origenCompleto struct{}
+
+func (origenCompleto) OrigenDeUsos(_ context.Context, ids []string) (map[string]OrigenDeUso, error) {
+	m := make(map[string]OrigenDeUso, len(ids))
+	for _, id := range ids {
+		m[id] = OrigenDeUso{UsoID: id, ReporteID: "rep", Escalon: "alias"}
+	}
+	return m, nil
 }
