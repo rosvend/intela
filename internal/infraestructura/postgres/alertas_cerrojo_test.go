@@ -8,12 +8,28 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
+// storeAparte abre otro pool sobre la misma base para la pasada concurrente. El de testhelp es de una
+// sola conexion (#88) y la retiene la pasada B: sin esto, A espera una conexion y no el cerrojo.
+func storeAparte(t *testing.T, s *Store) *Store {
+	t.Helper()
+	cfg := s.pool.Config()
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("pool aparte: %v", err)
+	}
+	// Registrado despues que el de testhelp, corre antes: el DROP DATABASE no convive con conexiones vivas.
+	t.Cleanup(pool.Close)
+	return Nuevo(pool)
+}
+
 // esperarCerrojoDeAvisoEnEspera espera a que alguna sesion quede bloqueada en un cerrojo de aviso.
-// Usa una conexion propia: el pool de pruebas es chico y las dos pasadas ya ocupan las suyas.
+// Usa una conexion propia: la del pool de testhelp la retiene la pasada B.
 func esperarCerrojoDeAvisoEnEspera(t *testing.T, s *Store) {
 	t.Helper()
 	conn, err := pgx.ConnectConfig(t.Context(), s.pool.Config().ConnConfig.Copy())
@@ -42,6 +58,7 @@ func TestEvaluacionesConcurrentesNoAutocierranUnaAlertaVigente(t *testing.T) {
 	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
 	ctx := t.Context()
 	anomalias := servicioDeAnomalias(s, time.Now())
+	pasadaA := servicioDeAnomalias(storeAparte(t, s), time.Now())
 
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
@@ -61,7 +78,7 @@ func TestEvaluacionesConcurrentesNoAutocierranUnaAlertaVigente(t *testing.T) {
 			return err
 		}
 		go func() {
-			r, err := anomalias.Evaluar(t.Context(), "2026-01", "")
+			r, err := pasadaA.Evaluar(t.Context(), "2026-01", "")
 			deA <- resultado{r, err}
 		}()
 		esperarCerrojoDeAvisoEnEspera(t, s)
@@ -131,6 +148,8 @@ func TestReaperturaTrasEsperarElCerrojoQuedaDespuesDelAutocierre(t *testing.T) {
 	ctx := t.Context()
 	anomalias := servicioDeAnomalias(s, time.Time{})
 	anomalias.Reloj = &relojQueAvanza{base: instanteAlertas}
+	pasadaA := servicioDeAnomalias(storeAparte(t, s), time.Time{})
+	pasadaA.Reloj = anomalias.Reloj // el mismo reloj: el orden de las lecturas es lo que se prueba
 
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
@@ -160,7 +179,7 @@ func TestReaperturaTrasEsperarElCerrojoQuedaDespuesDelAutocierre(t *testing.T) {
 			return err
 		}
 		go func() {
-			r, err := anomalias.Evaluar(t.Context(), "2026-01", "")
+			r, err := pasadaA.Evaluar(t.Context(), "2026-01", "")
 			deA <- resultado{r, err}
 		}()
 		esperarCerrojoDeAvisoEnEspera(t, s)
