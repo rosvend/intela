@@ -7,8 +7,21 @@ import (
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
-// corridaAsentada corre proc-1 de verdad hasta firmar Verificacion y devuelve su bitacora.
+// corridaAsentada es corridaSinAltas mas el alta asentada de cada obra: la cadena completa.
 func corridaAsentada(t *testing.T) *bitacoraFalsa {
+	t.Helper()
+	b := corridaSinAltas(t)
+	for _, o := range []struct{ id, titulo string }{{"obra-1", "La Primera"}, {"obra-2", "La Segunda"}} {
+		b.asientos = append(b.asientos, Asiento{
+			ID: "as-alta-" + o.id, Hecho: HechoObraRegistrada, RefTipo: RefObra, RefID: o.id,
+			Payload: []byte(`{"despues":{"titulo":"` + o.titulo + `","genero":"drama","anio":2020}}`),
+		})
+	}
+	return b
+}
+
+// corridaSinAltas corre proc-1 de verdad hasta firmar Verificacion; las obras no tienen alta asentada.
+func corridaSinAltas(t *testing.T) *bitacoraFalsa {
 	t.Helper()
 	e, _ := entornoValorizacion(t)
 	for range 4 {
@@ -77,8 +90,29 @@ func TestExplicarUnaLineaDeTitularRespondeLasSietePreguntas(t *testing.T) {
 	if x.Corrida.ProcesoID != "proc-1" || x.Corrida.Periodo != "2026-01" || x.Corrida.Circuito != "nacional" {
 		t.Fatalf("corrida = %+v", x.Corrida)
 	}
+	if x.Obra.Titulo != "La Primera" {
+		t.Fatalf("obra.titulo = %q, sale del alta asentada", x.Obra.Titulo)
+	}
 	if len(x.Faltantes) != 0 {
 		t.Fatalf("faltantes = %v, la cadena esta completa", x.Faltantes)
+	}
+}
+
+func TestExplicarNombraElAltaDeObraQueFalta(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaSinAltas(t)}
+
+	for _, ref := range []string{"proc-1:obra-1:titular-1", "proc-1:obra-2"} {
+		x, err := uc.Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if x.Obra.Titulo != "" {
+			t.Fatalf("%s: obra.titulo = %q sin alta asentada", ref, x.Obra.Titulo)
+		}
+		if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+			t.Fatalf("%s: faltantes = %v, tiene que nombrar %q", ref, x.Faltantes, HechoObraRegistrada)
+		}
 	}
 }
 

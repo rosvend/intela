@@ -22,6 +22,13 @@ func TestExplicarCifraDeUnaCorridaReal(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("asentar recaudo: %v", err)
 	}
+	if err := s.Asentar(ctx, aplicacion.Asiento{
+		Hecho: aplicacion.HechoObraRegistrada, RefTipo: aplicacion.RefObra, RefID: "obra-y",
+		Payload: []byte(`{"despues":{"titulo":"Obra Y","genero":"Drama","anio":2020}}`),
+		Cuando:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("asentar alta de obra: %v", err)
+	}
 
 	uc := aplicacion.Procesos{
 		Repo: s, Parametros: s, Bolsas: s, Declaraciones: s, Usos: s,
@@ -83,8 +90,8 @@ func TestExplicarCifraDeUnaCorridaReal(t *testing.T) {
 	if len(x.Firmas) != 2 || x.Firmas[0].ActorID != "actor-dist" || x.Firmas[1].ActorID != "actor-conta" {
 		t.Fatalf("7. firmas = %+v", x.Firmas)
 	}
-	if len(x.Faltantes) != 0 {
-		t.Fatalf("faltantes = %v", x.Faltantes)
+	if x.Obra.Titulo != "Obra Y" || len(x.Faltantes) != 0 {
+		t.Fatalf("obra.titulo = %q, faltantes = %v: la cadena esta completa", x.Obra.Titulo, x.Faltantes)
 	}
 
 	if _, err := (aplicacion.ExplicarCifra{Bitacora: s}).Explicar(ctx, auditor, "proc-y:obra-y:titular-otro"); !errors.Is(err, aplicacion.ErrNoEncontrado) {

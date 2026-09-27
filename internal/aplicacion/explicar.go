@@ -193,7 +193,7 @@ func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) 
 		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
 	}
 	x.Neto = cifra
-	x.Obra = obraLinaje(obraID, obra.Usos, deLaObra)
+	x.Obra, x.Faltantes = obraLinaje(obraID, obra.Usos, deLaObra, x.Faltantes)
 	x.Reportes = reportesDeLaObra(obra.Usos, corrida.Reportes)
 	x.Reporte = reportePrincipal(obra.Usos, x.Reportes)
 	x.Firmas = firmasDe(delProceso)
@@ -305,7 +305,8 @@ func menorPuntaje(a, b string) bool {
 	return errB != nil || pa.LessThan(pb)
 }
 
-func obraLinaje(obraID string, usos []IdentificacionDeUso, deLaObra []Asiento) ObraLinaje {
+// obraLinaje resume la obra; sin alta asentada el titulo queda vacio y el eslabon se nombra en faltantes.
+func obraLinaje(obraID string, usos []IdentificacionDeUso, deLaObra []Asiento, faltantes []string) (ObraLinaje, []string) {
 	o := ObraLinaje{ID: obraID}
 	if u, ok := usoMasDebil(usos); ok {
 		o.Escalon, o.Puntaje = u.Escalon, u.Puntaje
@@ -314,8 +315,9 @@ func obraLinaje(obraID string, usos []IdentificacionDeUso, deLaObra []Asiento) O
 	if ultimo(deLaObra, HechoObraCorregida, &cat, func() bool { return true }) ||
 		ultimo(deLaObra, HechoObraRegistrada, &cat, func() bool { return true }) {
 		o.Titulo = cat.Despues.Titulo
+		return o, faltantes
 	}
-	return o
+	return o, append(faltantes, HechoObraRegistrada)
 }
 
 func reportesDeLaObra(usos []IdentificacionDeUso, deLaCorrida []ReporteAsentado) []ReporteAsentado {
