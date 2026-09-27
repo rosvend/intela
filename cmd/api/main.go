@@ -181,6 +181,8 @@ func ejecutar(log *slog.Logger) error {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{

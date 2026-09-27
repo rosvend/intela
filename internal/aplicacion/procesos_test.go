@@ -198,9 +198,9 @@ func TestIniciarProcesoResuelveElSnapshotYAbreElProceso(t *testing.T) {
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1", snap: reparto.Snapshot{Reglamento: "IX"}}
 	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
-	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
+	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -241,9 +241,9 @@ func TestIniciarProcesoEsIdempotentePorID(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	params := &parametrosNormativosFalso{id: "snap-nuevo"}
-	uc := Procesos{Repo: repo, Parametros: params}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params})
 
-	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
+	v, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -264,9 +264,9 @@ func TestIniciarProcesoPropagaElErrorDeParametroAusente(t *testing.T) {
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{err: ErrParametroAusente}
 	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
-	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1")
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-1", "")
 	if !errors.Is(err, ErrParametroAusente) {
 		t.Fatalf("error = %v, se esperaba ErrParametroAusente", err)
 	}
@@ -281,9 +281,9 @@ func TestIniciarProcesoRechazaPeriodoInvalido(t *testing.T) {
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1"}
 	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
-	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-13", reparto.Nacional, "bolsa-1")
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-13", reparto.Nacional, "bolsa-1", "")
 	if !errors.Is(err, reparto.ErrProcesoInvalido) {
 		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un periodo mal formado es un dato mal formado, no un 500", err)
 	}
@@ -302,9 +302,9 @@ func TestIniciarProcesoRechazaSiElCircuitoNoCoincideConLaBolsa(t *testing.T) {
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1"}
 	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
-	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Internacional, "bolsa-1")
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Internacional, "bolsa-1", "")
 	if !errors.Is(err, ErrProcesoBolsaNoCoincide) {
 		t.Fatalf("error = %v, se esperaba ErrProcesoBolsaNoCoincide", err)
 	}
@@ -322,9 +322,9 @@ func TestIniciarProcesoRechazaSiElPeriodoNoCoincideConLaBolsa(t *testing.T) {
 	repo := nuevoRepositorioProcesosFalso()
 	params := &parametrosNormativosFalso{id: "snap-1"}
 	bolsas := &repositorioRecaudoFalso{bolsa: BolsaPersistida{ID: "bolsa-1", Periodo: "2026-01", Circuito: reparto.Nacional}}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
-	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-02", reparto.Nacional, "bolsa-1")
+	_, err := uc.IniciarProceso(t.Context(), "proc-1", "2026-02", reparto.Nacional, "bolsa-1", "")
 	if !errors.Is(err, ErrProcesoBolsaNoCoincide) {
 		t.Fatalf("error = %v, se esperaba ErrProcesoBolsaNoCoincide", err)
 	}
@@ -350,9 +350,9 @@ func TestIniciarProcesoIDReutilizadoConDatosDistintosEsConflicto(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	params := &parametrosNormativosFalso{id: "snap-nuevo"}
-	uc := Procesos{Repo: repo, Parametros: params}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params})
 
-	_, err = uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-2")
+	_, err = uc.IniciarProceso(t.Context(), "proc-1", "2026-01", reparto.Nacional, "bolsa-2", "")
 	if !errors.Is(err, ErrProcesoIDReutilizado) {
 		t.Fatalf("error = %v, se esperaba ErrProcesoIDReutilizado", err)
 	}
@@ -378,7 +378,7 @@ func TestFirmarCargaFirmaYPersisteElProceso(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	procesoNacionalEnVerificacionGuardado(t, repo)
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
 	v, err := uc.Firmar(t.Context(), "proc-1", reparto.RolDistribucion, "actor-dist")
 	if err != nil {
@@ -403,7 +403,7 @@ func TestFirmarPropagaElRechazoDelDominio(t *testing.T) {
 	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
 	_, err = uc.Firmar(t.Context(), "proc-1", reparto.RolDistribucion, "actor-dist")
 	if !errors.Is(err, reparto.ErrRepartoInvalido) {
@@ -419,9 +419,9 @@ func TestRechazarGatePersisteElRetroceso(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	procesoNacionalEnVerificacionGuardado(t, repo)
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
-	v, err := uc.RechazarGate(t.Context(), "proc-1", "faltan soportes")
+	v, err := uc.RechazarGate(t.Context(), "proc-1", "faltan soportes", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -458,12 +458,12 @@ func TestAvanzarEtapaRechazaConflictoDeConcurrencia(t *testing.T) {
 	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
 	// Otro actor rechaza la compuerta DESPUES de que este AvanzarEtapa ya
 	// leyo el proceso (revision 1) pero ANTES de que escriba: la revision en
 	// la base subio a 2 por debajo de sus pies.
-	if _, err := uc.RechazarGate(t.Context(), "proc-1", "faltan soportes"); err != nil {
+	if _, err := uc.RechazarGate(t.Context(), "proc-1", "faltan soportes", ""); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 
@@ -495,9 +495,9 @@ func TestAvanzarEtapaFueraDeValorizacionSoloPersisteLaEtapa(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
-	uc := Procesos{Repo: repo, Resultados: resultados}
+	uc := conBitacora(Procesos{Repo: repo, Resultados: resultados})
 
-	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 
-	uc := Procesos{
+	uc := conBitacora(Procesos{
 		Repo:       repo,
 		Parametros: &parametrosNormativosFalso{snap: snapshotDePrueba()},
 		Bolsas: &repositorioRecaudoFalso{bolsa: BolsaPersistida{
@@ -541,9 +541,9 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 		Usos:       &usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("z", reparto.TV, "")}},
 		Resultados: &repositorioResultadosFalso{},
 		Unidad:     &unidadFalsa{},
-	}
+	})
 
-	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
 	}
 	uc := Procesos{Repo: repo} // sin Unidad
 
-	_, err = uc.AvanzarEtapa(t.Context(), "proc-1")
+	_, err = uc.AvanzarEtapa(t.Context(), "proc-1", "")
 	if err == nil {
 		t.Fatal("se esperaba un error de cableado, no un panico ni una valorizacion sin atomicidad")
 	}
@@ -592,9 +592,9 @@ func TestAvanzarEtapaInternacionalNuncaValoriza(t *testing.T) {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	resultados := &repositorioResultadosFalso{}
-	uc := Procesos{Repo: repo, Resultados: resultados}
+	uc := conBitacora(Procesos{Repo: repo, Resultados: resultados})
 
-	v, err := uc.AvanzarEtapa(t.Context(), "proc-1")
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestAbrirCorridaDelPeriodoAbreUnProcesoPorBolsa(t *testing.T) {
 		{ID: "bolsa-2", UsuarioID: "w", Periodo: "2026-01", Circuito: recaudo.Internacional, Bruto: d("500")},
 	}}
 	params := &parametrosNormativosFalso{id: "snap-1"}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
 	if err := uc.AbrirCorridaDelPeriodo(t.Context(), "2026-01", 1); err != nil {
 		t.Fatalf("error inesperado: %v", err)
@@ -645,7 +645,7 @@ func TestAbrirCorridaDelPeriodoEsIdempotenteReintentandoElMismoTrabajo(t *testin
 		{ID: "bolsa-1", UsuarioID: "z", Periodo: "2026-01", Circuito: recaudo.Nacional, Bruto: d("1000")},
 	}}
 	params := &parametrosNormativosFalso{id: "snap-1"}
-	uc := Procesos{Repo: repo, Parametros: params, Bolsas: bolsas}
+	uc := conBitacora(Procesos{Repo: repo, Parametros: params, Bolsas: bolsas})
 
 	if err := uc.AbrirCorridaDelPeriodo(t.Context(), "2026-01", 1); err != nil {
 		t.Fatalf("error inesperado: %v", err)
@@ -676,7 +676,7 @@ func TestConsultarEstadoProcesoDelegaAlRepositorio(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	procesoNacionalEnVerificacionGuardado(t, repo)
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
 	v, err := uc.ConsultarEstadoProceso(t.Context(), "proc-1")
 	if err != nil {
@@ -692,7 +692,7 @@ func TestListarProcesosDelegaAlRepositorio(t *testing.T) {
 
 	repo := nuevoRepositorioProcesosFalso()
 	procesoNacionalEnVerificacionGuardado(t, repo)
-	uc := Procesos{Repo: repo}
+	uc := conBitacora(Procesos{Repo: repo})
 
 	lista, err := uc.ListarProcesos(t.Context())
 	if err != nil {
@@ -701,4 +701,18 @@ func TestListarProcesosDelegaAlRepositorio(t *testing.T) {
 	if len(lista) != 1 {
 		t.Fatalf("lista = %v, se esperaba un proceso", lista)
 	}
+}
+
+// conBitacora completa el cableado de asientos que toda transicion exige.
+func conBitacora(uc Procesos) Procesos {
+	if uc.Bitacora == nil {
+		uc.Bitacora = &bitacoraFalsa{}
+	}
+	if uc.Reloj == nil {
+		uc.Reloj = relojFijo{instante: instanteProceso}
+	}
+	if uc.Unidad == nil {
+		uc.Unidad = &unidadFalsa{}
+	}
+	return uc
 }

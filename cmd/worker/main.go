@@ -134,6 +134,8 @@ func manejadores(store *postgres.Store, log *slog.Logger) map[aplicacion.TipoTra
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
 	}
 	return map[aplicacion.TipoTrabajo]aplicacion.Manejador{
 		aplicacion.TrabajoResolverUsos:    pendiente("#37", log),

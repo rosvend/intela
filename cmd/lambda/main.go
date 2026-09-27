@@ -203,6 +203,8 @@ func construir() (http.Handler, error) {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
 	}
 
 	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
