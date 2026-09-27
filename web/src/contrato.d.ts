@@ -1870,8 +1870,10 @@ export interface components {
          *     - `reserva_declaracion_incompleta` — `R-04` / `RD 13.1.3`: lo declarado
          *       no suma 100 y se retiene el TOTAL de esa obra. Nombra la OBRA y el
          *       dinero. Es un estado valido del modelo, no un error.
-         *     - `tipo_obra_sin_mapear` — la obra no cae en ninguna de las cuatro
-         *       categorias de `RD 9.1.1`, asi que no hay ponderacion que aplicarle.
+         *     - `tipo_obra_sin_mapear` — un uso identificado llega sin `tipo_obra`
+         *       en una modalidad que pondera por el (TV, suscripcion, hotel): no cae
+         *       en ninguna de las cuatro categorias de `RD 9.1.1` y el motor aborta
+         *       la corrida. Nombra el USO: en el catalogo la obra si tiene tipo.
          * @enum {string}
          */
         TipoDeAnomalia: "oni" | "duplicado_archivo" | "duplicado_registro" | "titular_sin_porcentaje" | "reserva_declaracion_incompleta" | "tipo_obra_sin_mapear";
