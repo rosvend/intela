@@ -20,9 +20,16 @@
 -- tres se lo queda no lo decide esta PR -- aunque las tres tendran que subirlo
 -- por encima del 00005 por este mismo motivo.
 --
--- Para una migracion nueva el numero se toma SIEMPRE por encima del mayor que
--- exista, nunca en un hueco. El contenido no cambia con el renombre: solo
--- cambia la version que goose lee del nombre del archivo.
+-- Para una migracion nueva el numero es el primero libre por encima de la
+-- version APLICADA, y se reasigna al mergear. "Por encima del mayor que
+-- exista" solo protege a quien lo aplica y estrella a las PRs que quedan por
+-- debajo cuando esa PR mergea primero (detalle en la cabecera de 00007 y en
+-- #110). La etapa `Migration versions` de CI es la compuerta: falla si hay
+-- dos ficheros con el mismo numero, o si uno nuevo queda por debajo de lo
+-- que main ya tiene aplicado.
+--
+-- El contenido no cambia con el renombre: solo cambia la version que goose
+-- lee del nombre del archivo.
 --
 -- Una fila de reporte que no se puede normalizar NO se descarta: queda con su
 -- motivo, y no pondera nada. Es criterio de aceptacion de OE-1 y de KR-1, y es

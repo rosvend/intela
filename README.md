@@ -12,6 +12,7 @@ la sociedad de gestion colectiva de los escritores audiovisuales de Colombia.
 </h3>
 
 <p align="center">
+  <a href="./docs/QUICKSTART.md"><b>Quickstart</b></a> ·
   <a href="./docs/ARRANQUE.md"><b>Arranque</b></a> ·
   <a href="./docs/architecture/"><b>Arquitectura</b></a> ·
   <a href="./docs/dominio/"><b>Dominio</b></a> ·
@@ -58,29 +59,16 @@ completo de tres paginas.
 ### La aplicacion
 
 ```bash
-docker compose --profile demo up --build   # un comando: API, worker, scheduler, Postgres,
-                                           # el tablero, las migraciones y el dataset de demo
-deploy/smoke.sh                            # comprueba que arranca y sirve, o dice por que no
-make verificar                             # tidy, build, vet, gofmt y test — lo que corre CI
+docker compose --profile demo up --build   # todo lo anterior, ya migrado y sembrado
+deploy/smoke.sh                            # comprueba que sirve — lo mismo que corre CI
+make verificar                             # tidy, build, vet, gofmt y test — tambien lo de CI
 ```
 
-Tablero en <http://localhost>, entrando como `admin@redes.co` / `admin-local`. Sin `--profile demo`
-el sistema levanta migrado pero **vacio**.
+El perfil `demo` es lo que anade la siembra: sin el, la base queda migrada y vacia
+y el tablero pinta cero obras. Entrar con `admin@redes.co` / `admin-local`.
 
-Si algun puerto esta ocupado, el compose publica **tres** y los tres se mueven por entorno, sin
-editar ficheros. Mover solo el de nginx no basta: el 8080 de la API choca igual de seguido, y
-cuando choca los contenedores se quedan en `Created` sin decir por que.
-
-```bash
-INTELA_PUERTO_HTTP=8088 \
-INTELA_PUERTO_API=18080 \
-INTELA_PUERTO_PG=55432 \
-docker compose --profile demo up --build
-```
-
-→ [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para el quickstart completo, las variables de entorno y
-que datos son reales y cuales sinteticos. El detalle de los puertos esta en
-[Si un puerto esta ocupado](docs/ARRANQUE.md#si-un-puerto-esta-ocupado).
+→ [`docs/QUICKSTART.md`](docs/QUICKSTART.md) para prerequisitos, URLs y como parar y limpiar.
+→ [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para variables de entorno y datos de prueba.
 
 Los hooks locales viven en [`lefthook.yml`](lefthook.yml) y corren un subconjunto de lo mismo antes
 del commit y del push:

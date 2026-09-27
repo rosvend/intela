@@ -9,14 +9,18 @@
 // La mecanica es la misma: internal/infraestructura/migraciones. Este fichero
 // traduce un evento de invocacion en una orden de goose.
 //
-// Y una que NO es de goose: `primer-administrador`. Esta aqui porque el
-// problema que resuelve es el mismo -- hay que ejecutar algo DENTRO de la VPC
-// contra una base sin endpoint publico -- y esta es la unica funcion que ya
-// vive ahi con DATABASE_URL. Levantar una Lambda propia para una operacion que
-// se corre una vez en la vida de una instalacion es infraestructura que hay
-// que mantener para siempre. La deuda que si se asume: este binario ya no es
-// solo goose, y si aparece una segunda operacion de este tipo conviene sacarlas
-// las dos a su propia funcion.
+// Y tres que NO son de goose: `primer-administrador`, `sembrar-dataset` y
+// `estado-datos`. Estan aqui porque el problema que resuelven es el mismo --
+// hay que ejecutar algo DENTRO de la VPC contra una base sin endpoint publico
+// -- y esta es la unica funcion que ya vive ahi con DATABASE_URL. Levantar una
+// Lambda propia para cada operacion de un solo uso es infraestructura que hay
+// que mantener para siempre.
+//
+// Deuda (ADR 0017): con la tercera orden ajena a goose, este binario ya no es
+// solo migraciones. La siguiente de este tipo tiene que sacar las cuatro a su
+// propia funcion; `estado-datos` se acepto igual, sin conteo, porque no
+// escribe nada -- es puro diagnostico de solo lectura para verificar el
+// dataset antes de una demo, ver #153.
 //
 // Lo invoca Terraform (aws_lambda_invocation en modules/migrations), no el
 // workflow, para que el orden migrar-antes-de-servir quede en el grafo de
@@ -39,7 +43,9 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
+	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
+	"github.com/rosvend/intela/internal/infraestructura/semilla"
 )
 
 // ordenesPermitidas es lo que esta funcion acepta hacer. Todo lo demas se
@@ -62,6 +68,29 @@ var ordenesPermitidas = []string{"up", "up-by-one", "status", "version"}
 // de ordenesPermitidas: no es una orden de goose y no debe llegar a Aplicar.
 const ordenPrimerAdministrador = "primer-administrador"
 
+// ordenSembrarDataset carga el dataset sintetico completo (cmd/seed /
+// semilla.Cargar): titulares, obras, declaraciones, bolsas, reportes, usos
+// identificados y parametros. Misma razon que primer-administrador: la base no
+// tiene endpoint publico y cmd/seed no viaja en la imagen de la API.
+//
+// Alias: `sembrar-titulares-demo` sigue aceptandose y hace lo mismo -- el
+// nombre viejo del PR que solo sembraba el padron.
+const ordenSembrarDataset = "sembrar-dataset"
+
+const ordenSembrarTitularesDemo = "sembrar-titulares-demo" // alias de sembrar-dataset
+
+// ordenEstadoDatos cuenta filas de las tablas que sembrar-dataset toca. No
+// escribe nada: es para saber que hay en la base antes de decidir si
+// sembrar-dataset es seguro (por ejemplo, con obras ajenas al dataset ya
+// cargadas).
+const ordenEstadoDatos = "estado-datos"
+
+// dirObjetosLambda es donde caen los bytes de los reportes del seed. /tmp es lo
+// unico escribible en provided.al2023; la API no los relee desde aqui (solo el
+// metadato en Postgres). Cuando exista el adaptador S3, se cablea igual que en
+// cmd/lambda.
+const dirObjetosLambda = "/tmp/objetos"
+
 // peticion es lo que manda Terraform: {"orden":"up"}.
 //
 // Los cuatro campos de abajo solo los usa `primer-administrador`, y llegan en
@@ -72,6 +101,13 @@ const ordenPrimerAdministrador = "primer-administrador"
 // Hash y no la clave en claro. La calcula quien invoca, en su terminal, asi que
 // la credencial no viaja en el evento, no queda en el registro de la plataforma
 // y este proceso no la ve nunca.
+//
+// Reset solo lo usa `sembrar-dataset`: equivale a SEED_RESET=true. Se niega si
+// hay asientos o datos que no son del dataset (mismas guardas que cmd/seed).
+//
+// Aditivo tambien lo usa solo `sembrar-dataset`: escribe sin mirar el estado
+// previo, para una base con datos ajenos al dataset que hay que conservar
+// (#155). No es compatible con Reset: si los dos vienen en true, gana Reset.
 type peticion struct {
 	Orden string `json:"orden"`
 
@@ -79,11 +115,17 @@ type peticion struct {
 	Email  string `json:"email,omitempty"`
 	Nombre string `json:"nombre,omitempty"`
 	Hash   string `json:"hash,omitempty"`
+
+	Reset   bool `json:"reset,omitempty"`
+	Aditivo bool `json:"aditivo,omitempty"`
 }
 
 type respuesta struct {
 	Orden  string `json:"orden"`
 	Estado string `json:"estado"`
+
+	// Conteos solo lo llena estado-datos.
+	Conteos map[string]int `json:"conteos,omitempty"`
 }
 
 func main() {
@@ -99,6 +141,12 @@ func atender(log *slog.Logger) func(context.Context, peticion) (respuesta, error
 
 		if orden == ordenPrimerAdministrador {
 			return provisionar(ctx, p, log)
+		}
+		if orden == ordenSembrarDataset || orden == ordenSembrarTitularesDemo {
+			return sembrarDataset(ctx, p, log)
+		}
+		if orden == ordenEstadoDatos {
+			return estadoDatos(ctx, log)
 		}
 
 		// Antes de conectar: una orden rechazada no debe llegar a tocar la base
@@ -176,4 +224,100 @@ func provisionar(ctx context.Context, p peticion, log *slog.Logger) (respuesta, 
 	// Sin el email ni el hash en el registro: basta con QUE cuenta quedo.
 	log.Info("primer administrador creado", slog.String("id", u.ID), slog.String("rol", string(u.Rol)))
 	return respuesta{Orden: ordenPrimerAdministrador, Estado: "creado"}, nil
+}
+
+// sembrarDataset persiste el dataset sintetico via semilla.Cargar.
+//
+// Idempotente sin reset: si el juego ya esta completo, responde "ya sembrado".
+// Con reset:true aplica las mismas guardas que SEED_RESET en cmd/seed.
+//
+// El admin provisionado se conserva (ON CONFLICT en usuarios). Las otras
+// cuentas demo (distribucion, contabilidad, auditor, titular) se crean con las
+// SEED_CLAVE_* del entorno, defaults de docs/ARRANQUE.md.
+//
+// Con aditivo:true salta la comprobacion de estado y escribe encima de lo que
+// haya (semilla.CargarAditivo): pensado para una base con obras ajenas al
+// dataset que sembrar-dataset (con o sin reset) rechazaria (#155).
+func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuesta, error) {
+	ctx, cancelar := context.WithTimeout(ctx,
+		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
+	defer cancelar()
+
+	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	if err != nil {
+		log.Error("abrir la base", slog.Any("error", err))
+		return respuesta{}, err
+	}
+	defer store.CerrarPool()
+
+	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosLambda)}
+	claves := semilla.Claves{
+		Admin:        config.Cadena("SEED_CLAVE_ADMIN", "admin-local"),
+		Distribucion: config.Cadena("SEED_CLAVE_DISTRIBUCION", "distribucion-local"),
+		Contabilidad: config.Cadena("SEED_CLAVE_CONTABILIDAD", "contabilidad-local"),
+		Auditor:      config.Cadena("SEED_CLAVE_AUDITOR", "auditor-local"),
+		Titular:      config.Cadena("SEED_CLAVE_TITULAR", "ana-local"),
+	}
+
+	if p.Aditivo {
+		if err := semilla.CargarAditivo(ctx, store, almacen, cripto.Bcrypt{}, claves, log); err != nil {
+			log.Error("semilla aditiva fallida", slog.Any("error", err))
+			return respuesta{}, err
+		}
+		log.Info("dataset sintetico cargado de forma aditiva")
+		return respuesta{Orden: ordenSembrarDataset, Estado: "cargado"}, nil
+	}
+
+	esperado := len(semilla.Construir().Obras)
+	var obrasAntes int
+	if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&obrasAntes); err != nil {
+		log.Error("contar obras", slog.Any("error", err))
+		return respuesta{}, fmt.Errorf("contar obras: %w", err)
+	}
+
+	if err := semilla.Cargar(ctx, store, almacen, cripto.Bcrypt{}, claves, p.Reset, log); err != nil {
+		log.Error("semilla fallida", slog.Any("error", err))
+		return respuesta{}, err
+	}
+
+	estado := "cargado"
+	if !p.Reset && obrasAntes == esperado {
+		estado = "ya sembrado"
+	}
+	log.Info("dataset sintetico", slog.String("estado", estado), slog.Bool("reset", p.Reset))
+	return respuesta{Orden: ordenSembrarDataset, Estado: estado}, nil
+}
+
+// tablasEstadoDatos son las que sembrar-dataset toca (ver semilla.Cargar).
+var tablasEstadoDatos = []string{"titulares", "obras", "declaraciones", "usuarios", "reportes", "usos"}
+
+// estadoDatos cuenta filas, sin escribir nada. Un SELECT COUNT por tabla en
+// vez de un JOIN: el proposito es diagnostico manual antes de decidir si
+// sembrar-dataset (con o sin reset) es seguro, no un endpoint de negocio.
+func estadoDatos(ctx context.Context, log *slog.Logger) (respuesta, error) {
+	ctx, cancelar := context.WithTimeout(ctx,
+		config.Duracion("MIGRATE_TIMEOUT", 4*time.Minute))
+	defer cancelar()
+
+	store, err := postgres.Abrir(ctx, config.Cadena("DATABASE_URL", ""))
+	if err != nil {
+		log.Error("abrir la base", slog.Any("error", err))
+		return respuesta{}, err
+	}
+	defer store.CerrarPool()
+
+	conteos := make(map[string]int, len(tablasEstadoDatos))
+	for _, tabla := range tablasEstadoDatos {
+		var n int
+		// Nombres fijos de tablasEstadoDatos, no entrada del evento: no hay
+		// interpolacion de datos externos en el SQL.
+		if err := store.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM `+tabla).Scan(&n); err != nil {
+			log.Error("contar tabla", slog.String("tabla", tabla), slog.Any("error", err))
+			return respuesta{}, fmt.Errorf("contar %s: %w", tabla, err)
+		}
+		conteos[tabla] = n
+	}
+
+	log.Info("estado de datos", slog.Any("conteos", conteos))
+	return respuesta{Orden: ordenEstadoDatos, Estado: "contado", Conteos: conteos}, nil
 }

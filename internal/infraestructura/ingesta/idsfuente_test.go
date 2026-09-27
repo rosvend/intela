@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
@@ -100,6 +103,9 @@ func TestMapaNetflixProduceUnParQueLaCascadaSondeaPorShowID(t *testing.T) {
 	n, err := (aplicacion.ResolverUsos{
 		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
 		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
 	}).ResolverUsos(t.Context(), "2018")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -109,6 +115,98 @@ func TestMapaNetflixProduceUnParQueLaCascadaSondeaPorShowID(t *testing.T) {
 	}
 	if len(ids.sondeos) != 1 || ids.sondeos[0] != "netflix|show_id|80141259" {
 		t.Fatalf("sondeos de alias = %v, se esperaba [netflix|show_id|80141259]", ids.sondeos)
+	}
+}
+
+// Gemelo de Caracol: lo que persiste la ingesta es lo que sondea la cascada.
+// Cierra el circulo entre MapaCaracol, la grafia id_ficha del contrato y el
+// par canonico de la fuente en parCanonicoPorFuente. Sin id_ficha en el texto
+// persistido, Alias se llamaria con otra clave y el verde no detectaria el
+// desacuerdo.
+func TestMapaCaracolProduceUnParQueLaCascadaSondeaPorIDFicha(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCaracol().Aplicar(Tabla{
+		Columnas: []string{"Titulo", "ID_Ficha", "Programa ID_IMDB", "Duracion_total", "Fecha", "Hora"},
+		Filas:    [][]string{{"Rebelde", "55174", "tt0100001", "45", "20241231", "0:00"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if got := aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDFicha]; got != "55174" {
+		t.Fatalf("id_ficha persistido = %q", got)
+	}
+
+	uso := usos[0]
+	uso.ID = "u-1"
+	uso.Fuente = FuenteCaracol
+	uso.Escalon = identificacion.EscalonPendiente
+	uso.Modalidad = reparto.TV
+
+	ids := &identificacionMemoria{
+		alias: map[string]string{"caracol|id_ficha|55174": "obra-7"},
+	}
+	n, err := (aplicacion.ResolverUsos{
+		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
+		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
+	}).ResolverUsos(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("resueltas = %d, se esperaba 1", n)
+	}
+	if len(ids.sondeos) != 1 || ids.sondeos[0] != "caracol|id_ficha|55174" {
+		t.Fatalf("sondeos de alias = %v, se esperaba [caracol|id_ficha|55174]", ids.sondeos)
+	}
+}
+
+// Gemelo de cine: lo que persiste la ingesta es lo que sondea la cascada.
+// Cierra el circulo entre MapaCine, la grafia id_pelicula del contrato, la
+// fuente "cine" del adaptador y el par canonico en parCanonicoPorFuente. Es
+// ademas la prueba de cine a traves de la cascada que pide la entrada de
+// "cine" en el mapa: sin ella, el fallback alfabetico pasaria por canonico.
+func TestMapaCineProduceUnParQueLaCascadaSondeaPorIDPelicula(t *testing.T) {
+	t.Parallel()
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "id", "taquilla"},
+		Filas:    [][]string{{"Pelicula X", "PX-1", "10000"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if got := aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDPelicula]; got != "PX-1" {
+		t.Fatalf("id_pelicula persistido = %q", got)
+	}
+
+	uso := usos[0]
+	uso.ID = "u-1"
+	uso.Fuente = FuenteCine
+	uso.Escalon = identificacion.EscalonPendiente
+	uso.Modalidad = reparto.Cine
+
+	ids := &identificacionMemoria{
+		alias: map[string]string{"cine|id_pelicula|PX-1": "obra-9"},
+	}
+	n, err := (aplicacion.ResolverUsos{
+		Usos:           usosDelPeriodo{usos: []aplicacion.UsoPersistido{uso}},
+		Identificacion: ids,
+		Similitud:      sinSimilitud{},
+		Parametros:     umbralesFijos{},
+		Unidad:         unidadDirecta{},
+	}).ResolverUsos(t.Context(), "2026-01")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("resueltas = %d, se esperaba 1", n)
+	}
+	if len(ids.sondeos) != 1 || ids.sondeos[0] != "cine|id_pelicula|PX-1" {
+		t.Fatalf("sondeos de alias = %v, se esperaba [cine|id_pelicula|PX-1]", ids.sondeos)
 	}
 }
 
@@ -158,7 +256,13 @@ func (s usosDelPeriodo) UsoPorID(context.Context, string) (aplicacion.UsoPersist
 func (s usosDelPeriodo) UsosDePeriodo(context.Context, string) ([]aplicacion.UsoPersistido, error) {
 	return s.usos, nil
 }
-func (s usosDelPeriodo) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
+func (s usosDelPeriodo) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
+	return nil, nil
+}
+func (s usosDelPeriodo) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
+func (s usosDelPeriodo) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
 
@@ -183,4 +287,34 @@ func (i *identificacionMemoria) ObraPorIDGlobal(context.Context, string, string,
 }
 func (i *identificacionMemoria) GuardarMatch(context.Context, string, string, identificacion.Resultado) error {
 	return nil
+}
+func (i *identificacionMemoria) GuardarCandidatos(context.Context, string, []identificacion.Candidato) error {
+	return nil
+}
+
+// El escalon 3 no pinta nada en estas gemelas: un motor mudo y unos umbrales
+// cualesquiera bastan para que la cascada corra entera.
+type sinSimilitud struct{}
+
+func (sinSimilitud) Candidatos(context.Context, string, decimal.Decimal) ([]identificacion.Candidato, error) {
+	return nil, nil
+}
+
+// unidadDirecta corre fn sin transaccion: estas pruebas miran que se sondea, no
+// como se confirma.
+type unidadDirecta struct{}
+
+func (unidadDirecta) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+type umbralesFijos struct{}
+
+func (umbralesFijos) ParametroVigente(_ context.Context, clave string, _ time.Time) (decimal.Decimal, error) {
+	switch clave {
+	case aplicacion.ClaveUmbralMatch:
+		return decimal.RequireFromString("0.60"), nil
+	default:
+		return decimal.RequireFromString("0.45"), nil
+	}
 }

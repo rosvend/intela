@@ -25,6 +25,10 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/obras/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+| `/reportes/*` | `administrador` |
+| `GET /procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
+| `POST /procesos`, `POST /procesos/{id}/avanzar` | `administrador` |
+| `POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar` | `distribucion`, `contabilidad` |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -46,6 +50,23 @@ sociedad. Abrirlo a `auditor` —que tiene lectura de todo— o recortarlo para
 `titular` con `SoloPropiasObras` (`OE-6`) son decisiones de los issues que
 traigan esos paneles.
 
+`/reportes/*` es la ingesta de reportes de uso —subida, listado de cargas y el
+log de rechazos de cada carga— y pide `administrador` por lo mismo que el
+catalogo: una entrega pondera el reparto de un periodo entero, y el listado
+deja ver de que fuentes vive la sociedad. La pantalla de ingesta (#29) es solo
+de administrador, y lo que la cierra de verdad es este grupo del servidor, no
+el menu del cliente.
+
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
 `TitularID`, no el id de usuario.
+
+`/procesos/*` es el flujo de aprobaciones de `RD 13.5` (#34), y se parte en
+tres grupos por la misma razon que `/recaudo` y `/bolsas`: `administrador`
+OPERA el pipeline -abre una corrida y avanza sus etapas-, y `distribucion`/
+`contabilidad` son las dos firmas de sus compuertas, no quien lo opera. El
+rol con el que se firma sale de la SESION del actor, nunca de un campo del
+cuerpo: si el cliente pudiera elegirlo, un actor de `contabilidad` podria
+firmar "como `distribucion`" y la doble firma dejaria de separar a dos
+personas. La lectura la comparten los cuatro roles del modulo, `auditor`
+incluido, porque leer en que etapa esta una corrida no mueve nada.

@@ -125,11 +125,17 @@ export default function Login() {
           <h1 className="acceso-titulo">
             {creando ? "Crear una cuenta" : "Iniciar sesión"}
           </h1>
-          <p className="acceso-entradilla">
-            {creando
-              ? "El alta de titulares de REDES SGC."
-              : "Reconocimiento de obras y reparto de derechos para los escritores audiovisuales de REDES SGC."}
-          </p>
+          {/*
+            La entradilla solo acompana al alta, donde dice de que es el
+            formulario. En "Iniciar sesion" se quito: quien llega aqui ya sabe
+            a que sistema entra -lo dicen el logo y el titulo-, y la frase se
+            leia como relleno entre los dos.
+          */}
+          {creando && (
+            <p className="acceso-entradilla">
+              El alta de titulares de REDES SGC.
+            </p>
+          )}
 
           {/*
             Se llego aqui tras un "Salir" en el que el servidor no confirmo la

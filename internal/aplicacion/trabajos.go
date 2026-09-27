@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,14 +41,16 @@ var tiposConocidos = map[TipoTrabajo]bool{
 	TrabajoEjecutarReparto: true,
 }
 
-// periodoValido es el mismo patron que el CHECK de las tablas `reportes`,
-// `bolsas`, `procesos` y `cola_trabajos`: un ano, o un ano y un mes.
+// El periodo de la clave lo juzga el dominio, no una copia de aqui: la regla
+// -un ano, o un ano y un mes que existe- es `recaudo.PeriodoValido`, y con un
+// patron propio estas dos capas derivan. La copia que habia en este paquete
+// usaba `[0-9]{2}` para el mes y por tanto admitia `2026-00` y `2026-13`, justo
+// en el camino que escribe.
 //
-// Duplicado a proposito en las dos orillas. La base lo comprueba porque una
-// fila mal formada no se puede permitir aunque la escriba otro cliente; el
-// nucleo lo comprueba porque rechazar un periodo invalido cuando se encola es
-// mucho mas barato que descubrirlo cuando la insercion revienta.
-var periodoValido = regexp.MustCompile(`^[0-9]{4}(-[0-9]{2})?$`)
+// La base lo comprueba ademas por su cuenta (el CHECK de `cola_trabajos`),
+// porque una fila mal formada no se puede permitir aunque la escriba otro
+// cliente; el nucleo lo comprueba porque rechazar un periodo invalido cuando se
+// encola es mucho mas barato que descubrirlo cuando la insercion revienta.
 
 // ClaveTrabajo identifica un trabajo por lo que significa, no por su fila.
 //
@@ -83,8 +86,8 @@ func (c ClaveTrabajo) Valida() error {
 	if !tiposConocidos[c.Tipo] {
 		return fmt.Errorf("tipo de trabajo desconocido %q", c.Tipo)
 	}
-	if !periodoValido.MatchString(c.Periodo) {
-		return fmt.Errorf("periodo %q: se espera AAAA o AAAA-MM", c.Periodo)
+	if !recaudo.PeriodoValido(c.Periodo) {
+		return fmt.Errorf("periodo %q: se espera AAAA o AAAA-MM con un mes entre 01 y 12", c.Periodo)
 	}
 	if c.Corrida < 1 {
 		return fmt.Errorf("corrida %d: la primera corrida de un periodo es la 1", c.Corrida)

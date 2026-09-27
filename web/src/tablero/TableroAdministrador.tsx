@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { PlusIcon } from "@heroicons/react/24/outline";
 import { puedeVer } from "../navegacion";
 import { Usuario } from "../sesion";
 import { Tarjeta } from "./Tarjeta";
@@ -23,6 +24,7 @@ export default function TableroAdministrador({
         </div>
         {puedeVer(usuario.rol, "/ingesta") && (
           <Link className="boton-primario" to="/ingesta">
+            <PlusIcon className="boton-primario-icono" aria-hidden="true" />
             Nueva ingesta
           </Link>
         )}

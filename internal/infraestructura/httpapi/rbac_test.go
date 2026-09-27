@@ -10,13 +10,21 @@ import (
 )
 
 // La tabla que pide el issue: (rol, ruta) -> codigo, a traves del chi
-// router, con el doble de sesiones. Los 204 son la superficie vacia; lo
-// que se comprueba es el middleware, no el payload.
+// router, con el doble de sesiones. Lo que se comprueba es el middleware, no
+// el payload: por eso el harness cablea una auditoria falsa y lo permitido
+// responde 200 con lista vacia. Los 204 que quedan (/admin/pipeline) son la
+// superficie vacia.
 func TestMatrizRolRuta(t *testing.T) {
-	rutas := []string{"/admin/pipeline", "/auditoria/asientos"}
+	rutas := []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1"}
 	permitido := map[string][]aplicacion.Rol{
-		"/admin/pipeline":     {aplicacion.RolAdministrador},
-		"/auditoria/asientos": {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+		"/admin/pipeline":        {aplicacion.RolAdministrador},
+		"/auditoria/asientos":    {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+		"/auditoria/obra/obra-1": {aplicacion.RolAuditor, aplicacion.RolAdministrador},
+	}
+	esperadoPermitido := map[string]int{
+		"/admin/pipeline":        http.StatusNoContent,
+		"/auditoria/asientos":    http.StatusOK,
+		"/auditoria/obra/obra-1": http.StatusOK,
 	}
 	roles := []aplicacion.Rol{
 		aplicacion.RolAdministrador,
@@ -28,12 +36,12 @@ func TestMatrizRolRuta(t *testing.T) {
 
 	for _, rol := range roles {
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol}}
-		h := servidor(t, auth)
+		h := Nueva(Casos{Auth: auth, Auditoria: &auditoriaFalsa{}}, Opciones{}).Router()
 		for _, ruta := range rutas {
 			codigo := http.StatusForbidden
 			for _, p := range permitido[ruta] {
 				if p == rol {
-					codigo = http.StatusNoContent
+					codigo = esperadoPermitido[ruta]
 					break
 				}
 			}
@@ -53,7 +61,7 @@ func TestMatrizRolRuta(t *testing.T) {
 func TestRutaConRolSinSesionEs401(t *testing.T) {
 	h := servidor(t, &autenticacionFalsa{})
 
-	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos"} {
+	for _, ruta := range []string{"/admin/pipeline", "/auditoria/asientos", "/auditoria/obra/obra-1"} {
 		t.Run(ruta, func(t *testing.T) {
 			rec := pedir(t, h, http.MethodGet, ruta, "", "")
 			if rec.Code != http.StatusUnauthorized {

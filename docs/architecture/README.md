@@ -247,6 +247,7 @@ Cargar solo lo que haga falta para la tarea.
 | [`roles.md`](roles.md) | Matriz `aplicacion.Rol` → rol del reglamento y capacidades. **Leer antes de anadir una ruta** |
 | [`glosario.md`](../dominio/glosario.md) | Lenguaje ubicuo: obra, titular, ONI, recaudo, reparto, IPI, IDA |
 | [`reglas-negocio.md`](../dominio/reglas-negocio.md) | Registro de reglas con cita al reglamento. **Empezar aqui** |
+| [`matriz-reglas.md`](../dominio/matriz-reglas.md) | Matriz regla ↔ artículo ↔ módulo ↔ prueba (Objetivo 12) |
 | [`formulas.md`](../dominio/formulas.md) | Modelos de calculo por tipo de usuario (TV, cine, OTT, hoteles) |
 | [`identificadores.md`](../dominio/identificadores.md) | Por que los IDs de fuente no cruzan y como resolver obras |
 | [`fuentes-datos.md`](../dominio/fuentes-datos.md) | Perfil real de los archivos del cliente y que falta pedir |

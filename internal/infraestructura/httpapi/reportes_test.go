@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,15 +27,21 @@ import (
 // hace que estas pruebas comprueben el ADAPTADOR -codigos, cabeceras y forma
 // del JSON- y no la boveda ni la base.
 type ingestaFalsa struct {
-	rec    aplicacion.Recepcion
-	cargas []aplicacion.CargaReporte
-	err    error
+	rec      aplicacion.Recepcion
+	cargas   []aplicacion.CargaReporte
+	rechazos []aplicacion.UsoPersistido
+	err      error
 
 	fuente            string
 	formato           string
 	periodo           string
 	datos             []byte
 	periodoConsultado string
+	cargaConsultada   string
+	// La pagina que llego hasta el nucleo. Se registra porque el adaptador es
+	// quien la interpreta -ausente = defecto, fuera de rango = 400- y es lo unico
+	// que estas pruebas pueden comprobar sin base.
+	paginacionConsultada aplicacion.Paginacion
 }
 
 func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error) {
@@ -36,9 +49,20 @@ func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, period
 	return i.rec, i.err
 }
 
-func (i *ingestaFalsa) Cargas(_ context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
+func (i *ingestaFalsa) Cargas(_ context.Context, periodo string, pag aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	i.periodoConsultado = periodo
+	i.paginacionConsultada = pag
 	return i.cargas, i.err
+}
+
+func (i *ingestaFalsa) RechazosDeCarga(_ context.Context, id string, pag aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
+	i.cargaConsultada = id
+	i.paginacionConsultada = pag
+	return i.rechazos, i.err
+}
+
+func (i *ingestaFalsa) DeducirFormato(nombre string) string {
+	return aplicacion.FormatoDeNombre(nombre)
 }
 
 func servidorConIngesta(t *testing.T, ing Ingesta) http.Handler {
@@ -101,16 +125,18 @@ func recepcionDePrueba() aplicacion.Recepcion {
 // Autorizacion
 
 func TestLosReportesExigenElRolAdministrador(t *testing.T) {
-	// Una entrega pondera el reparto de un periodo entero. Las dos rutas van en
-	// el mismo grupo de rol que el catalogo.
+	// Una entrega pondera el reparto de un periodo entero. Las tres rutas van en
+	// el mismo grupo de rol que el catalogo; la de rechazos incluida, que es la
+	// pantalla de ingesta de #29, solo de administrador.
 	for _, rol := range []aplicacion.Rol{
 		aplicacion.RolDistribucion,
 		aplicacion.RolContabilidad,
 		aplicacion.RolAuditor,
 		aplicacion.RolTitular,
 	} {
+		ing := &ingestaFalsa{}
 		auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: rol}}
-		h := Nueva(Casos{Auth: auth, Ingesta: &ingestaFalsa{}}, Opciones{}).Router()
+		h := Nueva(Casos{Auth: auth, Ingesta: ing}, Opciones{}).Router()
 
 		if rec := pedir(t, h, http.MethodGet, "/reportes", "", "tok"); rec.Code != http.StatusForbidden {
 			t.Errorf("%s GET: codigo = %d, se esperaba 403", rol, rec.Code)
@@ -118,13 +144,23 @@ func TestLosReportesExigenElRolAdministrador(t *testing.T) {
 		if rec := subir(t, h, map[string]string{"fuente": "caracol"}, "x.csv", []byte("a")); rec.Code != http.StatusForbidden {
 			t.Errorf("%s POST: codigo = %d, se esperaba 403", rol, rec.Code)
 		}
+		if rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok"); rec.Code != http.StatusForbidden {
+			t.Errorf("%s GET rechazos: codigo = %d, se esperaba 403", rol, rec.Code)
+		}
+		// El 403 tiene que llegar ANTES del caso de uso: si la consulta se
+		// hiciera y solo se tirara la respuesta, el rol no protegeria la base.
+		if ing.cargaConsultada != "" {
+			t.Errorf("%s: se consultaron los rechazos de %q sin permiso", rol, ing.cargaConsultada)
+		}
 	}
 }
 
 func TestLosReportesSinSesionSon401(t *testing.T) {
 	h := servidorConIngesta(t, &ingestaFalsa{})
-	if rec := pedir(t, h, http.MethodGet, "/reportes", "", ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("codigo = %d, se esperaba 401", rec.Code)
+	for _, ruta := range []string{"/reportes", "/reportes/rep-1/rechazos"} {
+		if rec := pedir(t, h, http.MethodGet, ruta, "", ""); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s: codigo = %d, se esperaba 401", ruta, rec.Code)
+		}
 	}
 }
 
@@ -143,6 +179,9 @@ func TestLasRutasDeReportesSon503SiElBinarioNoCableaLaIngesta(t *testing.T) {
 	}
 	if rec := subir(t, h, map[string]string{"fuente": "caracol"}, "x.csv", []byte("a")); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("POST: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("GET rechazos: codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
 	}
 }
 
@@ -223,6 +262,48 @@ func TestSubirReporteRespetaElFormatoExplicito(t *testing.T) {
 	}
 }
 
+func TestSubirReporteLaQueryNoPisaAlFormulario(t *testing.T) {
+	// `r.FormValue` consulta primero la query: `POST /reportes?fuente=netflix`
+	// con un multipart `fuente=cine` encaminaba el archivo al adaptador
+	// equivocado, y `fuente` decide el id del reporte, la clave de
+	// deduplicacion y el indice de alias. El contrato declara los tres campos
+	// como propiedades multipart.
+	ing := &ingestaFalsa{rec: recepcionDePrueba()}
+	h := servidorConIngesta(t, ing)
+
+	var cuerpo bytes.Buffer
+	escritor := multipart.NewWriter(&cuerpo)
+	for k, v := range map[string]string{"fuente": "cine", "periodo": "2026-01"} {
+		if err := escritor.WriteField(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parte, err := escritor.CreateFormFile("archivo", "sala.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parte.Write([]byte("titulo\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := escritor.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/reportes?fuente=netflix&periodo=2025&formato=xlsx", &cuerpo)
+	req.Header.Set("Content-Type", escritor.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.fuente != "cine" || ing.periodo != "2026-01" || ing.formato != aplicacion.FormatoCSV {
+		t.Fatalf("fuente/periodo/formato = %q/%q/%q, se esperaban los del formulario",
+			ing.fuente, ing.periodo, ing.formato)
+	}
+}
+
 func TestSubirReporteTraduceLosErroresDelNucleo(t *testing.T) {
 	casos := []struct {
 		nombre   string
@@ -248,7 +329,7 @@ func TestSubirReporteTraduceLosErroresDelNucleo(t *testing.T) {
 		{
 			nombre:   "boveda con contenido ajeno",
 			err:      fmt.Errorf("%w: bajo la clave hay otros bytes", aplicacion.ErrEvidenciaCorrupta),
-			codigo:   http.StatusConflict,
+			codigo:   http.StatusInternalServerError,
 			enCuerpo: "avise a operacion",
 		},
 		{
@@ -290,6 +371,223 @@ func TestSubirReporteConCuerpoQueNoEsMultipartEs400(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/reportes", `{"fuente":"caracol"}`, "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// servidorConLog construye la API con un log capturable. Es lo que permite
+// afirmar que un 5xx dejo rastro en el servidor y no solo un codigo hacia el
+// cliente.
+func servidorConLog(t *testing.T, ing Ingesta, buf *bytes.Buffer) http.Handler {
+	t.Helper()
+	auth := &autenticacionFalsa{
+		usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador},
+	}
+	log := slog.New(slog.NewTextHandler(buf, nil))
+	return Nueva(Casos{Auth: auth, Ingesta: ing}, Opciones{Log: log}).Router()
+}
+
+// Un fallo de disco del servidor al derramar el multipart no es una peticion
+// mal formada: con 1 MiB en memoria, todo archivo mayor crea un temporal via
+// os.CreateTemp, y un TMPDIR inutilizable falla ahi. Antes del arreglo esa
+// rama contestaba 400 sin log; ahora es 5xx con log a Error y un mensaje que
+// no culpa al cliente. El control de 300 KiB demuestra que lo pequeno sigue
+// en memoria y entra con 201 aunque el temporal este roto.
+func TestSubirReporteConTemporalRotoDa5xxConLogYLoPequenoSigueEn201(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+
+	grande := bytes.Repeat([]byte("x"), 3<<20)
+	pequeno := bytes.Repeat([]byte("x"), 300<<10)
+
+	// Archivo mayor que la memoria: se derrama, el temporal falla.
+	var bufGrande bytes.Buffer
+	hGrande := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &bufGrande)
+	recGrande := subir(t, hGrande,
+		map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"grande.csv", grande)
+	if recGrande.Code != http.StatusInternalServerError {
+		t.Fatalf("archivo grande: codigo = %d, se esperaba 500. Cuerpo: %s",
+			recGrande.Code, recGrande.Body)
+	}
+	if strings.Contains(recGrande.Body.String(), "multipart/form-data") {
+		t.Errorf("archivo grande: el 500 culpa al cliente: %s", recGrande.Body)
+	}
+	if !strings.Contains(recGrande.Body.String(), "no se pudo recibir") {
+		t.Errorf("archivo grande: el cuerpo no dice que fue un fallo del servidor: %s",
+			recGrande.Body)
+	}
+	// La linea de log a Error con la causa: sin ella ninguna alerta basada en
+	// 5xx se dispararia con el 400 anterior.
+	logGrande := bufGrande.String()
+	if !strings.Contains(logGrande, "fallo al recibir la entrega multipart") {
+		t.Errorf("archivo grande: el log no trae la causa: %q", logGrande)
+	}
+	if !strings.Contains(strings.ToUpper(logGrande), "ERROR") {
+		t.Errorf("archivo grande: el log no es a nivel Error: %q", logGrande)
+	}
+
+	// Control: lo que cabe en memoria no toca disco y entra igual.
+	var bufPequeno bytes.Buffer
+	hPequeno := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &bufPequeno)
+	recPequeno := subir(t, hPequeno,
+		map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"pequeno.csv", pequeno)
+	if recPequeno.Code != http.StatusCreated {
+		t.Fatalf("archivo pequeno: codigo = %d, se esperaba 201. Cuerpo: %s",
+			recPequeno.Code, recPequeno.Body)
+	}
+}
+
+// Un cuerpo truncado sigue siendo culpa del cliente aunque TMPDIR este roto:
+// no es *os.PathError y tiene que dar 400, no 500.
+func TestSubirReporteTruncadoConTemporalRotoSigueEn400(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+
+	var cuerpo bytes.Buffer
+	escritor := multipart.NewWriter(&cuerpo)
+	if err := escritor.WriteField("fuente", "caracol"); err != nil {
+		t.Fatal(err)
+	}
+	parte, err := escritor.CreateFormFile("archivo", "corte.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parte.Write(bytes.Repeat([]byte("x"), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := escritor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cortado := cuerpo.Bytes()[:cuerpo.Len()/2]
+
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	req := httptest.NewRequest(http.MethodPost, "/reportes", bytes.NewReader(cortado))
+	req.Header.Set("Content-Type", escritor.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// Un ECONNRESET del cliente llega como *net.OpError → *os.SyscallError y NO
+// es incidente del servidor: TMPDIR/disco fallan como *os.PathError. Sin este
+// borde, cada subida abortada (red movil, pestana cerrada) contaba como 5xx
+// con log a Error -justo la alerta que #114 reservo para fallos del servidor-.
+func TestEsFalloTemporalSoloPathError(t *testing.T) {
+	pathErr := &os.PathError{Op: "open", Path: "/tmp/x", Err: syscall.ENOENT}
+	if !esFalloTemporal(pathErr) {
+		t.Error("PathError tenia que ser fallo temporal")
+	}
+	if !esFalloTemporal(fmt.Errorf("multipart: %w", pathErr)) {
+		t.Error("PathError envuelto tenia que ser fallo temporal")
+	}
+
+	reset := &net.OpError{
+		Op:  "read",
+		Net: "tcp",
+		Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET},
+	}
+	if esFalloTemporal(reset) {
+		t.Error("ECONNRESET del cliente no puede ser fallo temporal")
+	}
+	if esFalloTemporal(fmt.Errorf("multipart: %w", reset)) {
+		t.Error("ECONNRESET envuelto no puede ser fallo temporal")
+	}
+	if esFalloTemporal(&os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}) {
+		t.Error("SyscallError solo no puede ser fallo temporal")
+	}
+	if esFalloTemporal(syscall.ECONNRESET) {
+		t.Error("Errno solo no puede ser fallo temporal")
+	}
+}
+
+// El cliente corta la subida a mitad (SetLinger(0) → RST): el servidor no
+// debe tratarlo como fallo de temporal ni dejar log a Error de esa rama.
+func TestSubirReporteConClienteQueCortaNoDa500(t *testing.T) {
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	boundary := "----intela-borde"
+	var cuerpo bytes.Buffer
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"fuente\"\r\n\r\ncaracol\r\n")
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"periodo\"\r\n\r\n2026-01\r\n")
+	fmt.Fprintf(&cuerpo, "--%s\r\n", boundary)
+	fmt.Fprintf(&cuerpo, "Content-Disposition: form-data; name=\"archivo\"; filename=\"corte.csv\"\r\n")
+	fmt.Fprintf(&cuerpo, "Content-Type: text/csv\r\n\r\n")
+	cuerpo.Write(bytes.Repeat([]byte("x"), 64<<10))
+	// Sin cerrar el multipart a proposito: el cliente aborta a mitad.
+
+	u, err := url.Parse(srv.URL + "/reportes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("conn = %T, se esperaba *net.TCPConn", conn)
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+
+	req := fmt.Sprintf(
+		"POST /reportes HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer tok\r\nContent-Type: multipart/form-data; boundary=%s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+		u.Host, boundary, cuerpo.Len()+64, // margen: el cliente no manda todo
+	)
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(cuerpo.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+
+	// Esperar a que el servidor procese el RST y escriba el log si lo hace.
+	time.Sleep(50 * time.Millisecond)
+
+	log := buf.String()
+	if strings.Contains(log, "fallo al recibir la entrega multipart") {
+		t.Errorf("un RST del cliente no puede dejar log a Error de temporal: %q", log)
+	}
+	if strings.Contains(strings.ToUpper(log), "ERROR") &&
+		strings.Contains(log, "connection reset") {
+		t.Errorf("un RST del cliente no puede ser Error: %q", log)
+	}
+}
+
+// A esta altura los bytes ya estan en RAM o en un temporal del servidor, asi
+// que un fallo de lectura es E/S del servidor y no peticion malformada: 500
+// con log, no 400. La costura leerCuerpoArchivo permite simularlo sin romper
+// el disco.
+func TestSubirReporteConFalloDeLecturaDa500ConLog(t *testing.T) {
+	anterior := leerCuerpoArchivo
+	leerCuerpoArchivo = func(io.Reader) ([]byte, error) {
+		return nil, errors.New("disco roto")
+	}
+	defer func() { leerCuerpoArchivo = anterior }()
+
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+	rec := subir(t, h, map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"parrilla.csv", []byte("titulo\n"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "no se pudo leer el archivo subido") {
+		t.Errorf("cuerpo = %s", rec.Body)
+	}
+	if !strings.Contains(buf.String(), "fallo al leer la subida") {
+		t.Errorf("el log no trae la causa: %q", buf.String())
 	}
 }
 
@@ -432,6 +730,30 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 	}
 }
 
+func TestListarCargasPasaLaPaginaAlNucleo(t *testing.T) {
+	ing := &ingestaFalsa{}
+	h := servidorConIngesta(t, ing)
+
+	rec := pedir(t, h, http.MethodGet, "/reportes?limite=10&desplazamiento=20", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.paginacionConsultada.Limite != 10 || ing.paginacionConsultada.Desplazamiento != 20 {
+		t.Fatalf("pagina = %+v, se esperaba limite 10 desplazamiento 20", ing.paginacionConsultada)
+	}
+}
+
+func TestListarCargasRechazaUnaPaginaInvalida(t *testing.T) {
+	h := servidorConIngesta(t, &ingestaFalsa{})
+
+	for _, ruta := range []string{"/reportes?limite=0", "/reportes?limite=501", "/reportes?desplazamiento=-1"} {
+		rec := pedir(t, h, http.MethodGet, ruta, "", "tok")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: codigo = %d, se esperaba 400. Cuerpo: %s", ruta, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestListarCargasSinNingunaDevuelveListaVaciaYNoNull(t *testing.T) {
 	h := servidorConIngesta(t, &ingestaFalsa{})
 
@@ -451,5 +773,176 @@ func TestListarCargasConPeriodoMalEscritoEs400(t *testing.T) {
 	rec := pedir(t, h, http.MethodGet, "/reportes?periodo=2026-1", "", "tok")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /reportes/{id}/rechazos
+
+func TestRechazosDeCargaSirveElLogDeUnaCarga(t *testing.T) {
+	// Emisiones puesto a proposito: una medida que llegue al doble no puede
+	// salir por la respuesta (ADR 0016).
+	ing := &ingestaFalsa{rechazos: []aplicacion.UsoPersistido{
+		{ID: "rep-1-2", Titulo: "Sin duracion", IDsFuente: "123", Emisiones: 7,
+			RechazoMotivo: `fila 4, duracion_min (columna "Duracion_total"): vacio`},
+		{ID: "rep-1-10", Titulo: "Radio Novela", IDsFuente: "456", Emisiones: 3,
+			RechazoMotivo: `modalidad "radio" fuera de tv|cine|ott|hotel`},
+	}}
+	h := servidorConIngesta(t, ing)
+
+	rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.cargaConsultada != "rep-1" {
+		t.Errorf("carga consultada = %q, se esperaba rep-1", ing.cargaConsultada)
+	}
+
+	var cuerpo []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("el cuerpo no es JSON: %v (%s)", err, rec.Body)
+	}
+	if len(cuerpo) != 2 {
+		t.Fatalf("rechazos = %d, se esperaban 2", len(cuerpo))
+	}
+	// El orden es el del caso de uso, que es el de la fila del archivo: el
+	// adaptador no reordena.
+	if cuerpo[0]["id"] != "rep-1-2" || cuerpo[1]["id"] != "rep-1-10" {
+		t.Errorf("orden = %v, %v", cuerpo[0]["id"], cuerpo[1]["id"])
+	}
+	// La MISMA forma que los rechazos del POST, y nada mas: ni medidas ni
+	// campos internos del nucleo.
+	for _, r := range cuerpo {
+		if len(r) != 4 || r["id"] == nil || r["titulo"] == nil || r["ids_fuente"] == nil || r["motivo"] == nil {
+			t.Errorf("forma = %v, se esperaba {id, titulo, ids_fuente, motivo}", r)
+		}
+	}
+	if cuerpo[0]["motivo"] != `fila 4, duracion_min (columna "Duracion_total"): vacio` {
+		t.Errorf("motivo = %v", cuerpo[0]["motivo"])
+	}
+}
+
+func TestRechazosDeCargaSinNingunoDevuelveListaVaciaYNoNull(t *testing.T) {
+	// El doble devuelve nil a proposito: la respuesta tiene que ser [] aunque
+	// el nucleo mande nil, o la pantalla revienta justo con la carga buena.
+	h := servidorConIngesta(t, &ingestaFalsa{})
+
+	rec := pedir(t, h, http.MethodGet, "/reportes/rep-1/rechazos", "", "tok")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("codigo = %d, cuerpo = %s", rec.Code, rec.Body)
+	}
+}
+
+// La pagina se interpreta en el adaptador -es quien habla HTTP- y llega al
+// nucleo ya resuelta: ausente es el defecto, no "sin tope".
+func TestRechazosDeCargaPasaLaPaginaAlNucleo(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		consulta string
+		quiero   aplicacion.Paginacion
+	}{
+		{
+			nombre: "sin parametros",
+			quiero: aplicacion.Paginacion{Limite: aplicacion.LimiteObrasPorDefecto},
+		},
+		{
+			nombre:   "limite y desplazamiento",
+			consulta: "?limite=10&desplazamiento=20",
+			quiero:   aplicacion.Paginacion{Limite: 10, Desplazamiento: 20},
+		},
+		{
+			nombre:   "el tope exacto",
+			consulta: "?limite=500",
+			quiero:   aplicacion.Paginacion{Limite: aplicacion.LimiteObrasMaximo},
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			h := servidorConIngesta(t, ing)
+
+			rec := pedir(t, h, http.MethodGet,
+				"/reportes/rep-1/rechazos"+c.consulta, "", "tok")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("codigo = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if ing.paginacionConsultada != c.quiero {
+				t.Errorf("paginacion = %+v, se esperaba %+v",
+					ing.paginacionConsultada, c.quiero)
+			}
+		})
+	}
+}
+
+// Fuera de rango es 400 y no un recorte en silencio: quien pide 10.000 tiene que
+// saber que no, y quien pide 0 no puede recibir una pagina vacia que se leeria
+// como "esta carga no tuvo rechazos".
+func TestRechazosDeCargaRechazaUnaPaginaInvalida(t *testing.T) {
+	for _, consulta := range []string{
+		"?limite=0", "?limite=-1", "?limite=abc", "?limite=501",
+		"?desplazamiento=-1", "?desplazamiento=x",
+	} {
+		t.Run(consulta, func(t *testing.T) {
+			ing := &ingestaFalsa{}
+			h := servidorConIngesta(t, ing)
+
+			rec := pedir(t, h, http.MethodGet,
+				"/reportes/rep-1/rechazos"+consulta, "", "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if ing.paginacionConsultada != (aplicacion.Paginacion{}) {
+				t.Errorf("una peticion rechazada no puede llegar al nucleo: %+v",
+					ing.paginacionConsultada)
+			}
+		})
+	}
+}
+
+func TestRechazosDeCargaTraduceLosErroresDelNucleo(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		err      error
+		codigo   int
+		enCuerpo string
+	}{
+		{
+			// 404 y no una lista vacia: "no existe" y "no tuvo rechazos" son dos
+			// respuestas distintas.
+			nombre:   "carga que no existe",
+			err:      fmt.Errorf("rechazos de la carga \"rep-x\": %w", aplicacion.ErrNoEncontrado),
+			codigo:   http.StatusNotFound,
+			enCuerpo: "esa carga no existe",
+		},
+		{
+			nombre:   "id en blanco",
+			err:      fmt.Errorf("%w: falta el id de la carga", aplicacion.ErrReporteInvalido),
+			codigo:   http.StatusBadRequest,
+			enCuerpo: "falta el id de la carga",
+		},
+		{
+			nombre:   "fallo de infraestructura",
+			err:      fmt.Errorf("la base no responde"),
+			codigo:   http.StatusInternalServerError,
+			enCuerpo: "no se pudo consultar los rechazos de la carga",
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConIngesta(t, &ingestaFalsa{err: c.err})
+			rec := pedir(t, h, http.MethodGet, "/reportes/rep-x/rechazos", "", "tok")
+			if rec.Code != c.codigo {
+				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.codigo, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), c.enCuerpo) {
+				t.Errorf("el cuerpo no dice %q: %s", c.enCuerpo, rec.Body)
+			}
+			// El 500 no filtra el error interno: eso va al log, no al cliente.
+			if c.codigo == http.StatusInternalServerError && strings.Contains(rec.Body.String(), "la base") {
+				t.Errorf("el 500 filtra el error interno: %s", rec.Body)
+			}
+		})
 	}
 }

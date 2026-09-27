@@ -33,8 +33,17 @@ const (
 // sembrarReportes deja dos reportes de periodos distintos y devuelve el Store.
 func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-
 	pool := testhelp.Pool(t)
+	return sembrarReportesEn(t, pool), pool
+}
+
+// sembrarReportesEn siembra los dos reportes sobre un pool ya abierto.
+//
+// Existe para la sonda de la unidad de trabajo, que no puede usar
+// [testhelp.Pool]: ese deja MaxConns=1 y la lectura desde fuera de la
+// transaccion abierta se interbloquea.
+func sembrarReportesEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 
@@ -46,7 +55,7 @@ func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 		shaOtro, "reportes/"+shaOtro, 256); err != nil {
 		t.Fatalf("sembrar reporte de febrero: %v", err)
 	}
-	return s, pool
+	return s
 }
 
 func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
@@ -59,6 +68,10 @@ func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 3,
+		// Sin canal o sin rating la ingesta rechaza la fila (#165). Los tests
+		// que quieren ese hueco lo vacian a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -160,7 +173,7 @@ func TestGuardarUsosPersisteLaFormaCanonica(t *testing.T) {
 	ctx := t.Context()
 
 	u := usoPendiente("uso-1", reporteEnero, "La Casa de las Dos Palmas")
-	u.IDsFuente = "ID_Ficha=1234"
+	u.IDsFuente = "id_ficha=1234"
 	u.TipoObra = "serie"
 	u.DuracionMin = decimal.RequireFromString("52.5000")
 	u.Rating = decimal.RequireFromString("3.250000")
@@ -204,7 +217,7 @@ func TestGuardarUsosSeparaElLoteEnCanonicoYRechazado(t *testing.T) {
 
 	mala := usoPendiente("uso-mala", reporteEnero, "Radio Novela")
 	mala.Modalidad = "radio"
-	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 
 	err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
 		usoPendiente("uso-1", reporteEnero, "La Casa"),
@@ -576,7 +589,7 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 // a leer #26 y el reparto.
 //
 // Los DEFAULT del esquema (`oni DEFAULT TRUE`, `emisiones DEFAULT 1`) no
-// intervienen: insertarUso manda los tres valores siempre, asi que el unico
+// intervienen: el COPY manda los tres valores siempre, asi que el unico
 // sitio donde pueden ponerse es el caso de uso.
 func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	s, pool := sembrarReportes(t)
@@ -596,9 +609,11 @@ func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	recien := aplicacion.UsoPersistido{
 		Titulo:      "La Casa de las Dos Palmas",
 		Modalidad:   reparto.TV,
-		IDsFuente:   "ID_Ficha=1234",
+		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(52),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{recien})
@@ -806,8 +821,8 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 //     ingesta"- acusando de traer una obra a una fila que no traia ninguna.
 //     Eso se ve con un doble en memoria.
 //  2. En cuanto se arregla SOLO en Go, la fila pasa como vacia y llega al
-//     INSERT con el blanco intacto. El NULLIF del INSERT compara con la cadena
-//     vacia LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
+//     COPY con el blanco intacto. valoresUso compara contra la cadena vacia
+//     LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
 //     la rechaza con un 23514 DENTRO de la transaccion del lote. No se pierde
 //     esa fila: se pierden TODAS. Ese sintoma no existe contra un doble -no
 //     hay CHECK que violar- y es el mas caro de los dos: el reporte ya quedo
@@ -1341,7 +1356,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 	// seis combinaciones, y los dos COUNT devuelven 6 y 6 sin que nada falle.
 	mala1 := usoPendiente("uso-mala-1", reporteEnero, "Radio Novela")
 	mala1.Modalidad = "radio"
-	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 	mala2 := usoPendiente("uso-mala-2", reporteEnero, "Sin duracion")
 	mala2.RechazoMotivo = `duracion_min: "cuarenta y cinco" no es un numero`
 
@@ -1355,7 +1370,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
@@ -1394,7 +1409,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
 
-	enero, err := s.ListarCargas(ctx, "2026-01")
+	enero, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2026-01): %v", err)
 	}
@@ -1402,9 +1417,10 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 		t.Fatalf("cargas de enero = %+v", enero)
 	}
 
-	// El filtro va como parametro y el vacio significa "todas". Es lo que
-	// permite una sola sentencia y un solo plan.
-	todas, err := s.ListarCargas(ctx, "")
+	// El filtro va como parametro y el vacio significa "todas". Cada caso
+	// tiene su sentencia y su plan: el `OR` evitaba el indice `reportes_periodo`
+	// en plan generico.
+	todas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(): %v", err)
 	}
@@ -1413,7 +1429,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	}
 
 	// Un periodo sin cargas es lista vacia, no error.
-	ninguna, err := s.ListarCargas(ctx, "2025-12")
+	ninguna, err := s.ListarCargas(ctx, "2025-12", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2025-12): %v", err)
 	}
@@ -1438,7 +1454,7 @@ func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
 		t.Fatalf("fijar creado de febrero: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
@@ -1446,6 +1462,297 @@ func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
 		t.Fatalf("orden = %s, %s; se esperaba la mas reciente primero",
 			cargas[0].ID, cargas[1].ID)
 	}
+}
+
+func TestListarCargasPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	primera, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// La rama filtrada por periodo tambien pagina: es la que usa la pantalla tras
+// cada subida (GET /reportes?periodo=...&limite=...&desplazamiento=...). Sin el
+// LIMIT/OFFSET en esa rama, el listado filtrado volvia entero y la suite
+// seguia en verde porque TestListarCargasPagina solo ejerce la rama sin
+// filtro.
+func TestListarCargasFiltradaPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Una segunda carga en el mismo periodo de enero: con dos en 2026-01 y una
+	// en 2026-02, la pagina filtrada tiene que recortar y avanzar.
+	const (
+		reporteEnero2 = "rep-caracol-enero-2"
+		shaEnero2     = "3333333333333333333333333333333333333333333333333333333333333333"
+	)
+	if err := s.GuardarReporte(ctx, reporteEnero2, "caracol", "2026-01",
+		shaEnero2, "reportes/"+shaEnero2, 64); err != nil {
+		t.Fatalf("sembrar segunda carga de enero: %v", err)
+	}
+
+	primera, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas filtradas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina filtrada no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas filtradas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// ListarCargas tiene que participar en Store.EnUnidad: lee por ejecutorDe, no
+// por el pool. Sin esto, una lectura dentro de la unidad no ve lo que la
+// unidad acaba de escribir (y con el pool agotado se interbloquea). El merge
+// que separo la consulta en dos ramas revirtio s.ejecutorDe a s.pool; esta
+// sonda es lo que evita que vuelva a pasar en silencio.
+func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
+	// Dos conexiones: EnUnidad ocupa una con la transaccion y el conteo de
+	// fuera (pool directo) pide otra. Con el MaxConns=1 de testhelp.Pool la
+	// segunda espera al pool mientras la unidad espera a la segunda: el
+	// timeout de 10 minutos del paquete. Mismo arreglo que
+	// TestCandidatosParticipaEnLaUnidad.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool de dos conexiones: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool de dos conexiones: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	s := sembrarReportesEn(t, pool)
+	const (
+		idSonda  = "rep-sonda"
+		periodo  = "2026-03"
+		shaSonda = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
+		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
+			shaSonda, "reportes/"+shaSonda, 32); err != nil {
+			return err
+		}
+		cargas, err := s.ListarCargas(ctx, periodo, aplicacion.Paginacion{})
+		if err != nil {
+			t.Errorf("ListarCargas dentro de la unidad: %v", err)
+			return nil
+		}
+		if len(cargas) != 1 || cargas[0].ID != idSonda {
+			t.Errorf("ListarCargas no ve la carga escrita en la MISMA unidad: %d, se esperaba 1",
+				len(cargas))
+		}
+
+		// Desde otra conexion la fila no existe todavia: la unidad no confirmo.
+		var n int
+		if err := pool.QueryRow(t.Context(),
+			`SELECT count(*) FROM reportes WHERE id = $1`, idSonda).Scan(&n); err != nil {
+			t.Errorf("contar desde fuera: %v", err)
+			return nil
+		}
+		if n != 0 {
+			t.Errorf("ListarCargas confirmo la transaccion de la unidad por su cuenta")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("EnUnidad: %v", err)
+	}
+
+	fuera, err := s.ListarCargas(t.Context(), periodo, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas fuera de la unidad: %v", err)
+	}
+	if len(fuera) != 1 || fuera[0].ID != idSonda {
+		t.Fatalf("la unidad confirmo y la carga tenia que verse: %+v", fuera)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RechazosDeReporte: el log de rechazos de una carga
+// ---------------------------------------------------------------------------
+
+// rechazoDe es una fila del log de rechazos de una entrega, con su motivo.
+func rechazoDe(id, reporteID, motivo string) aplicacion.UsoPersistido {
+	u := usoPendiente(id, reporteID, "Titulo de "+id)
+	u.RechazoMotivo = motivo
+	return u
+}
+
+func TestRechazosDeReporteDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, que es lo
+	// que deriva la ingesta. Con -1, -2 y -10 el orden lexico (-1, -10, -2) y el
+	// de fila (-1, -2, -10) se separan, y se insertan desordenados para que el
+	// orden de insercion tampoco lo tape.
+	diez := rechazoDe(reporteEnero+"-10", reporteEnero, `modalidad "radio" fuera de tv|cine|ott|hotel`)
+	diez.Modalidad = "radio"
+	diez.IDsFuente = "ID_Ficha 77"
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		diez,
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+		rechazoDe(reporteEnero+"-1", reporteEnero, `duracion_min: "x" no es un numero`),
+		// La otra entrega tiene su propio log, y no puede colarse en el de enero.
+		rechazoDe(reporteFebrero+"-1", reporteFebrero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	rechazos, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeReporte: %v", err)
+	}
+	ids := make([]string, 0, len(rechazos))
+	for _, u := range rechazos {
+		ids = append(ids, u.ID)
+	}
+	quiero := []string{reporteEnero + "-1", reporteEnero + "-2", reporteEnero + "-10"}
+	if strings.Join(ids, ",") != strings.Join(quiero, ",") {
+		t.Fatalf("ids = %v, se esperaba %v (solo los de enero, en orden de fila)", ids, quiero)
+	}
+
+	// La proyeccion entera, campo a campo: una columna corrida no falla, deja
+	// el motivo en el titulo.
+	got := rechazos[2]
+	if got.ReporteID != reporteEnero || got.Fuente != "caracol" || got.Titulo != "Titulo de "+diez.ID ||
+		got.IDsFuente != "ID_Ficha 77" || got.Modalidad != "radio" || got.RechazoMotivo != diez.RechazoMotivo {
+		t.Errorf("rechazo = %+v", got)
+	}
+	if got.RechazoTipo != aplicacion.TipoRevisionAdaptador || got.RechazoCodigo != aplicacion.CodigoRechazoFormato {
+		t.Errorf("tipo/codigo = %q/%q", got.RechazoTipo, got.RechazoCodigo)
+	}
+}
+
+func TestRechazosDeReporteDistingueSinRechazosDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Enero con una fila canonica y ningun rechazo: la fila de `usos` no es un
+	// rechazo y no puede salir por aqui.
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// Existe y no tuvo rechazos: lista VACIA, no nil. Es la fila nula del LEFT
+	// JOIN, y no puede salir como un rechazo con id vacio.
+	ninguno, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeReporte(enero): %v", err)
+	}
+	if ninguno == nil || len(ninguno) != 0 {
+		t.Fatalf("rechazos = %#v, se esperaba una lista vacia y no nil", ninguno)
+	}
+
+	// No existe: ErrNoEncontrado, que la capa HTTP convierte en 404.
+	if _, err := s.RechazosDeReporte(ctx, "rep-que-no-existe", aplicacion.Paginacion{}); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+// La pagina no puede cambiar lo que la lectura DICE sobre la entrega. Con el
+// LIMIT en la sentencia de arriba, una pagina vacia -un desplazamiento mas alla
+// del final, o una entrega sin rechazos consultada desde la pagina 2- devolvia
+// cero filas y el adaptador la leia como "esa entrega no existe": un 404 sobre
+// una entrega que si existe.
+func TestRechazosDeReportePaginadoDistinguePaginaVaciaDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		rechazoDe(reporteEnero+"-1", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-3", reporteEnero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// La primera pagina, corta.
+	primera, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2})
+	if err != nil {
+		t.Fatalf("primera pagina: %v", err)
+	}
+	if ids := idsDe(primera); strings.Join(ids, ",") != reporteEnero+"-1,"+reporteEnero+"-2" {
+		t.Fatalf("primera pagina = %v", ids)
+	}
+
+	// La segunda, con la que queda.
+	segunda, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("segunda pagina: %v", err)
+	}
+	if ids := idsDe(segunda); strings.Join(ids, ",") != reporteEnero+"-3" {
+		t.Fatalf("segunda pagina = %v", ids)
+	}
+
+	// Mas alla del final: lista VACIA, no ErrNoEncontrado. La entrega existe.
+	mas, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 50})
+	if err != nil {
+		t.Fatalf("una pagina vacia de una entrega que existe no es un error: %v", err)
+	}
+	if mas == nil || len(mas) != 0 {
+		t.Fatalf("pagina vacia = %#v, se esperaba [] y no nil", mas)
+	}
+
+	// Y una entrega SIN rechazos, pedida desde la pagina 2, tampoco desaparece.
+	vacia, err := s.RechazosDeReporte(ctx, reporteFebrero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("una entrega sin rechazos consultada desde la pagina 2 existe: %v", err)
+	}
+	if vacia == nil || len(vacia) != 0 {
+		t.Fatalf("rechazos de febrero = %#v", vacia)
+	}
+}
+
+func idsDe(usos []aplicacion.UsoPersistido) []string {
+	ids := make([]string, 0, len(usos))
+	for _, u := range usos {
+		ids = append(ids, u.ID)
+	}
+	return ids
 }
 
 func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {

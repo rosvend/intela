@@ -36,33 +36,60 @@ export const RUTAS: readonly ItemDeNav[] = [
     seccion: "principal",
   },
   {
+    // Solo administrador: el servidor protege /reportes con
+    // requiereRol(administrador) (#25) y #29 fija que la pantalla de ingesta
+    // es solo suya.
     to: "/ingesta",
     label: "Ingesta",
-    roles: ["administrador", "distribucion", "auditor"],
+    roles: ["administrador"],
     seccion: "principal",
   },
   {
+    // Solo administrador: el grupo entero `/obras` del servidor esta bajo
+    // requiereRol(aplicacion.RolAdministrador)
+    // (internal/infraestructura/httpapi/server.go), asi que distribucion y
+    // auditor reciben 403 en TODAS las pantallas de #30, el catalogo incluido.
+    // Es la misma discrepancia que #29 encontro en /ingesta y resolvio igual:
+    // ofrecer en la navegacion una pantalla que el servidor va a rechazar es
+    // prometer algo que el sistema no da (D-013). El `requiereRol` del servidor
+    // sigue siendo la barrera real: esto solo deja de anunciar lo que no hay.
     to: "/catalogo",
     label: "Catálogo",
-    roles: ["administrador", "distribucion", "auditor"],
+    roles: ["administrador"],
     seccion: "principal",
   },
   {
+    // Solo administrador: el grupo `/titulares` del servidor esta bajo
+    // requiereRol(aplicacion.RolAdministrador)
+    // (internal/infraestructura/httpapi/server.go), y alli esta justificado
+    // -el padron es lo que llena el selector de partes del editor de splits
+    // (#30), asi que quien no edita la declaracion no tiene esa superficie-.
+    // Es la misma discrepancia que #29 encontro en /ingesta y que /catalogo ya
+    // resolvio igual: ofrecer en la navegacion una pantalla que el servidor va
+    // a rechazar es prometer algo que el sistema no da (D-013, D-014). El
+    // `requiereRol` del servidor sigue siendo la barrera real: esto solo deja
+    // de anunciar lo que no hay.
     to: "/titulares",
     label: "Titulares",
-    roles: ["administrador", "contabilidad", "auditor"],
+    roles: ["administrador"],
     seccion: "principal",
   },
   {
     to: "/distribucion",
     label: "Distribución",
-    roles: ["administrador", "distribucion", "auditor"],
+    // Contabilidad entra aqui porque es la otra firma de la compuerta
+    // (tabla `firmas`). Ocultarle el panel dejaria la segunda firma sin
+    // sitio; la doble firma la hace el backend, no la nav.
+    roles: ["administrador", "distribucion", "contabilidad", "auditor"],
     seccion: "principal",
   },
   {
     to: "/anomalias",
     label: "Anomalías",
-    roles: ["administrador", "distribucion", "auditor"],
+    // Contabilidad es la segunda firma de la compuerta: sin /anomalias no
+    // ve el aviso de alertas abiertas antes de firmar. Roles a alinear con
+    // el `requiereRol` de #17 cuando aterrice el middleware.
+    roles: ["administrador", "distribucion", "contabilidad", "auditor"],
     seccion: "principal",
   },
   {

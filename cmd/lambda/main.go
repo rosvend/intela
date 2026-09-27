@@ -30,6 +30,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -135,15 +136,51 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	liquidaciones := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: registro},
+		Bitacora:    store,
+		Unidad:      store,
+	}
+
+	// El mismo *Store satisface tambien CatalogoObras, BitacoraAuditoria,
+	// UnidadDeTrabajo y -por el puerto GestionDeclaraciones- la lectura de la
+	// declaracion vigente que el catalogo necesita para decir en que estado
+	// esta cada obra. El nucleo sigue viendo puertos separados: que el
+	// adaptador sea uno solo es asunto suyo, y es lo que permite que el
+	// asiento del alta comparta transaccion con la obra (ADR 0006, #91).
+	catalogo := aplicacion.Catalogo{
+		Obras:         store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
+	}
+
+	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
+	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
+	// al contrario que la boveda de la ingesta de abajo.
+	padron := aplicacion.Titulares{Padron: store}
 
 	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
 	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
 	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
+	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
+	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
+	// padron debe mostrar-, y un guardia que mira lo recortado deja pasar en
+	// silencio lo que no ve. `padron` sigue construido arriba porque lo usa el
+	// handler HTTP de `GET /titulares`.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
@@ -155,21 +192,40 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
-	// Ingesta va SIN cablear a proposito, y sus rutas responden 503 diciendolo.
+	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
+	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
+	// cablear aqui abajo.
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+	}
+
+	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
 	//
-	// La boveda de reportes crudos es hoy `objetos.Disco`, y el ADR 0006 le
-	// exige inmutabilidad y retencion. El sistema de ficheros de Lambda es de
-	// solo lectura salvo /tmp, y /tmp se recicla con el contenedor: montar la
-	// boveda ahi daria un acuse que certifica una evidencia que desaparece a la
+	// La boveda (reportes crudos y documentos de afiliacion) es hoy
+	// `objetos.Disco`, y el ADR 0006 le exige inmutabilidad y retencion. El
+	// sistema de ficheros de Lambda es de solo lectura salvo /tmp, y /tmp se
+	// recicla con el contenedor: montar la boveda ahi daria un acuse (o una
+	// solicitud admitida) que certifica una evidencia que desaparece a la
 	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
-	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde el
-	// ADR 0014 pone los objetos -- se cablea aqui igual que en cmd/api.
+	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
+	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:         store,
 		Auth:          autenticacion,
+		Liq:           liquidaciones,
 		Catalogo:      catalogo,
+		Padron:        padron,
 		Declaraciones: declaraciones,
 		Recaudo:       recaudo,
+		Procesos:      procesos,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Auditoria:     aplicacion.Auditoria{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

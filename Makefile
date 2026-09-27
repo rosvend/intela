@@ -43,7 +43,7 @@ seed:
 # --- La demo de un comando --------------------------------------------------
 #
 # Atajos, no una segunda forma de arrancar: cada uno es literalmente el comando
-# que documenta `docs/ARRANQUE.md` y el que corre la etapa `Boot smoke test`.
+# que documenta `docs/QUICKSTART.md` y el que corre la etapa `Smoke (compose bring-up)`.
 # En cuanto un `make` empieza a hacer algo distinto de lo documentado, lo
 # documentado deja de estar probado.
 
@@ -54,12 +54,12 @@ demo:
 humo:
 	bash deploy/smoke.sh
 
-# Solo la logica de decision, sobre fixtures. Sin Docker, sin red, <1s.
+# La guarda de migrate/seed con respuestas simuladas. Sin Docker ni red.
 humo-unidad:
-	bash deploy/smoke_test.sh
+	bash deploy/smoke_guardia_test.sh
 
-# `-v` a proposito: sin el, el pgdata de la corrida anterior sobrevive y el
-# seed de la siguiente se encuentra una base a medias.
+# Borra los volumenes del proyecto (base y reportes). Para conservar datos,
+# usar `docker compose --profile demo down` sin `-v`.
 #
 # `--remove-orphans` por lo mismo, y es lo que corre la etapa de humo: un
 # servicio que se renombro o se quito -MinIO, sin ir mas lejos- deja su

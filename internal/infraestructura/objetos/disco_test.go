@@ -106,6 +106,23 @@ func TestPonerNoSobrescribe(t *testing.T) {
 	}
 }
 
+func TestBorrarQuitaElObjetoYEsIdempotente(t *testing.T) {
+	d := Disco{Dir: t.TempDir()}
+	clave := "afiliaciones/afil-1/rut"
+	if err := d.Poner(context.Background(), clave, []byte("%PDF")); err != nil {
+		t.Fatalf("Poner: %v", err)
+	}
+	if err := d.Borrar(context.Background(), clave); err != nil {
+		t.Fatalf("Borrar: %v", err)
+	}
+	if _, err := d.Obtener(context.Background(), clave); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("tras borrar se esperaba ErrNoEncontrado, se obtuvo %v", err)
+	}
+	if err := d.Borrar(context.Background(), clave); err != nil {
+		t.Fatalf("borrar de nuevo: %v", err)
+	}
+}
+
 func TestObtenerInexistente(t *testing.T) {
 	d := Disco{Dir: t.TempDir()}
 	_, err := d.Obtener(context.Background(), "no/existe.csv")

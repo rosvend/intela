@@ -3,6 +3,7 @@ package repertorio
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -62,6 +63,19 @@ type Declaracion struct {
 // edicion antes de escribir nada- y por eso es mas estricta: una parte sin IPI
 // o con un porcentaje que no es positivo no es "declaracion incompleta", es un
 // dato mal formado que no debe llegar a guardarse.
+//
+// # Forma canonica
+//
+// `TitularID` e `IPI` se recortan aqui, sobre una copia: el padron guarda esos
+// mismos campos recortados ([afiliacion.NuevoTitular]) y esta puerta es quien
+// decide que es una parte valida, asi que es donde se fija la forma canonica.
+// Quien recibe la [Declaracion] devuelta -la comprobacion de R-01, la
+// conciliacion del IPI, lo que se persiste- trabaja con lo ya recortado y no
+// vuelve a decidirlo. Un id de solo espacios cae en "no trae titular", y
+// `" tit-a "` y `"tit-a"` son el mismo titular repetido.
+//
+// `ObraID` NO se recorta: viene del path de la ruta y recortarlo cambiaria que
+// obra se busca, y con ello que 404 se devuelve.
 func NuevaDeclaracion(obraID string, partes []Parte) (Declaracion, error) {
 	if obraID == "" {
 		return Declaracion{}, fmt.Errorf("%w: falta el identificador de la obra", ErrDeclaracionInvalida)
@@ -70,9 +84,14 @@ func NuevaDeclaracion(obraID string, partes []Parte) (Declaracion, error) {
 		return Declaracion{}, fmt.Errorf("%w: no trae ninguna parte", ErrDeclaracionInvalida)
 	}
 
+	normalizadas := make([]Parte, len(partes))
 	vistos := make(map[string]bool, len(partes))
 	suma := decimal.Zero
-	for _, p := range partes {
+	for i, p := range partes {
+		p.TitularID = strings.TrimSpace(p.TitularID)
+		p.IPI = strings.TrimSpace(p.IPI)
+		normalizadas[i] = p
+
 		if p.TitularID == "" {
 			return Declaracion{}, fmt.Errorf("%w: una parte no trae titular", ErrDeclaracionInvalida)
 		}
@@ -102,7 +121,7 @@ func NuevaDeclaracion(obraID string, partes []Parte) (Declaracion, error) {
 			ErrDeclaracionInvalida, suma.StringFixed(4))
 	}
 
-	return Declaracion{ObraID: obraID, Partes: partes}, nil
+	return Declaracion{ObraID: obraID, Partes: normalizadas}, nil
 }
 
 func (d Declaracion) Completa() bool {

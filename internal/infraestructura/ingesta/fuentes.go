@@ -47,14 +47,14 @@ func CatalogoDelCliente() (map[aplicacion.ClaveLector]aplicacion.LectorReporte, 
 //   - `tipo_obra`. La parrilla trae `TIPO` (PR/SE/PE) y `SubGenero`
 //     (Telenovela, Magazine, Noticiero, Agro...), y NINGUNA de las dos es la
 //     clasificacion del reglamento -- cinematografica, unitario, serie,
-//     telenovela, sketches --. La tabla de correspondencia es la pregunta 5 de
-//     `docs/dominio/fuentes-datos.md` y todavia no la ha contestado el cliente.
-//     Escribir `SubGenero` en `tipo_obra` inventaria esa correspondencia y
-//     despues no habria forma de distinguir lo mapeado de lo supuesto; la
-//     columna se queda en su DEFAULT vacio hasta que la respuesta llegue.
-//   - `rating`. La parrilla NO lo trae, y es lo que bloquea `RD 9.1.1`
-//     completo: hace falta el feed del proveedor de audiencia, que es la
-//     pregunta 3.
+//     telenovela, sketches --. La tabla de correspondencia es P-05 y sigue
+//     sin confirmacion del cliente, asi que este mapa no la escribe. Cuando
+//     la cascada identifica la fila, `tipo_obra` sale de `obras.tipo` (#165).
+//   - `canal_id`. La parrilla no trae el canal que pago (P-20). La ingesta
+//     rechaza la fila en vez de guardarla vacia: sin canal no entra en
+//     UsosDeCanal.
+//   - `rating`. La parrilla NO lo trae. El dato es el feed de P-06. Una fila
+//     de TV con rating 0 se rechaza: RD 9.1.1 lo usaria como peso cero.
 //   - Los cuatro campos de episodio (`Titulo_capitulo`, `Temporada`,
 //     `ID_Ficha_Capitulo`, `Numero_Capitulo`) estan vacios al 100% pese a que
 //     18 filas son series. Hoy solo se puede identificar el programa.
@@ -80,11 +80,12 @@ func MapaCaracol() Mapa {
 		// mes que viene por un motivo que no es.
 		Hoja: "",
 		Columnas: []Columna{
-			// `Titulo` y no `Titulo_original`: es el titulo con el que se emitio
-			// en Colombia, que es contra el que resuelve la cascada. Los dos
-			// difieren en 16 de 59 filas; el original se recuperara cuando el
-			// esquema canonico admita las dos variantes.
+			// `Titulo` es el titulo con el que se emitio en Colombia y
+			// `Titulo_original` el de origen: difieren en 16 de 59 filas, y el
+			// escalon 3 prueba los dos (#32). El original no es requerido: una
+			// entrega sin esa columna se lee igual y solo pierde ese recall.
 			{Campo: CampoTitulo, Nombre: "Titulo", Requerida: true},
+			{Campo: CampoTituloOrig, Nombre: "Titulo_original", Requerida: false},
 			// `ID_Ficha` es la clave de obra de la fuente. El valor va tal
 			// cual; la clave del contrato es `id_ficha`, que es lo que indexa
 			// `alias_obra.tipo_id` (ADR 0018). Sin el par `id_ficha=<valor>`,
@@ -95,8 +96,14 @@ func MapaCaracol() Mapa {
 			// mapea: es constante en 0, relleno, no dato.
 			{Campo: CampoIDsFuente, Nombre: "Programa ID_IMDB", Requerida: false, ClaveID: aplicacion.ClaveIMDB},
 			// Minutos. Poblada en las 59 filas. Alimenta `Duracion` de
-			// `RD 9.1.1`.
+			// `RD 9.1.1`. La transformacion del 80% la aplica normalizacion
+			// (#26), no este mapa.
 			{Campo: CampoDuracionMin, Nombre: "Duracion_total", Requerida: true},
+			// Fecha y hora de la emision. Van al esquema canonico para que
+			// normalizacion produzca YYYY-MM-DD / HH:MM:SS; tambien forman
+			// parte de ClaveRegistro.
+			{Campo: CampoFecha, Nombre: "Fecha", Requerida: false},
+			{Campo: CampoHora, Nombre: "Hora", Requerida: false},
 		},
 		// La emision, que es la granularidad real. `ID_Ficha` sola mandaria 30
 		// emisiones legitimas al log de rechazos; con la fecha y la hora, las 59
@@ -180,7 +187,7 @@ func MapaNetflix() Mapa {
 // Mapea `modalidad` desde el archivo ADEMAS de fijarla. No es redundante: la
 // muestra la trae como columna, y dejarla sin mapear haria que un archivo con
 // filas de hotel entrara entero declarado como cine. Con la columna mapeada, la
-// fila dice lo que es y `validarUso` rechaza lo que no sea una de las cuatro
+// fila dice lo que es y `validarUso` rechaza lo que no sea una de las siete
 // modalidades; la modalidad fija sigue valiendo para las celdas vacias.
 func MapaCine() Mapa {
 	return Mapa{
@@ -193,6 +200,11 @@ func MapaCine() Mapa {
 			{Campo: CampoTipoObra, Nombre: "tipo_obra", Requerida: false},
 			// La metrica de la modalidad. Sin ella la fila no pondera nada.
 			{Campo: CampoTaquilla, Nombre: "taquilla", Requerida: true},
+			{Campo: CampoEspectadores, Nombre: "espectadores", Requerida: false},
+			// Moneda de la taquilla. Sin ella, normalizacion manda a revision
+			// (no pone a cero). La muestra sintetica trae COP; el archivo real
+			// del cliente fijara el nombre de columna cuando llegue.
+			{Campo: CampoMoneda, Nombre: "moneda", Requerida: false},
 		},
 		ClaveRegistro: []string{"id"},
 	}

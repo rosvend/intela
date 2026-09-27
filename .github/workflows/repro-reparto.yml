@@ -1,0 +1,45 @@
+# Reusable stage: ADR 0005 — re-running a reparto produces byte-identical
+# output ("comparada en CI").
+#
+# Runs the golden inputs twice inside `internal/dominio/reparto` and fails on
+# any difference, serialized or structural. Kept separate from `test-go.yml`
+# on purpose: when the check goes red, its name has to say whether the engine
+# went non-deterministic or behavior broke.
+#
+# Inert until `go.mod` exists, like every other Go stage.
+
+name: Reproducibility
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  reejecucion:
+    name: engine re-run is byte-identical
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # go test shares the runner; do not leave the contents token in
+          # git-credentials for test code to read (fork PRs included).
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # `-race` stays on here, unlike `perf-10k`: a data race in a money path
+      # does not crash, it produces a different number, so the determinism
+      # check itself runs under the detector (`test-go.yml` says why).
+      - name: Double-run comparison
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -run 'Reejecucion|Golden' -v ./internal/dominio/reparto/

@@ -80,9 +80,11 @@ plataforma los guarda una segunda vez por su cuenta. Nombran el campo, nunca su 
 
 ## Consecuencias
 
-**La deuda, por escrito:** `cmd/lambda-migrate` ya no es solo goose. Si aparece una segunda
-operacion de este tipo, las dos deben salir a su propia funcion; una tercera orden ajena a las
-migraciones es la senal de que este ADR hay que sustituirlo.
+**La deuda, por escrito:** `cmd/lambda-migrate` ya no es solo goose. La segunda operacion de este
+tipo ya aterrizo: `sembrar-dataset` (dataset sintetico completo via `semilla.Cargar`, sin
+`cmd/seed` en la imagen de la API). Las dos deben salir a su propia funcion; una tercera orden
+ajena a las migraciones es la senal de que este ADR hay que sustituirlo. Runbook:
+[`docs/runbooks/sembrar-titulares-demo.md`](../runbooks/sembrar-titulares-demo.md).
 
 **El radio de la funcion de migraciones crece.** Quien tenga `lambda:InvokeFunction` sobre
 `intela-migrate` puede reclamar el primer administrador antes que el operador. Mitigado por IAM y

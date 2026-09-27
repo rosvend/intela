@@ -5,6 +5,9 @@ fuentes: Reglamento de Distribucion IX, Reglamento de Tarifas VI, Reglamento de 
 
 # Registro de reglas de negocio
 
+La matriz regla ↔ artículo ↔ implementación ↔ prueba (Objetivo 12) vive en
+[`matriz-reglas.md`](matriz-reglas.md).
+
 Cada regla es operativa: se puede implementar y se puede verificar. La columna de fuente
 apunta a la seccion exacta del reglamento, en `docs/reglamentos/`, para que cualquier cifra
 del sistema sea explicable.
@@ -126,6 +129,14 @@ Se publica en la web de REDES SGC con titulos e informacion identificatoria, **s
 los montos**. La informacion economica se mantiene en reserva. Debe indicarse fecha del
 proceso, periodo, y direccion fisica y electronica para allegar documentacion.
 Estado: Firme. Fuente: `RD 13.8.1` a `RD 13.8.4`
+Implementacion: **pendiente**, dueno #33/#34. `internal/aplicacion.Reparto.UsosDeCanal`
+(#119) cuenta las filas sin obra identificada en `ResumenUsosDeCanal`, pero no reserva su
+importe: hoy quien pasa su resultado directo a `reparto.Reparto` reparte el 100% de la bolsa
+entre las obras identificadas, y la parte ONI desaparece dentro de ellas en vez de quedar en
+reserva. `internal/dominio/reparto` (#33) no tiene todavia una linea de resultado para esto, y
+`ProcesoDeReparto` (#34) es quien tendria que orquestarla. `TestElResumenNoReservaLaParteONIDocumentaElHueco`
+en `internal/infraestructura/postgres/reparto_test.go` fija el hueco y esta escrito para
+fallar el dia que se cierre.
 
 ### R-19 Prescripcion ONI: 3 anos
 Contados desde la publicacion del listado. Prescribe a favor de REDES SGC.
@@ -174,6 +185,8 @@ Para television por suscripcion, se excluyen del reparto los canales que no tran
 contenido del catalogo de REDES SGC.
 Estado: Firme. Fuente: `RD 9.5`
 Implementacion: hace falta un filtro de repertorio a nivel de canal **y** a nivel de programa.
+Hoy conviven tres granularidades sin reconciliar del todo: `Uso.FueraDeRepertorio` (por uso,
+comentario "canal"), `identificacion.FuentesExcluidas` (por fuente) y el texto de esta regla.
 Los noticieros y magazines de la parrilla de muestra probablemente no son repertorio. Ver
 `docs/dominio/fuentes-datos.md`.
 

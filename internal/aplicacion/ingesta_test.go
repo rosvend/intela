@@ -1,6 +1,7 @@
 package aplicacion
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -50,6 +51,11 @@ func (a *almacenMemoria) Obtener(_ context.Context, clave string) ([]byte, error
 		return nil, ErrNoEncontrado
 	}
 	return datos, nil
+}
+
+func (a *almacenMemoria) Borrar(_ context.Context, clave string) error {
+	delete(a.objetos, clave)
+	return nil
 }
 
 // repoIngestaMemoria imita el UNIQUE (sha256, fuente) de la tabla reportes,
@@ -129,12 +135,64 @@ func (r *repoIngestaMemoria) UsoPorID(_ context.Context, id string) (UsoPersisti
 	return UsoPersistido{}, ErrNoEncontrado
 }
 
+func (r *repoIngestaMemoria) ListarRechazos(context.Context) ([]UsoPersistido, error) {
+	var us []UsoPersistido
+	for _, u := range r.usos {
+		if u.RechazoMotivo != "" {
+			us = append(us, u)
+		}
+	}
+	if us == nil {
+		us = []UsoPersistido{}
+	}
+	return us, nil
+}
+
+// RechazosDeReporte imita la lectura por entrega del adaptador real: una PAGINA
+// del log de esa entrega y de ninguna otra, ErrNoEncontrado si la entrega no
+// existe y una lista vacia -no nil- si existe sin rechazos o si la pagina cae
+// mas alla del final.
+//
+// Ordena igual que el ORDER BY del adaptador, por longitud y despues por texto:
+// los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, y el orden
+// lexico pondria `-10` antes que `-2`. Recorta DESPUES de ordenar, que es lo que
+// hace el LIMIT de la base; ordenar la pagina ya recortada daria otra cosa.
+func (r *repoIngestaMemoria) RechazosDeReporte(_ context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error) {
+	if _, hay := r.reportes[reporteID]; !hay {
+		return nil, ErrNoEncontrado
+	}
+	us := []UsoPersistido{}
+	for _, u := range r.usos {
+		if u.ReporteID == reporteID && u.RechazoMotivo != "" {
+			us = append(us, u)
+		}
+	}
+	slices.SortFunc(us, func(a, b UsoPersistido) int {
+		return cmp.Or(cmp.Compare(len(a.ID), len(b.ID)), strings.Compare(a.ID, b.ID))
+	})
+	return recortar(us, pag.ConDefecto()), nil
+}
+
+// recortar aplica la pagina a una lista ya ordenada, como el LIMIT/OFFSET de la
+// base. Un desplazamiento mas alla del final da lista vacia y no error: es una
+// pagina vacia de una lectura que existe.
+func recortar(us []UsoPersistido, pag Paginacion) []UsoPersistido {
+	if pag.Desplazamiento >= len(us) {
+		return []UsoPersistido{}
+	}
+	fin := pag.Desplazamiento + pag.Limite
+	if fin > len(us) {
+		fin = len(us)
+	}
+	return us[pag.Desplazamiento:fin]
+}
+
 // ListarCargas imita la proyeccion del adaptador real: una fila por entrega,
 // con los dos recuentos sacados de las filas que se le guardaron.
 //
 // El orden es por id y no por instante de recepcion: este doble no tiene reloj,
 // y un orden estable es lo que hace comprobable el listado.
-func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string) ([]CargaReporte, error) {
+func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	ids := make([]string, 0, len(r.reportes))
 	for id := range r.reportes {
 		ids = append(ids, id)
@@ -159,7 +217,18 @@ func (r *repoIngestaMemoria) ListarCargas(_ context.Context, periodo string) ([]
 		}
 		cargas = append(cargas, c)
 	}
-	return cargas, nil
+	pag = pag.ConDefecto()
+	if pag.Limite == LimiteSinTope {
+		return cargas, nil
+	}
+	if pag.Desplazamiento >= len(cargas) {
+		return []CargaReporte{}, nil
+	}
+	fin := pag.Desplazamiento + pag.Limite
+	if fin > len(cargas) {
+		fin = len(cargas)
+	}
+	return cargas[pag.Desplazamiento:fin], nil
 }
 
 // canonicos deja fuera las filas rechazadas, igual que el adaptador real: las
@@ -189,6 +258,11 @@ func usoBueno(titulo string) UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 1,
+		// canal_id y rating no salen del mapa de Caracol, pero una fila de TV
+		// sin ellos ya no es canonica (#165). Quien quiera el rechazo los deja
+		// en cero a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -475,17 +549,22 @@ func TestGuardarReporteAceptaElObjetoAjenoSiEsElMismoContenido(t *testing.T) {
 
 // La estructura minima se comprueba ANTES de tocar la boveda: un periodo mal
 // formateado lo rechazaria el CHECK de la tabla despues de haber escrito un
-// objeto que ya no se puede borrar.
+// objeto que ya no se puede borrar. Un mes que no existe tampoco es un periodo:
+// la regla la pone el dominio (`recaudo.PeriodoValido`) y sin ella `2026-13`
+// quemaba la boveda bajo un periodo que ningun reparto cierra.
 func TestGuardarReporteRechazaLoQueElEsquemaNoAdmite(t *testing.T) {
 	casos := map[string]struct {
 		fuente, periodo string
 		datos           []byte
 	}{
-		"sin fuente":       {"", "2026-01", []byte("x")},
-		"periodo vacio":    {"caracol", "", []byte("x")},
-		"periodo con dia":  {"caracol", "2026-01-15", []byte("x")},
-		"periodo en letra": {"caracol", "enero", []byte("x")},
-		"sin bytes":        {"caracol", "2026-01", nil},
+		"sin fuente":            {"", "2026-01", []byte("x")},
+		"periodo vacio":         {"caracol", "", []byte("x")},
+		"periodo con dia":       {"caracol", "2026-01-15", []byte("x")},
+		"periodo en letra":      {"caracol", "enero", []byte("x")},
+		"periodo con mes trece": {"caracol", "2026-13", []byte("x")},
+		"periodo con mes cero":  {"caracol", "2026-00", []byte("x")},
+		"periodo de un digito":  {"caracol", "2026-1", []byte("x")},
+		"sin bytes":             {"caracol", "2026-01", nil},
 	}
 	for nombre, c := range casos {
 		t.Run(nombre, func(t *testing.T) {
@@ -644,7 +723,7 @@ func TestValidarUsoNombraElCampoQueFalla(t *testing.T) {
 	}{
 		"buena":                 {usoBueno("La Casa"), ""},
 		"sin titulo":            {usoBueno("   "), "titulo vacio: sin titulo no hay nada que identificar"},
-		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), `modalidad "radio" fuera de tv|cine|ott|hotel`},
+		"modalidad desconocida": {func() UsoPersistido { u := usoBueno("X"); u.Modalidad = "radio"; return u }(), `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`},
 		"escalon desconocido":   {func() UsoPersistido { u := usoBueno("X"); u.Escalon = "adivinado"; return u }(), `escalon "adivinado" en la ingesta: solo sale "pendiente" de aqui`},
 		// Ya no la caza la coherencia oni/obra sino la regla de H5, que es
 		// anterior y mas estricta: con obra_id puesto no se mira nada mas. Que el
@@ -797,11 +876,11 @@ var blancos = map[string]string{
 //
 // Que no se rechace lo cumple cualquier TrimSpace puesto en la comprobacion de
 // turno. Lo que hace falta es que el valor que sale hacia el repositorio sea la
-// cadena vacia EXACTA, porque el INSERT lo pasa por un NULLIF contra la cadena
-// vacia literal y esa comparacion no se puede aflojar desde Go.
+// cadena vacia EXACTA, porque valoresUso la compara contra la cadena vacia
+// literal para mandarla como nil y esa comparacion no se puede aflojar desde Go.
 //
 // Un TrimSpace escrito en las comprobaciones en vez de sobre el campo deja pasar
-// la fila y manda el blanco intacto al SQL, donde el NULLIF no lo anula y el
+// la fila y manda el blanco intacto al adaptador, donde valoresUso no lo anula y el
 // CHECK uso_resuelto_tiene_obra aborta el lote ENTERO. Por eso se comprueba
 // `guardado.ObraID == ""`: es lo unico que distingue la normalizacion de verdad
 // del parche que la aparenta.
@@ -838,12 +917,12 @@ func TestGuardarUsosTrataElObraIDEnBlancoComoSinObra(t *testing.T) {
 			if guardado.ObraID != "" {
 				t.Errorf(
 					"ObraID = %q, se esperaba la cadena vacia EXACTA: "+
-						"el INSERT compara con NULLIF($6, ''), que no recorta nada",
+						"valoresUso compara contra '', que no recorta nada",
 					guardado.ObraID)
 			}
 			if !guardado.ONI {
 				t.Error("sin obra es ONI: la guarda que estampa ONI tiene que ver " +
-					"el blanco como vacio, o la fila llega al INSERT con oni = false " +
+					"el blanco como vacio, o la fila llega al adaptador con oni = false " +
 					"y obra_id NULL, que es justo lo que el CHECK prohibe")
 			}
 			if guardado.Escalon != "pendiente" {
@@ -902,7 +981,7 @@ func TestGuardarUsosNoAflojaH5AlRecortarLosBlancos(t *testing.T) {
 // Un blanco en UNA fila no puede costar el lote entero.
 //
 // Es la mitad cara del defecto y la que no se ve en la capa de aplicacion sin
-// buscarla: con el criterio de "vacio" repartido entre Go y el NULLIF del SQL,
+// buscarla: con el criterio de "vacio" repartido entre Go y valoresUso,
 // la fila del blanco esquiva las dos comprobaciones de Go, viola el CHECK
 // uso_resuelto_tiene_obra en el INSERT y se lleva por delante a las buenas que
 // la acompanan -la escritura del lote es UNA transaccion a proposito-. Aqui se
@@ -928,11 +1007,11 @@ func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 	if len(repo.canonicos()) != 3 {
 		t.Fatalf("se esperaban 3 usos canonicos, hay %d: %+v", len(repo.canonicos()), repo.canonicos())
 	}
-	// Y las tres salen con obra_id vacio EXACTO, que es lo que el INSERT sabe
-	// convertir en NULL.
+	// Y las tres salen con obra_id vacio EXACTO, que es lo que valoresUso sabe
+	// convertir en nil.
 	for _, u := range repo.usos {
 		if u.ObraID != "" {
-			t.Errorf("%q sale con ObraID = %q: el NULLIF del INSERT no lo va a anular",
+			t.Errorf("%q sale con ObraID = %q: valoresUso no lo va a anular",
 				u.Titulo, u.ObraID)
 		}
 	}
@@ -946,7 +1025,10 @@ func TestGuardarUsosNoPierdeElLotePorUnObraIDEnBlanco(t *testing.T) {
 func TestGuardarUsosNoConfundeElEscalonVacioConUnoAdelantado(t *testing.T) {
 	ingesta, repo, _ := nuevaIngesta()
 
-	recien := UsoPersistido{Titulo: "Recien Parseada", Modalidad: reparto.TV}
+	recien := UsoPersistido{
+		Titulo: "Recien Parseada", Modalidad: reparto.TV,
+		CanalID: "caracol", Rating: decimal.NewFromInt(1),
+	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{recien})
 	if err != nil {
@@ -1041,9 +1123,11 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 	recien := UsoPersistido{
 		Titulo:      "La Casa de las Dos Palmas",
 		Modalidad:   reparto.TV,
-		IDsFuente:   "ID_Ficha=1234",
+		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(48),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(t.Context(), rep, []UsoPersistido{recien})
@@ -1072,6 +1156,45 @@ func TestGuardarUsosRellenaLosDefaultsDeUnaFilaRecienParseada(t *testing.T) {
 	}
 	if guardado.ReporteID != rep.ID {
 		t.Errorf("ReporteID = %q, se esperaba %q", guardado.ReporteID, rep.ID)
+	}
+}
+
+// Una fila de TV sin canal no pondera, y una con canal pero sin rating pondera
+// cero. Las dos se rechazan y el motivo nombra el campo. Cine no multiplica
+// por rating: con canal, rating 0 sigue siendo canonica (#165).
+func TestGuardarUsosRechazaFilaSinCanalYFilaSinRating(t *testing.T) {
+	ingesta, repo, _ := nuevaIngesta()
+
+	sinCanal := usoBueno("Sin canal")
+	sinCanal.CanalID = ""
+	sinRating := usoBueno("Sin rating")
+	sinRating.Rating = decimal.Zero
+	cine := usoBueno("Pelicula")
+	cine.Modalidad = reparto.Cine
+	cine.Rating = decimal.Zero
+	buena := usoBueno("Con canal y rating")
+
+	rechazados, err := ingesta.GuardarUsos(t.Context(), repDePrueba(), []UsoPersistido{
+		sinCanal, sinRating, cine, buena,
+	})
+	if err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+	if len(rechazados) != 2 {
+		t.Fatalf("rechazados = %d, se esperaban 2: %+v", len(rechazados), rechazados)
+	}
+	motivos := map[string]string{}
+	for _, u := range rechazados {
+		motivos[u.Titulo] = u.RechazoMotivo
+	}
+	if !strings.Contains(motivos["Sin canal"], "canal_id") {
+		t.Fatalf("sin canal: motivo = %q", motivos["Sin canal"])
+	}
+	if !strings.Contains(motivos["Sin rating"], "rating") {
+		t.Fatalf("sin rating: motivo = %q", motivos["Sin rating"])
+	}
+	if len(repo.canonicos()) != 2 {
+		t.Fatalf("canonicas = %d, se esperaban la de cine y la buena", len(repo.canonicos()))
 	}
 }
 
@@ -1526,6 +1649,38 @@ func TestIngerirReporteDejaLaEvidenciaYLasFilasCanonicas(t *testing.T) {
 	}
 }
 
+// B1: con SnapshotNormalizacion cableado, la duracion cruda no llega a usos.
+func TestIngerirReporteAplicaElOchentaPorCientoDeTV(t *testing.T) {
+	fila := usoBueno("Rebelde")
+	fila.DuracionMin = decimal.NewFromInt(45)
+	fila.Fecha = "20241231"
+	fila.Hora = "20:00"
+	lec := &lectorFalso{filas: []UsoPersistido{fila}}
+	ingesta, repo, _ := ingestaConLector(lec)
+	ingesta.SnapshotNormalizacion = func(context.Context) (reparto.Snapshot, error) {
+		return reparto.Snapshot{
+			DuracionArtisticaPct: decimal.RequireFromString("0.80"),
+			MinutosHoraTV:        decimal.NewFromInt(48),
+			MonedaBase:           "COP",
+		}, nil
+	}
+
+	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-norm"))
+	if err != nil {
+		t.Fatalf("IngerirReporte: %v", err)
+	}
+	if rec.Aceptados != 1 {
+		t.Fatalf("aceptados = %d", rec.Aceptados)
+	}
+	got := repo.canonicos()[0]
+	if !got.DuracionMin.Equal(decimal.RequireFromString("36")) {
+		t.Fatalf("DuracionMin = %s, se esperaba 36 (80%% de 45)", got.DuracionMin)
+	}
+	if got.Fecha != "2024-12-31" {
+		t.Fatalf("Fecha = %q, se esperaba 2024-12-31", got.Fecha)
+	}
+}
+
 func TestIngerirReporteNoPersisteNadaSiElArchivoNoTieneLaColumna(t *testing.T) {
 	// El criterio de aceptacion es literal: "nothing is persisted". Y no es
 	// cosmetico -- de la boveda no se borra (ADR 0006), y escribir el acuse
@@ -1714,7 +1869,7 @@ func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
 		t.Fatalf("febrero: %v", err)
 	}
 
-	todas, err := ingesta.Cargas(t.Context(), "")
+	todas, err := ingesta.Cargas(t.Context(), "", Paginacion{})
 	if err != nil {
 		t.Fatalf("Cargas: %v", err)
 	}
@@ -1722,7 +1877,7 @@ func TestCargasAtaCadaEntregaASuPeriodoYCuentaSusFilas(t *testing.T) {
 		t.Fatalf("cargas = %d, se esperaban 2", len(todas))
 	}
 
-	enero, err := ingesta.Cargas(t.Context(), "2026-01")
+	enero, err := ingesta.Cargas(t.Context(), "2026-01", Paginacion{})
 	if err != nil {
 		t.Fatalf("Cargas(2026-01): %v", err)
 	}
@@ -1744,8 +1899,179 @@ func TestCargasRechazaUnPeriodoMalEscrito(t *testing.T) {
 	ingesta, _, _ := nuevaIngesta()
 
 	// "2026-1" no casa con ninguna fila y devolveria una lista vacia
-	// indistinguible de "ese periodo no tuvo cargas".
-	if _, err := ingesta.Cargas(t.Context(), "2026-1"); !errors.Is(err, ErrReporteInvalido) {
-		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	// indistinguible de "ese periodo no tuvo cargas". Un mes que no existe cae
+	// por lo mismo: antes se contestaba 200 con la lista vacia, que se lee como
+	// "ese mes no tuvo recaudo" cuando lo que pasa es que ese mes no existe.
+	for _, periodo := range []string{"2026-1", "2026-13", "2026-00", "enero"} {
+		if _, err := ingesta.Cargas(t.Context(), periodo, Paginacion{}); !errors.Is(err, ErrReporteInvalido) {
+			t.Errorf("periodo %q: err = %v, se esperaba ErrReporteInvalido", periodo, err)
+		}
+	}
+
+	// Y el filtro no es mas estricto que el constructor: un periodo que el
+	// nucleo acepta al escribir se puede consultar. Con dos patrones -el del
+	// filtro y el de la escritura- habia bolsas escribibles que no se podian
+	// consultar.
+	if _, err := ingesta.Cargas(t.Context(), "2026-12", Paginacion{}); err != nil {
+		t.Fatalf("un periodo valido no puede rechazarse: %v", err)
+	}
+}
+
+func TestCargasPagina(t *testing.T) {
+	lec := &lectorFalso{filas: []UsoPersistido{usoBueno("Buena")}}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	for _, periodo := range []string{"2026-01", "2026-02", "2026-03"} {
+		if _, err := ingesta.IngerirReporte(
+			t.Context(), "caracol", FormatoXLSX, periodo, []byte(periodo)); err != nil {
+			t.Fatalf("%s: %v", periodo, err)
+		}
+	}
+
+	// El defecto es la primera pagina completa: sin paginacion pedida, el
+	// listado no se recorta en silencio.
+	todas, err := ingesta.Cargas(t.Context(), "", Paginacion{})
+	if err != nil {
+		t.Fatalf("Cargas: %v", err)
+	}
+	if len(todas) != 3 {
+		t.Fatalf("cargas = %d, se esperaban 3", len(todas))
+	}
+
+	una, err := ingesta.Cargas(t.Context(), "", Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("Cargas(pagina): %v", err)
+	}
+	if len(una) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(una))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RechazosDeCarga: el log de rechazos de una entrega
+// ---------------------------------------------------------------------------
+
+func TestRechazosDeCargaExigeElIDDeLaCarga(t *testing.T) {
+	ingesta, _, _ := nuevaIngesta()
+
+	// El NBSP es el blanco de los exports de Excel: TrimSpace lo recorta, un
+	// recorte propio de espacios no.
+	for _, id := range []string{"", "   ", " "} {
+		if _, err := ingesta.RechazosDeCarga(t.Context(), id, Paginacion{}); !errors.Is(err, ErrReporteInvalido) {
+			t.Errorf("id %q: err = %v, se esperaba ErrReporteInvalido", id, err)
+		}
+	}
+}
+
+func TestRechazosDeCargaDeUnaCargaQueNoExisteEsNoEncontrado(t *testing.T) {
+	ingesta, _, _ := nuevaIngesta()
+
+	// Una lista vacia no puede significar "esa carga no existe": seria la
+	// misma ambiguedad que Cargas evita validando el periodo, y la pantalla
+	// diria "sin rechazos" de una carga que nunca llego.
+	_, err := ingesta.RechazosDeCarga(t.Context(), "rep-que-no-existe", Paginacion{})
+	if !errors.Is(err, ErrNoEncontrado) {
+		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+func TestRechazosDeCargaDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
+	// Doce filas para que existan las posiciones 10 y 11: con menos de once, el
+	// orden lexico y el de fila coinciden y la prueba no distingue nada.
+	filas := make([]UsoPersistido, 12)
+	for n := range filas {
+		filas[n] = usoBueno("Fila " + strconv.Itoa(n))
+	}
+	for _, n := range []int{10, 2, 1} {
+		filas[n].RechazoMotivo = fmt.Sprintf("fila %d, duracion_min: \"x\" no es un numero", n)
+	}
+	lec := &lectorFalso{filas: filas}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	if err != nil {
+		t.Fatalf("enero: %v", err)
+	}
+	// Otra entrega con su propio rechazo: no puede colarse en el log de enero.
+	otra := usoBueno("De febrero")
+	otra.RechazoMotivo = "titulo vacio"
+	lec.filas = []UsoPersistido{otra}
+	if _, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-02", []byte("febrero")); err != nil {
+		t.Fatalf("febrero: %v", err)
+	}
+
+	// Con blancos alrededor: el id llega de un segmento de la URL, y el caso de
+	// uso lo recorta antes de buscar.
+	rechazos, err := ingesta.RechazosDeCarga(t.Context(), " "+enero.Reporte.ID+" ", Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeCarga: %v", err)
+	}
+	ids := make([]string, 0, len(rechazos))
+	for _, u := range rechazos {
+		ids = append(ids, u.ID)
+	}
+	quiero := []string{enero.Reporte.ID + "-1", enero.Reporte.ID + "-2", enero.Reporte.ID + "-10"}
+	if !slices.Equal(ids, quiero) {
+		t.Fatalf("ids = %v, se esperaba %v (solo los de enero, en orden de fila)", ids, quiero)
+	}
+	// El motivo viaja con cada fila: es lo que la pantalla le muestra a quien
+	// subio el archivo.
+	if !strings.Contains(rechazos[2].RechazoMotivo, "fila 10") {
+		t.Errorf("motivo = %q", rechazos[2].RechazoMotivo)
+	}
+}
+
+// La pagina NO puede truncar la cifra. El recuento total sigue saliendo del
+// listado, que es de donde la pantalla saca su "N de M": sin eso, acotar el log
+// seria truncarlo en silencio, que es justo lo que la cota existe para no hacer.
+func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
+	filas := make([]UsoPersistido, 3)
+	for n := range filas {
+		filas[n] = usoBueno("Fila " + strconv.Itoa(n))
+		filas[n].RechazoMotivo = "titulo vacio"
+	}
+	lec := &lectorFalso{filas: filas}
+	ingesta, _, _ := ingestaConLector(lec)
+
+	enero, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("enero"))
+	if err != nil {
+		t.Fatalf("enero: %v", err)
+	}
+
+	// El listado dice cuantos rechazos hubo: la cifra que NO se acota.
+	cargas, err := ingesta.Cargas(t.Context(), "2026-01", Paginacion{})
+	if err != nil {
+		t.Fatalf("Cargas: %v", err)
+	}
+	if len(cargas) != 1 || cargas[0].Rechazados != 3 {
+		t.Fatalf("cargas = %+v, se esperaban 3 rechazos contados", cargas)
+	}
+
+	// Y el log se pide por paginas: la primera trae una sola fila.
+	una, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID, Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("RechazosDeCarga: %v", err)
+	}
+	if len(una) != 1 {
+		t.Fatalf("la primera pagina trajo %d filas, se esperaba 1", len(una))
+	}
+	if quiero := enero.Reporte.ID + "-0"; una[0].ID != quiero {
+		t.Errorf("primera fila = %q, se esperaba %q", una[0].ID, quiero)
+	}
+
+	// Sin limite explicito manda el defecto, que es una cota y no "sin tope".
+	todas, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID, Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeCarga sin limite: %v", err)
+	}
+	if len(todas) != 3 {
+		t.Fatalf("sin limite trajo %d filas, se esperaban las 3", len(todas))
+	}
+
+	// Y una pagina mas alla del final es una lista vacia, no un error.
+	mas, err := ingesta.RechazosDeCarga(t.Context(), enero.Reporte.ID,
+		Paginacion{Limite: 1, Desplazamiento: 9})
+	if err != nil || len(mas) != 0 {
+		t.Fatalf("pagina fuera de rango = %#v, err = %v", mas, err)
 	}
 }

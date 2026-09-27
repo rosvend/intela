@@ -1,274 +1,333 @@
 #!/usr/bin/env bash
 #
-# Prueba de humo del arranque. Contesta la pregunta que las etapas de Docker de
-# CI no contestan: la imagen construye, pero >>arranca y sirve<<?
+# Prueba de humo del stack de docker-compose.
 #
-#   docker compose --profile demo up -d --build
-#   deploy/smoke.sh
+# Responde a una pregunta que el resto del pipeline no responde: *el sistema
+# arranca y sirve*. `go build` dice que compila, `docker build` dice que la
+# imagen se construye, y con las dos en verde el stack puede seguir sin
+# levantar -un DSN mal escrito, una migracion que no aplica, el `proxy_pass`
+# sin barra final que manda /api/obras a la API como /api/obras y devuelve 404
+# a todo-. Nada de eso se ve hasta que alguien abre el navegador.
 #
-# Recorre la misma ruta que recorre una persona en la demo, y por la puerta por
-# la que entra una persona: nginx en el puerto de entrada, no la API en el 8080.
-# Un proxy mal configurado -la barra final de `proxy_pass`, el `upstream` que
-# apunta a un servicio caido- es invisible si se golpea la API directamente, y
-# es de lo mas facil de romper que hay aqui.
+# Se prueba lo que ve un usuario, a traves de nginx y en el puerto publicado,
+# no contenedor por contenedor: el proxy es parte del sistema y es donde viven
+# la mitad de los fallos de integracion.
 #
-#   1. GET  /health              el proceso vive, sin tocar la base
-#   2. GET  /ready               el proceso vive Y Postgres responde
-#   3. GET  /                    nginx sirve el tablero, no su propio 404
-#   4. POST /api/auth/session    el seed sembro los usuarios, y el prefijo /api/
-#                                se recorta bien de camino a la API
-#   5. GET  /api/obras           con el token: hay catalogo, y son las 4 del seed
+# Uso:
+#   deploy/smoke.sh                       contra http://localhost
+#   SMOKE_BASE_URL=http://localhost:8088 deploy/smoke.sh
 #
-# Cada paso se reintenta hasta SMOKE_TIMEOUT. Los pasos 4 y 5 lo necesitan de
-# verdad: el seed corre EN PARALELO con la API -no hay `depends_on: seed`- asi
-# que al terminar `up -d` es normal que las credenciales todavia no existan. Lo
-# que no es normal es que sigan sin existir un minuto despues, y eso es lo que
-# separa "todavia no" de "roto".
+# Variables:
+#   SMOKE_BASE_URL   Raiz publica, la de nginx. Por defecto http://localhost
+#   SMOKE_ESPERA     Segundos de margen por comprobacion. Por defecto 180
+#   SMOKE_EMAIL      Usuario con el que se entra. Por defecto admin@redes.co
+#   SMOKE_CLAVE      Su clave. Por defecto SEED_CLAVE_ADMIN, o admin-local
+#   SMOKE_COMPOSE    Orden de compose. Por defecto "docker compose --profile
+#                    demo": sin el perfil, `logs` en fatal() no ve el
+#                    contenedor del seed -Compose v2 lo excluye de ese
+#                    comando en cuanto el servicio declara `profiles` y el
+#                    perfil no esta activo- aunque `ps --all` si lo liste, y
+#                    el seed es el fallo mas probable de toda la funcionalidad.
+#   SMOKE_SIN_COMPOSE  =1 para omitir el estado de los contenedores (util
+#                      cuando se apunta a un despliegue remoto)
 #
-# La cuenta de obras se comprueba de verdad, contra SMOKE_OBRAS. Un `200 []` es
-# el falso verde clasico de esta prueba: el stack responde, la ruta existe, la
-# autorizacion pasa... y no hay datos. Un smoke test que solo mira el codigo de
-# estado lo da por bueno.
+# Sale 0 si el stack sirve, 1 si no, y en ese caso deja en el log el estado de
+# los contenedores y la cola de sus logs: un fallo aqui tiene que ser
+# diagnosticable sin volver a levantar nada.
+
+set -Eeuo pipefail
+
+BASE="${SMOKE_BASE_URL:-http://localhost}"
+BASE="${BASE%/}"
+ESPERA="${SMOKE_ESPERA:-180}"
+EMAIL="${SMOKE_EMAIL:-admin@redes.co}"
+CLAVE="${SMOKE_CLAVE:-${SEED_CLAVE_ADMIN:-admin-local}}"
+read -r -a COMPOSE <<<"${SMOKE_COMPOSE:-docker compose --profile demo}"
+
+# Los servicios que tienen que seguir en pie al final. `migrate` y `seed` no
+# estan: son de una sola pasada y se comprueban aparte, por su codigo de
+# salida (comprobacion 1/7 mas abajo), no por lo que el resto del script
+# infiera de ellos.
+SERVICIOS=(postgres api worker scheduler web nginx)
+
+# Servicios de una sola pasada (comprobados en una_pasada_ok(), mas abajo).
+# Antes de esto, el resto del script "demostraba" su exito por indirectas -si
+# la base no estuviera migrada no habria /ready, y si no estuviera sembrada no
+# habria con quien entrar-, y esas indirectas son falsas en cuanto la base YA
+# tenia datos de una corrida anterior: un `seed` que falla a medias dice adios
+# con un `warning` (`required: false` en docker-compose.yml, deliberado: es lo
+# que permite `up` sin --profile demo) y los usuarios y obras de la corrida
+# anterior siguen ahi para que el login y `/api/obras` pasen igual.
 #
-# Salida 0 = todo verde. Cualquier otra cosa = fallo, con el motivo y el ultimo
-# cuerpo recibido.
+# `migrate` es obligatorio; `seed` solo existe si el perfil `seed` o `demo`
+# esta activo, asi que su ausencia no es un fallo -es un `up` pelado-.
+UNA_PASADA=(migrate seed)
+UNA_PASADA_OBLIGATORIO=migrate
 
-set -euo pipefail
+# ---------------------------------------------------------------------------
+# Salida
 
-# --- Configuracion ----------------------------------------------------------
+rojo=""
+verde=""
+neutro=""
+if [ -t 1 ]; then
+  rojo=$'\033[31m'
+  verde=$'\033[32m'
+  neutro=$'\033[0m'
+fi
 
-# Puerto por defecto = el mismo que docker-compose.yml publica por defecto. Si
-# se movio uno, se mueve el otro: `INTELA_PUERTO_HTTP=8088` sirve para ambos.
-BASE_URL="${BASE_URL:-http://localhost:${INTELA_PUERTO_HTTP:-80}}"
-SMOKE_EMAIL="${SMOKE_EMAIL:-admin@redes.co}"
-# Tiene que ser el rol `administrador`: GET /obras exige ese rol y con cualquier
-# otro la prueba fallaria con 403 sin que nada este roto.
-SMOKE_CLAVE="${SMOKE_CLAVE:-${SEED_CLAVE_ADMIN:-admin-local}}"
-# Cuantas obras siembra el seed. Este `4` es el unico del proyecto: la etapa de
-# CI no lo repite, exporta SMOKE_OBRAS solo si quiere otra cosa. Cuando el
-# dataset del seed crezca, se cambia aqui y CI viene detras.
-SMOKE_OBRAS="${SMOKE_OBRAS:-4}"
-SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-180}"
-SMOKE_INTERVALO="${SMOKE_INTERVALO:-2}"
+paso() { printf '\n== %s\n' "$1"; }
+ok() { printf '   %sok%s  %s\n' "$verde" "$neutro" "$1"; }
 
-# Estado de la ultima peticion. Global porque en bash una funcion solo devuelve
-# un entero, y aqui hacen falta el codigo y el cuerpo a la vez.
-CODIGO=""
-CUERPO=""
-MOTIVO=""
-
-# --- Logica de decision -----------------------------------------------------
+# fatal imprime el motivo y VUELCA EL ESTADO antes de salir.
 #
-# Funciones puras: reciben texto, devuelven 0 o 1, no tocan la red. Es lo que
-# `deploy/smoke_test.sh` prueba unitariamente. Estan separadas del transporte a
-# proposito -es aqui donde se decide verde o rojo, y una decision que solo se
-# puede ejercitar levantando Postgres no se ejercita nunca.
+# Sin el volcado, un fallo en CI deja "la peticion no respondio" y nada mas: hay
+# que reproducir el arranque entero en local para enterarse de que lo que pasaba
+# era que la migracion 00011 no aplicaba. Los logs ya estan ahi en el momento
+# del fallo; no recogerlos es tirarlos.
+fatal() {
+  printf '\n%sFALLO%s  %s\n' "$rojo" "$neutro" "$1" >&2
 
-# codigo_es <obtenido> <esperado>
-codigo_es() { [ "${1-}" = "${2-}" ]; }
-
-# estado_es <cuerpo> <estado>  -- {"estado":"ok"} y {"estado":"listo"}
-estado_es() {
-  local visto
-  visto=$(printf '%s' "${1-}" | jq -r '
-    if type == "object" and (.estado | type) == "string" then .estado else empty end
-  ' 2>/dev/null) || return 1
-  [ "$visto" = "${2-}" ]
-}
-
-# es_el_tablero <html>
-#
-# Busca el <title> del index de la SPA. No vale comprobar solo que la respuesta
-# no este vacia: el 404 de nginx tambien es HTML no vacio y devuelto con 200 por
-# el fallback de SPA mal puesto, que es justo el fallo que hay que cazar.
-es_el_tablero() { printf '%s' "${1-}" | grep -q '<title>Intela'; }
-
-# token_de <cuerpo>  -- imprime el token; falla si no lo hay o esta vacio
-token_de() {
-  local t
-  t=$(printf '%s' "${1-}" | jq -r '
-    if type == "object" and (.token | type) == "string" then .token else empty end
-  ' 2>/dev/null) || return 1
-  [ -n "$t" ] || return 1
-  printf '%s' "$t"
-}
-
-# contar_obras <cuerpo>  -- imprime cuantas; falla si la respuesta no es una lista
-#
-# El "falla si no es una lista" importa: un {"error":...} tiene longitud 1 para
-# `jq length`, asi que contarlo sin mirar el tipo convierte un error en un exito.
-contar_obras() {
-  local n
-  n=$(printf '%s' "${1-}" | jq -r '
-    if type == "array" then length else empty end
-  ' 2>/dev/null) || return 1
-  [ -n "$n" ] || return 1
-  printf '%s' "$n"
-}
-
-# cuenta_coincide <cuerpo> <esperadas>
-cuenta_coincide() {
-  local n
-  n=$(contar_obras "${1-}") || return 1
-  [ "$n" = "${2-}" ]
-}
-
-# --- Transporte -------------------------------------------------------------
-
-# pedir <metodo> <ruta> [cuerpo-json] [cabecera]
-pedir() {
-  local metodo=$1 ruta=$2 datos=${3-} cabecera=${4-}
-  local tmp
-  tmp=$(mktemp)
-  local -a args=(--silent --show-error --max-time 10 -X "$metodo"
-    -o "$tmp" -w '%{http_code}')
-  if [ -n "$datos" ]; then
-    args+=(-H 'Content-Type: application/json' --data "$datos")
-  fi
-  if [ -n "$cabecera" ]; then
-    args+=(-H "$cabecera")
+  if [ "${SMOKE_SIN_COMPOSE:-0}" != "1" ] && command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
+    printf '\n--- estado de los contenedores ---\n' >&2
+    "${COMPOSE[@]}" ps --all >&2 || true
+    printf '\n--- ultimas 60 lineas de cada servicio ---\n' >&2
+    "${COMPOSE[@]}" logs --tail 60 --no-color >&2 || true
   fi
 
-  CODIGO=$(curl "${args[@]}" "${BASE_URL}${ruta}" 2>/dev/null) || {
-    CUERPO=""
-    CODIGO=""
-    rm -f "$tmp"
-    return 1
-  }
-  CUERPO=$(cat "$tmp")
-  rm -f "$tmp"
-}
-
-# recorte <texto> -- para que un HTML entero no inunde el log del fallo
-recorte() { printf '%s' "${1-}" | tr '\n' ' ' | cut -c1-200; }
-
-# --- Comprobaciones ---------------------------------------------------------
-
-comprobar_health() {
-  pedir GET /health || { MOTIVO="sin respuesta: nadie escucha en $BASE_URL"; return 1; }
-  codigo_es "$CODIGO" 200 || { MOTIVO="HTTP $CODIGO"; return 1; }
-  estado_es "$CUERPO" ok || { MOTIVO="cuerpo inesperado: $(recorte "$CUERPO")"; return 1; }
-}
-
-comprobar_ready() {
-  pedir GET /ready || { MOTIVO="sin respuesta"; return 1; }
-  # El 503 aqui es el caso interesante: el proceso vive y la base no. Se nombra
-  # aparte para no leerlo como "la API esta caida", que es lo contrario.
-  if ! codigo_es "$CODIGO" 200; then
-    MOTIVO="HTTP $CODIGO ($(recorte "$CUERPO"))"
-    if [ "$CODIGO" = "503" ]; then
-      MOTIVO="$MOTIVO - la API responde pero Postgres no"
-    fi
-    return 1
-  fi
-  estado_es "$CUERPO" listo || { MOTIVO="cuerpo inesperado: $(recorte "$CUERPO")"; return 1; }
-}
-
-comprobar_tablero() {
-  pedir GET / || { MOTIVO="sin respuesta"; return 1; }
-  codigo_es "$CODIGO" 200 || { MOTIVO="HTTP $CODIGO - el servicio web o su upstream"; return 1; }
-  es_el_tablero "$CUERPO" || {
-    MOTIVO="200 pero no es el tablero: $(recorte "$CUERPO")"
-    return 1
-  }
-}
-
-TOKEN=""
-comprobar_sesion() {
-  local carga
-  carga=$(jq -nc --arg e "$SMOKE_EMAIL" --arg c "$SMOKE_CLAVE" '{email:$e, clave:$c}')
-  pedir POST /api/auth/session "$carga" || { MOTIVO="sin respuesta"; return 1; }
-  if ! codigo_es "$CODIGO" 200; then
-    MOTIVO="HTTP $CODIGO ($(recorte "$CUERPO"))"
-    case "$CODIGO" in
-      401) MOTIVO="$MOTIVO - usuarios sin sembrar todavia, o clave distinta" ;;
-      404) MOTIVO="$MOTIVO - nginx no esta recortando el prefijo /api/" ;;
-    esac
-    return 1
-  fi
-  TOKEN=$(token_de "$CUERPO") || { MOTIVO="200 sin token: $(recorte "$CUERPO")"; return 1; }
-}
-
-comprobar_obras() {
-  pedir GET /api/obras "" "Authorization: Bearer $TOKEN" || { MOTIVO="sin respuesta"; return 1; }
-  if ! codigo_es "$CODIGO" 200; then
-    MOTIVO="HTTP $CODIGO ($(recorte "$CUERPO"))"
-    if [ "$CODIGO" = "403" ]; then
-      MOTIVO="$MOTIVO - $SMOKE_EMAIL no tiene el rol administrador"
-    fi
-    return 1
-  fi
-  if ! cuenta_coincide "$CUERPO" "$SMOKE_OBRAS"; then
-    local vistas
-    vistas=$(contar_obras "$CUERPO") || vistas="(la respuesta no es una lista)"
-    MOTIVO="se esperaban $SMOKE_OBRAS obras y llegaron $vistas - falta el seed? (--profile demo)"
-    return 1
-  fi
-}
-
-# --- Ejecucion --------------------------------------------------------------
-
-paso() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
-
-fallo() {
-  printf '\n  \033[31mFALLO\033[0m  %s\n' "$1" >&2
-  printf '\n         Que mirar: docker compose --profile demo logs --tail=100\n' >&2
   exit 1
 }
 
-# reintentar <descripcion> <comprobacion>
-#
-# Un fallo tiene que distinguirse de un "todavia no". Reintentar hasta el tope y
-# entonces gritar es lo que hace esa distincion; abortar al primer intento
-# convertiria cada arranque frio en rojo, y no reintentar nunca es como se acaba
-# metiendo un `sleep 30` que unas veces sobra y otras no llega.
-reintentar() {
-  local desc=$1 comprobacion=$2
-  local fin=$(( $(date +%s) + SMOKE_TIMEOUT ))
-  local intentos=0
-  MOTIVO="sin intentar"
+# Red de seguridad para lo que "set -e" por si solo no verbaliza: una
+# asignacion desnuda como `x=$(curl ...)` aborta el script sin pasar por
+# fatal() si curl falla en el transporte (timeout, conexion rechazada) en vez
+# de responder con un codigo HTTP. El trap convierte ese abort silencioso en
+# el mismo volcado de diagnostico que ya usan las comprobaciones explicitas.
+trap 'fatal "fallo inesperado en la linea $LINENO: revisa la salida de arriba"' ERR
 
-  while :; do
-    intentos=$((intentos + 1))
-    if "$comprobacion"; then
-      if [ "$intentos" -gt 1 ]; then
-        paso "$desc  (tras $intentos intentos)"
-      else
-        paso "$desc"
-      fi
-      return 0
+# esperar repite una comprobacion hasta que pasa o hasta agotar SMOKE_ESPERA.
+#
+# Existe porque `up -d` devuelve cuando los contenedores ARRANCARON, no cuando
+# el sistema esta listo: Postgres todavia acepta conexiones a medias, la API
+# aun no abrio el puerto y el seed puede seguir insertando. Un smoke test sin
+# espera no prueba el stack, prueba la velocidad de la maquina.
+esperar() {
+  local que="$1"
+  shift
+  local fin=$((SECONDS + ESPERA))
+  until "$@"; do
+    if ((SECONDS >= fin)); then
+      fatal "$que: seguia sin cumplirse tras ${ESPERA}s"
     fi
-    if [ "$(date +%s)" -ge "$fin" ]; then
-      fallo "$desc
-         Motivo:   $MOTIVO
-         Intentos: $intentos en ${SMOKE_TIMEOUT}s"
+    sleep 2
+  done
+  ok "$que"
+}
+
+# codigo devuelve solo el codigo HTTP. Sin -f: aqui un 401 es una respuesta
+# valida que hay que poder comparar, no un error de curl.
+codigo() { curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$@"; }
+
+# una_pasada_ok exige que los servicios de una sola pasada hayan TERMINADO y
+# hayan terminado BIEN, preguntandoselo al contenedor (`ps --all`), no
+# deduciendolo de que la base tenga datos -que es de donde salia el verde
+# falso: los datos podian ser de la corrida de ayer-.
+#
+# Se exige `exited` ademas de `ExitCode == 0` porque un contenedor que todavia
+# corre, o que se quedo en `created` y nunca arranco, tambien lleva `ExitCode`
+# 0 en esta salida: sin mirar el estado, "no ha terminado" se leeria como
+# "termino bien", que es la misma clase de fallo que esto viene a cerrar.
+#
+# La forma de `ps --format json` NO es estable entre versiones de Compose: unas
+# devuelven un array JSON y otras una linea por contenedor (NDJSON). `-s` mas
+# `flatten(1)` acepta las dos. Importa mas de lo que parece: si la guarda se
+# rompiera por la version de Compose, se romperia en CI -que es el unico sitio
+# donde nadie la esta mirando-.
+una_pasada_ok() {
+  local crudo estado servicio situacion codigo_salida visto_obligatorio=0
+  local nombres_json
+
+  crudo=$("${COMPOSE[@]}" ps --all --format json 2>/dev/null) ||
+    fatal "no se pudo consultar '${COMPOSE[*]} ps --all --format json'"
+
+  nombres_json=$(printf '%s\n' "${UNA_PASADA[@]}" |
+    jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+  estado=$(jq -r -s --argjson nombres "$nombres_json" \
+    'flatten(1)[]
+     | select(.Service as $s | $nombres | index($s))
+     | "\(.Service) \(.State) \(.ExitCode)"' <<<"$crudo") ||
+    fatal "no se pudo interpretar la salida de '${COMPOSE[*]} ps --all --format json'"
+
+  while read -r servicio situacion codigo_salida; do
+    [ -n "$servicio" ] || continue
+    if [ "$servicio" = "$UNA_PASADA_OBLIGATORIO" ]; then
+      visto_obligatorio=1
     fi
-    sleep "$SMOKE_INTERVALO"
+    if [ "$situacion" != "exited" ]; then
+      fatal "el servicio de una sola pasada '$servicio' no termino: sigue en '$situacion'"
+    fi
+    if [ "$codigo_salida" != "0" ]; then
+      fatal "el servicio de una sola pasada '$servicio' termino con codigo $codigo_salida: revisa sus logs abajo"
+    fi
+  done <<<"$estado"
+
+  # Sin `migrate` en la salida, `SMOKE_COMPOSE` no esta mirando el proyecto que
+  # se levanto, y entonces ni esta comprobacion ni la 7/7 significan nada.
+  if [ "$visto_obligatorio" != "1" ]; then
+    fatal "no aparece el contenedor de '$UNA_PASADA_OBLIGATORIO' en '${COMPOSE[*]} ps --all': revisa SMOKE_COMPOSE"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Comprobaciones
+
+for bin in curl jq; do
+  command -v "$bin" >/dev/null 2>&1 ||
+    fatal "hace falta '$bin' en el PATH para correr la prueba de humo"
+done
+
+printf 'Prueba de humo contra %s\n' "$BASE"
+
+# 1. Los pasos de una sola pasada (migrate, seed) salieron con 0. Sin esto,
+#    una base ya sembrada de una corrida anterior deja pasar un `seed` roto:
+#    las comprobaciones 5 y 6 de mas abajo (login y catalogo) no distinguen
+#    "sembrado" de "sembrado a medias por la corrida de HOY": solo miran
+#    que haya datos, y los datos pueden ser de ayer.
+paso "1/7  migrate y seed (si esta en el perfil) terminaron con exito"
+if [ "${SMOKE_SIN_COMPOSE:-0}" = "1" ]; then
+  ok "omitido (SMOKE_SIN_COMPOSE=1)"
+elif ! command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
+  ok "omitido: '${COMPOSE[0]}' no esta en el PATH"
+else
+  una_pasada_ok
+  ok "servicios de una sola pasada en 0"
+fi
+
+# 2. La sonda de disponibilidad. NO es /health: /health solo dice que el
+#    proceso vive, /ready dice que ademas la base responde, que es lo que
+#    distingue "arranco" de "sirve".
+paso "2/7  la API responde a traves de nginx"
+ready() { [ "$(codigo "$BASE/ready")" = "200" ]; }
+esperar "GET $BASE/ready -> 200" ready
+
+# El prefijo /api/ es un camino DISTINTO en nginx.conf, con su propia barra
+# final en el proxy_pass. Que /ready funcione no dice nada sobre el, y es el
+# que usa el tablero entero.
+[ "$(codigo "$BASE/api/health")" = "200" ] ||
+  fatal "GET $BASE/api/health no devolvio 200: revisa el proxy_pass de /api/ en deploy/nginx.conf"
+ok "GET $BASE/api/health -> 200 (el prefijo /api/ enruta)"
+
+# 3. El tablero, servido por el contenedor `web` a traves de nginx.
+paso "3/7  el tablero web se sirve por nginx"
+raiz=$(curl -fsS --max-time 10 "$BASE/") ||
+  fatal "GET $BASE/ no respondio: nginx no esta sirviendo la SPA"
+grep -q 'id="root"' <<<"$raiz" ||
+  fatal "GET $BASE/ respondio, pero el cuerpo no es el index de la SPA (falta el div #root)"
+ok "GET $BASE/ -> index de la SPA"
+
+# El index es HTML estatico: se sirve igual aunque el build de Vite haya salido
+# vacio y no haya aplicacion ninguna. El bundle es lo que distingue "nginx
+# responde" de "el tablero carga", y ademas prueba el `location /assets/` de
+# web/nginx.conf, que es otro camino distinto.
+# awk con match()+exit, no grep+head. `grep -m1 -o` para en la primera LINEA
+# que casa, pero -o sigue imprimiendo TODAS las coincidencias de esa linea: si
+# el index trae mas de un bundle en la misma linea (un <script> y un
+# modulepreload, por ejemplo), la salida tiene varias rutas y `codigo
+# "$BASE$bundle"` pide una URL rota. Encadenar `| head -n1` detras arregla eso
+# pero reintroduce el problema original para una linea larga: `head` puede
+# seguir cerrando la tuberia a mitad de la escritura de `grep`, SIGPIPE, y con
+# `pipefail` el `|| bundle=""` de abajo pisaria un valor que ya se habia
+# capturado bien. match()+exit es un solo proceso: sin tuberia, no hay lector
+# que pueda matar al escritor a mitad de nada, sea la linea del largo que sea.
+bundle=$(awk 'match($0, /\/assets\/[^"]*\.js/) { print substr($0, RSTART, RLENGTH); exit }' <<<"$raiz") ||
+  bundle=""
+[ -n "$bundle" ] ||
+  fatal "el index no referencia ningun bundle en /assets/: el build del tablero salio vacio"
+[ "$(codigo "$BASE$bundle")" = "200" ] ||
+  fatal "GET $BASE$bundle no devolvio 200: el tablero no puede cargar"
+ok "GET $BASE$bundle -> 200 (el bundle del tablero carga)"
+
+# 4. Una ruta protegida SIN credencial. Un 200 aqui seria un agujero, y un 404
+#    querria decir que la ruta ni existe -las dos cosas se ven igual de bien
+#    desde fuera si solo se mira que "algo responde"-.
+paso "4/7  las rutas protegidas piden sesion"
+sin_token=$(codigo "$BASE/api/obras")
+[ "$sin_token" = "401" ] ||
+  fatal "GET $BASE/api/obras sin token devolvio $sin_token, se esperaba 401"
+ok "GET $BASE/api/obras sin token -> 401"
+
+# 5. Entrar. Esto es lo que espera al seed: los usuarios los crea el, asi que
+#    hasta que no termina no hay con quien iniciar sesion.
+paso "5/7  se puede iniciar sesion con el usuario del seed"
+sesion=""
+login() {
+  sesion=$(curl -fsS --max-time 10 -X POST "$BASE/api/auth/session" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$EMAIL\",\"clave\":\"$CLAVE\"}" 2>/dev/null) || return 1
+  jq -e '.token | strings and (length > 0)' >/dev/null 2>&1 <<<"$sesion"
+}
+esperar "POST $BASE/api/auth/session como $EMAIL" login
+token=$(jq -r '.token' <<<"$sesion")
+rol=$(jq -r '.usuario.rol' <<<"$sesion")
+ok "sesion abierta con rol '$rol'"
+
+# 6. Un endpoint de negocio de verdad, con datos de verdad. Que devuelva 200 no
+#    basta: el catalogo vacio tambien es un 200, y es exactamente el sintoma de
+#    "levanto pero nadie lo sembro", que es lo que este perfil existe para
+#    evitar.
+paso "6/7  el catalogo devuelve las obras sembradas"
+obras=""
+catalogo() {
+  obras=$(curl -fsS --max-time 10 -H "Authorization: Bearer $token" \
+    "$BASE/api/obras") || return 1
+  [ "$(jq 'if type == "array" then length else 0 end' <<<"$obras")" -ge 1 ]
+}
+esperar "GET $BASE/api/obras -> al menos una obra" catalogo
+printf '   %d obras en el catalogo: %s\n' \
+  "$(jq 'length' <<<"$obras")" \
+  "$(jq -r '[.[].titulo] | join(", ")' <<<"$obras")"
+
+# 7. Lo que HTTP no puede ver. `worker` y `scheduler` no publican puerto: si
+#    uno de los dos esta reiniciandose en bucle, todo lo de arriba sigue en
+#    verde y el sistema esta roto igual.
+#
+# `ps --status running` es una foto: un contenedor con `restart:
+# unless-stopped` que muere y revive cada par de segundos esta "running" en
+# casi cualquier instante en que se le mire, asi que una sola foto no
+# distingue un bucle de reinicio de un servicio sano. Se pide la foto dos
+# veces con margen entre medias -sin fiarse de RestartCount, que podman no
+# expone igual que Docker- para que un servicio que muere en el hueco salga
+# en al menos una de las dos como no corriendo.
+#
+# COBERTURA PARCIAL, a proposito y declarada: esto atrapa el bucle rapido -el
+# que revive cada pocos segundos, que es la forma que toma un servicio que
+# muere al arrancar-, no cualquier bucle. Uno cuya ventana de "running" pase
+# de los 3 s de margen puede salir "en pie" en las dos fotos. Cerrarlo de
+# verdad pide contar reinicios, y `RestartCount` no se lee igual en Docker
+# que en podman, que son los dos entornos donde esto tiene que correr. Lo que
+# NO se puede hacer es presentarlo como cubierto: un bucle lento pasa.
+en_pie() {
+  local corriendo
+  corriendo=$("${COMPOSE[@]}" ps --status running --services 2>/dev/null) || return 1
+  local servicio
+  for servicio in "${SERVICIOS[@]}"; do
+    grep -qx "$servicio" <<<"$corriendo" || return 1
   done
 }
 
-requisitos() {
-  local falta=""
-  command -v curl >/dev/null || falta="$falta curl"
-  command -v jq >/dev/null || falta="$falta jq"
-  [ -z "$falta" ] || fallo "faltan herramientas:$falta"
-}
-
-main() {
-  requisitos
-  printf '\nPrueba de humo contra %s\n\n' "$BASE_URL"
-
-  reintentar "GET  /health            200 {\"estado\":\"ok\"}"        comprobar_health
-  reintentar "GET  /ready             200 {\"estado\":\"listo\"}"     comprobar_ready
-  reintentar "GET  /                  200 con el tablero"           comprobar_tablero
-  reintentar "POST /api/auth/session  200 con token ($SMOKE_EMAIL)" comprobar_sesion
-  reintentar "GET  /api/obras         200 con $SMOKE_OBRAS obras"   comprobar_obras
-
-  printf '\n\033[32mPrueba de humo verde.\033[0m El stack arranca y sirve.\n\n'
-}
-
-# El guard es lo que deja que `deploy/smoke_test.sh` haga `source` de este
-# fichero para probar las funciones de arriba sin disparar ninguna peticion.
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-  main "$@"
+paso "7/7  todos los servicios siguen en pie"
+if [ "${SMOKE_SIN_COMPOSE:-0}" = "1" ]; then
+  ok "omitido (SMOKE_SIN_COMPOSE=1)"
+elif ! command -v "${COMPOSE[0]}" >/dev/null 2>&1; then
+  ok "omitido: '${COMPOSE[0]}' no esta en el PATH"
+else
+  en_pie ||
+    fatal "no se pudo consultar '${COMPOSE[*]} ps', o algun servicio de ${SERVICIOS[*]} no esta corriendo"
+  sleep 3
+  en_pie ||
+    fatal "algun servicio de ${SERVICIOS[*]} dejo de estar en pie entre dos comprobaciones: parece un bucle de reinicio"
+  ok "en pie: ${SERVICIOS[*]} (comprobado dos veces, con 3s de margen)"
 fi
+
+printf '\n%sLa prueba de humo paso%s: el stack arranca y sirve.\n' "$verde" "$neutro"

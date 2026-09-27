@@ -12,6 +12,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/normalizacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -54,6 +56,22 @@ type Ingesta struct {
 	// que no se puede es ingerir un archivo, y eso lo dice IngerirReporte con
 	// su nombre y con la lista de lo que si sabe leer.
 	Lectores map[ClaveLector]LectorReporte
+
+	// SnapshotNormalizacion resuelve los coeficientes de RD 9.1.1 y las tasas
+	// de cambio para el paso de esquema. Si es nil, IngerirReporte no aplica
+	// el 80%/hora televisiva (tests que construyen filas ya canonicas).
+	SnapshotNormalizacion func(ctx context.Context) (reparto.Snapshot, error)
+}
+
+// DeducirFormato deduce el formato de una entrega por la extension de su
+// nombre de archivo. Es [FormatoDeNombre], expuesto como metodo para que la
+// interfaz que el adaptador HTTP declara describa TODO lo que el handler
+// necesita del nucleo -incluida esta deduccion- en vez de importar un
+// paquete hermano de infraestructura para una sola funcion. Un doble de
+// prueba puede alterar la deduccion, que es justo lo que el patron del
+// fichero promete y lo que el import directo rompia.
+func (i Ingesta) DeducirFormato(nombre string) string {
+	return FormatoDeNombre(nombre)
 }
 
 // IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
@@ -129,6 +147,10 @@ func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo st
 	// El acuse sale de prepararReporte, que ya exigio la fuente y derivo el id:
 	// normalizarAcuse seria un no-op y su unica rama de error, inalcanzable. Es
 	// el UNICO sitio del fichero donde eso es cierto por construccion.
+	filas, err = i.aplicarNormalizacion(ctx, filas)
+	if err != nil {
+		return Recepcion{}, err
+	}
 	lote, rechazados := prepararLote(rep, filas)
 
 	// Las dos escrituras, en UNA. Separadas -- el acuse por un lado y las filas
@@ -171,17 +193,55 @@ func (i Ingesta) lectoresDisponibles() string {
 // El periodo se valida aunque solo se use como filtro. No es defensa contra
 // inyeccion -- va como parametro --, es que "2026-1" no casa con ninguna fila
 // y devolveria una lista vacia indistinguible de "ese periodo no tuvo cargas".
-func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+// Lo mismo vale para un mes que no existe: `2026-13` se rechaza con 400 en vez
+// de contestar una lista vacia que se lee como "ese mes no tuvo recaudo". La
+// regla es la del dominio, `recaudo.PeriodoValido`, sin copia en este paquete.
+func (i Ingesta) Cargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	periodo = strings.TrimSpace(periodo)
-	if periodo != "" && !periodoValido.MatchString(periodo) {
+	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, fmt.Errorf(
-			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
+			ErrReporteInvalido, periodo)
 	}
-	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	pag = pag.ConDefecto()
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo, pag)
 	if err != nil {
 		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
 	}
 	return cargas, nil
+}
+
+// RechazosDeCarga devuelve una pagina del log de rechazos de una entrega, en
+// orden de fila del archivo.
+//
+// Es lo que despliega una fila del listado de cargas: [Ingesta.Cargas] solo trae
+// el RECUENTO de rechazos, y la cola de revision -que si trae las filas- esta
+// acotada a 1000 en toda la base, asi que filtrarla por entrega truncaria en
+// silencio justo la carga grande.
+//
+// Va paginada por lo mismo que el listado del catalogo: un archivo con la
+// cabecera equivocada rechaza todas sus filas, y sin cota este log se leia
+// entero y se pintaba entero. La pagina NO trunca la cifra: el total sigue
+// siendo `Carga.rechazados`, que es lo que el listado ya tiene en la fila que se
+// despliega, y quien la pinta dice "N de M" con el.
+//
+// Una entrega que no existe es [ErrNoEncontrado], y no una lista vacia: "no
+// llego" y "llego entera" son las dos respuestas que esta lectura existe para
+// distinguir. Una pagina vacia de una entrega que si existe es una lista vacia.
+func (i Ingesta) RechazosDeCarga(ctx context.Context, id string, pag Paginacion) ([]UsoPersistido, error) {
+	// TrimSpace por lo mismo que la fuente en prepararReporte: su blanco incluye
+	// el NBSP. Un id en blanco no es "una carga que no existe", es una peticion
+	// mal hecha, y se dice como tal.
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: falta el id de la carga", ErrReporteInvalido)
+	}
+	pag = pag.ConDefecto()
+	rechazos, err := i.Reportes.RechazosDeReporte(ctx, id, pag)
+	if err != nil {
+		return nil, fmt.Errorf("leer los rechazos de la carga %q: %w", id, err)
+	}
+	return rechazos, nil
 }
 
 // huella devuelve el SHA-256 hexadecimal de unos bytes.
@@ -320,12 +380,16 @@ func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
 	switch {
 	case fuente == "":
 		return Reporte{}, fmt.Errorf("%w: falta la fuente", ErrReporteInvalido)
-	// periodoValido vive en trabajos.go, una sola vez para el paquete. Se
-	// comprueba aqui y no solo en la base porque GuardarReporte escribe la
-	// boveda ANTES que la fila, y de la boveda no se puede borrar nada.
-	case !periodoValido.MatchString(periodo):
+	// La regla del periodo es la del dominio (`recaudo.PeriodoValido`) y no una
+	// copia de este paquete: la que habia aqui usaba `[0-9]{2}` para el mes y
+	// dejaba entrar `2026-00` y `2026-13`. Se comprueba en el nucleo y no solo
+	// en la base porque GuardarReporte escribe la boveda ANTES que la fila, y de
+	// la boveda no se puede borrar nada: un archivo subido a un mes que no
+	// existe queda quemado para siempre.
+	case !recaudo.PeriodoValido(periodo):
 		return Reporte{}, fmt.Errorf(
-			"%w: periodo %q, se esperaba AAAA o AAAA-MM", ErrReporteInvalido, periodo)
+			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
+			ErrReporteInvalido, periodo)
 	case len(datos) == 0:
 		return Reporte{}, fmt.Errorf("%w: la entrega no trae bytes", ErrReporteInvalido)
 	}
@@ -502,8 +566,8 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 	for n, u := range usos {
 		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
 		// no es el espacio: es que el campo se lee TRES veces en DOS capas
-		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el
-		// NULLIF($6, '') del INSERT- y cada lectura decide "vacio" por su cuenta.
+		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el nil de
+		// valoresUso para obra_id- y cada lectura decide "vacio" por su cuenta.
 		// Mientras el criterio se escriba tres veces, puede discrepar tres veces.
 		//
 		// Discrepaba ya. Un obra_id de solo blancos -un espacio, un tabulador, un
@@ -516,16 +580,16 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		//
 		// Y arreglarlo solo en Go lo empeora, que es la razon de que la
 		// normalizacion sea UNA y este ANTES de todo. Con TrimSpace en las dos
-		// comparaciones de arriba pero no en el SQL, la fila pasa como vacia,
-		// llega al INSERT con el espacio intacto, NULLIF no la anula -no es
+		// comparaciones de arriba pero no sobre el campo, la fila pasa como vacia,
+		// llega al COPY con el espacio intacto, valoresUso no lo anula -no es
 		// literalmente ''- y el CHECK uso_resuelto_tiene_obra la rechaza: 23514
 		// dentro de la transaccion del lote, que se lleva por delante TODAS las
 		// filas buenas que la acompanan. Un rechazo con el motivo equivocado se
 		// convertiria asi en una entrega entera perdida.
 		//
 		// Normalizando aqui el valor viaja ya limpio a las tres lecturas, incluido
-		// el que se manda al INSERT, y "vacio" pasa a significar lo mismo en Go y
-		// en SQL por construccion, no por acuerdo.
+		// el que se manda al COPY, y "vacio" pasa a significar lo mismo en Go y
+		// en el adaptador por construccion, no por acuerdo.
 		//
 		// TrimSpace y no un recorte propio: su definicion de blanco es
 		// unicode.IsSpace, que incluye el NBSP (U+00A0) con el que los exports de
@@ -540,7 +604,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		// el razonamiento de arriba, que vale igual para todos: mientras el
 		// criterio de "vacio" se escriba en mas de un sitio puede discrepar en
 		// mas de un sitio, y cada discrepancia acaba en el mismo lugar, que es
-		// una restriccion de la base abortando el INSERT del lote ENTERO. UNA
+		// una restriccion de la base abortando la escritura del lote ENTERO. UNA
 		// normalizacion por campo, aqui arriba, ANTES de que nada los lea.
 		//
 		// Lo que se pierde por cada uno si el blanco no se recorta AQUI:
@@ -587,6 +651,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		u.Escalon = strings.TrimSpace(u.Escalon)
 		u.Evidencia = strings.TrimSpace(u.Evidencia)
 		u.RechazoMotivo = strings.TrimSpace(u.RechazoMotivo)
+		u.CanalID = strings.TrimSpace(u.CanalID)
 
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
@@ -606,13 +671,13 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		// Compara contra "" a secas, y tiene que seguir siendo asi: el TrimSpace
 		// esta arriba, una vez. Repetirlo aqui volveria a dar dos criterios que
-		// pueden separarse, y el de mas abajo -el NULLIF del INSERT- no se puede
-		// repetir en Go de ninguna manera.
+		// pueden separarse, y el de mas abajo -el nil del COPY para obra_id-
+		// compara contra la misma cadena vacia literal.
 		if u.ObraID == "" {
 			// A la salida de ingesta ninguna fila esta identificada: es lo que
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
-			// DEFAULT TRUE de la columna no llega a aplicarse porque
-			// insertarUso manda el valor siempre, asi que el que vale es este.
+			// DEFAULT TRUE de la columna no llega a aplicarse porque el COPY
+			// manda el valor siempre, asi que el que vale es este.
 			//
 			// Es ademas lo que deja el CHECK uso_resuelto_tiene_obra fuera del
 			// alcance de esta ruta, y por eso validarUso ya no lo repite.
@@ -625,12 +690,11 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 			// paso lo normaliza, deja de ser prueba de nada.
 			u.ONI = true
 		}
-		if u.Emisiones == 0 {
+		if u.Emisiones == 0 && u.EmisionesTexto != "0" {
 			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
-			// porque insertarUso manda el valor siempre. Una parrilla real
-			// nunca declara cero emisiones -la granularidad es la emision, no
-			// la obra, y RD 9.1.1 las multiplica-, asi que el cero es el valor
-			// vacio de Go, no un dato.
+			// porque el COPY manda el valor siempre. Una celda vacia es el
+			// cero de Go, no un dato. Un "0" explicito (S4) llega con
+			// EmisionesTexto=="0" desde normalizacion y se respeta.
 			u.Emisiones = 1
 		}
 		if u.RechazoMotivo == "" {
@@ -641,6 +705,9 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 			// rechazos.
 			u.RechazoMotivo = validarUso(u)
 		}
+		if u.RechazoMotivo != "" && u.RechazoTipo == "" {
+			MarcarRechazoAdaptador(&u)
+		}
 
 		lote[n] = u
 		if u.RechazoMotivo != "" {
@@ -648,6 +715,37 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 	}
 	return lote, rechazados
+}
+
+// aplicarNormalizacion lleva las filas del adaptador por el dominio de
+// esquema (#26) antes de prepararLote. Las ya rechazadas por el mapa de
+// columnas no se re-procesan: conservan su motivo y reciben tipo=adaptador.
+func (i Ingesta) aplicarNormalizacion(ctx context.Context, filas []UsoPersistido) ([]UsoPersistido, error) {
+	if i.SnapshotNormalizacion == nil {
+		for n := range filas {
+			MarcarRechazoAdaptador(&filas[n])
+		}
+		return filas, nil
+	}
+	snap, err := i.SnapshotNormalizacion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolver parametros de normalizacion: %w", err)
+	}
+	p, err := ParametrosDesde(snap)
+	if err != nil {
+		return nil, fmt.Errorf("armar parametros de normalizacion: %w", err)
+	}
+	out := make([]UsoPersistido, 0, len(filas))
+	for _, u := range filas {
+		if u.RechazoMotivo != "" {
+			MarcarRechazoAdaptador(&u)
+			out = append(out, u)
+			continue
+		}
+		uso, rev := normalizacion.Normalizar(aFila(u), p)
+		out = append(out, aPersistido(uso, rev))
+	}
+	return out, nil
 }
 
 // validarUso devuelve el motivo por el que una fila no es canonica, o "" si lo
@@ -673,9 +771,18 @@ func validarUso(u UsoPersistido) string {
 		return "titulo vacio: sin titulo no hay nada que identificar"
 	}
 	switch u.Modalidad {
-	case reparto.TV, reparto.Cine, reparto.OTT, reparto.Hotel:
+	case reparto.TV, reparto.Cine, reparto.OTT, reparto.Hotel,
+		reparto.Teatro, reparto.Transporte, reparto.Suscripcion:
 	default:
-		return fmt.Sprintf("modalidad %q fuera de tv|cine|ott|hotel", u.Modalidad)
+		return fmt.Sprintf("modalidad %q fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion", u.Modalidad)
+	}
+	switch u.TipoObra {
+	case "", "cinematografica", "unitario", "serie", "telenovela", "sketches":
+	default:
+		return fmt.Sprintf(
+			"tipo_obra %q fuera de cinematografica|unitario|serie|telenovela|sketches",
+			u.TipoObra,
+		)
 	}
 	if u.Escalon == "manual" {
 		return "escalon manual: una resolucion manual necesita autor e instante, y no entra por ingesta"
@@ -708,8 +815,8 @@ func validarUso(u UsoPersistido) string {
 	// Contra "" a secas: GuardarUsos ya recorto los blancos antes de llamar, y
 	// esa es la UNICA normalizacion del campo en todo el camino. Un TrimSpace
 	// tambien aqui no seria redundante sino peligroso: sugeriria que esta funcion
-	// se puede llamar con un valor sin normalizar, y el INSERT -que compara con
-	// NULLIF($6, '')- no puede hacer esa misma concesion.
+	// se puede llamar con un valor sin normalizar, y valoresUso -que compara
+	// contra '' literal para mandar nil- no puede hacer esa misma concesion.
 	if u.ObraID != "" {
 		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
 	}
@@ -781,6 +888,7 @@ func validarUso(u UsoPersistido) string {
 		{"duracion_min", u.DuracionMin, 12, 4},
 		{"rating", u.Rating, 12, 6},
 		{"taquilla", u.Taquilla, 18, 2},
+		{"espectadores", u.Espectadores, 18, 2},
 		{"vistas", u.Vistas, 18, 2},
 		{"minutos_vistos", u.MinutosVistos, 18, 4},
 		{"pb", u.PB, 18, 4},
@@ -808,8 +916,26 @@ func validarUso(u UsoPersistido) string {
 				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
 		}
 	}
+	// Sin canal la fila no entra en UsosDeCanal y el reparto la pierde sin
+	// error. P-20 sigue abierta (ningun mapa trae la columna); hasta que
+	// llegue, la fila se rechaza y el motivo nombra el campo (#165).
+	if u.CanalID == "" {
+		return "canal_id vacio: sin canal la fila no entra en UsosDeCanal y queda fuera del reparto"
+	}
+	// TV, hotel y suscripcion multiplican por rating (RD 9.1.1). Cero es el
+	// default de una celda que la parrilla no trae, y pondera como si la
+	// audiencia fuera cero. El valor real es el feed de P-06, no este archivo.
+	switch u.Modalidad {
+	case reparto.TV, reparto.Hotel, reparto.Suscripcion:
+		if u.Rating.IsZero() {
+			return "rating vacio: sin rating el peso de audiencia de RD 9.1.1 queda en cero"
+		}
+	}
 	if u.Emisiones < 0 {
 		return fmt.Sprintf("emisiones negativas: %d", u.Emisiones)
+	}
+	if u.Exhibiciones < 0 {
+		return fmt.Sprintf("exhibiciones negativas: %d", u.Exhibiciones)
 	}
 	return ""
 }

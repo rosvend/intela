@@ -67,10 +67,10 @@ func insertarUsoSQL(t *testing.T, pool *pgxpool.Pool, u aplicacion.UsoPersistido
 		modalidad = reparto.TV
 	}
 	_, err := pool.Exec(t.Context(),
-		`INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, modalidad,
+		`INSERT INTO usos (id, reporte_id, fuente, titulo, titulo_original, ids_fuente, modalidad,
 		                    escalon, oni, puntaje, emisiones)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'pendiente', TRUE, 0, 1)`,
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(modalidad))
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'pendiente', TRUE, 0, 1)`,
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.TituloOrig, u.IDsFuente, string(modalidad))
 	if err != nil {
 		t.Fatalf("insertar uso %q: %v", u.ID, err)
 	}
@@ -378,16 +378,16 @@ func TestGuardarMatchActualizaLaFilaConElResultado(t *testing.T) {
 	}
 
 	var (
-		obraID, escalon, evidencia      string
-		puntaje                         decimal.Decimal
-		oni                             bool
-		resueltoPorNulo, resueltoEnNulo bool
+		obraID, escalon, evidencia, tipoObra string
+		puntaje                              decimal.Decimal
+		oni                                  bool
+		resueltoPorNulo, resueltoEnNulo      bool
 	)
 	err := pool.QueryRow(ctx,
-		`SELECT obra_id, escalon, evidencia, puntaje, oni,
+		`SELECT obra_id, escalon, evidencia, puntaje, oni, tipo_obra,
 		        resuelto_por IS NULL, resuelto_en IS NULL
 		   FROM usos WHERE id = 'u-1'`).
-		Scan(&obraID, &escalon, &evidencia, &puntaje, &oni, &resueltoPorNulo, &resueltoEnNulo)
+		Scan(&obraID, &escalon, &evidencia, &puntaje, &oni, &tipoObra, &resueltoPorNulo, &resueltoEnNulo)
 	if err != nil {
 		t.Fatalf("leer el uso: %v", err)
 	}
@@ -402,6 +402,35 @@ func TestGuardarMatchActualizaLaFilaConElResultado(t *testing.T) {
 	}
 	if !resueltoPorNulo || !resueltoEnNulo {
 		t.Fatal("resuelto_por/resuelto_en deberian quedar NULL: no es resolucion manual")
+	}
+	// La fila llego sin tipo_obra (el mapa de Caracol no lo trae). Con obra,
+	// el tipo sale del catalogo (#165).
+	if tipoObra != string(repertorio.TipoSerie) {
+		t.Fatalf("tipo_obra = %q, se esperaba %q desde obras.tipo", tipoObra, repertorio.TipoSerie)
+	}
+}
+
+// Un tipo que ya trajo la fuente no se pisa con el del catalogo.
+func TestGuardarMatchNoPisaElTipoObraQueTrajoLaFuente(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx, `UPDATE usos SET tipo_obra = 'unitario' WHERE id = 'u-1'`); err != nil {
+		t.Fatalf("plantar tipo_obra: %v", err)
+	}
+	if err := s.GuardarMatch(ctx, "u-1", "pendiente", identificacion.Resultado{
+		ObraID:  obraImdb,
+		Escalon: identificacion.EscalonAlias,
+		Puntaje: decimal.NewFromInt(1),
+	}); err != nil {
+		t.Fatalf("GuardarMatch: %v", err)
+	}
+	var tipo string
+	if err := pool.QueryRow(ctx, `SELECT tipo_obra FROM usos WHERE id = 'u-1'`).Scan(&tipo); err != nil {
+		t.Fatalf("leer tipo_obra: %v", err)
+	}
+	if tipo != "unitario" {
+		t.Fatalf("tipo_obra = %q, se esperaba unitario: la fuente ya lo traia", tipo)
 	}
 }
 
@@ -567,6 +596,32 @@ func TestGuardarMatchRechazaUnaObraQueNoExiste(t *testing.T) {
 
 // ingestaDePrueba satisface aplicacion.RepositorioIngesta. Solo UsosDePeriodo
 // tiene comportamiento: es el unico metodo que ResolverUsos llama.
+// cascadaDePrueba usa los adaptadores REALES de similitud y parametros: es lo
+// que hace que estas pruebas ejerzan el SQL.
+func cascadaDePrueba(t *testing.T, s *Store, pool *pgxpool.Pool) aplicacion.ResolverUsos {
+	t.Helper()
+
+	for clave, valor := range map[string]string{
+		aplicacion.ClaveUmbralMatch: "0.60",
+		aplicacion.ClaveUmbralBanda: "0.45",
+	} {
+		if _, err := pool.Exec(t.Context(),
+			`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
+			 VALUES ($1, $2, DATE '2000-01-01', 'Consejo Directivo', 'RD-IX-prueba')
+			 ON CONFLICT (clave, vigente_desde) DO NOTHING`, clave, valor); err != nil {
+			t.Fatalf("sembrar el parametro %q: %v", clave, err)
+		}
+	}
+
+	return aplicacion.ResolverUsos{
+		Usos:           ingestaDePrueba{pool: pool},
+		Identificacion: s,
+		Similitud:      s,
+		Parametros:     s,
+		Unidad:         s,
+	}
+}
+
 type ingestaDePrueba struct {
 	pool *pgxpool.Pool
 }
@@ -584,13 +639,19 @@ func (i ingestaDePrueba) UsosSinResolver(context.Context) ([]aplicacion.UsoPersi
 func (i ingestaDePrueba) UsoPorID(context.Context, string) (aplicacion.UsoPersistido, error) {
 	return aplicacion.UsoPersistido{}, nil
 }
-func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
+func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
+func (i ingestaDePrueba) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
+	return nil, nil
+}
+func (i ingestaDePrueba) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
 
 func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]aplicacion.UsoPersistido, error) {
 	filas, err := i.pool.Query(ctx,
-		`SELECT u.id, u.reporte_id, u.fuente, u.titulo, u.ids_fuente, COALESCE(u.obra_id, ''),
+		`SELECT u.id, u.reporte_id, u.fuente, u.titulo, u.titulo_original, u.ids_fuente, COALESCE(u.obra_id, ''),
 		        u.escalon, u.evidencia, u.oni, u.modalidad
 		   FROM usos u
 		   JOIN reportes r ON r.id = u.reporte_id
@@ -605,7 +666,7 @@ func (i ingestaDePrueba) UsosDePeriodo(ctx context.Context, periodo string) ([]a
 	for filas.Next() {
 		var u aplicacion.UsoPersistido
 		var modalidad string
-		if err := filas.Scan(&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.IDsFuente, &u.ObraID,
+		if err := filas.Scan(&u.ID, &u.ReporteID, &u.Fuente, &u.Titulo, &u.TituloOrig, &u.IDsFuente, &u.ObraID,
 			&u.Escalon, &u.Evidencia, &u.ONI, &modalidad); err != nil {
 			return nil, err
 		}
@@ -662,7 +723,7 @@ func TestResolverUsosIntegracionCriterio1AliasExistente(t *testing.T) {
 		t.Fatalf("sembrar alias: %v", err)
 	}
 
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 	n, err := r.ResolverUsos(ctx, "2024")
 	if err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
@@ -708,7 +769,7 @@ func TestResolverUsosIntegracionNetflixPorShowID(t *testing.T) {
 		})
 	}
 
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
@@ -731,7 +792,7 @@ func TestResolverUsosIntegracionNetflixPorShowID(t *testing.T) {
 func TestResolverUsosIntegracionCriterio2Y3(t *testing.T) {
 	s, pool := sembrarIdentificacion(t)
 	ctx := t.Context()
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("primera corrida: %v", err)
@@ -789,10 +850,8 @@ func TestResolverUsosIntegracionCriterio4Repertorio(t *testing.T) {
 		Titulo: "Gol Caracol", IDsFuente: "id_ficha=999",
 	})
 
-	r := aplicacion.ResolverUsos{
-		Usos: ingestaDePrueba{pool: pool}, Identificacion: s,
-		FueraDeRepertorio: identificacion.FuentesExcluidas{"canal-deportes"},
-	}
+	r := cascadaDePrueba(t, s, pool)
+	r.FueraDeRepertorio = identificacion.FuentesExcluidas{"canal-deportes"}
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
@@ -842,10 +901,8 @@ func TestResolverUsosIntegracionExcluidaSinMatchVuelveAPendiente(t *testing.T) {
 		ID: "u-5", ReporteID: reporteUno, Fuente: "canal-deportes",
 		Titulo: "Gol Caracol", IDsFuente: "id_ficha=999",
 	})
-	r := aplicacion.ResolverUsos{
-		Usos: ingestaDePrueba{pool: pool}, Identificacion: s,
-		FueraDeRepertorio: identificacion.FuentesExcluidas{"canal-deportes"},
-	}
+	r := cascadaDePrueba(t, s, pool)
+	r.FueraDeRepertorio = identificacion.FuentesExcluidas{"canal-deportes"}
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("corrida con exclusion: %v", err)
 	}
@@ -854,9 +911,10 @@ func TestResolverUsosIntegracionExcluidaSinMatchVuelveAPendiente(t *testing.T) {
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("corrida sin exclusion: %v", err)
 	}
+	// Vuelve al repertorio y aun asi no la reconoce nadie: ONI (RD 13.8).
 	u5 := leerUso(t, pool, "u-5")
-	if u5.escalon != identificacion.EscalonPendiente || !u5.obraIDNulo || !u5.oni || u5.evidencia != "" {
-		t.Fatalf("u-5 deberia volver a pendiente y ONI: %+v", u5)
+	if u5.escalon != identificacion.EscalonONI || !u5.obraIDNulo || !u5.oni {
+		t.Fatalf("u-5 deberia salir a ONI: %+v", u5)
 	}
 }
 
@@ -874,7 +932,7 @@ func TestResolverUsosIntegracionIDLocalDeSoloEspaciosNoTumbaLaCorrida(t *testing
 		Titulo: "La Casa de las Dos Palmas", IDsFuente: "id_ficha=   \nimdb=tt0100001",
 	})
 
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
@@ -900,7 +958,7 @@ func TestResolverUsosIntegracionIDLocalDeSoloEspaciosNoTumbaLaCorrida(t *testing
 	}
 }
 
-// I5 (criterio 5): lo que no resuelve queda intacto, como insumo del difuso.
+// I5 (criterio 5): lo que ningun escalon reconoce sale a ONI, no se asigna mal.
 func TestResolverUsosIntegracionCriterio5NoResuelto(t *testing.T) {
 	s, pool := sembrarIdentificacion(t)
 	ctx := t.Context()
@@ -910,13 +968,13 @@ func TestResolverUsosIntegracionCriterio5NoResuelto(t *testing.T) {
 		Titulo: "Obra sin catalogar", IDsFuente: "id_ficha=555\nimdb=tt9999999",
 	})
 
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 	if _, err := r.ResolverUsos(ctx, "2024"); err != nil {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
 
 	u6 := leerUso(t, pool, "u-6")
-	if u6.escalon != "pendiente" || !u6.obraIDNulo {
+	if u6.escalon != identificacion.EscalonONI || !u6.obraIDNulo {
 		t.Fatalf("una fila sin match no puede resolver: %+v", u6)
 	}
 	if contarAlias(t, pool, "caracol", "id_ficha", "555") != 0 {
@@ -928,7 +986,7 @@ func TestResolverUsosIntegracionCriterio5NoResuelto(t *testing.T) {
 func TestResolverUsosIntegracionEsIdempotente(t *testing.T) {
 	s, pool := sembrarIdentificacion(t)
 	ctx := t.Context()
-	r := aplicacion.ResolverUsos{Usos: ingestaDePrueba{pool: pool}, Identificacion: s}
+	r := cascadaDePrueba(t, s, pool)
 
 	n1, err := r.ResolverUsos(ctx, "2024")
 	if err != nil {

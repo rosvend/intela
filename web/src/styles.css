@@ -19,7 +19,23 @@
   --acento-hondo: #5c1226; /* vinotinto mas hondo: hover del boton primario */
   --ok: #2f7d4f;
   --alerta: #b45309;
+  /*
+   * Los fondos de los badges de estado del catalogo (#30).
+   *
+   * No hay un color nuevo por estado: el texto sigue saliendo de `--ok` y
+   * `--alerta`, que el repo ya tenia, y "sin declaracion" se pinta con el gris
+   * de `--texto-suave` sobre `--fondo`. El rojo tampoco es un estado -`invalida`
+   * no se persiste, el backend rechaza la suma mayor a 100-, asi que `--error`
+   * solo lo usa lo que de verdad falla: una respuesta que no se pudo leer. Ya
+   * estaba escrito como literal en `.acceso-error` y `.tarjeta-error`; aqui se
+   * le pone nombre para no acabar con un tercer rojo.
+   */
+  --error: #b91c1c;
+  --error-fondo: #fdeaea;
+  --ok-fondo: #eaf5ee;
+  --alerta-fondo: #fdf3e7;
   --radio: 8px;
+  --radio-tarjeta: 16px; /* tarjetas del catalogo: todas con la misma curva */
   --radio-boton: 99px; /* todos los botones del mockup son pill */
   --sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -188,7 +204,7 @@ a {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.5rem 0.6rem;
-  border-radius: var(--radio);
+  border-radius: var(--radio-boton);
   color: var(--texto);
   text-decoration: none;
   font-size: 0.92rem;
@@ -196,6 +212,17 @@ a {
 
 .sidebar-item:hover {
   background: var(--fondo);
+}
+
+/* Icono Heroicons de cada modulo; el texto absorbe el hueco y el badge queda a la derecha. */
+.sidebar-item-icono {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+}
+
+.sidebar-item-texto {
+  flex: 1;
 }
 
 .sidebar-item-activo,
@@ -216,6 +243,7 @@ a {
 }
 
 .sidebar-pie {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -224,6 +252,7 @@ a {
   margin-top: 1rem;
 }
 
+/* Aro vinotinto: sobre el blanco del sidebar el rosa palido se pierde sin borde. */
 .avatar {
   width: 2rem;
   height: 2rem;
@@ -231,6 +260,7 @@ a {
   display: grid;
   place-items: center;
   border-radius: 50%;
+  border: 1.5px solid var(--acento);
   background: var(--acento-activo);
   color: var(--acento);
   font-size: 0.8rem;
@@ -257,17 +287,113 @@ a {
   color: var(--texto-suave);
 }
 
-.sidebar-salir {
-  background: none;
-  border: none;
-  color: var(--texto-suave);
-  cursor: pointer;
-  font: inherit;
+/* El perfil entero es el boton que abre el menu de usuario. */
+.sidebar-perfil {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   padding: 0.25rem;
+  border: none;
+  border-radius: var(--radio);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.sidebar-salir:hover {
+.sidebar-perfil:hover {
+  background: var(--fondo);
+}
+
+.sidebar-perfil:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* Caret del perfil: gira al abrir para decir que el bloque se despliega. */
+.sidebar-caret {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: var(--texto-suave);
+  transition: transform 140ms ease-out;
+}
+
+.sidebar-caret-abierto {
+  transform: rotate(180deg);
+}
+
+/* Menu del perfil: flota sobre el pie del sidebar. */
+.sidebar-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  box-shadow: 0 8px 24px rgba(28, 29, 33, 0.12);
+  z-index: 10;
+  transform-origin: bottom left;
+  animation: menu-aparecer 140ms ease-out;
+}
+
+@keyframes menu-aparecer {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sidebar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-radius: var(--radio);
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.sidebar-menu-item:hover {
+  background: var(--acento-activo);
   color: var(--acento);
+}
+
+.sidebar-menu-item:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: -2px;
+}
+
+.sidebar-menu-icono {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-menu {
+    animation: none;
+  }
+  .sidebar-caret {
+    transition: none;
+  }
 }
 
 .contenido {
@@ -290,9 +416,59 @@ a {
   background: var(--acento);
   color: white;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+/* El plus gira una vuelta al pasar el cursor; sin movimiento reducido. */
+.boton-primario-icono {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  transition: transform 300ms ease-out;
+}
+
+.boton-primario:hover .boton-primario-icono {
+  transform: rotate(360deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boton-primario-icono {
+    transition: none;
+  }
 }
 
 .boton-primario:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.boton-secundario,
+.boton-peligro {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 1rem;
+  border-radius: var(--radio-boton);
+  cursor: pointer;
+}
+
+.boton-secundario {
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  color: var(--texto);
+}
+
+.boton-peligro {
+  border: none;
+  background: #b91c1c;
+  color: white;
+}
+
+.boton-secundario:disabled,
+.boton-peligro:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -343,12 +519,22 @@ a {
   max-width: 25rem;
 }
 
-/* Mascara pintada con el token de marca: la forma esta en el canal alfa. */
+/*
+ * Mascara pintada con el token de marca: la forma esta en el canal alfa.
+ *
+ * El margen inferior es la distancia AL TITULO, no al techo de la pantalla,
+ * y la columna entera se centra en vertical (`align-items: center` en
+ * `.acceso-formulario`). Por eso acortar este margen no acerca el logo al
+ * titulo por un solo lado: el bloque completo es mas corto, y al recentrarse
+ * el logo baja la mitad de lo que se quito mientras el titulo sube la otra
+ * mitad -- los dos se acercan al centro del bloque, no solo el de abajo hacia
+ * el de arriba.
+ */
 .acceso-logo {
   display: block;
   width: 132px;
   height: 42px; /* 132 / 3.179, el aspecto real del activo */
-  margin: 0 auto 3rem;
+  margin: 0 auto 1.5rem;
   background-color: var(--acento);
   mask-repeat: no-repeat;
   mask-position: center;
@@ -363,9 +549,9 @@ a {
  * sus etiquetas se quedan a la izquierda -- un formulario se lee por el borde
  * izquierdo de las etiquetas, y centrarlas obliga a buscar cada una.
  *
- * La entradilla se centra con el titulo aunque no se pidiera explicitamente:
- * es la segunda linea del mismo bloque, y dejarla a la izquierda debajo de un
- * titulo centrado se lee como un descuido.
+ * La entradilla -que solo dibuja el modo de alta- se centra con el titulo
+ * aunque no se pidiera explicitamente: es la segunda linea del mismo bloque, y
+ * dejarla a la izquierda debajo de un titulo centrado se lee como un descuido.
  */
 .acceso-titulo {
   margin: 0 0 0.5rem;
@@ -488,7 +674,7 @@ a {
 
 .acceso-error {
   margin: 0;
-  color: #b91c1c;
+  color: var(--error);
   font-size: 0.85rem;
 }
 
@@ -568,8 +754,10 @@ a {
     padding: 2.5rem 1.5rem;
   }
 
+  /* Mismo valor que en escritorio (`.acceso-logo`, arriba): sin esta regla el
+     media query volvia a 2rem y deshacia el ajuste en pantallas chicas. */
   .acceso-logo {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
   }
 
   /*
@@ -608,6 +796,85 @@ td {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--acento);
+}
+
+/* ---------- alta de titular (afiliacion/Wizard.tsx) ---------- */
+
+.wizard {
+  max-width: 38rem;
+  margin: 2rem auto;
+  padding: 0 1.5rem 2rem;
+}
+.wizard fieldset {
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  padding: 1rem 1.2rem;
+  margin: 0 0 1rem;
+}
+.wizard legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+.wizard label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.7rem 0;
+}
+.wizard label.opcion {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.wizard input[type="radio"] {
+  margin-top: 0.25rem;
+}
+.pasos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0;
+  margin: 0 0 1.2rem;
+  list-style: none;
+  font-size: 0.85rem;
+}
+.pasos li {
+  color: var(--texto-suave);
+}
+.pasos li[aria-current="step"] {
+  color: var(--acento);
+  font-weight: 600;
+}
+.wizard-retorno {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+}
+.wizard-retorno summary {
+  cursor: pointer;
+  color: var(--texto-suave);
+}
+.revision {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+}
+.revision dt {
+  color: var(--texto-suave);
+}
+.revision dd {
+  margin: 0;
+}
+.acciones {
+  display: flex;
+  gap: 0.6rem;
+}
+.alerta {
+  color: #7a2a22;
+  background: #f8ebe6;
+  border: 1px solid #e3c7be;
+  padding: 0.6rem 0.8rem;
 }
 
 /* ---------- tablero (Inicio, reutilizado por #40 / #42) ---------- */
@@ -700,7 +967,7 @@ td {
 
 .tarjeta-error {
   margin: 0;
-  color: #b91c1c;
+  color: var(--error);
   font-size: 0.9rem;
 }
 
@@ -721,6 +988,1754 @@ td {
 
   .tablero-kpis,
   .tablero-kpis-titular {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- panel de corridas y anomalias (#40) ---------- */
+
+.panel-corridas-cuerpo {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.panel-corridas-detalle {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fila-activa {
+  background: var(--acento-activo);
+}
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.pipeline-paso {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  position: relative;
+  padding: 0.35rem 1.1rem 0.35rem 0;
+  color: var(--texto-suave);
+  font-size: 0.8rem;
+}
+
+.pipeline-paso:not(:last-child)::after {
+  content: "";
+  width: 1.1rem;
+  height: 1px;
+  background: var(--borde);
+  position: absolute;
+  right: 0;
+  top: 50%;
+}
+
+.pipeline-marca {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--borde);
+  flex-shrink: 0;
+}
+
+.pipeline-paso-hecha {
+  color: var(--ok);
+}
+
+.pipeline-paso-hecha .pipeline-marca {
+  background: var(--ok);
+}
+
+.pipeline-paso-actual {
+  color: var(--acento);
+  font-weight: 600;
+}
+
+.pipeline-paso-actual .pipeline-marca {
+  background: var(--acento);
+}
+
+.compuerta {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compuerta h3 {
+  margin: 0;
+}
+
+.compuerta-firmas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.compuerta-firmas li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.compuerta-estado-firmado {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.compuerta-estado-pendiente {
+  color: var(--alerta);
+  font-weight: 600;
+}
+
+.compuerta-advertencia {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--alerta);
+}
+
+.compuerta-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.compuerta-rechazo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.compuerta-rechazo textarea {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  resize: vertical;
+}
+
+.selector-periodo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.selector-periodo select {
+  font: inherit;
+  font-weight: 500;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--superficie);
+}
+
+@media (max-width: 900px) {
+  .panel-corridas-cuerpo {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- ingesta (#29) ---------- */
+
+/*
+ * Panel con el resultado de una subida. El borde izquierdo dice como fue:
+ * verde si entro todo; ambar si hubo rechazos (quedaron en el log, no se
+ * perdieron); vinotinto si el backend rechazo la entrega entera.
+ */
+.panel-resultado {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-left-width: 4px;
+  border-radius: var(--radio);
+}
+
+.panel-resultado h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.panel-resultado p {
+  margin: 0;
+}
+
+.panel-ok {
+  border-left-color: var(--ok);
+}
+
+.panel-ok h2 {
+  color: var(--ok);
+}
+
+.panel-parcial {
+  border-left-color: var(--alerta);
+}
+
+.panel-parcial h2 {
+  color: var(--alerta);
+}
+
+.panel-fallo {
+  border-left-color: var(--acento);
+}
+
+.panel-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.panel-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.panel-datos dd {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+}
+
+.panel-aviso {
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+/* El mensaje del backend se muestra tal cual, saltos de linea incluidos. */
+.panel-mensaje {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.huella {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.tabla-rechazos td {
+  vertical-align: top;
+}
+
+/* El id del rechazo (`rep-<huella>-<n>`) pasa de 70 caracteres y la columna se
+   titula "Id", no "Fila": parte linea en vez de estirar la tabla. */
+.tabla-rechazos-id {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+/* ids_fuente trae una linea `clave=valor` por identificador (ADR 0018). */
+.tabla-rechazos-ids {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: pre-line;
+}
+
+/* Listado de cargas: recuentos a la derecha y en cifras tabulares, para
+   comparar filas de un vistazo. */
+.tabla-cargas-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accion de fila con aspecto de enlace: un boton pill por fila pesaria mas
+   que los datos. */
+.tabla-cargas-boton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--acento);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tabla-cargas-boton:hover {
+  text-decoration: underline;
+}
+
+.tabla-cargas-boton:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* El log abierto se lee como parte de su carga: fondo tenue y un spinner mas
+   compacto que el de pantalla completa. */
+.tabla-cargas-log > td {
+  padding: 0.75rem 1rem 1rem;
+  background: var(--fondo);
+}
+
+.tabla-cargas-log .cargando {
+  padding: 1rem;
+}
+
+.ingesta-error {
+  margin: 0;
+  color: var(--acento);
+  overflow-wrap: anywhere;
+}
+
+/* Pantalla (Ingesta.tsx): cabecera, formulario, resultado y listado en
+   columna, con el mismo ancho maximo que el tablero. Margenes y no `gap`: la
+   region del resultado esta siempre montada y, vacia, no debe sumar hueco. */
+.ingesta {
+  display: flex;
+  flex-direction: column;
+  max-width: 1120px;
+}
+
+.ingesta > * + * {
+  margin-top: 1.5rem;
+}
+
+.ingesta > .ingesta-resultado:empty {
+  margin-top: 0;
+}
+
+.ingesta-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.ingesta-cabecera p {
+  margin: 0;
+}
+
+.ingesta-formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 12px 32px rgba(28, 29, 33, 0.06);
+  animation: ingesta-entrada 320ms ease-out both;
+}
+
+/* Titulo interno de la tarjeta, como el "Import File" de la referencia. */
+.ingesta-tarjeta-cabecera h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.ingesta-tarjeta-cabecera .muted {
+  margin: 0;
+}
+
+.ingesta-campos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 1.5rem;
+}
+
+.ingesta-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* Grupo del periodo: la leyenda hace de rotulo, sin borde de fieldset. */
+.ingesta-periodo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.ingesta-periodo legend {
+  padding: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* Modo y valor en una sola fila, a la par del campo de fuente. */
+.ingesta-periodo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ingesta-periodo-fila .ingesta-modo {
+  flex: none;
+}
+
+.ingesta-periodo-fila input,
+.ingesta-periodo-fila select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mensual/Anual como pildoras; la marcada va en vinotinto tenue. */
+.ingesta-modo {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ingesta-modo-opcion {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ingesta-modo-opcion input {
+  margin: 0;
+  accent-color: var(--acento);
+}
+
+.ingesta-modo-opcion:has(input:checked) {
+  border-color: var(--acento);
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.ingesta-modo-opcion:has(input:focus-visible) {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.ingesta-formulario label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.ingesta-campo input,
+.ingesta-campo select {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  color: var(--texto);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.ingesta-campo input::placeholder {
+  color: var(--texto-suave);
+}
+
+.ingesta-formulario input:focus-visible,
+.ingesta-formulario select:focus-visible {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-activo);
+}
+
+.ingesta-ayuda {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+
+/* Zona de soltar: tarjeta punteada centrada, como la referencia. */
+.ingesta-soltar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.25rem 1.5rem;
+  border: 2px dashed var(--borde);
+  border-radius: var(--radio-tarjeta);
+  background: var(--fondo);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+}
+
+.ingesta-soltar:hover {
+  border-color: var(--acento);
+  transform: translateY(-1px);
+}
+
+/* Foco del input oculto: el anillo se ve en la zona. */
+.ingesta-soltar:focus-within {
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-activo);
+  outline: none;
+}
+
+.ingesta-soltar-activa {
+  border-color: var(--acento);
+  background: var(--acento-activo);
+  transform: scale(1.01);
+}
+
+/* Ilustracion de hojas: grises frios con un detalle en vinotinto. */
+.ingesta-soltar-ilustracion {
+  width: 88px;
+  height: 88px;
+  margin-bottom: 0.5rem;
+  animation: ingesta-flotar 3.2s ease-in-out infinite;
+}
+
+.ingesta-soltar-hoja-atras rect {
+  fill: #ececf1;
+}
+
+.ingesta-soltar-hoja-frente rect:first-child {
+  fill: #ffffff;
+  stroke: #e0e0e8;
+  stroke-width: 2;
+}
+
+.ingesta-soltar-hoja-frente path {
+  fill: #ececf1;
+}
+
+.ingesta-soltar-hoja-frente rect:nth-child(3),
+.ingesta-soltar-hoja-frente rect:nth-child(4) {
+  fill: #d9d9e2;
+}
+
+.ingesta-soltar-hoja-frente rect:nth-child(5) {
+  fill: var(--acento);
+  opacity: 0.85;
+}
+
+.ingesta-soltar-titulo {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.ingesta-soltar-texto {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--texto-suave);
+}
+
+/* El "clic para elegirlo" con el color de marca. */
+.ingesta-soltar-enlace {
+  color: var(--acento);
+  font-weight: 600;
+}
+
+/* Label e input reales: ocultos a la vista, presentes para el lector. */
+.ingesta-soltar-oculto,
+.ingesta-soltar-entrada {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Sin uso directo: se conserva para no dejar referencias colgadas. */
+.ingesta-soltar input {
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.ingesta-archivo {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+/* Rotulo pequeno sobre la ficha, como "Uploaded files" de la referencia. */
+.ingesta-ficha-titulo {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* Ficha del archivo elegido: fila con icono, datos y retiro. */
+.ingesta-ficha {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  animation: ingesta-ficha-entrada 220ms ease-out both;
+}
+
+.ingesta-ficha-icono {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.ingesta-ficha-icono svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.ingesta-ficha-datos {
+  flex: 1;
+  min-width: 0;
+}
+
+.ingesta-ficha-nombre {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingesta-ficha-estado {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+
+/* Progreso indeterminado: el POST no reporta avance real. */
+.ingesta-ficha-progreso {
+  height: 6px;
+  margin-top: 0.5rem;
+  border-radius: 99px;
+  background: var(--borde);
+  overflow: hidden;
+}
+
+.ingesta-ficha-barra {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--acento);
+  animation: ingesta-barra 1.2s ease-in-out infinite;
+}
+
+/* Icono de papelera tenue, rojo solo al pasar el cursor. */
+.ingesta-ficha-quitar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--texto-suave);
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ingesta-ficha-quitar svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.ingesta-ficha-quitar:hover {
+  background: var(--error-fondo);
+  color: var(--error);
+}
+
+.ingesta-ficha-quitar:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.ingesta-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem 1rem;
+}
+
+/* Listado en tarjeta para cerrar la pagina con el mismo radio. */
+.ingesta-cargas {
+  padding: 1.5rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 12px 32px rgba(28, 29, 33, 0.06);
+  animation: ingesta-entrada 320ms ease-out 80ms both;
+}
+
+.ingesta-cargas h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+/* Entrada de las tarjetas: aparece y sube apenas. */
+@keyframes ingesta-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Entrada de la ficha: mas corta que la de la tarjeta. */
+@keyframes ingesta-ficha-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Barrido de la barra de progreso indeterminada. */
+@keyframes ingesta-barra {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+/* Flote tenue de la ilustracion. */
+@keyframes ingesta-flotar {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Sin movimiento: se pierde el adorno, no la informacion. */
+@media (prefers-reduced-motion: reduce) {
+  .ingesta-formulario,
+  .ingesta-cargas,
+  .ingesta-ficha,
+  .ingesta-soltar-ilustracion,
+  .ingesta-ficha-barra {
+    animation: none;
+  }
+  .ingesta-soltar,
+  .ingesta-soltar-activa {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ingesta-campos {
+    grid-template-columns: 1fr;
+  }
+  .ingesta-acciones {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* ---------- catalogo (#30) ---------- */
+
+/* Pantalla (Catalogo.tsx): cabecera, filtros y resultados en columna, con el
+   mismo ancho maximo que el tablero y la ingesta. `gap` y no margenes: los
+   hijos directos son la cabecera, la tarjeta de filtros y el bloque de
+   resultados -que a su vez aporta el resumen y la tabla-, y con margenes el
+   resumen se comia el hueco por especificidad. */
+.catalogo {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.catalogo-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.catalogo-cabecera p {
+  margin: 0;
+  max-width: 62rem;
+}
+
+/* Los mismos controles que el formulario de ingesta, con nombre propio: los
+   campos de una busqueda no son los de una subida, y reutilizar las clases de
+   la otra pantalla dejaria el catalogo dependiendo de que #29 no se renombre. */
+/* El buscador: una sola barra -selector, campo y lupa- y debajo los filtros
+   aplicados como chips. La barra es un solo contenedor: el borde de foco lo
+   pone `:focus-within`, no cada control. */
+.buscador {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.buscador-barra {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+}
+
+.buscador-barra:focus-within {
+  border-color: var(--acento);
+}
+
+.buscador-selector {
+  position: relative;
+  flex: none;
+}
+
+.buscador-selector-boton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-radius: calc(var(--radio-tarjeta) - 4px);
+  background: transparent;
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.buscador-selector-boton:hover {
+  background: var(--fondo);
+}
+
+.buscador-selector-boton:focus-visible,
+.buscador-lupa:focus-visible,
+.buscador-chip button:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.buscador-divisor {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 0.4rem 0.25rem;
+  background: var(--borde);
+}
+
+.buscador-campo {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.5rem;
+  border: 0;
+  background: transparent;
+  color: var(--texto);
+}
+
+.buscador-campo::placeholder {
+  color: var(--texto-suave);
+}
+
+/* El contorno lo lleva la barra entera (`:focus-within`). */
+.buscador-campo:focus {
+  outline: none;
+}
+
+.buscador-lupa {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 0;
+  border-radius: var(--radio-boton);
+  background: transparent;
+  color: var(--acento);
+  cursor: pointer;
+}
+
+.buscador-lupa:hover {
+  background: var(--acento-activo);
+}
+
+.buscador-menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 10;
+  min-width: 13rem;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 8px 24px rgba(28, 29, 33, 0.12);
+}
+
+.buscador-menu[hidden] {
+  display: none;
+}
+
+.buscador-opcion {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: calc(var(--radio-tarjeta) - 6px);
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.buscador-opcion-resaltada {
+  background: var(--fondo);
+}
+
+.buscador-opcion[aria-selected="true"] {
+  background: var(--acento-activo);
+  color: var(--acento);
+  font-weight: 600;
+}
+
+.buscador-aviso {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--error);
+}
+
+.buscador-aplicados {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.buscador-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.buscador-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem 0.3rem 0.25rem 0.8rem;
+  border-radius: var(--radio-boton);
+  background: var(--acento-activo);
+  color: var(--acento);
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.buscador-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radio-boton);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.buscador-chip button:hover {
+  background: rgba(125, 26, 53, 0.12);
+}
+
+.buscador-chip svg,
+.buscador-lupa svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.catalogo-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.catalogo-campo label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.catalogo-campo input {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.catalogo-campo input::placeholder {
+  color: var(--texto-suave);
+}
+
+.catalogo-campo input:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.catalogo-ayuda {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+}
+
+/* Accion secundaria y no `.boton-primario`: limpiar la busqueda no es la accion
+   principal de la pantalla. */
+.catalogo-limpiar {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.catalogo-limpiar:hover {
+  border-color: var(--acento);
+  color: var(--acento);
+}
+
+.catalogo-limpiar:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* La tabla y su pie viven en la misma tarjeta blanca del mockup. */
+.catalogo-caja {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  overflow: hidden;
+}
+
+.tabla-catalogo td {
+  vertical-align: top;
+}
+
+.catalogo-titulo {
+  font-weight: 600;
+}
+
+/* El titulo de cada fila es el enlace al detalle de su obra. Conserva el
+   subrayado y el color de enlace del resto de la aplicacion -un enlace que solo
+   se distinguiera por color no se distinguiria-, y el foco se marca con el
+   mismo contorno que los demas controles del catalogo. */
+.catalogo-titulo a:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.catalogo-identificador {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+/* La etiqueta y la suma, en columna: son dos datos distintos -el estado que da
+   el backend y la cifra que da el backend- y pegados en una linea se leen como
+   uno solo. */
+.catalogo-declaracion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.badge-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radio-boton);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-estado-punto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-estado-completa {
+  background: var(--ok-fondo);
+  color: var(--ok);
+}
+
+/* Ambar, NUNCA rojo: una declaracion que no suma 100 es un estado valido del
+   negocio (R-04) del que se retiene el importe, no un error de quien declaro.
+   El rojo esta reservado para lo que de verdad falla. */
+.badge-estado-incompleta {
+  background: var(--alerta-fondo);
+  color: var(--alerta);
+}
+
+.badge-estado-sin-declaracion {
+  background: var(--fondo);
+  color: var(--texto-suave);
+}
+
+.catalogo-suma {
+  font-size: 0.82rem;
+  color: var(--texto-suave);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Estado vacio: ni es un error ni lleva role="alert" -no hay nada roto-, asi
+   que no se pinta con el color del fallo. */
+.catalogo-vacio {
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.catalogo-vacio p {
+  margin: 0;
+  font-weight: 600;
+}
+
+.catalogo-vacio p + p {
+  margin-top: 0.4rem;
+  font-weight: 400;
+}
+
+.catalogo-pie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--borde);
+  background: var(--fondo);
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.catalogo-pie-botones {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Boton redondo con icono: paginador del catalogo y quitar fila del editor.
+   El nombre accesible va en aria-label; el SVG es decorativo. */
+.catalogo-pagina,
+.boton-icono {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid var(--borde);
+  border-radius: 50%;
+  background: var(--superficie);
+  color: var(--texto);
+  cursor: pointer;
+}
+
+.boton-icono:hover:not(:disabled) {
+  border-color: var(--acento);
+  color: var(--acento);
+}
+
+.catalogo-pagina:disabled {
+  background: var(--fondo);
+  color: var(--texto-suave);
+  cursor: default;
+}
+
+.catalogo-pagina:focus-visible,
+.boton-icono:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* El fallo del catalogo: el mismo lenguaje visual que el panel de resultado de
+   #29 -borde izquierdo grueso-, para que "esto no se pudo leer" se reconozca
+   igual en las dos pantallas. */
+.catalogo-error {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  background: var(--error-fondo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--error);
+  border-radius: var(--radio-tarjeta);
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .catalogo-campos {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .catalogo-campos {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- detalle de obra (#30, paso 6) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo: es la misma pantalla un
+   nivel mas abajo. */
+.detalle-obra {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.detalle-obra h1 {
+  margin: 0;
+}
+
+.detalle-volver {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.detalle-cabecera {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* La ficha de datos, con el rotulo encima del valor: cada dato tiene que poder
+   citarse por su nombre desde una auditoria, y en una linea corrida no se puede.
+   Se usa para los metadatos de la obra y para las cifras de la declaracion. */
+.detalle-ficha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.9rem 1.5rem;
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+}
+
+.detalle-ficha > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.detalle-ficha dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.detalle-ficha dd {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.detalle-declaracion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.detalle-declaracion h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Cifras del backend: tabulares para que dos lecturas se comparen de un vistazo
+   y en el mismo ancho. */
+.detalle-cifra {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.detalle-nota {
+  margin: 0;
+  max-width: 62rem;
+  font-size: 0.85rem;
+}
+
+/* Identificadores opacos (`titular_id`, IDA, el id de la obra): en mono y
+   partiendo linea, que es lo que deja copiarlos a la API sin equivocarse. */
+.detalle-identificador {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+/* El porcentaje declarado, a la derecha y en cifras tabulares, igual que los
+   recuentos del listado de cargas. */
+.tabla-partes-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- historial de versiones (#30, paso 7) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo y el detalle: es la misma
+   pantalla un nivel mas abajo. */
+.historial-versiones {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.historial-versiones h1 {
+  margin: 0;
+}
+
+.historial-versiones h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Una version por bloque, separadas por una linea: la ventana, el estado y el
+   reparto de cada una se leen como una unidad, y sin la linea dos versiones
+   seguidas se leen como una sola tabla larga con dos encabezados. */
+.historial-version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--borde);
+}
+
+/* La version que rige hoy, dicha con palabras en el dato de "Vigente hasta".
+   En el color de acento y no en ambar ni en rojo: no es una alerta -no hay
+   nada mal- ni un estado de la declaracion, es la que sigue abierta. */
+.historial-abierta {
+  font-weight: 600;
+  color: var(--acento);
+}
+
+/* ---------- editor de reparto (#30, paso 8) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo, el detalle y el historial:
+   es la misma pantalla un nivel mas abajo. */
+.editor-reparto {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.editor-reparto h1 {
+  margin: 0;
+}
+
+.editor-reparto h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/*
+ * El aviso de que version se cierra y cual se abre.
+ *
+ * En el tinte de acento y no en ambar: no es una advertencia ni un estado del
+ * negocio -no hay nada que corregir-, es lo que va a pasar al guardar, y quien
+ * crea que esta corrigiendo la version vigente tiene que leerlo antes de tocar
+ * nada. El ambar queda para lo que de verdad pide atencion.
+ */
+.editor-aviso-version {
+  margin: 0;
+  padding: 0.9rem 1.15rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--acento);
+  border-radius: var(--radio-tarjeta);
+  font-size: 0.9rem;
+  max-width: 62rem;
+}
+
+.editor-formulario,
+.editor-borrador,
+.editor-padron {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* La tabla de filas: los campos ocupan el ancho de su celda, y el numero va a
+   la derecha como en las tablas de partes que no se editan. */
+.editor-filas td {
+  vertical-align: middle;
+}
+
+.editor-campo {
+  font: inherit;
+  font-size: 0.85rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.editor-campo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.editor-campo-numero {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem 1.25rem;
+}
+
+.editor-aviso {
+  margin: 0;
+  max-width: 42rem;
+  font-size: 0.85rem;
+  color: var(--alerta);
+}
+
+/* Un titular que el padron trae y la regla no admite como parte. En ambar, que
+   es el color de "esto necesita una explicacion" y no el del fallo: no hay nada
+   roto, hay una regla -R-01- que se aplica al guardar. */
+.editor-no-elegible {
+  font-size: 0.85rem;
+  color: var(--alerta);
+}
+
+/* ---------- auditoria (OE-7) ---------- */
+
+/* Mismo ancho maximo y misma columna que el catalogo: es otra pantalla del
+   mismo tablero. */
+.auditoria {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.auditoria-cabecera h1 {
+  margin: 0 0 0.35rem;
+}
+
+.auditoria-cabecera p {
+  margin: 0;
+  max-width: 62rem;
+}
+
+/* La nota de inmutabilidad: tinte de acento y no ambar -no es una
+   advertencia, es la propiedad que hace que esta pantalla sirva como
+   evidencia-. */
+.auditoria-nota {
+  margin: 0;
+  padding: 0.9rem 1.15rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--acento);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+  max-width: 62rem;
+}
+
+.auditoria-filtros {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.auditoria-campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem 1.25rem;
+}
+
+.auditoria-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.auditoria-campo label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.auditoria-campo input,
+.auditoria-campo select {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+
+.auditoria-campo input:focus-visible,
+.auditoria-campo select:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.auditoria-historia {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.auditoria-historia-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auditoria-historia-fila input {
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+  max-width: 16rem;
+}
+
+/* La linea de tiempo: una raya continua con un punto por asiento. */
+.linea-tiempo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.linea-tiempo-asiento {
+  display: flex;
+  gap: 0.9rem;
+  padding: 1rem 0 1rem 0.35rem;
+  border-left: 2px solid var(--borde);
+}
+
+.linea-tiempo-asiento:last-child {
+  border-left-color: transparent;
+}
+
+.linea-tiempo-punto {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.25rem;
+  margin-left: -0.5rem;
+  border-radius: 50%;
+  background: var(--texto-suave);
+}
+
+/* Un color por familia, todos de la paleta existente: el punto dice el tipo
+   sin que haya que leer la etiqueta. */
+.linea-tiempo-punto-catalogo {
+  background: var(--acento);
+}
+
+.linea-tiempo-punto-splits {
+  background: var(--ok);
+}
+
+.linea-tiempo-punto-distribucion {
+  background: var(--alerta);
+}
+
+.linea-tiempo-punto-recaudo {
+  background: var(--texto);
+}
+
+.linea-tiempo-punto-identificacion {
+  background: var(--texto-suave);
+}
+
+.linea-tiempo-punto-otro {
+  background: var(--borde);
+}
+
+.linea-tiempo-contenido {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.linea-tiempo-cabecera {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.linea-tiempo-hecho {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.linea-tiempo-meta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+}
+
+.linea-tiempo-evidencia {
+  font-size: 0.9rem;
+}
+
+.linea-tiempo-evidencia summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--acento);
+}
+
+.linea-tiempo-evidencia summary:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* La evidencia de un asiento: pares clave-valor con el rotulo encima del
+   valor, igual que la ficha del detalle de obra -cada dato tiene que poder
+   citarse por su nombre desde una auditoria-. */
+.evidencia {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.evidencia-datos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem 1.25rem;
+  margin: 0;
+}
+
+.evidencia-datos dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.evidencia-datos dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.evidencia .tabla-partes {
+  caption-side: top;
+}
+
+.evidencia caption {
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding-bottom: 0.4rem;
+}
+
+@media (max-width: 900px) {
+  .evidencia-datos {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .evidencia-datos {
     grid-template-columns: 1fr;
   }
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
+	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 )
@@ -85,6 +86,29 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 			hay.obras, len(d.Obras), hay.reportes, len(d.Reportes), hay.usosSinIdentificar)
 	}
 
+	return escribir(ctx, store, almacen, hasher, claves, d, log)
+}
+
+// CargarAditivo escribe el dataset sin mirar el estado previo de la base: no
+// borra nada y no exige que obras/reportes esten vacios o en la forma
+// completa que pide Cargar. Pensada para una base con datos ajenos al
+// dataset que hay que conservar -Cargar los rechazaria con "semilla a
+// medias"- (#155).
+//
+// Tan segura como Cargar porque insertarPadron ya usa ON CONFLICT DO NOTHING
+// en titulares/usuarios, y registrarObras falla alto si un id del dataset ya
+// existe en vez de pisarlo: no hay escritura silenciosa sobre lo que ya haya.
+func CargarAditivo(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, hasher aplicacion.Hasher, claves Claves, log *slog.Logger) error {
+	if log == nil {
+		log = slog.Default()
+	}
+	return escribir(ctx, store, almacen, hasher, claves, Construir(), log)
+}
+
+// escribir es el camino que de verdad persiste el dataset. Cargar y
+// CargarAditivo comparten esta funcion; lo que cambia entre ellas es solo la
+// comprobacion previa.
+func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, hasher aplicacion.Hasher, claves Claves, d Dataset, log *slog.Logger) error {
 	hashes, err := hashear(hasher, claves)
 	if err != nil {
 		return err
@@ -190,10 +214,27 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 	for i, t := range d.Titulares {
 		idsTitulares[i] = t.ID
 	}
+	idsCanales := make([]string, len(d.Canales))
+	claves := make([]string, len(d.Canales))
+	for i, c := range d.Canales {
+		idsCanales[i] = c.ID
+		claves[i] = clasificacionClave(c.ID, c.AnioAudiencia)
+	}
+
 	if err := soloDelDataset(ctx, pool, "obras", idsObras); err != nil {
 		return err
 	}
 	if err := soloDelDataset(ctx, pool, "titulares", idsTitulares); err != nil {
+		return err
+	}
+	// La 00011 anadio dos tablas mas que un SEED_RESET puede arrasar: un canal
+	// importado o una clasificacion anual real no las conoce este dataset, y
+	// sin esta comprobacion DELETE las borra igual que a las sinteticas.
+	if err := soloDelDataset(ctx, pool, "canales", idsCanales); err != nil {
+		return err
+	}
+	if err := soloClaveDelDataset(ctx, pool, "canales_clasificacion",
+		"canal_id || ':' || anio_audiencia", claves); err != nil {
 		return err
 	}
 
@@ -225,6 +266,8 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"anticipos",
 		"calendario",
 		"cola_trabajos",
+		"resultados_parte_no_distribuida",
+		"resultados_grupo",
 		"resultados_titular",
 		"resultados_obra",
 		"resultados_proceso",
@@ -237,6 +280,8 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 		"obra_coautores",
 		"declaraciones",
 		"bolsas",
+		"canales_clasificacion",
+		"canales",
 		"usuarios_recaudo",
 		"parametros",
 		"sesiones",
@@ -257,14 +302,22 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 // soloDelDataset falla si en la tabla hay algun id que el dataset no conoce.
 //
 // El nombre de la tabla se concatena porque un identificador no puede viajar
-// como parametro; los dos valores posibles son literales de este fichero.
+// como parametro; los valores posibles son literales de este fichero.
 func soloDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla string, ids []string) error {
+	return soloClaveDelDataset(ctx, pool, tabla, "id", ids)
+}
+
+// soloClaveDelDataset es soloDelDataset con una expresion de clave distinta a
+// "id". La usa canales_clasificacion, cuya clave es compuesta
+// (canal_id, anio_audiencia) y no tiene una sola columna que comparar contra
+// el dataset.
+func soloClaveDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla, expr string, claves []string) error {
 	var (
 		ajenas  int
 		ejemplo string
 	)
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*), COALESCE(MIN(id), '') FROM `+tabla+` WHERE id <> ALL($1)`, ids,
+		`SELECT COUNT(*), COALESCE(MIN(`+expr+`), '') FROM `+tabla+` WHERE `+expr+` <> ALL($1)`, claves,
 	).Scan(&ajenas, &ejemplo); err != nil {
 		return fmt.Errorf("comprobar la procedencia de %s: %w", tabla, err)
 	}
@@ -273,6 +326,16 @@ func soloDelDataset(ctx context.Context, pool *pgxpool.Pool, tabla string, ids [
 			ErrDatosNoSinteticos, ajenas, tabla, ejemplo)
 	}
 	return nil
+}
+
+// clasificacionClave compone la clave de canales_clasificacion como una sola
+// cadena comparable con ANY($1).
+//
+// El separador es ':' y no otra cosa porque los ids de canal de este dataset
+// son slugs en minuscula sin ':' (caracol, rcn, ...); un id que lo llevara
+// haria ambigua la clave, pero eso no ocurre con datos de este fichero.
+func clasificacionClave(canalID string, anio int) string {
+	return fmt.Sprintf("%s:%d", canalID, anio)
 }
 
 func hashear(hasher aplicacion.Hasher, c Claves) (map[string]string, error) {
@@ -329,10 +392,17 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// ON CONFLICT DO NOTHING: en produccion la instalacion ya tiene el primer
+	// administrador (orden primer-administrador) y a veces el padron demo
+	// (sembrar-titulares-demo). Sin esto, Cargar fallaba al chocar con esas
+	// filas aunque obras y reportes estuvieran vacios (hay.vacio() mira solo
+	// esas dos tablas). La clave del admin provisionado se conserva: no se
+	// reescribe el hash.
 	for _, tit := range d.Titulares {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO titulares (id, nombre, ipi, persona_natural, clase, email)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			tit.ID, tit.Nombre, tit.IPI, tit.PersonaNatural, tit.Clase, tit.Email); err != nil {
 			return fmt.Errorf("insertar titular %s: %w", tit.ID, err)
 		}
@@ -349,7 +419,8 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO usuarios (id, email, nombre, rol, titular_id, password_hash)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING`,
 			u.ID, u.Email, u.Nombre, string(u.Rol), titular, hash); err != nil {
 			return fmt.Errorf("insertar usuario %s: %w", u.ID, err)
 		}
@@ -400,6 +471,24 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 			VALUES ($1, $2, $3, $4)`,
 			usuario.ID(), datos.Nombre, datos.NIT, string(datos.Categoria)); err != nil {
 			return fmt.Errorf("insertar usuario de recaudo %s: %w", u.ID, err)
+		}
+	}
+
+	// Los canales van por SQL directo como las bolsas: no hay adaptador para
+	// `canales` todavia, y el registro es dato de demostracion, no un hecho de
+	// negocio que deba asentarse.
+	for _, c := range d.Canales {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales (id, nombre, grupo_estructural)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.Nombre, c.GrupoEstructural); err != nil {
+			return fmt.Errorf("insertar canal %s: %w", c.ID, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+			VALUES ($1, $2, $3)`,
+			c.ID, c.AnioAudiencia, c.GrupoEfectivo); err != nil {
+			return fmt.Errorf("clasificar canal %s: %w", c.ID, err)
 		}
 	}
 
@@ -479,7 +568,16 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 //
 // El resto del padron sigue por Store.Pool(). `titulares`, `usuarios` y
 // `parametros` no tienen todavia adaptador de escritura, e inventarle un puerto
-// al sembrador para taparlo seria indireccion sin requisito. `declaraciones`,
+// al sembrador para taparlo seria indireccion sin requisito.
+//
+// Lo de `parametros` sigue siendo cierto despues de la #118, aunque
+// aplicacion.ParametrosNormativos ya no sea un puerto de solo lectura: lo que
+// ese puerto escribe es `snapshots_parametros` -- el corte congelado de una
+// corrida --, nunca la tabla de vigencias. Sembrar una vigencia y congelar un
+// corte no son la misma operacion, y la primera necesita organo, acto y
+// asiento; ver el comentario de postgres.Store.Pool.
+//
+// `declaraciones`,
 // `bolsas` y `usuarios_recaudo` SI lo tienen ya, y aun asi van por SQL: sus
 // adaptadores asientan en bitacora dentro de la misma transaccion, y el seed
 // tiene que terminar con la bitacora vacia para que SEED_RESET siga siendo
@@ -515,6 +613,12 @@ func usosCrudos(usos []aplicacion.UsoPersistido) []aplicacion.UsoPersistido {
 		u.Escalon = ""
 		u.Evidencia = ""
 		u.ONI = false
+		// TV no trae tipo_obra en el archivo (P-05). identificar lo copia de
+		// obras.tipo; dejarlo aqui haria pasar el seed por un dato que Caracol
+		// no entrega (#165).
+		if u.Modalidad == reparto.TV {
+			u.TipoObra = ""
+		}
 		out[i] = u
 	}
 	return out
@@ -539,7 +643,11 @@ func identificar(ctx context.Context, store *postgres.Store, reporteID string, u
 				       oni = false,
 				       escalon = 'alias',
 				       evidencia = $3,
-				       puntaje = 1
+				       puntaje = 1,
+				       tipo_obra = CASE
+				         WHEN tipo_obra <> '' THEN tipo_obra
+				         ELSE (SELECT tipo FROM obras WHERE id = $2)
+				       END
 				 WHERE id = $1`,
 				id, u.ObraID, u.Evidencia)
 			if err != nil {
