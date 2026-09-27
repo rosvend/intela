@@ -507,7 +507,7 @@ func TestGuardarUsosSinFilasNoEsError(t *testing.T) {
 }
 
 // "Sin resolver" es escalon pendiente, no ONI: la cola manual es otro puerto
-// (RepositorioONI) y otra pregunta. Una fila ya resuelta por alias no vuelve a
+// (RepositorioCasosIdentificacion) y otra pregunta. Una fila ya resuelta por alias no vuelve a
 // la cascada.
 func TestUsosSinResolverSoloDevuelveLasPendientes(t *testing.T) {
 	s, _ := sembrarReportes(t)

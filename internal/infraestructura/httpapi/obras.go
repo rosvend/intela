@@ -258,8 +258,9 @@ func (a *API) buscarObras(w http.ResponseWriter, r *http.Request) {
 // rango = 400, nunca un recorte en silencio de lo que se pidio.
 //
 // Eran dos hasta que la #30 sirvio el padron por paginas, y cuatro cuando el
-// historial de versiones dejo de tener un tope duro. Si aparece una quinta, se
-// dice -el numero es la unica parte de este comentario que envejece solo-.
+// historial de versiones dejo de tener un tope duro. La quinta es la cola de
+// casos de identificacion (#174). Si aparece una sexta, se dice -el numero es
+// la unica parte de este comentario que envejece solo-.
 func leerPaginacion(w http.ResponseWriter, q url.Values) (aplicacion.Paginacion, bool) {
 	p := aplicacion.Paginacion{}
 	if bruto := q.Get("limite"); bruto != "" {

@@ -618,15 +618,14 @@ type LectorReporte interface {
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
-// RepositorioONI es la cola manual. Separado de identificacion porque son dos
-// modulos distintos del ADR 0003.
 // RepositorioOrigenDeUsos devuelve, por id de uso, su reporte exacto y como se identifico su obra.
 type RepositorioOrigenDeUsos interface {
 	OrigenDeUsos(ctx context.Context, usoIDs []string) (map[string]OrigenDeUso, error)
 }
 
-type RepositorioONI interface {
-	Listar(ctx context.Context) ([]UsoPersistido, error)
+// RepositorioCasosIdentificacion es la lectura de la cola manual (ADR 0007): pagina y conteo de pendientes en una sola lectura.
+type RepositorioCasosIdentificacion interface {
+	ListarCasosIdentificacion(ctx context.Context, q ConsultaCasos) (PaginaCasos, error)
 }
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce

@@ -23,6 +23,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `/admin/*` | `administrador` |
 | `/auditoria/*` | `auditor`, `administrador` |
 | `/obras/*` | `administrador` |
+| `/identificacion/*` | `administrador` |
 | `/recaudo/*` | `contabilidad`, `administrador` |
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
 | `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo |

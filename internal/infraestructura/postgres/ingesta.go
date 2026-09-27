@@ -348,7 +348,7 @@ func valoresRechazo(u aplicacion.UsoPersistido) []any {
 //
 // El filtro es escalon = 'pendiente' y no `oni`: son dos preguntas distintas.
 // Una fila en ONI ya paso por la cascada y no la reconocio nadie -esa cola la
-// sirve RepositorioONI-, mientras que una pendiente ni siquiera se ha
+// sirve RepositorioCasosIdentificacion-, mientras que una pendiente ni siquiera se ha
 // intentado. Ademas hay un indice parcial hecho para este WHERE.
 func (s *Store) UsosSinResolver(ctx context.Context) ([]aplicacion.UsoPersistido, error) {
 	return s.consultarUsos(ctx,

@@ -300,6 +300,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/identificacion/casos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Casos de identificacion
+         * @description Lista los usos que la cascada no pudo identificar (`pendiente`,
+         *     escalon `oni`) y los que una persona ya resolvio (`asignado`,
+         *     escalon `manual`), con la evidencia y los candidatos de la banda
+         *     ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
+         *
+         *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
+         *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
+         *
+         *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
+         *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
+         *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
+         *     caso resuelto y el alta del reporte para uno pendiente.
+         *
+         *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un
+         *     filtro mal formado responde 400.
+         */
+        get: operations["listarCasosIdentificacion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auditoria/asientos": {
         parameters: {
             query?: never;
@@ -2095,6 +2129,64 @@ export interface components {
             sha256: string;
             clave_objeto: string;
         };
+        /** @description Una pagina de la cola manual y el total de pendientes bajo los mismos filtros. */
+        PaginaCasosIdentificacion: {
+            casos: components["schemas"]["CasoIdentificacion"][];
+            /** @description Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion. */
+            pendientes: number;
+        };
+        /**
+         * @description Un uso que la cascada no resolvio, tal como llego, con la evidencia
+         *     para que una persona decida. Sin importes ni medidas (ADR 0007).
+         */
+        CasoIdentificacion: {
+            /** @description Id del uso. */
+            id: string;
+            titulo: string;
+            titulo_original: string;
+            fuente: string;
+            modalidad: string;
+            reporte_id: string;
+            /** @description Periodo del reporte del que salio el uso. */
+            periodo: string;
+            /** @description Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018). */
+            ids_fuente: string;
+            /** @description Por que la cascada no lo resolvio. */
+            evidencia: string;
+            /** @enum {string} */
+            estado: "pendiente" | "asignado";
+            /** @description Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda. */
+            candidatos: components["schemas"]["CandidatoIdentificacion"][];
+            /** @description La obra que una persona le dio al caso. `null` si esta pendiente. */
+            obra_asignada: {
+                id: string;
+                titulo: string;
+            } | null;
+            /** @description Quien resolvio el caso. `null` si esta pendiente. */
+            resuelto_por: {
+                id: string;
+                /** @description Nombre para mostrar del usuario. */
+                nombre: string;
+            } | null;
+            /** Format: date-time */
+            resuelto_en: string | null;
+            /**
+             * Format: date-time
+             * @description `resuelto_en` si esta resuelto; si no, el alta del reporte.
+             */
+            ultima_actualizacion: string;
+        };
+        CandidatoIdentificacion: {
+            obra_id: string;
+            /** @description Titulo de la obra en el catalogo. */
+            titulo: string;
+            anio: number;
+            genero: string;
+            /** @description Similitud del escalon difuso. */
+            puntaje: number;
+            /** @description El titulo del uso con el que se obtuvo el puntaje. */
+            titulo_consultado: string;
+        };
         /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
          *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
@@ -3112,6 +3204,142 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listarCasosIdentificacion: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filtra por estado del caso. Si se omite, lista los dos.
+                 * @example pendiente
+                 */
+                estado?: "pendiente" | "asignado";
+                /**
+                 * @description Fuente del uso, exacta.
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo del reporte, `AAAA` o `AAAA-MM` con mes entre 01 y 12.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos casos saltarse. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pagina de casos, en orden de llegada del reporte. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "pendientes": 1,
+                     *       "casos": [
+                     *         {
+                     *           "id": "uso-1",
+                     *           "titulo": "La Casa",
+                     *           "titulo_original": "The House",
+                     *           "fuente": "caracol",
+                     *           "modalidad": "tv",
+                     *           "reporte_id": "rep-1",
+                     *           "periodo": "2025-01",
+                     *           "ids_fuente": "id_ficha=871732",
+                     *           "evidencia": "banda ambigua: 1 candidatos, mejor obra-12 (0.61000) para \"la casa\" bajo umbral 0.85000",
+                     *           "estado": "pendiente",
+                     *           "candidatos": [
+                     *             {
+                     *               "obra_id": "obra-12",
+                     *               "titulo": "La Casa de las Dos Palmas",
+                     *               "anio": 1990,
+                     *               "genero": "Drama",
+                     *               "puntaje": 0.61,
+                     *               "titulo_consultado": "la casa"
+                     *             }
+                     *           ],
+                     *           "obra_asignada": null,
+                     *           "resuelto_por": null,
+                     *           "resuelto_en": null,
+                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PaginaCasosIdentificacion"];
+                };
+            };
+            /** @description Un filtro o la paginacion vienen mal formados. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "filtro de casos invalido: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo la cola de identificacion. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la cola de identificacion no esta disponible"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
