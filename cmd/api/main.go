@@ -190,6 +190,9 @@ func ejecutar(log *slog.Logger) error {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
@@ -207,6 +210,7 @@ func ejecutar(log *slog.Logger) error {
 		Cola:           aplicacion.Normalizacion{Reportes: store},
 		Auditoria:      aplicacion.Auditoria{Bitacora: store},
 		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

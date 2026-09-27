@@ -17,6 +17,12 @@ var (
 	// ErrNoEncontrado: la consulta fue bien y no hay fila.
 	ErrNoEncontrado = errors.New("no encontrado")
 
+	// ErrBitacoraInmutable: se intento UPDATE, DELETE o TRUNCATE sobre la bitacora (ADR 0006).
+	ErrBitacoraInmutable = errors.New("la bitacora es append-only")
+
+	// ErrLinajeIncompleto: falta un eslabon del origen de una cifra; asentar a medias es peor que no asentar (ADR 0006).
+	ErrLinajeIncompleto = errors.New("linaje incompleto")
+
 	// ErrSinTrabajo: la cola esta vacia. No es un fallo.
 	ErrSinTrabajo = errors.New("sin trabajo pendiente")
 

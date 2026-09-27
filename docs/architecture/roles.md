@@ -32,6 +32,7 @@ puerta del prefijo; la autorizacion fina vive con el caso de uso.
 | `GET /procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
 | `POST /procesos`, `POST /procesos/{id}/avanzar` | `administrador` |
 | `POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar` | `distribucion`, `contabilidad` |
+| `GET /explicar/{ref}` | `titular` (solo lineas suyas, `OE-6`), `auditor`, `administrador` |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe

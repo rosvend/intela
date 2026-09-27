@@ -68,6 +68,7 @@ type API struct {
 	cola           ColaRevision
 	auditoria      Auditoria
 	identificacion CasosIdentificacion
+	explicar       Explicador
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -94,6 +95,7 @@ type Casos struct {
 	Cola           ColaRevision
 	Auditoria      Auditoria
 	Identificacion CasosIdentificacion
+	Explicar       Explicador
 }
 
 // ColaRevision lista lo que espera ojo humano: filas que no se pudieron
@@ -129,6 +131,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		cola:           casos.Cola,
 		auditoria:      casos.Auditoria,
 		identificacion: casos.Identificacion,
+		explicar:       casos.Explicar,
 		opts:           opts,
 		log:            log,
 	}
@@ -191,6 +194,11 @@ func (a *API) Router() http.Handler {
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
+		if a.explicar != nil {
+			protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+				Get("/explicar/{ref}", a.explicarCifra)
+		}
+
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo

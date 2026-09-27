@@ -212,6 +212,9 @@ func construir() (http.Handler, error) {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
 	}
 
 	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
@@ -237,6 +240,7 @@ func construir() (http.Handler, error) {
 		Cola:           aplicacion.Normalizacion{Reportes: store},
 		Auditoria:      aplicacion.Auditoria{Bitacora: store},
 		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

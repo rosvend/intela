@@ -33,13 +33,14 @@ type Auditoria interface {
 // pares clave-valor. Tiene que cuadrar con el schema `Asiento` de
 // api/openapi.yaml.
 type asientoJSON struct {
-	ID      string          `json:"id"`
-	Hecho   string          `json:"hecho"`
-	RefTipo string          `json:"ref_tipo"`
-	RefID   string          `json:"ref_id"`
-	Actor   string          `json:"actor"`
-	Payload json.RawMessage `json:"payload"`
-	Cuando  string          `json:"cuando"`
+	ID       string          `json:"id"`
+	Hecho    string          `json:"hecho"`
+	RefTipo  string          `json:"ref_tipo"`
+	RefID    string          `json:"ref_id"`
+	Actor    string          `json:"actor"`
+	RefiereA string          `json:"refiere_a,omitempty"`
+	Payload  json.RawMessage `json:"payload"`
+	Cuando   string          `json:"cuando"`
 }
 
 func aAsientoJSON(a aplicacion.Asiento) asientoJSON {
@@ -48,13 +49,14 @@ func aAsientoJSON(a aplicacion.Asiento) asientoJSON {
 		payload = json.RawMessage(`{}`)
 	}
 	return asientoJSON{
-		ID:      a.ID,
-		Hecho:   a.Hecho,
-		RefTipo: a.RefTipo,
-		RefID:   a.RefID,
-		Actor:   a.ActorID,
-		Payload: payload,
-		Cuando:  a.Cuando.Format(time.RFC3339Nano),
+		ID:       a.ID,
+		Hecho:    a.Hecho,
+		RefTipo:  a.RefTipo,
+		RefID:    a.RefID,
+		Actor:    a.ActorID,
+		RefiereA: a.RefiereA,
+		Payload:  payload,
+		Cuando:   a.Cuando.Format(time.RFC3339Nano),
 	}
 }
 
