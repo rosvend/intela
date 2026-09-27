@@ -18,6 +18,8 @@ import (
 var casosExentosEnLambda = map[string]string{
 	"Ingesta": "la boveda de reportes crudos es objetos.Disco y el FS de Lambda " +
 		"es de solo lectura salvo /tmp, que se recicla con el contenedor (ADR 0006/0014)",
+	"Admision": "el RUT y la certificacion bancaria de la solicitud van a la misma " +
+		"boveda objetos.Disco que Ingesta; ver TestLambdaNoDependeDeLaBovedaEnDisco",
 }
 
 // TestLambdaCableaLosMismosCasosQueLaAPI compara los campos de `httpapi.Casos`
