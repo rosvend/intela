@@ -431,7 +431,9 @@ export interface paths {
          *     Si falta la valorizacion de la corrida o de la obra, la respuesta es
          *     404: una explicacion a medias es peor que ninguna. Un eslabon
          *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
-         *     no oculta la cifra: se nombra en `faltantes`.
+         *     no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
+         *     de la bolsa (`recaudo.registrado`) y el alta de la obra
+         *     (`obra.registrada`, sin la cual `obra.titulo` sale vacio).
          *
          *     Un titular solo ve lineas suyas; la de otro titular responde 403, no
          *     404. `auditor` y `administrador` ven cualquiera.
@@ -1924,8 +1926,8 @@ export interface components {
          *     `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
          *     su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
          *     el importe de la obra, la version de su declaracion, las partes y la
-         *     identificacion de cada uso. Append-only: corregir es escribir otro
-         *     asiento con `refiere_a`.
+         *     identificacion de cada uso. Append-only: un asiento nunca se modifica
+         *     ni se borra.
          */
         Asiento: {
             /**
@@ -1956,8 +1958,9 @@ export interface components {
              */
             actor: string;
             /**
-             * @description Id del asiento que este corrige. Ausente si no corrige nada: el
-             *     original nunca se modifica.
+             * @description Columna reservada para enlazar una correccion con el asiento que
+             *     corrige (ADR 0006). Ningun caso de uso escribe correcciones todavia,
+             *     asi que hoy siempre esta ausente.
              * @example 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
              */
             refiere_a?: string;
@@ -2027,7 +2030,7 @@ export interface components {
             /** @description La obra, resumida por su identificacion menos cierta. */
             obra: {
                 id: string;
-                /** @description Vacio si el alta de la obra no tiene asiento. */
+                /** @description Del alta asentada de la obra. Vacio si no hay alta; entonces `faltantes` nombra `obra.registrada`. */
                 titulo: string;
                 /** @enum {string} */
                 escalon: "alias" | "id_global" | "difuso" | "manual";
@@ -2077,7 +2080,12 @@ export interface components {
                 /** Format: date-time */
                 cuando: string;
             }[];
-            /** @description Hechos accesorios sin asiento, por nombre. Vacio si la cadena esta completa. */
+            /**
+             * @description Eslabones accesorios sin asiento, por el nombre del hecho que falta:
+             *     `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
+             *     de la obra). Vacio solo si los dos estan asentados; la cadena del
+             *     dinero nunca falta, sin ella la respuesta es 404.
+             */
             faltantes: string[];
         };
         /** @description La version exacta de un archivo crudo en la boveda. */
