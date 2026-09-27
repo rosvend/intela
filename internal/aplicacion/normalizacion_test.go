@@ -26,14 +26,17 @@ func loteMixto() []normalizacion.Fila {
 		{
 			ID: "tv-ok", Fuente: "caracol", Modalidad: "tv",
 			Titulo: "Serie Y", Fecha: "20241231", Duracion: "60", Emisiones: "10",
+			CanalID: "caracol", Rating: "4.5",
 		},
 		{
 			ID: "cine-ok", Fuente: "cine", Modalidad: "cine",
 			Titulo: "Pelicula X", Fecha: "2024-06-01", Taquilla: "100", Moneda: "COP",
+			CanalID: "procinal",
 		},
 		{
 			ID: "ott-ok", Fuente: "netflix", Modalidad: "ott",
 			Titulo: "Show Z", Fecha: "2018-12-31", Vistas: "1200",
+			CanalID: "netflix",
 		},
 		{
 			ID: "tv-fecha", Fuente: "caracol", Modalidad: "tv",

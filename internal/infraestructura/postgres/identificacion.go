@@ -89,7 +89,14 @@ func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r
 	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos
 		    SET obra_id = NULLIF($2, ''), escalon = $3, evidencia = $4, puntaje = $5,
-		        oni = ($2 = '' AND $3 <> 'excluido')
+		        oni = ($2 = '' AND $3 <> 'excluido'),
+		        -- La parrilla no trae tipo_obra (P-05). Con obra y el campo vacio,
+		        -- el tipo sale del catalogo. Un tipo que si trajo la fuente no se pisa.
+		        -- El mismo CASE esta en semilla.identificar (#165).
+		        tipo_obra = CASE
+		          WHEN $2 = '' OR tipo_obra <> '' THEN tipo_obra
+		          ELSE COALESCE((SELECT tipo FROM obras WHERE id = $2), tipo_obra)
+		        END
 		  WHERE id = $1 AND escalon = $6`,
 		usoID, r.ObraID, r.Escalon, r.Evidencia, r.Puntaje, escalonPrevio)
 	if err != nil {
