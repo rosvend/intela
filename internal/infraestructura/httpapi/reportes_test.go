@@ -38,13 +38,18 @@ type ingestaFalsa struct {
 	datos             []byte
 	periodoConsultado string
 	cargaConsultada   string
+	// El actor que llego hasta el nucleo. Se registra porque quien lo decide es
+	// la SESION y no el formulario: es lo que comprueba la prueba del campo
+	// hostil.
+	usuario aplicacion.Usuario
 	// La pagina que llego hasta el nucleo. Se registra porque el adaptador es
 	// quien la interpreta -ausente = defecto, fuera de rango = 400- y es lo unico
 	// que estas pruebas pueden comprobar sin base.
 	paginacionConsultada aplicacion.Paginacion
 }
 
-func (i *ingestaFalsa) IngerirReporte(_ context.Context, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error) {
+func (i *ingestaFalsa) IngerirReporte(_ context.Context, usuario aplicacion.Usuario, fuente, formato, periodo string, datos []byte) (aplicacion.Recepcion, error) {
+	i.usuario = usuario
 	i.fuente, i.formato, i.periodo, i.datos = fuente, formato, periodo, datos
 	return i.rec, i.err
 }
@@ -301,6 +306,79 @@ func TestSubirReporteLaQueryNoPisaAlFormulario(t *testing.T) {
 	if ing.fuente != "cine" || ing.periodo != "2026-01" || ing.formato != aplicacion.FormatoCSV {
 		t.Fatalf("fuente/periodo/formato = %q/%q/%q, se esperaban los del formulario",
 			ing.fuente, ing.periodo, ing.formato)
+	}
+}
+
+// El actor de la entrega sale de la SESION (#116). Un campo `subido_por` en el
+// multipart se ignora: si valiera, quien sube el archivo elegiria a nombre de
+// quien queda registrada la entrega que pondera la bolsa de un periodo entero,
+// que es justo lo contrario de lo que pide la auditoria (RD 16).
+func TestSubirReporteTomaElActorDeLaSesionYNoDelFormulario(t *testing.T) {
+	ing := &ingestaFalsa{rec: recepcionDePrueba()}
+	h := servidorConIngesta(t, ing)
+
+	rec := subir(t, h, map[string]string{
+		"fuente": "caracol", "periodo": "2026-01", "subido_por": "usr-otro",
+	}, "parrilla.xlsx", []byte("x"))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	// servidorConIngesta autentica a usr-admin, que es el unico actor que el
+	// handler puede haber mandado.
+	if ing.usuario.ID != "usr-admin" {
+		t.Fatalf("actor = %q, se esperaba el de la sesion (usr-admin) y no el del formulario",
+			ing.usuario.ID)
+	}
+}
+
+// El camino de EXITO tambien deja rastro, y con el actor: hasta #116 solo
+// escribian los caminos de fallo, asi que de una entrega aceptada el log no
+// decia quien la habia hecho. La atribucion con valor probatorio es la columna
+// `reportes.subido_por`; esta linea es la que responde sin abrir la base.
+func TestSubirReporteRegistraEnElLogQuienLaSubio(t *testing.T) {
+	var buf bytes.Buffer
+	h := servidorConLog(t, &ingestaFalsa{rec: recepcionDePrueba()}, &buf)
+
+	rec := subir(t, h, map[string]string{"fuente": "caracol", "periodo": "2026-01"},
+		"parrilla.xlsx", []byte("x"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("codigo = %d, se esperaba 201. Cuerpo: %s", rec.Code, rec.Body)
+	}
+
+	linea := buf.String()
+	if !strings.Contains(linea, "subido_por=usr-admin") {
+		t.Fatalf("el log del camino de exito no nombra al actor: %s", linea)
+	}
+	// Y nombra la entrega: un log que solo dice "algo paso" no sirve para
+	// saber de que carga habla.
+	if !strings.Contains(linea, "reporte=rep-1") {
+		t.Fatalf("el log no identifica la entrega: %s", linea)
+	}
+}
+
+// Sin sesion no hay actor, y sin actor no se registra la entrega: la guarda es
+// del HANDLER y no depende de que el router monte `requiereRol` delante. Se
+// llama al handler DIRECTO, con un contexto sin Usuario, porque por el router
+// ese caso no se alcanza -- `conSesion` corta antes con 401 -- y es justo el
+// cableado que la guarda protege.
+//
+// El cuerpo va vacio a proposito: la guarda corre ANTES del parseo, asi que no
+// hace falta ni un multipart para comprobarla.
+func TestSubirReporteSinActorNoLlegaAlNucleo(t *testing.T) {
+	ing := &ingestaFalsa{rec: recepcionDePrueba()}
+	api := Nueva(Casos{Ingesta: ing}, Opciones{})
+
+	req := httptest.NewRequest(http.MethodPost, "/reportes", nil)
+	rec := httptest.NewRecorder()
+	api.subirReporte(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("codigo = %d, se esperaba 401. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if ing.fuente != "" || ing.usuario.ID != "" {
+		t.Fatalf("la entrega llego al nucleo sin actor: fuente=%q usuario=%q",
+			ing.fuente, ing.usuario.ID)
 	}
 }
 
@@ -695,6 +773,7 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 			SHA256:      strings.Repeat("a", 64),
 			ClaveObjeto: "reportes/" + strings.Repeat("a", 64),
 			NBytes:      21032,
+			SubidoPor:   "usr-admin",
 		},
 		Recibido:   time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC),
 		Aceptados:  58,
@@ -727,6 +806,11 @@ func TestListarCargasSirveElListadoDeCargasHechas(t *testing.T) {
 	}
 	if cuerpo[0]["clave_objeto"] != "reportes/"+strings.Repeat("a", 64) {
 		t.Errorf("clave_objeto = %v", cuerpo[0]["clave_objeto"])
+	}
+	// Y quien la subio (#116): el listado es la unica lectura que responde
+	// "quien entrego esto" sin abrir la base.
+	if cuerpo[0]["subido_por"] != "usr-admin" {
+		t.Errorf("subido_por = %v, se esperaba usr-admin", cuerpo[0]["subido_por"])
 	}
 }
 

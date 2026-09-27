@@ -33,7 +33,10 @@ func TestElMapaDeCaracolRechazaLaFilaSinCanal(t *testing.T) {
 		"La Casa de las Dos Palmas,1234,52,20260202,1930\n")
 
 	const periodo = "2026-02"
-	rec, err := ing.IngerirReporte(ctx, "caracol", "csv", periodo, csv)
+	// Sin actor a proposito: esta prueba es del canal, no de la atribucion, y
+	// sembrarReportes no crea ningun usuario al que referenciar. La entrega
+	// queda con subido_por NULL, que es un caso valido (#116).
+	rec, err := ing.IngerirReporte(ctx, aplicacion.Usuario{}, "caracol", "csv", periodo, csv)
 	if err != nil {
 		t.Fatalf("IngerirReporte con el mapa real de Caracol: %v", err)
 	}

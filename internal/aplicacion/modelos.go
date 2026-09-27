@@ -145,6 +145,19 @@ type Reporte struct {
 	SHA256      string
 	ClaveObjeto string
 	NBytes      int
+
+	// SubidoPor es el id del usuario autenticado que hizo la entrega (#116).
+	//
+	// Vacio NO es un dato perdido: es la ausencia de atribucion, y se persiste
+	// como NULL. Son dos casos y los dos son ciertos -- las entregas anteriores
+	// a la columna, que se documentan como "anterior a la atribucion", y las
+	// que escribe el sembrador, que no tienen a nadie detras --. Inventar un
+	// actor para cualquiera de los dos seria una atribucion falsa en la tabla
+	// que la auditoria revisa (RD 16).
+	//
+	// Guarda el id y no el nombre ni el correo, igual que usos.resuelto_por:
+	// esos cambian sin que cambie quien entrego el archivo.
+	SubidoPor string
 }
 
 // Recepcion es el acuse de una entrega INGERIDA entera: congelada, parseada y

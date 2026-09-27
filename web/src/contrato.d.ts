@@ -911,6 +911,12 @@ export interface paths {
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
          *     volver al archivo EXACTO que pondero una corrida y no "al archivo de
          *     esa fuente" (ADR 0006).
+         *
+         *     Cada carga dice tambien QUIEN la subio (`subido_por`): es la parte de la
+         *     trazabilidad que faltaba, porque la escritura que decide como se pondera
+         *     la bolsa de un periodo entero era la unica del sistema sin actor. Las
+         *     entregas anteriores a esa columna lo traen vacio, que es "anterior a la
+         *     atribucion" y no un actor desconocido.
          */
         get: operations["listarCargas"];
         put?: never;
@@ -934,6 +940,11 @@ export interface paths {
          *     `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
          *     que de el sale UNICAMENTE esa decision: la clave del objeto de la
          *     boveda se deriva de la huella del contenido, no del nombre.
+         *
+         *     La entrega queda atribuida al usuario de la SESION, y el actor no viaja
+         *     en el formulario: un campo `subido_por` en el multipart se ignora. Quien
+         *     sube el archivo no elige a nombre de quien queda registrada una entrega
+         *     que pondera la bolsa de un periodo entero.
          */
         post: operations["subirReporte"];
         delete?: never;
@@ -1066,6 +1077,26 @@ export interface components {
              */
             clave_objeto: string;
             nbytes: number;
+            /**
+             * @description Id del usuario autenticado que hizo la entrega (#116). Es la
+             *     respuesta a "quien entrego este archivo", que era lo que faltaba
+             *     para cerrar la cadena: de una entrega se sabia la fuente, el periodo
+             *     y la huella, pero no quien la subio, mientras que `usos.resuelto_por`
+             *     ya registraba el actor de una resolucion manual, que es una accion
+             *     menos consecuente.
+             *
+             *     Sale de la SESION, nunca del formulario: un campo `subido_por` en el
+             *     multipart se ignora. Si valiera, quien sube el archivo elegiria a
+             *     nombre de quien queda registrada la entrega que pondera la bolsa de
+             *     un periodo entero.
+             *
+             *     Cadena vacia cuando no hay actor: las entregas anteriores a la
+             *     columna, que son "anteriores a la atribucion", y las que escribe el
+             *     sembrador. Se persiste como NULL y no se rellena con un usuario
+             *     inventado, porque una atribucion falsa es peor que su ausencia
+             *     declarada.
+             */
+            subido_por: string;
             /**
              * Format: date-time
              * @description Cuando llego. Sale del reloj de la base: es la marca de un hecho de

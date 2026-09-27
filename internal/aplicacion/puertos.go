@@ -435,7 +435,15 @@ type RepositorioUsosDeReparto interface {
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
-	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
+	// GuardarReporte escribe SOLO el acuse, sin filas. Antes de usarlo, leer la
+	// advertencia de [Ingesta.GuardarReporte]: la pareja acuse + filas es
+	// [RepositorioIngesta.GuardarEntrega], y este metodo se queda para el seed.
+	//
+	// subidoPor es el id del usuario autenticado que hizo la entrega, o "" si no
+	// hay actor -el seed, o una entrega anterior a la atribucion (#116)-. Vacio
+	// se persiste como NULL y NUNCA como cadena vacia: no hay usuario con id ""
+	// y la clave foranea lo rechazaria.
+	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
 
 	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
