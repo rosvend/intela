@@ -97,5 +97,38 @@ func traducirError(err error, formato string, args ...any) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%s: %w", contexto, aplicacion.ErrNoEncontrado)
 	}
+	// Detail/Where de PgError suelen traer la pista que el Message omite: en
+	// un COPY, "COPY usos, line N" vive en Where (o Detail). Sin esto, un
+	// lote de miles de filas falla con "copiar el lote del reporte X" y nadie
+	// sabe cual fila lo rompio.
+	if pista := pistaPgError(err); pista != "" {
+		return fmt.Errorf("%s (%s): %w", contexto, pista, err)
+	}
 	return fmt.Errorf("%s: %w", contexto, err)
+}
+
+// esConflictoUnico reconoce una violacion de UNIQUE (23505). El caso de uso
+// la traduce a ErrConflicto: "ya hay una solicitud con ese correo" no es un
+// 500.
+func esConflictoUnico(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// pistaPgError junta Detail y Where no vacios de un *pgconn.PgError. Vacio si
+// el error no es de Postgres o no trae ninguna de las dos.
+func pistaPgError(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return ""
+	}
+	switch {
+	case pgErr.Detail != "" && pgErr.Where != "":
+		return pgErr.Detail + "; " + pgErr.Where
+	case pgErr.Detail != "":
+		return pgErr.Detail
+	case pgErr.Where != "":
+		return pgErr.Where
+	}
+	return ""
 }

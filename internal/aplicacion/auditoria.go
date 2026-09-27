@@ -32,7 +32,7 @@ type Auditoria struct {
 // Postgres; es la misma forma que [Catalogo.BuscarObras].
 func (a Auditoria) Asientos(ctx context.Context, pag Paginacion) ([]Asiento, error) {
 	pag = pag.ConDefecto()
-	asientos, err := a.Bitacora.Listar(ctx, pag)
+	asientos, err := a.Bitacora.ListarAsientos(ctx, pag)
 	if err != nil {
 		return nil, fmt.Errorf("leer la bitacora: %w", err)
 	}

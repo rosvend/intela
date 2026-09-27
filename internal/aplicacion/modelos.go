@@ -145,6 +145,19 @@ type Reporte struct {
 	SHA256      string
 	ClaveObjeto string
 	NBytes      int
+
+	// SubidoPor es el id del usuario autenticado que hizo la entrega (#116).
+	//
+	// Vacio NO es un dato perdido: es la ausencia de atribucion, y se persiste
+	// como NULL. Son dos casos y los dos son ciertos -- las entregas anteriores
+	// a la columna, que se documentan como "anterior a la atribucion", y las
+	// que escribe el sembrador, que no tienen a nadie detras --. Inventar un
+	// actor para cualquiera de los dos seria una atribucion falsa en la tabla
+	// que la auditoria revisa (RD 16).
+	//
+	// Guarda el id y no el nombre ni el correo, igual que usos.resuelto_por:
+	// esos cambian sin que cambie quien entrego el archivo.
+	SubidoPor string
 }
 
 // Recepcion es el acuse de una entrega INGERIDA entera: congelada, parseada y
@@ -369,4 +382,39 @@ type Anticipo struct {
 	TitularID string
 	Monto     decimal.Decimal
 	Estado    string
+}
+
+// SolicitudAfiliacion es lo que el asistente de alta manda al caso de uso.
+//
+// Los documentos van en bytes, no en claves: quien llama no conoce el
+// almacen. El caso de uso los guarda y deja las claves en el Afiliado.
+type SolicitudAfiliacion struct {
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	PerteneceOtraSGC   bool
+	Clave              string
+	RUT                []byte
+	CertBancaria       []byte
+	Renuncia           []byte
+}
+
+// AfiliacionVista es la solicitud (o el afiliado ya admitido) tal como
+// sale del nucleo hacia el adaptador. Sin etiquetas json: la forma de
+// red la decide HTTP.
+type AfiliacionVista struct {
+	ID                 string
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	Estado             string
+	ElegibleAnticipo   bool
+	TieneRUT           bool
+	TieneCertBancaria  bool
+	TieneRenuncia      bool
+	TitularID          string
 }

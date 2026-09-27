@@ -33,20 +33,34 @@ const (
 // sembrarReportes deja dos reportes de periodos distintos y devuelve el Store.
 func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-
 	pool := testhelp.Pool(t)
+	return sembrarReportesEn(t, pool), pool
+}
+
+// sembrarReportesEn siembra los dos reportes sobre un pool ya abierto.
+//
+// Existe para la sonda de la unidad de trabajo, que no puede usar
+// [testhelp.Pool]: ese deja MaxConns=1 y la lectura desde fuera de la
+// transaccion abierta se interbloquea.
+//
+// Los dos acuses van SIN actor, que es el caso "anterior a la atribucion"
+// (#116): este sembrador no crea ningun usuario, y pasarle un id inventado
+// haria fallar la clave foranea. De paso, las pruebas de listado ejercitan el
+// COALESCE de subido_por sobre filas que lo tienen NULL.
+func sembrarReportesEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 
 	if err := s.GuardarReporte(ctx, reporteEnero, "caracol", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("sembrar reporte de enero: %v", err)
 	}
 	if err := s.GuardarReporte(ctx, reporteFebrero, "caracol", "2026-02",
-		shaOtro, "reportes/"+shaOtro, 256); err != nil {
+		shaOtro, "reportes/"+shaOtro, 256, ""); err != nil {
 		t.Fatalf("sembrar reporte de febrero: %v", err)
 	}
-	return s, pool
+	return s
 }
 
 func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
@@ -59,6 +73,10 @@ func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 3,
+		// Sin canal o sin rating la ingesta rechaza la fila (#165). Los tests
+		// que quieren ese hueco lo vacian a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -97,7 +115,7 @@ func TestGuardarReporteTraduceElDuplicadoDeHuella(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	err := s.GuardarReporte(t.Context(), "rep-otro-id", "caracol", "2026-03",
-		shaParrilla, "reportes/"+shaParrilla, 128)
+		shaParrilla, "reportes/"+shaParrilla, 128, "")
 	if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
 		t.Fatalf("se esperaba ErrReporteDuplicado, se obtuvo %v", err)
 	}
@@ -114,8 +132,116 @@ func TestGuardarReporteAdmiteLaMismaHuellaDeOtraFuente(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	if err := s.GuardarReporte(t.Context(), "rep-netflix", "netflix", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("otra fuente con los mismos bytes es una entrega valida: %v", err)
+	}
+}
+
+// reporteDeEntrega arma un acuse valido para las pruebas de GuardarEntrega:
+// huella de 64 hexadecimales, periodo con forma y nbytes > 0, que es lo que
+// exigen los CHECK de `reportes`.
+func reporteDeEntrega(id, sha, subidoPor string) aplicacion.Reporte {
+	return aplicacion.Reporte{
+		ID: id, Fuente: "caracol", Periodo: "2026-01",
+		SHA256: sha, ClaveObjeto: "reportes/" + sha, NBytes: 128, SubidoPor: subidoPor,
+	}
+}
+
+// La atribucion de la entrega (#116): quien sube queda en la fila de `reportes`,
+// y la ausencia de actor es NULL -- no la cadena vacia, que no referencia a
+// ningun usuario y la clave foranea rechazaria.
+//
+// Va contra Postgres de verdad porque lo que se comprueba es el NULLIF del
+// INSERT y la forma de la columna, y ninguna de las dos cosas existe en un
+// doble.
+func TestGuardarEntregaPersisteQuienSubioYDejaNuloSinActor(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	conActor := reporteDeEntrega("rep-con-actor", shaParrilla, usuarioAdmin)
+	if err := s.GuardarEntrega(ctx, conActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	sinActor := reporteDeEntrega("rep-sin-actor", shaOtro, "")
+	if err := s.GuardarEntrega(ctx, sinActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	var subidoPor *string
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por FROM reportes WHERE id = $1`, conActor.ID).Scan(&subidoPor); err != nil {
+		t.Fatalf("leer subido_por: %v", err)
+	}
+	if subidoPor == nil || *subidoPor != usuarioAdmin {
+		t.Fatalf("subido_por = %v, se esperaba %q", subidoPor, usuarioAdmin)
+	}
+
+	// NULL y no "": si aqui llegara "" seria que el NULLIF no hace su trabajo,
+	// y la FK solo lo estaria tapando en el camino del actor.
+	var esNulo bool
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por IS NULL FROM reportes WHERE id = $1`, sinActor.ID).Scan(&esNulo); err != nil {
+		t.Fatalf("leer subido_por sin actor: %v", err)
+	}
+	if !esNulo {
+		t.Fatal("una entrega sin actor tiene que quedar con subido_por NULL")
+	}
+}
+
+// Un id que no existe lo rechaza la clave foranea: la columna no es texto
+// libre, es una referencia al padron. Y la entrega NO queda escrita, que es lo
+// que impide confundir "sin actor" (NULL, legitimo) con "actor inventado".
+func TestGuardarEntregaConActorInexistenteNoEscribeNada(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	const fantasma = "rep-actor-fantasma"
+	err := s.GuardarEntrega(ctx, reporteDeEntrega(fantasma, shaParrilla, "usr-que-no-existe"), nil)
+	if !esClaveForanea(err) {
+		t.Fatalf("se esperaba una violacion de clave foranea, se obtuvo %v", err)
+	}
+
+	var hay bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM reportes WHERE id = $1)`, fantasma).Scan(&hay); err != nil {
+		t.Fatalf("comprobar la fila: %v", err)
+	}
+	if hay {
+		t.Fatal("la entrega quedo escrita con un actor que no existe")
+	}
+}
+
+// La atribucion vuelve por la PROYECCION del listado, que es de donde la lee
+// `GET /reportes`. El COALESCE tiene que devolver "" para las filas sin actor
+// -- las anteriores a la migracion y las del sembrador -- sin que el escaneo
+// falle: sin el, media tabla de `reportes` seria ilegible.
+func TestListarCargasDevuelveQuienSubioCadaEntrega(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-atribuido", shaParrilla, usuarioAdmin), nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-anterior", shaOtro, ""), nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	porID := map[string]aplicacion.CargaReporte{}
+	for _, c := range cargas {
+		porID[c.ID] = c
+	}
+	if got := porID["rep-atribuido"].SubidoPor; got != usuarioAdmin {
+		t.Errorf("subido_por de la entrega atribuida = %q, se esperaba %q", got, usuarioAdmin)
+	}
+	if _, hay := porID["rep-anterior"]; !hay {
+		t.Fatal("la entrega sin actor no volvio en el listado")
+	}
+	if got := porID["rep-anterior"].SubidoPor; got != "" {
+		t.Errorf("subido_por de la entrega sin actor = %q, se esperaba vacio", got)
 	}
 }
 
@@ -576,7 +702,7 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 // a leer #26 y el reparto.
 //
 // Los DEFAULT del esquema (`oni DEFAULT TRUE`, `emisiones DEFAULT 1`) no
-// intervienen: insertarUso manda los tres valores siempre, asi que el unico
+// intervienen: el COPY manda los tres valores siempre, asi que el unico
 // sitio donde pueden ponerse es el caso de uso.
 func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	s, pool := sembrarReportes(t)
@@ -599,6 +725,8 @@ func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(52),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{recien})
@@ -806,8 +934,8 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 //     ingesta"- acusando de traer una obra a una fila que no traia ninguna.
 //     Eso se ve con un doble en memoria.
 //  2. En cuanto se arregla SOLO en Go, la fila pasa como vacia y llega al
-//     INSERT con el blanco intacto. El NULLIF del INSERT compara con la cadena
-//     vacia LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
+//     COPY con el blanco intacto. valoresUso compara contra la cadena vacia
+//     LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
 //     la rechaza con un 23514 DENTRO de la transaccion del lote. No se pierde
 //     esa fila: se pierden TODAS. Ese sintoma no existe contra un doble -no
 //     hay CHECK que violar- y es el mas caro de los dos: el reporte ya quedo
@@ -1355,7 +1483,7 @@ func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
 		t.Fatalf("GuardarUsos: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
@@ -1394,7 +1522,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	s, _ := sembrarReportes(t)
 	ctx := t.Context()
 
-	enero, err := s.ListarCargas(ctx, "2026-01")
+	enero, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2026-01): %v", err)
 	}
@@ -1402,9 +1530,10 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 		t.Fatalf("cargas de enero = %+v", enero)
 	}
 
-	// El filtro va como parametro y el vacio significa "todas". Es lo que
-	// permite una sola sentencia y un solo plan.
-	todas, err := s.ListarCargas(ctx, "")
+	// El filtro va como parametro y el vacio significa "todas". Cada caso
+	// tiene su sentencia y su plan: el `OR` evitaba el indice `reportes_periodo`
+	// en plan generico.
+	todas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(): %v", err)
 	}
@@ -1413,7 +1542,7 @@ func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
 	}
 
 	// Un periodo sin cargas es lista vacia, no error.
-	ninguna, err := s.ListarCargas(ctx, "2025-12")
+	ninguna, err := s.ListarCargas(ctx, "2025-12", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas(2025-12): %v", err)
 	}
@@ -1438,13 +1567,152 @@ func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
 		t.Fatalf("fijar creado de febrero: %v", err)
 	}
 
-	cargas, err := s.ListarCargas(ctx, "")
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
 	if err != nil {
 		t.Fatalf("ListarCargas: %v", err)
 	}
 	if cargas[0].ID != reporteFebrero || cargas[1].ID != reporteEnero {
 		t.Fatalf("orden = %s, %s; se esperaba la mas reciente primero",
 			cargas[0].ID, cargas[1].ID)
+	}
+}
+
+func TestListarCargasPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	primera, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// La rama filtrada por periodo tambien pagina: es la que usa la pantalla tras
+// cada subida (GET /reportes?periodo=...&limite=...&desplazamiento=...). Sin el
+// LIMIT/OFFSET en esa rama, el listado filtrado volvia entero y la suite
+// seguia en verde porque TestListarCargasPagina solo ejerce la rama sin
+// filtro.
+func TestListarCargasFiltradaPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Una segunda carga en el mismo periodo de enero: con dos en 2026-01 y una
+	// en 2026-02, la pagina filtrada tiene que recortar y avanzar.
+	const (
+		reporteEnero2 = "rep-caracol-enero-2"
+		shaEnero2     = "3333333333333333333333333333333333333333333333333333333333333333"
+	)
+	if err := s.GuardarReporte(ctx, reporteEnero2, "caracol", "2026-01",
+		shaEnero2, "reportes/"+shaEnero2, 64, ""); err != nil {
+		t.Fatalf("sembrar segunda carga de enero: %v", err)
+	}
+
+	primera, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas filtradas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina filtrada no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas filtradas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// ListarCargas tiene que participar en Store.EnUnidad: lee por ejecutorDe, no
+// por el pool. Sin esto, una lectura dentro de la unidad no ve lo que la
+// unidad acaba de escribir (y con el pool agotado se interbloquea). El merge
+// que separo la consulta en dos ramas revirtio s.ejecutorDe a s.pool; esta
+// sonda es lo que evita que vuelva a pasar en silencio.
+func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
+	// Dos conexiones: EnUnidad ocupa una con la transaccion y el conteo de
+	// fuera (pool directo) pide otra. Con el MaxConns=1 de testhelp.Pool la
+	// segunda espera al pool mientras la unidad espera a la segunda: el
+	// timeout de 10 minutos del paquete. Mismo arreglo que
+	// TestCandidatosParticipaEnLaUnidad.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool de dos conexiones: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool de dos conexiones: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	s := sembrarReportesEn(t, pool)
+	const (
+		idSonda  = "rep-sonda"
+		periodo  = "2026-03"
+		shaSonda = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
+		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
+			shaSonda, "reportes/"+shaSonda, 32, ""); err != nil {
+			return err
+		}
+		cargas, err := s.ListarCargas(ctx, periodo, aplicacion.Paginacion{})
+		if err != nil {
+			t.Errorf("ListarCargas dentro de la unidad: %v", err)
+			return nil
+		}
+		if len(cargas) != 1 || cargas[0].ID != idSonda {
+			t.Errorf("ListarCargas no ve la carga escrita en la MISMA unidad: %d, se esperaba 1",
+				len(cargas))
+		}
+
+		// Desde otra conexion la fila no existe todavia: la unidad no confirmo.
+		var n int
+		if err := pool.QueryRow(t.Context(),
+			`SELECT count(*) FROM reportes WHERE id = $1`, idSonda).Scan(&n); err != nil {
+			t.Errorf("contar desde fuera: %v", err)
+			return nil
+		}
+		if n != 0 {
+			t.Errorf("ListarCargas confirmo la transaccion de la unidad por su cuenta")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("EnUnidad: %v", err)
+	}
+
+	fuera, err := s.ListarCargas(t.Context(), periodo, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas fuera de la unidad: %v", err)
+	}
+	if len(fuera) != 1 || fuera[0].ID != idSonda {
+		t.Fatalf("la unidad confirmo y la carga tenia que verse: %+v", fuera)
 	}
 }
 

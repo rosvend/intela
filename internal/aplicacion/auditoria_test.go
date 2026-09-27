@@ -51,7 +51,7 @@ func (b *bitacoraFalsa) AsientoPorID(_ context.Context, id string) (Asiento, err
 	return Asiento{}, ErrNoEncontrado
 }
 
-func (b *bitacoraFalsa) Listar(_ context.Context, pag Paginacion) ([]Asiento, error) {
+func (b *bitacoraFalsa) ListarAsientos(_ context.Context, pag Paginacion) ([]Asiento, error) {
 	b.pagRecibida = pag
 	return b.asientos, b.err
 }

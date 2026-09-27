@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { Route, Routes } from "react-router-dom";
+import WizardAfiliacion from "./afiliacion/Wizard";
 import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
 import Inicio from "./Inicio";
@@ -15,6 +16,8 @@ import EditorReparto from "./catalogo/EditorReparto";
 import HistorialVersiones from "./catalogo/HistorialVersiones";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
+import PanelCorridas from "./reparto/PanelCorridas";
+import TableroAnomalias from "./reparto/TableroAnomalias";
 
 /**
  * Las pantallas reales de los modulos de `RUTAS`, por ruta. Un modulo que no
@@ -25,6 +28,8 @@ import { RUTAS } from "./navegacion";
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
   "/catalogo": <Catalogo />,
+  "/distribucion": <PanelCorridas />,
+  "/anomalias": <TableroAnomalias />,
   "/auditoria": <Auditoria />,
 };
 
@@ -75,6 +80,8 @@ const SUBRUTAS_AUDITORIA: readonly { path: string; element: ReactElement }[] = [
  * recarga la pagina entera y pierde el estado; y sin `try_files` en nginx
  * -que hasta ahora tampoco estaba- devuelve 404 directamente.
  *
+ * /afiliacion va FUERA de RutaProtegida: el alta la rellena quien todavia no
+ * es afiliado, igual que el POST /afiliaciones del backend va sin sesion.
  * Las rutas de `RUTAS` (Sprint 3-5) salen de `PANTALLAS`, o de
  * <EnConstruccion> mientras su pantalla no exista. Las tres sub-rutas del
  * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`, y la historia de una obra
@@ -84,6 +91,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/afiliacion" element={<WizardAfiliacion />} />
       <Route element={<RutaProtegida />}>
         <Route element={<Layout />}>
           <Route index element={<Inicio />} />
@@ -97,6 +105,7 @@ export default function App() {
               }
             />
           ))}
+          <Route path="/distribucion/:id" element={<PanelCorridas />} />
           {SUBRUTAS_DEL_DETALLE.map((subruta) => (
             <Route
               key={subruta.path}

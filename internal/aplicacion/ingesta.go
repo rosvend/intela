@@ -63,6 +63,17 @@ type Ingesta struct {
 	SnapshotNormalizacion func(ctx context.Context) (reparto.Snapshot, error)
 }
 
+// DeducirFormato deduce el formato de una entrega por la extension de su
+// nombre de archivo. Es [FormatoDeNombre], expuesto como metodo para que la
+// interfaz que el adaptador HTTP declara describa TODO lo que el handler
+// necesita del nucleo -incluida esta deduccion- en vez de importar un
+// paquete hermano de infraestructura para una sola funcion. Un doble de
+// prueba puede alterar la deduccion, que es justo lo que el patron del
+// fichero promete y lo que el import directo rompia.
+func (i Ingesta) DeducirFormato(nombre string) string {
+	return FormatoDeNombre(nombre)
+}
+
 // IngerirReporte hace la entrega ENTERA: elige el adaptador, parsea, congela
 // la evidencia y persiste las filas.
 //
@@ -92,7 +103,20 @@ type Ingesta struct {
 // Por lo mismo del punto 2. Aceptarlo escribiria un acuse con cero usos y
 // dejaria la huella quemada; y un export que salio vacio es exactamente el
 // caso en el que el cliente vuelve a mandar el archivo bueno.
-func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
+//
+// # Quien entrega
+//
+// `usuario` es el actor autenticado y viaja como PARAMETRO, no dentro de
+// `datos`: es una decision de quien llama y no algo que venga en el archivo.
+// Con la atribucion dentro del fichero, quien sube elegiria a su nombre quien
+// queda registrado, que es justo lo contrario de lo que pide la auditoria
+// (RD 16). El adaptador HTTP lo saca de la sesion y no del formulario; ver
+// [httpapi.UsuarioDe] y `subirReporte`.
+//
+// Se persiste en la MISMA transaccion que las filas ([RepositorioIngesta.GuardarEntrega]):
+// una entrega sin su actor, o un actor sin su entrega, es una cadena de
+// trazabilidad rota a medias.
+func (i Ingesta) IngerirReporte(ctx context.Context, usuario Usuario, fuente, formato, periodo string, datos []byte) (Recepcion, error) {
 	// UNA sola normalizacion, y antes de todo lo demas, por lo mismo que en
 	// GuardarReporte: la fuente se usa aqui para BUSCAR el adaptador y se pasa
 	// despues a GuardarReporte, y con dos criterios distintos " caracol " no
@@ -125,7 +149,7 @@ func (i Ingesta) IngerirReporte(ctx context.Context, fuente, formato, periodo st
 			"%w: la entrega de %q (%s) no trae ninguna fila de datos", ErrReporteInvalido, fuente, formato)
 	}
 
-	rep, err := prepararReporte(fuente, periodo, datos)
+	rep, err := prepararReporte(usuario, fuente, periodo, datos)
 	if err != nil {
 		return Recepcion{}, err
 	}
@@ -185,14 +209,15 @@ func (i Ingesta) lectoresDisponibles() string {
 // Lo mismo vale para un mes que no existe: `2026-13` se rechaza con 400 en vez
 // de contestar una lista vacia que se lee como "ese mes no tuvo recaudo". La
 // regla es la del dominio, `recaudo.PeriodoValido`, sin copia en este paquete.
-func (i Ingesta) Cargas(ctx context.Context, periodo string) ([]CargaReporte, error) {
+func (i Ingesta) Cargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error) {
 	periodo = strings.TrimSpace(periodo)
 	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, fmt.Errorf(
 			"%w: periodo %q, se esperaba AAAA o AAAA-MM con un mes entre 01 y 12",
 			ErrReporteInvalido, periodo)
 	}
-	cargas, err := i.Reportes.ListarCargas(ctx, periodo)
+	pag = pag.ConDefecto()
+	cargas, err := i.Reportes.ListarCargas(ctx, periodo, pag)
 	if err != nil {
 		return nil, fmt.Errorf("listar las cargas del periodo %q: %w", periodo, err)
 	}
@@ -314,7 +339,10 @@ func idReporte(fuente, sha string) string {
 // Este metodo se queda para el seed, que construye las filas en Go y las mete
 // aparte.
 func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, datos []byte) (Reporte, error) {
-	rep, err := prepararReporte(fuente, periodo, datos)
+	// Sin actor, y es la verdad: el sembrador no tiene a nadie detras. El
+	// Usuario cero deja SubidoPor vacio, que se persiste como NULL y se lee
+	// como "anterior a la atribucion" (ver [Reporte.SubidoPor]).
+	rep, err := prepararReporte(Usuario{}, fuente, periodo, datos)
 	if err != nil {
 		return Reporte{}, err
 	}
@@ -322,7 +350,7 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 		return Reporte{}, err
 	}
 	if err := i.Reportes.GuardarReporte(
-		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes,
+		ctx, rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes, rep.SubidoPor,
 	); err != nil {
 		// Envuelto como los demas caminos de este fichero. errors.Is sigue
 		// casando con ErrReporteDuplicado -es lo que comprueban las pruebas-,
@@ -336,10 +364,14 @@ func (i Ingesta) GuardarReporte(ctx context.Context, fuente, periodo string, dat
 
 // prepararReporte valida una entrega y deriva su acuse.
 //
-// No toca nada: es una funcion de (fuente, periodo, bytes) a [Reporte]. Que sea
-// pura es lo que permite que [Ingesta.IngerirReporte] la llame antes de decidir
-// como persiste, sin comprometerse todavia a escribir nada.
-func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
+// No toca nada: es una funcion de (usuario, fuente, periodo, bytes) a [Reporte].
+// Que sea pura es lo que permite que [Ingesta.IngerirReporte] la llame antes de
+// decidir como persiste, sin comprometerse todavia a escribir nada. El usuario
+// entra aqui, y no se estampa despues, para que el acuse lleve su actor desde
+// que existe: si la atribucion se anadiera mas tarde, cualquier camino que
+// devolviera el [Reporte] sin pasar por aqui lo entregaria sin actor y nada
+// fallaria.
+func prepararReporte(usuario Usuario, fuente, periodo string, datos []byte) (Reporte, error) {
 	// UNA sola normalizacion de la fuente, y ANTES de la validacion, por lo
 	// mismo que la de obra_id en GuardarUsos: la fuente se validaba recortada
 	// y se usaba CRUDA en los tres sitios que vienen despues -la fila de
@@ -383,10 +415,11 @@ func prepararReporte(fuente, periodo string, datos []byte) (Reporte, error) {
 	}
 
 	rep := Reporte{
-		Fuente:  fuente,
-		Periodo: periodo,
-		SHA256:  huella(datos),
-		NBytes:  len(datos),
+		Fuente:    fuente,
+		Periodo:   periodo,
+		SHA256:    huella(datos),
+		NBytes:    len(datos),
+		SubidoPor: usuario.ID,
 	}
 	rep.ID = idReporte(fuente, rep.SHA256)
 	rep.ClaveObjeto = claveObjeto(rep.SHA256)
@@ -554,8 +587,8 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 	for n, u := range usos {
 		// UNA sola normalizacion de obra_id, y va aqui arriba porque el problema
 		// no es el espacio: es que el campo se lee TRES veces en DOS capas
-		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el
-		// NULLIF($6, '') del INSERT- y cada lectura decide "vacio" por su cuenta.
+		// -la guarda de ONI de abajo, la regla de H5 en validarUso, y el nil de
+		// valoresUso para obra_id- y cada lectura decide "vacio" por su cuenta.
 		// Mientras el criterio se escriba tres veces, puede discrepar tres veces.
 		//
 		// Discrepaba ya. Un obra_id de solo blancos -un espacio, un tabulador, un
@@ -568,16 +601,16 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		//
 		// Y arreglarlo solo en Go lo empeora, que es la razon de que la
 		// normalizacion sea UNA y este ANTES de todo. Con TrimSpace en las dos
-		// comparaciones de arriba pero no en el SQL, la fila pasa como vacia,
-		// llega al INSERT con el espacio intacto, NULLIF no la anula -no es
+		// comparaciones de arriba pero no sobre el campo, la fila pasa como vacia,
+		// llega al COPY con el espacio intacto, valoresUso no lo anula -no es
 		// literalmente ''- y el CHECK uso_resuelto_tiene_obra la rechaza: 23514
 		// dentro de la transaccion del lote, que se lleva por delante TODAS las
 		// filas buenas que la acompanan. Un rechazo con el motivo equivocado se
 		// convertiria asi en una entrega entera perdida.
 		//
 		// Normalizando aqui el valor viaja ya limpio a las tres lecturas, incluido
-		// el que se manda al INSERT, y "vacio" pasa a significar lo mismo en Go y
-		// en SQL por construccion, no por acuerdo.
+		// el que se manda al COPY, y "vacio" pasa a significar lo mismo en Go y
+		// en el adaptador por construccion, no por acuerdo.
 		//
 		// TrimSpace y no un recorte propio: su definicion de blanco es
 		// unicode.IsSpace, que incluye el NBSP (U+00A0) con el que los exports de
@@ -592,7 +625,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		// el razonamiento de arriba, que vale igual para todos: mientras el
 		// criterio de "vacio" se escriba en mas de un sitio puede discrepar en
 		// mas de un sitio, y cada discrepancia acaba en el mismo lugar, que es
-		// una restriccion de la base abortando el INSERT del lote ENTERO. UNA
+		// una restriccion de la base abortando la escritura del lote ENTERO. UNA
 		// normalizacion por campo, aqui arriba, ANTES de que nada los lea.
 		//
 		// Lo que se pierde por cada uno si el blanco no se recorta AQUI:
@@ -639,6 +672,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		u.Escalon = strings.TrimSpace(u.Escalon)
 		u.Evidencia = strings.TrimSpace(u.Evidencia)
 		u.RechazoMotivo = strings.TrimSpace(u.RechazoMotivo)
+		u.CanalID = strings.TrimSpace(u.CanalID)
 
 		u.ReporteID = rep.ID
 		u.Fuente = rep.Fuente
@@ -658,13 +692,13 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		// Compara contra "" a secas, y tiene que seguir siendo asi: el TrimSpace
 		// esta arriba, una vez. Repetirlo aqui volveria a dar dos criterios que
-		// pueden separarse, y el de mas abajo -el NULLIF del INSERT- no se puede
-		// repetir en Go de ninguna manera.
+		// pueden separarse, y el de mas abajo -el nil del COPY para obra_id-
+		// compara contra la misma cadena vacia literal.
 		if u.ObraID == "" {
 			// A la salida de ingesta ninguna fila esta identificada: es lo que
 			// dice el doc de Ingesta y lo que asume la cascada (ADR 0007). El
-			// DEFAULT TRUE de la columna no llega a aplicarse porque
-			// insertarUso manda el valor siempre, asi que el que vale es este.
+			// DEFAULT TRUE de la columna no llega a aplicarse porque el COPY
+			// manda el valor siempre, asi que el que vale es este.
 			//
 			// Es ademas lo que deja el CHECK uso_resuelto_tiene_obra fuera del
 			// alcance de esta ruta, y por eso validarUso ya no lo repite.
@@ -679,7 +713,7 @@ func prepararLote(rep Reporte, usos []UsoPersistido) (lote, rechazados []UsoPers
 		}
 		if u.Emisiones == 0 && u.EmisionesTexto != "0" {
 			// Igual que Escalon y ONI: el DEFAULT 1 de la columna no se aplica
-			// porque insertarUso manda el valor siempre. Una celda vacia es el
+			// porque el COPY manda el valor siempre. Una celda vacia es el
 			// cero de Go, no un dato. Un "0" explicito (S4) llega con
 			// EmisionesTexto=="0" desde normalizacion y se respeta.
 			u.Emisiones = 1
@@ -824,8 +858,8 @@ func validarUso(u UsoPersistido) string {
 	// Contra "" a secas: GuardarUsos ya recorto los blancos antes de llamar, y
 	// esa es la UNICA normalizacion del campo en todo el camino. Un TrimSpace
 	// tambien aqui no seria redundante sino peligroso: sugeriria que esta funcion
-	// se puede llamar con un valor sin normalizar, y el INSERT -que compara con
-	// NULLIF($6, '')- no puede hacer esa misma concesion.
+	// se puede llamar con un valor sin normalizar, y valoresUso -que compara
+	// contra '' literal para mandar nil- no puede hacer esa misma concesion.
 	if u.ObraID != "" {
 		return "obra_id en la ingesta: identificar es trabajo de la cascada (ADR 0007)"
 	}
@@ -923,6 +957,21 @@ func validarUso(u UsoPersistido) string {
 			return fmt.Sprintf(
 				"%s %s: la columna es NUMERIC(%d,%d) y no admite mas de %d digitos enteros",
 				m.campo, m.valor, m.precision, m.escala, m.precision-m.escala)
+		}
+	}
+	// Sin canal la fila no entra en UsosDeCanal y el reparto la pierde sin
+	// error. P-20 sigue abierta (ningun mapa trae la columna); hasta que
+	// llegue, la fila se rechaza y el motivo nombra el campo (#165).
+	if u.CanalID == "" {
+		return "canal_id vacio: sin canal la fila no entra en UsosDeCanal y queda fuera del reparto"
+	}
+	// TV, hotel y suscripcion multiplican por rating (RD 9.1.1). Cero es el
+	// default de una celda que la parrilla no trae, y pondera como si la
+	// audiencia fuera cero. El valor real es el feed de P-06, no este archivo.
+	switch u.Modalidad {
+	case reparto.TV, reparto.Hotel, reparto.Suscripcion:
+		if u.Rating.IsZero() {
+			return "rating vacio: sin rating el peso de audiencia de RD 9.1.1 queda en cero"
 		}
 	}
 	if u.Emisiones < 0 {

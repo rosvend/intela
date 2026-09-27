@@ -378,16 +378,16 @@ func TestGuardarMatchActualizaLaFilaConElResultado(t *testing.T) {
 	}
 
 	var (
-		obraID, escalon, evidencia      string
-		puntaje                         decimal.Decimal
-		oni                             bool
-		resueltoPorNulo, resueltoEnNulo bool
+		obraID, escalon, evidencia, tipoObra string
+		puntaje                              decimal.Decimal
+		oni                                  bool
+		resueltoPorNulo, resueltoEnNulo      bool
 	)
 	err := pool.QueryRow(ctx,
-		`SELECT obra_id, escalon, evidencia, puntaje, oni,
+		`SELECT obra_id, escalon, evidencia, puntaje, oni, tipo_obra,
 		        resuelto_por IS NULL, resuelto_en IS NULL
 		   FROM usos WHERE id = 'u-1'`).
-		Scan(&obraID, &escalon, &evidencia, &puntaje, &oni, &resueltoPorNulo, &resueltoEnNulo)
+		Scan(&obraID, &escalon, &evidencia, &puntaje, &oni, &tipoObra, &resueltoPorNulo, &resueltoEnNulo)
 	if err != nil {
 		t.Fatalf("leer el uso: %v", err)
 	}
@@ -402,6 +402,35 @@ func TestGuardarMatchActualizaLaFilaConElResultado(t *testing.T) {
 	}
 	if !resueltoPorNulo || !resueltoEnNulo {
 		t.Fatal("resuelto_por/resuelto_en deberian quedar NULL: no es resolucion manual")
+	}
+	// La fila llego sin tipo_obra (el mapa de Caracol no lo trae). Con obra,
+	// el tipo sale del catalogo (#165).
+	if tipoObra != string(repertorio.TipoSerie) {
+		t.Fatalf("tipo_obra = %q, se esperaba %q desde obras.tipo", tipoObra, repertorio.TipoSerie)
+	}
+}
+
+// Un tipo que ya trajo la fuente no se pisa con el del catalogo.
+func TestGuardarMatchNoPisaElTipoObraQueTrajoLaFuente(t *testing.T) {
+	s, pool := sembrarIdentificacion(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx, `UPDATE usos SET tipo_obra = 'unitario' WHERE id = 'u-1'`); err != nil {
+		t.Fatalf("plantar tipo_obra: %v", err)
+	}
+	if err := s.GuardarMatch(ctx, "u-1", "pendiente", identificacion.Resultado{
+		ObraID:  obraImdb,
+		Escalon: identificacion.EscalonAlias,
+		Puntaje: decimal.NewFromInt(1),
+	}); err != nil {
+		t.Fatalf("GuardarMatch: %v", err)
+	}
+	var tipo string
+	if err := pool.QueryRow(ctx, `SELECT tipo_obra FROM usos WHERE id = 'u-1'`).Scan(&tipo); err != nil {
+		t.Fatalf("leer tipo_obra: %v", err)
+	}
+	if tipo != "unitario" {
+		t.Fatalf("tipo_obra = %q, se esperaba unitario: la fuente ya lo traia", tipo)
 	}
 }
 
@@ -597,7 +626,7 @@ type ingestaDePrueba struct {
 	pool *pgxpool.Pool
 }
 
-func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string, string, string, int) error {
+func (i ingestaDePrueba) GuardarReporte(context.Context, string, string, string, string, string, int, string) error {
 	return nil
 }
 func (i ingestaDePrueba) GuardarUsos(context.Context, []aplicacion.UsoPersistido) error { return nil }
@@ -616,7 +645,7 @@ func (i ingestaDePrueba) ListarRechazos(context.Context) ([]aplicacion.UsoPersis
 func (i ingestaDePrueba) RechazosDeReporte(context.Context, string, aplicacion.Paginacion) ([]aplicacion.UsoPersistido, error) {
 	return nil, nil
 }
-func (i ingestaDePrueba) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
+func (i ingestaDePrueba) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
 

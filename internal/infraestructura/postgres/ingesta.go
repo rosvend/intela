@@ -63,8 +63,8 @@ func escanearUso(fila pgx.Row) (aplicacion.UsoPersistido, error) {
 // huella -el id se deriva de ese par-, o sea exactamente en el mismo caso. Por
 // eso basta con mirar el codigo de unicidad y no hace falta distinguir que
 // restriccion salto.
-func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error {
-	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes)
+func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error {
+	_, err := s.ejecutorDe(ctx).Exec(ctx, sqlInsertarReporte, id, fuente, periodo, sha, claveObjeto, nbytes, subidoPor)
 	return traducirErrorDeReporte(err, fuente, periodo)
 }
 
@@ -73,8 +73,14 @@ func (s *Store) GuardarReporte(ctx context.Context, id, fuente, periodo, sha, cl
 // transaccion. Una constante y no dos literales para que no puedan divergir --
 // una columna anadida en un sitio y olvidada en el otro no falla, escribe una
 // entrega incompleta por uno de los dos caminos.
-const sqlInsertarReporte = `INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
-	 VALUES ($1, $2, $3, $4, $5, $6)`
+//
+// NULLIF en subido_por por la misma razon que en el INSERT de asientos: el
+// nucleo dice "sin actor" con la cadena vacia, y la columna lo dice con NULL.
+// Sin el NULLIF, la cadena vacia entraria como valor y la clave foranea a
+// usuarios(id) la rechazaria -- no hay usuario con id "" --, de modo que una
+// entrega sin actor fallaria en vez de quedar sin atribucion.
+const sqlInsertarReporte = `INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes, subido_por)
+	 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`
 
 // traducirErrorDeReporte pone el duplicado por huella en vocabulario del
 // negocio, y lo demas en el traductor general.
@@ -109,10 +115,14 @@ func traducirErrorDeReporte(err error, fuente, periodo string) error {
 // El limite lo elige el caso de uso llamando a este metodo en vez de a los otros
 // dos; la transaccion la abre el adaptador porque el nucleo no puede tocar pgx.
 // Es la misma forma que [Store.Registrar] con la obra y sus coautores.
+//
+// El actor entra en la MISMA transaccion que las filas (#116). Fuera de ella no
+// habria forma de distinguir una entrega atribuida a medias de una entrega sin
+// atribucion: los dos casos se leerian igual, con `subido_por` a NULL.
 func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos []aplicacion.UsoPersistido) error {
 	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, sqlInsertarReporte,
-			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes)
+			rep.ID, rep.Fuente, rep.Periodo, rep.SHA256, rep.ClaveObjeto, rep.NBytes, rep.SubidoPor)
 		if err != nil {
 			return traducirErrorDeReporte(err, rep.Fuente, rep.Periodo)
 		}
@@ -133,21 +143,46 @@ func (s *Store) GuardarEntrega(ctx context.Context, rep aplicacion.Reporte, usos
 // hay forma de que se contaminen; las dos van por `usos_reporte` y
 // `usos_rechazados_reporte`, que son indices que ya existen.
 //
-// El periodo se filtra con un parametro que puede ser vacio, no concatenando
-// otro WHERE: una sola sentencia, un solo plan, y ningun camino en el que el
-// texto del SQL dependa de la entrada.
+// El periodo se filtra por rama y no concatenando otro WHERE: dos sentencias
+// constantes -una sin filtro y otra con `WHERE r.periodo = $1`- y ningun
+// camino en el que el texto del SQL dependa de la entrada. La eleccion es solo
+// vacio/no-vacio, y el filtro viaja como parametro en su rama.
 //
 // El orden es por `creado` descendente y desempata por id. Sin el desempate,
 // dos cargas del mismo instante -- que es lo normal en una prueba, y posible en
 // produccion -- salen en orden arbitrario y el listado cambia entre lecturas.
-func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.CargaReporte, error) {
-	filas, err := s.ejecutorDe(ctx).Query(ctx, `
-		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes, r.creado,
+func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
+	pag = pag.ConDefecto()
+	// LIMIT NULL es "sin limite" en PostgreSQL: misma convencion que el resto
+	// de listados.
+	var limite *int
+	if pag.Limite != aplicacion.LimiteSinTope {
+		limite = &pag.Limite
+	}
+	// COALESCE sobre subido_por por la misma razon que sobre obra_id en
+	// columnasUso: la columna es NULL para las entregas anteriores a la
+	// atribucion y para las del sembrador, y sin el COALESCE el escaneo de esas
+	// filas falla. Se lee como "", que es "sin actor" y no "actor desconocido".
+	proyeccion := `
+		SELECT r.id, r.fuente, r.periodo, r.sha256, r.clave_objeto, r.nbytes,
+		       COALESCE(r.subido_por, ''),
+		       r.creado,
 		       (SELECT COUNT(*) FROM usos            u WHERE u.reporte_id = r.id),
 		       (SELECT COUNT(*) FROM usos_rechazados x WHERE x.reporte_id = r.id)
-		  FROM reportes r
-		 WHERE $1 = '' OR r.periodo = $1
-		 ORDER BY r.creado DESC, r.id`, periodo)
+		  FROM reportes r`
+	// Dos ramas y no `WHERE $1 = '' OR r.periodo = $1`: el OR evita el indice
+	// `reportes_periodo` en plan generico. El filtro va como parametro y el
+	// vacio significa "todas", pero cada caso tiene su sentencia y su plan.
+	var filas pgx.Rows
+	var err error
+	if periodo == "" {
+		filas, err = s.ejecutorDe(ctx).Query(ctx, proyeccion+`
+			 ORDER BY r.creado DESC, r.id LIMIT $1 OFFSET $2`, limite, pag.Desplazamiento)
+	} else {
+		filas, err = s.ejecutorDe(ctx).Query(ctx, proyeccion+`
+			 WHERE r.periodo = $1
+			 ORDER BY r.creado DESC, r.id LIMIT $2 OFFSET $3`, periodo, limite, pag.Desplazamiento)
+	}
 	if err != nil {
 		return nil, traducirError(err, "listar cargas del periodo %q", periodo)
 	}
@@ -157,7 +192,7 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string) ([]aplicacion.
 	for filas.Next() {
 		var c aplicacion.CargaReporte
 		if err := filas.Scan(
-			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.Recibido,
+			&c.ID, &c.Fuente, &c.Periodo, &c.SHA256, &c.ClaveObjeto, &c.NBytes, &c.SubidoPor, &c.Recibido,
 			&c.Aceptados, &c.Rechazados,
 		); err != nil {
 			return nil, traducirError(err, "escanear carga")
@@ -207,68 +242,93 @@ func (s *Store) GuardarUsos(ctx context.Context, usos []aplicacion.UsoPersistido
 // den.
 //
 // Extraido de GuardarUsos para que [Store.GuardarEntrega] escriba las filas
-// exactamente igual: con dos copias del bucle, el encaminamiento del ADR 0016
-// -- que es lo que mantiene los rechazos fuera de las lecturas canonicas --
+// exactamente igual: con dos copias del encaminamiento, el del ADR 0016 --
+// que es lo que mantiene los rechazos fuera de las lecturas canonicas --
 // tendria que acordarse de cambiar en dos sitios.
+//
+// Son dos COPY y no N INSERTs: cada Exec es un viaje redondo dentro de la
+// transaccion que mantiene los bloqueos, y una parrilla de un ano son decenas
+// de miles de filas. La particion previa en memoria es barata al lado de un
+// solo viaje; el encaminamiento por fila sigue siendo el mismo (RechazoMotivo
+// decide la tabla).
 func escribirLote(ctx context.Context, tx pgx.Tx, usos []aplicacion.UsoPersistido) error {
+	if len(usos) == 0 {
+		return nil
+	}
+	var buenas, malas []aplicacion.UsoPersistido
 	for _, u := range usos {
-		var err error
 		if u.RechazoMotivo != "" {
-			err = insertarRechazo(ctx, tx, u)
+			malas = append(malas, u)
 		} else {
-			err = insertarUso(ctx, tx, u)
+			buenas = append(buenas, u)
 		}
+	}
+	if len(buenas) > 0 {
+		_, err := tx.CopyFrom(ctx, pgx.Identifier{"usos"}, columnasUsoCopia,
+			pgx.CopyFromSlice(len(buenas), func(i int) ([]any, error) {
+				return valoresUso(buenas[i]), nil
+			}))
 		if err != nil {
-			return traducirError(err, "guardar la fila %q del reporte %q", u.ID, u.ReporteID)
+			return traducirError(err, "copiar el lote canonico del reporte %q", usos[0].ReporteID)
+		}
+	}
+	if len(malas) > 0 {
+		_, err := tx.CopyFrom(ctx, pgx.Identifier{"usos_rechazados"}, columnasRechazoCopia,
+			pgx.CopyFromSlice(len(malas), func(i int) ([]any, error) {
+				return valoresRechazo(malas[i]), nil
+			}))
+		if err != nil {
+			return traducirError(err, "copiar el lote rechazado del reporte %q", usos[0].ReporteID)
 		}
 	}
 	return nil
 }
 
-// insertarUso escribe una fila canonica.
-//
-// obra_id entra con NULLIF: la cadena vacia de UsoPersistido significa "sin
-// obra todavia", y el CHECK uso_resuelto_tiene_obra la quiere como NULL. Sin
-// esto, una fila en ONI intentaria guardar la cadena vacia como referencia a
-// obras(id) y fallaria por clave foranea con un mensaje que no dice nada de lo
-// que pasa.
-//
-// NULLIF compara con la cadena vacia LITERAL, y no hay forma de que sea mas
-// indulgente sin meter aqui una regla de negocio: envolver el parametro en un
-// btrim() haria que la base decidiera por su cuenta que cuenta como "sin obra",
-// que es justo la clase de criterio que no puede vivir en dos sitios.
-//
-// Por eso el valor llega ya recortado: Ingesta.GuardarUsos hace el TrimSpace una
-// sola vez, arriba del todo, y esta comparacion es la MISMA que la de Go, no una
-// segunda opinion.
-//
-// Si algun dia otro camino escribiera usos sin pasar por ese caso de uso, tiene
-// que traer esa misma garantia. Sin ella, un obra_id de solo blancos esquiva el
-// NULLIF, viola el CHECK y aborta la transaccion del lote ENTERO.
-func insertarUso(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) error {
-	_, err := tx.Exec(ctx,
-		`INSERT INTO usos (
-		   id, reporte_id, fuente, titulo, titulo_original, ids_fuente, obra_id, escalon, evidencia,
-		   oni, modalidad, tipo_obra, canal_id, fecha, hora,
-		   duracion_min, emisiones, rating, taquilla, espectadores, exhibiciones,
-		   vistas, minutos_vistos, pb)
-		 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9,
-		         $10, $11, $12, $13, $14, $15,
-		         $16, $17, $18, $19, $20, $21,
-		         $22, $23, $24)`,
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.TituloOrig, u.IDsFuente, u.ObraID, u.Escalon, u.Evidencia,
-		u.ONI, string(u.Modalidad), u.TipoObra, u.CanalID, u.Fecha, u.Hora,
-		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores, u.Exhibiciones,
-		u.Vistas, u.MinutosVistos, u.PB)
-	return err
+// columnasUsoCopia y columnasRechazoCopia son las columnas de los dos COPY, en
+// el mismo orden que los INSERT que reemplazan. Separadas de la sentencia
+// porque CopyFrom pide el recorte aparte; si una columna entra o sale de una
+// tabla, cambia aqui y en valoresUso/valoresRechazo, nunca en un $n.
+var columnasUsoCopia = []string{
+	"id", "reporte_id", "fuente", "titulo", "titulo_original", "ids_fuente", "obra_id", "escalon", "evidencia",
+	"oni", "modalidad", "tipo_obra", "canal_id", "fecha", "hora",
+	"duracion_min", "emisiones", "rating", "taquilla", "espectadores", "exhibiciones",
+	"vistas", "minutos_vistos", "pb",
 }
 
-// insertarRechazo escribe una fila en el log de rechazos.
+var columnasRechazoCopia = []string{
+	"id", "reporte_id", "fuente", "titulo", "ids_fuente", "modalidad", "motivo", "tipo", "codigo",
+}
+
+// valoresUso es una fila canonica como valores para el COPY, en el orden de
+// [columnasUsoCopia].
+//
+// obra_id viaja como nil cuando es "": la cadena vacia de UsoPersistido
+// significa "sin obra todavia", y el CHECK uso_resuelto_tiene_obra la quiere
+// como NULL. Con COPY no hay expresion SQL donde anularla, asi que la
+// conversion se hace aqui, con comparacion literal contra "": envolverla en un
+// recorte haria que el adaptador decidiera por su cuenta que cuenta como
+// "sin obra". El valor llega ya recortado del caso de uso: prepararLote hace
+// el TrimSpace una sola vez, arriba del todo.
+func valoresUso(u aplicacion.UsoPersistido) []any {
+	var obraID any = u.ObraID
+	if u.ObraID == "" {
+		obraID = nil
+	}
+	return []any{
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.TituloOrig, u.IDsFuente, obraID, u.Escalon, u.Evidencia,
+		u.ONI, string(u.Modalidad), u.TipoObra, u.CanalID, u.Fecha, u.Hora,
+		u.DuracionMin, u.Emisiones, u.Rating, u.Taquilla, u.Espectadores, u.Exhibiciones,
+		u.Vistas, u.MinutosVistos, u.PB,
+	}
+}
+
+// valoresRechazo es una fila del log de rechazos como valores para el COPY, en
+// el orden de [columnasRechazoCopia].
 //
 // Guarda lo identificatorio y el motivo, y NINGUNA columna de medida: una fila
 // rechazada no pondera, y sin las medidas aqui no hay forma de que una consulta
 // futura la sume "solo para ver" (ADR 0016).
-func insertarRechazo(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido) error {
+func valoresRechazo(u aplicacion.UsoPersistido) []any {
 	tipo := u.RechazoTipo
 	if tipo == "" {
 		tipo = aplicacion.TipoRevisionAdaptador
@@ -277,11 +337,10 @@ func insertarRechazo(ctx context.Context, tx pgx.Tx, u aplicacion.UsoPersistido)
 	if codigo == "" {
 		codigo = aplicacion.CodigoRechazoFormato
 	}
-	_, err := tx.Exec(ctx,
-		`INSERT INTO usos_rechazados (id, reporte_id, fuente, titulo, ids_fuente, modalidad, motivo, tipo, codigo)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(u.Modalidad), u.RechazoMotivo, tipo, codigo)
-	return err
+	return []any{
+		u.ID, u.ReporteID, u.Fuente, u.Titulo, u.IDsFuente, string(u.Modalidad),
+		u.RechazoMotivo, tipo, codigo,
+	}
 }
 
 // UsosSinResolver devuelve las filas que la cascada de identificacion todavia

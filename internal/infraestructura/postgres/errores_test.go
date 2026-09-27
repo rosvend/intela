@@ -108,4 +108,26 @@ func TestTraducirError(t *testing.T) {
 			t.Fatalf("el mensaje no lleva el contexto formateado: %q", got.Error())
 		}
 	})
+
+	// COPY no tiene id por fila; Detail/Where suelen traer "COPY usos, line N".
+	// Sin esto, un lote de miles falla con solo el id del reporte.
+	t.Run("Detail y Where del PgError van al mensaje", func(t *testing.T) {
+		conPista := &pgconn.PgError{
+			Code:    "23514",
+			Message: "check constraint",
+			Detail:  "Failing row contains (...).",
+			Where:   "COPY usos, line 7",
+		}
+		got := traducirError(conPista, "copiar el lote canonico del reporte %q", "rep-1")
+		msg := got.Error()
+		if !strings.Contains(msg, "Failing row contains") {
+			t.Errorf("el mensaje no lleva Detail: %q", msg)
+		}
+		if !strings.Contains(msg, "COPY usos, line 7") {
+			t.Errorf("el mensaje no lleva Where: %q", msg)
+		}
+		if !errors.Is(got, conPista) {
+			t.Errorf("se perdio la causa original en %v", got)
+		}
+	})
 }

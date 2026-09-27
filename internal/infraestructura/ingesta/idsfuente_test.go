@@ -249,7 +249,7 @@ type usosDelPeriodo struct {
 	usos []aplicacion.UsoPersistido
 }
 
-func (s usosDelPeriodo) GuardarReporte(context.Context, string, string, string, string, string, int) error {
+func (s usosDelPeriodo) GuardarReporte(context.Context, string, string, string, string, string, int, string) error {
 	return nil
 }
 func (s usosDelPeriodo) GuardarUsos(context.Context, []aplicacion.UsoPersistido) error { return nil }
@@ -265,7 +265,7 @@ func (s usosDelPeriodo) UsoPorID(context.Context, string) (aplicacion.UsoPersist
 func (s usosDelPeriodo) UsosDePeriodo(context.Context, string) ([]aplicacion.UsoPersistido, error) {
 	return s.usos, nil
 }
-func (s usosDelPeriodo) ListarCargas(context.Context, string) ([]aplicacion.CargaReporte, error) {
+func (s usosDelPeriodo) ListarCargas(context.Context, string, aplicacion.Paginacion) ([]aplicacion.CargaReporte, error) {
 	return nil, nil
 }
 func (s usosDelPeriodo) ListarRechazos(context.Context) ([]aplicacion.UsoPersistido, error) {

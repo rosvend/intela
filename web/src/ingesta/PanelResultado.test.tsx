@@ -67,7 +67,7 @@ const NO_SE_GUARDO =
 const PUDO_LLEGAR =
   "La entrega pudo haber llegado al servidor: revisa el listado de cargas antes de volver a subirla.";
 
-// Texto literal del 409 de evidencia corrupta: lo levanta
+// Texto literal del 500 de evidencia corrupta: lo levanta
 // internal/infraestructura/httpapi/reportes.go cuando la boveda tiene bytes
 // distintos bajo la huella. Se copia aqui a proposito: si el backend lo
 // reformula, este test avisa de que la UI lo estaba mostrando.
@@ -268,14 +268,15 @@ describe("PanelResultado", () => {
     expect(pudoHaberLlegado(status)).toBe(quiere);
   });
 
-  // El 409 de evidencia corrupta entra por el mismo status que el duplicado,
-  // asi que el titulo tiene que dejar hablar al mensaje del backend.
-  it("un 409 de evidencia corrupta conserva su mensaje y no lo titula duplicado", () => {
+  // La evidencia corrupta responde 500, no 409: es un incidente de
+  // integridad del servidor y cae en el cajon neutro con el aviso, con el
+  // mensaje intacto para que se lea lo de avisar a operacion.
+  it("un 500 de evidencia corrupta conserva su mensaje y lleva el aviso", () => {
     render(
       <PanelResultado
         resultado={{
           tipo: "fallo",
-          status: 409,
+          status: 500,
           mensaje: MENSAJE_EVIDENCIA_CORRUPTA,
         }}
       />,
@@ -284,19 +285,15 @@ describe("PanelResultado", () => {
     const alerta = screen.getByRole("alert");
     expect(
       within(alerta).getByRole("heading", {
-        name: "La entrega choca con lo que ya está guardado",
+        name: "No se sabe si la entrega se registró",
       }),
     ).toBeTruthy();
-    // Y no afirma el no-registro, que es lo que decia antes. En este caso
-    // -evidencia corrupta- seria cierto, pero el titulo es UNO solo para las
-    // dos ramas del 409, y en el duplicado -el caso comun- es falso.
-    expect(alerta.textContent).not.toMatch(/no se registró/i);
     // El mensaje de la API llega entero: es lo que dice que hay que avisar a
     // operacion, y no un "ya se habia cargado" inofensivo.
     expect(within(alerta).getByText(MENSAJE_EVIDENCIA_CORRUPTA)).toBeTruthy();
     expect(within(alerta).queryByText(/ya se había cargado/i)).toBeNull();
-    // Con un 409 el servidor contesto: no hay duda de si la entrega llego.
-    expect(within(alerta).queryByText(PUDO_LLEGAR)).toBeNull();
+    // Un 500 deja abierta la pregunta de si la entrega llego.
+    expect(within(alerta).getByText(PUDO_LLEGAR)).toBeTruthy();
   });
 
   it.each([502, 504] as const)(
