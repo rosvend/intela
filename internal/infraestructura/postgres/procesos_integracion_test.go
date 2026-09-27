@@ -10,8 +10,8 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
-	"github.com/rosvend/intela/internal/infraestructura/reloj"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 // sembrarProcesoNacionalListoParaValorizar deja una bolsa, un uso

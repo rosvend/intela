@@ -168,7 +168,10 @@ func TestUnAsientoFallidoAbortaLaTransicion(t *testing.T) {
 			_, err := e.uc.Firmar(t.Context(), "proc-1", reparto.RolDistribucion, "a")
 			return err
 		},
-		"rechazar": func(e entornoProcesos) error { _, err := e.uc.RechazarGate(t.Context(), "proc-1", "m", "a"); return err },
+		"rechazar": func(e entornoProcesos) error {
+			_, err := e.uc.RechazarGate(t.Context(), "proc-1", "m", "a")
+			return err
+		},
 	}
 	for nombre, operar := range casos {
 		t.Run(nombre, func(t *testing.T) {
