@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -60,6 +61,114 @@ func TestTablaCSVSinCabecera(t *testing.T) {
 	_, err := TablaCSV(nil)
 	if !errors.Is(err, aplicacion.ErrReporteInvalido) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+	}
+}
+
+// El caso de #167. Con LazyQuotes una comilla de apertura sin cierre mete en
+// un solo campo todo lo que viene detras, y C y D dejan de existir: ni entran
+// ni quedan en el log. La entrega se rechaza nombrando la linea donde abre la
+// comilla, que es lo que hay que corregir. Una comilla a medias que SI cierra,
+// y un campo legitimo con salto de linea entrecomillado, siguen leyendose.
+func TestTablaCSVRechazaLaComillaSinCerrarYNoElCampoMultilinea(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre string
+		csv    string
+		linea  int
+	}{
+		{
+			nombre: "se traga el resto del archivo",
+			csv: "titulo,id,taquilla\n" +
+				"A,PX-1,1\n" +
+				"\"Sin cerrar,PX-2,2\n" +
+				"C,PX-3,3\n" +
+				"D,PX-4,4\n",
+			linea: 3,
+		},
+		{
+			nombre: "la linea cuenta los blancos de delante",
+			csv: "\n" +
+				"titulo,id,taquilla\n" +
+				"A,PX-1,1\n" +
+				"\"Sin cerrar,PX-2,2\n" +
+				"C,PX-3,3\n",
+			linea: 4,
+		},
+		{
+			nombre: "un campo multilinea cerrado no corre la linea de la comilla",
+			csv: "titulo,id\n" +
+				"\"Dos\nlineas\",PX-1\n" +
+				"\"Sin cerrar,PX-2\n" +
+				"C,PX-3\n",
+			linea: 4,
+		},
+		{
+			nombre: "la comilla no es el primer campo de su linea",
+			csv: "titulo,id,taquilla\n" +
+				"A,\"Sin cerrar,2\n" +
+				"C,PX-3,3\n",
+			linea: 2,
+		},
+		{
+			nombre: "con retorno de carro la linea sigue siendo una",
+			csv: "titulo,id,taquilla\r\n" +
+				"A,PX-1,1\r\n" +
+				"\"Sin cerrar,PX-2,2\r\n" +
+				"C,PX-3,3\r\n",
+			linea: 3,
+		},
+		{
+			nombre: "sin salto final tambien se traga el resto",
+			csv: "titulo,id,taquilla\n" +
+				"A,PX-1,1\n" +
+				"\"Sin cerrar,PX-2,2\n" +
+				"C,PX-3,3",
+			linea: 3,
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			t.Parallel()
+			_, err := TablaCSV([]byte(caso.csv))
+			if !errors.Is(err, aplicacion.ErrReporteInvalido) {
+				t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
+			}
+			quiere := fmt.Sprintf("linea %d", caso.linea)
+			if !strings.Contains(err.Error(), quiere) || !strings.Contains(err.Error(), "comilla") {
+				t.Fatalf("el error no nombra %s ni la comilla: %v", quiere, err)
+			}
+		})
+	}
+
+	// `"Dos\nlineas"` cierra. Lo que viene detras es otra fila, no contenido
+	// de la primera: es el campo que issue #167 dice que tiene que seguir
+	// leyendose (TestTablaCSVNumeraBienConCamposMultilineaYBlancosAntesDeLaCabecera).
+	tabla, err := TablaCSV([]byte("\ntitulo,id\n\"Dos\nlineas\",PX-1\nMala,PX-2\n"))
+	if err != nil {
+		t.Fatalf("el campo multilinea cerrado no se rechaza: %v", err)
+	}
+	if len(tabla.Filas) != 2 || tabla.Filas[0][0] != "Dos\nlineas" || tabla.Filas[1][0] != "Mala" {
+		t.Fatalf("filas = %#v, se esperaban las dos, con el salto dentro de la primera", tabla.Filas)
+	}
+	// El mismo campo, ahora como ultimo registro del archivo. Cierra antes de
+	// EOF: no es una comilla que se traga el resto, y tiene que entrar.
+	tabla, err = TablaCSV([]byte("titulo,id\n\"Dos\nlineas\",PX-1"))
+	if err != nil {
+		t.Fatalf("el multilinea cerrado al final del archivo no se rechaza: %v", err)
+	}
+	if len(tabla.Filas) != 1 || tabla.Filas[0][0] != "Dos\nlineas" {
+		t.Fatalf("filas = %#v", tabla.Filas)
+	}
+
+	// La comilla a medias DENTRO del campo cierra mas adelante. LazyQuotes
+	// existe para no tumbar esta sinopsis.
+	tabla, err = TablaCSV([]byte("titulo,id,taquilla\n\"Dijo \"hola\" y siguio\",PX-1,1\nB,PX-2,2\n"))
+	if err != nil {
+		t.Fatalf("la comilla a medias que cierra no se rechaza: %v", err)
+	}
+	if len(tabla.Filas) != 2 || tabla.Filas[0][0] != "Dijo \"hola\" y siguio" {
+		t.Fatalf("la sinopsis perdio el texto o la fila de detras: %#v", tabla.Filas)
 	}
 }
 
