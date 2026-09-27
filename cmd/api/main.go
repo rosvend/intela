@@ -199,6 +199,7 @@ func ejecutar(log *slog.Logger) error {
 		Procesos:      procesos,
 		Cola:          aplicacion.Normalizacion{Reportes: store},
 		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Explicar:      aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
