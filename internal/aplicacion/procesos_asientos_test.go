@@ -32,6 +32,8 @@ func nuevoEntornoProcesos() entornoProcesos {
 			Bitacora:   bit,
 			Reloj:      relojFijo{instante: instanteProceso},
 			Unidad:     u,
+			// Abierta: estos tests miran los asientos, no la compuerta de #37.
+			Anomalias: &compuertaFalsa{},
 		},
 	}
 }
