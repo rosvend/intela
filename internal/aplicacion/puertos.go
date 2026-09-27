@@ -435,7 +435,15 @@ type RepositorioUsosDeReparto interface {
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
-	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
+	// GuardarReporte escribe SOLO el acuse, sin filas. Antes de usarlo, leer la
+	// advertencia de [Ingesta.GuardarReporte]: la pareja acuse + filas es
+	// [RepositorioIngesta.GuardarEntrega], y este metodo se queda para el seed.
+	//
+	// subidoPor es el id del usuario autenticado que hizo la entrega, o "" si no
+	// hay actor -el seed, o una entrega anterior a la atribucion (#116)-. Vacio
+	// se persiste como NULL y NUNCA como cadena vacia: no hay usuario con id ""
+	// y la clave foranea lo rechazaria.
+	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
 
 	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
@@ -766,6 +774,30 @@ type ProcesoVista struct {
 type RepositorioResultados interface {
 	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+}
+
+// RepositorioReporteLiquidacion lee las lineas de corrida del titular para
+// el panel y el export por obra (#43): bruto, deducciones y neto. Es
+// lectura de resultados_titular + resultados_proceso; el prorrateo vive
+// en dominio.
+//
+// No es [RepositorioLiquidacion]. Ese puerto es el de las ordenes de pago
+// (ADR 0019) y su DeTitular no filtra por periodo ni devuelve el desglose
+// por obra. El mismo *Store satisface los dos, con nombres distintos, por
+// la misma razon por la que AsientoPorID no se llama PorID.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
+type RepositorioReporteLiquidacion interface {
+	FilasDeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
 }
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la

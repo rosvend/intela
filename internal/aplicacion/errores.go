@@ -34,6 +34,12 @@ var (
 	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
+	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
+	ErrFormatoInvalido = errors.New("formato invalido")
+
+	// ErrPeriodoInvalido: el filtro de periodo no es YYYY ni YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
+
 	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
 	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
 	// admitida). En titulares, el IPI no vacio es unico. Distinto de

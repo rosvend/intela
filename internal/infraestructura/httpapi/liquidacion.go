@@ -89,11 +89,21 @@ func aListadoJSON(vistas []aplicacion.OrdenVista) listadoJSON {
 }
 
 func (a *API) listarLiquidaciones(w http.ResponseWriter, r *http.Request) {
-	a.servirLiquidaciones(w, r, a.liq.Listar)
+	if a.ordenes == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"las liquidaciones no estan configuradas en esta instalacion")
+		return
+	}
+	a.servirLiquidaciones(w, r, a.ordenes.Listar)
 }
 
 func (a *API) misLiquidaciones(w http.ResponseWriter, r *http.Request) {
-	a.servirLiquidaciones(w, r, a.liq.DeTitular)
+	if a.ordenes == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"las liquidaciones no estan configuradas en esta instalacion")
+		return
+	}
+	a.servirLiquidaciones(w, r, a.ordenes.DeTitular)
 }
 
 func (a *API) servirLiquidaciones(w http.ResponseWriter, r *http.Request, fn func(context.Context, aplicacion.Usuario) ([]aplicacion.OrdenVista, error)) {

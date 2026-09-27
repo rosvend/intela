@@ -32,7 +32,7 @@ func sembrarDosCanales(t *testing.T) *Store {
 	ctx := t.Context()
 
 	if err := s.GuardarReporte(ctx, reporteRCN, "rcn", periodoDosTV,
-		shaRCN, "reportes/"+shaRCN, 64); err != nil {
+		shaRCN, "reportes/"+shaRCN, 64, ""); err != nil {
 		t.Fatalf("sembrar la entrega de rcn: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestUsosDeCanalExcluyeFilasSinObraYLasCuenta(t *testing.T) {
 		t.Fatalf("sembrar obra: %v", err)
 	}
 	if err := s.GuardarReporte(ctx, reporteRCN, "rcn", periodoDosTV,
-		shaRCN, "reportes/"+shaRCN, 64); err != nil {
+		shaRCN, "reportes/"+shaRCN, 64, ""); err != nil {
 		t.Fatalf("sembrar la entrega de rcn: %v", err)
 	}
 
