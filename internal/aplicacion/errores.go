@@ -134,6 +134,9 @@ var (
 	// porque es lo que permite volver a pedirle al cliente exactamente eso.
 	ErrReporteInvalido = errors.New("reporte invalido")
 
+	// ErrFiltroCasosInvalido: un filtro de la cola de identificacion no se puede leer (estado o periodo).
+	ErrFiltroCasosInvalido = errors.New("filtro de casos invalido")
+
 	// ErrObjetoYaExiste: esa clave del almacen ya tiene contenido.
 	//
 	// Un AlmacenObjetos no sobrescribe (ADR 0006), asi que necesita una forma
