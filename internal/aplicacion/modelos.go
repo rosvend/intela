@@ -341,8 +341,10 @@ type Asiento struct {
 	RefTipo string
 	RefID   string
 	ActorID string
-	Payload []byte
-	Cuando  time.Time
+	// RefiereA es el ID del asiento que este corrige; vacio si no corrige nada.
+	RefiereA string
+	Payload  []byte
+	Cuando   time.Time
 }
 
 type Alerta struct {
