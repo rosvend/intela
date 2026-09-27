@@ -1,6 +1,7 @@
 -- Correccion enlazada y rechazo tipado de la bitacora (issue #38, ADR 0006).
 --
--- refiere_a: corregir es escribir otro asiento que referencia al anterior.
+-- refiere_a: columna reservada para enlazar una correccion con el asiento que
+-- corrige (ADR 0006). Ningun caso de uso escribe correcciones todavia.
 -- ERRCODE IN006: el adaptador reconoce el rechazo append-only sin leer prosa.
 --
 -- Numero: 00020, primero libre por encima de 00019 (allowMissing = false).

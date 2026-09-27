@@ -54,8 +54,8 @@ func servidorConAuditoria(t *testing.T, a Auditoria) http.Handler {
 	return Nueva(Casos{Auth: auth, Auditoria: a}, Opciones{}).Router()
 }
 
-// Una correccion viaja con el id del asiento que corrige; un asiento original no lleva la clave.
-func TestLaCorreccionViajaConRefiereA(t *testing.T) {
+// Solo el serializador: refiere_a sale si el asiento lo trae y se omite si no. No hay ruta de correccion (ADR 0006).
+func TestElSerializadorPasaRefiereAYLoOmiteVacio(t *testing.T) {
 	original := asientoFalso("as-1", "declaracion.guardada", "obra", "obra-1", "usr-admin")
 	correccion := asientoFalso("as-2", "declaracion.guardada", "obra", "obra-1", "usr-admin")
 	correccion.RefiereA = "as-1"

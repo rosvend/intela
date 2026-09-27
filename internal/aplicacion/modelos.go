@@ -354,7 +354,7 @@ type Asiento struct {
 	RefTipo string
 	RefID   string
 	ActorID string
-	// RefiereA es el ID del asiento que este corrige; vacio si no corrige nada.
+	// RefiereA queda reservado para enlazar una correccion (ADR 0006); ningun caso de uso lo escribe todavia.
 	RefiereA string
 	Payload  []byte
 	Cuando   time.Time
