@@ -305,19 +305,24 @@ func menorPuntaje(a, b string) bool {
 	return errB != nil || pa.LessThan(pb)
 }
 
-// obraLinaje resume la obra; sin alta asentada el titulo queda vacio y el eslabon se nombra en faltantes.
+// obraLinaje resume la obra. El titulo sale de la ultima correccion o del alta; faltantes nombra el alta si no esta asentada.
 func obraLinaje(obraID string, usos []IdentificacionDeUso, deLaObra []Asiento, faltantes []string) (ObraLinaje, []string) {
 	o := ObraLinaje{ID: obraID}
 	if u, ok := usoMasDebil(usos); ok {
 		o.Escalon, o.Puntaje = u.Escalon, u.Puntaje
 	}
-	var cat AsientoObra
-	if ultimo(deLaObra, HechoObraCorregida, &cat, func() bool { return true }) ||
-		ultimo(deLaObra, HechoObraRegistrada, &cat, func() bool { return true }) {
-		o.Titulo = cat.Despues.Titulo
-		return o, faltantes
+	var alta, correccion AsientoObra
+	hayAlta := ultimo(deLaObra, HechoObraRegistrada, &alta, func() bool { return true })
+	switch {
+	case ultimo(deLaObra, HechoObraCorregida, &correccion, func() bool { return true }):
+		o.Titulo = correccion.Despues.Titulo
+	case hayAlta:
+		o.Titulo = alta.Despues.Titulo
 	}
-	return o, append(faltantes, HechoObraRegistrada)
+	if !hayAlta {
+		faltantes = append(faltantes, HechoObraRegistrada)
+	}
+	return o, faltantes
 }
 
 func reportesDeLaObra(usos []IdentificacionDeUso, deLaCorrida []ReporteAsentado) []ReporteAsentado {

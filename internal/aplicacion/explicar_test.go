@@ -194,3 +194,24 @@ func TestRefDeLineaYDeObra(t *testing.T) {
 		t.Fatalf("FormarRef sin titular = %q", got)
 	}
 }
+
+// Una correccion da el titulo pero no es el alta: faltantes sigue nombrando obra.registrada (B3).
+func TestExplicarConCorreccionSinAltaNombraElAlta(t *testing.T) {
+	t.Parallel()
+	b := corridaSinAltas(t)
+	b.asientos = append(b.asientos, Asiento{
+		ID: "as-correccion-obra-1", Hecho: HechoObraCorregida, RefTipo: RefObra, RefID: "obra-1",
+		Payload: []byte(`{"despues":{"titulo":"La Primera Corregida","genero":"drama","anio":2020}}`),
+	})
+
+	x, err := ExplicarCifra{Bitacora: b}.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("explicar: %v", err)
+	}
+	if x.Obra.Titulo != "La Primera Corregida" {
+		t.Fatalf("obra.titulo = %q, sale de la ultima correccion", x.Obra.Titulo)
+	}
+	if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+		t.Fatalf("faltantes = %v, sin alta asentada tiene que nombrar %q", x.Faltantes, HechoObraRegistrada)
+	}
+}

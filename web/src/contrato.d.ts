@@ -467,7 +467,7 @@ export interface paths {
          *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
          *     no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
          *     de la bolsa (`recaudo.registrado`) y el alta de la obra
-         *     (`obra.registrada`, sin la cual `obra.titulo` sale vacio).
+         *     (`obra.registrada`, que se nombra aunque haya correcciones asentadas).
          *
          *     Un titular solo ve lineas suyas; la de otro titular responde 403, no
          *     404. `auditor` y `administrador` ven cualquiera.
@@ -2064,7 +2064,7 @@ export interface components {
             /** @description La obra, resumida por su identificacion menos cierta. */
             obra: {
                 id: string;
-                /** @description Del alta asentada de la obra. Vacio si no hay alta; entonces `faltantes` nombra `obra.registrada`. */
+                /** @description De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos. */
                 titulo: string;
                 /** @enum {string} */
                 escalon: "alias" | "id_global" | "difuso" | "manual";
@@ -2117,8 +2117,9 @@ export interface components {
             /**
              * @description Eslabones accesorios sin asiento, por el nombre del hecho que falta:
              *     `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
-             *     de la obra). Vacio solo si los dos estan asentados; la cadena del
-             *     dinero nunca falta, sin ella la respuesta es 404.
+             *     de la obra; una correccion asentada no la sustituye). Vacio solo si
+             *     los dos estan asentados; la cadena del dinero nunca falta, sin ella
+             *     la respuesta es 404.
              */
             faltantes: string[];
         };
