@@ -29,6 +29,19 @@ var ErrClaveInvalida = errors.New("clave de objeto invalida")
 // Windows; aqui solo pasa lo que se nombra.
 var claveValida = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 
+// validarClave aplica la lista blanca de claves; la comparten Disco y S3.
+func validarClave(clave string) error {
+	if clave == "" || !claveValida.MatchString(clave) {
+		return fmt.Errorf("%w: %q", ErrClaveInvalida, clave)
+	}
+	for _, seg := range strings.Split(clave, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%w: %q", ErrClaveInvalida, clave)
+		}
+	}
+	return nil
+}
+
 // Disco guarda cada objeto como un fichero bajo Dir.
 type Disco struct {
 	Dir string
@@ -42,13 +55,8 @@ type Disco struct {
 // explicitamente que no es de fiar-, asi que un "../" en cualquiera de los
 // dos escapaba del directorio y escribia donde alcanzase el proceso.
 func (d Disco) ruta(clave string) (string, error) {
-	if clave == "" || !claveValida.MatchString(clave) {
-		return "", fmt.Errorf("%w: %q", ErrClaveInvalida, clave)
-	}
-	for _, seg := range strings.Split(clave, "/") {
-		if seg == "." || seg == ".." {
-			return "", fmt.Errorf("%w: %q", ErrClaveInvalida, clave)
-		}
+	if err := validarClave(clave); err != nil {
+		return "", err
 	}
 
 	raiz, err := filepath.Abs(d.Dir)
