@@ -11,12 +11,16 @@ import {
   DocumentChartBarIcon,
   ExclamationTriangleIcon,
   HomeIcon,
+  PencilSquareIcon,
+  QueueListIcon,
   ReceiptPercentIcon,
   ShieldCheckIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline";
+import { usePendientesDeIdentificacion } from "./identificacion/pendientes";
+import { iniciales } from "./iniciales";
 import logo from "./logo-intela.png";
-import { RUTAS, Seccion, itemsDeNav } from "./navegacion";
+import { RUTAS, Seccion, itemsDeNav, puedeVer } from "./navegacion";
 import { Rol, useSesion } from "./sesion";
 
 const ETIQUETA_ROL: Record<Rol, string> = {
@@ -42,21 +46,14 @@ const ICONOS_NAV: Record<string, Icono> = {
   "/ingesta": ArrowUpTrayIcon,
   "/catalogo": BookOpenIcon,
   "/titulares": UsersIcon,
+  "/identificacion": PencilSquareIcon,
+  "/lista-oni": QueueListIcon,
   "/distribucion": ChartPieIcon,
   "/anomalias": ExclamationTriangleIcon,
   "/reportes": DocumentChartBarIcon,
   "/deducciones": ReceiptPercentIcon,
   "/auditoria": ShieldCheckIcon,
 };
-
-function iniciales(nombre: string): string {
-  return nombre
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((parte) => parte[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 // Todo el chrome vive en el sidebar; el guard es cosmetico, la autorizacion real es `requiereRol` en el servidor.
 export default function Layout() {
@@ -68,6 +65,16 @@ export default function Layout() {
 
   // El `if (!usuario)` va tras todos los hooks: un retorno entre hooks rompe las reglas de React.
   const items = usuario ? itemsDeNav(usuario.rol) : [];
+
+  // Solo administrador pide el conteo (D1): `puedeVer` es la misma puerta que
+  // ya filtra la navegacion, asi que un rol que no ve /identificacion tampoco
+  // dispara la peticion del badge.
+  const habilitadoParaPendientes = usuario
+    ? puedeVer(usuario.rol, "/identificacion")
+    : false;
+  const { pendientes, contexto } = usePendientesDeIdentificacion(
+    habilitadoParaPendientes,
+  );
 
   // "Configuración" lleva al primer modulo visible de esa seccion, o a Inicio.
   const destinoConfiguracion =
@@ -125,6 +132,16 @@ export default function Layout() {
                 </p>
                 {deLaSeccion.map((item) => {
                   const IconoNav = ICONOS_NAV[item.to] ?? HomeIcon;
+                  // El badge de /identificacion sale del conteo en vivo, no
+                  // del `contador` estatico de `RUTAS` (que nadie puebla
+                  // todavia, ver el comentario en `navegacion.ts`): con 0 o
+                  // sin dato valido no se pinta.
+                  const contador =
+                    item.to === "/identificacion"
+                      ? pendientes && pendientes > 0
+                        ? pendientes
+                        : undefined
+                      : item.contador;
                   return (
                     <NavLink
                       key={item.to}
@@ -141,8 +158,11 @@ export default function Layout() {
                         aria-hidden="true"
                       />
                       <span className="sidebar-item-texto">{item.label}</span>
-                      {item.contador !== undefined && (
-                        <span className="sidebar-badge">{item.contador}</span>
+                      {contador !== undefined && (
+                        <span className="sidebar-badge">
+                          {contador}
+                          <span className="solo-lector"> pendientes</span>
+                        </span>
                       )}
                     </NavLink>
                   );
@@ -211,7 +231,7 @@ export default function Layout() {
         </div>
       </aside>
       <main className="contenido">
-        {autorizado ? <Outlet /> : <NoAutorizado />}
+        {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
       </main>
     </div>
   );

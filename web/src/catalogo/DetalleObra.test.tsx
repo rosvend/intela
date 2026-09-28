@@ -128,6 +128,8 @@ function respuestaDeSesion(rol: Rol): Response {
 const esLaObra = (url: string) => /^\/api\/obras\/[^/]+$/.test(url);
 const esElHistorial = (url: string) =>
   /^\/api\/obras\/[^/]+\/declaracion\/historial(\?.*)?$/.test(url);
+const esElHistorialDeResoluciones = (url: string) =>
+  /^\/api\/auditoria\/obra\/[^/]+$/.test(url);
 
 /**
  * Un backend falso que responde por URL y metodo: la sesion con el rol del test,
@@ -137,17 +139,29 @@ const esElHistorial = (url: string) =>
  * las partes (item 9b). **Sin `padron()` el padron responde 404**, que es lo que
  * hace falta en las pruebas que no miran esa columna: la tabla se pinta igual, con
  * el guion.
+ *
+ * `historialDeResoluciones()` responde al historial de resoluciones manuales
+ * (paso 6, `identificacion/HistorialResoluciones.tsx`), que la ficha pide
+ * ahora ademas de la obra y su declaracion. Por defecto una lista vacia: las
+ * pruebas de este fichero verifican la ficha de la declaracion, no el
+ * historial de resoluciones -que tiene su propio fichero de pruebas-, y sin
+ * una respuesta explicita esa peticion caeria en el 404 generico de "ruta no
+ * encontrada", que la seccion nueva pintaria como un error y contaminaria las
+ * aserciones `role="alert"` de pruebas que no tienen nada que ver con
+ * identificacion.
  */
 function simularServidor({
   rol = "administrador",
   obra = () => json(obraCompleta),
   historial = () => json(HISTORIAL),
+  historialDeResoluciones = () => json([]),
   catalogo,
   padron,
 }: {
   rol?: Rol;
   obra?: () => Response;
   historial?: () => Response;
+  historialDeResoluciones?: () => Response;
   catalogo?: () => Response;
   padron?: () => Response;
 } = {}) {
@@ -162,6 +176,9 @@ function simularServidor({
     }
     if (metodo === "GET" && esElHistorial(url)) {
       return Promise.resolve(historial());
+    }
+    if (metodo === "GET" && esElHistorialDeResoluciones(url)) {
+      return Promise.resolve(historialDeResoluciones());
     }
     if (metodo === "GET" && padron && url.startsWith("/api/titulares")) {
       return Promise.resolve(padron());
@@ -444,12 +461,26 @@ describe("detalle de obra (integracion con App)", () => {
     // Sin declaracion no hay partes ni tabla de partes.
     expect(screen.queryByRole("table")).toBeNull();
 
-    // Y el historial no se pide: `version_vigente` en `null` ya dijo que no hay
-    // ninguna declaracion -el mismo hecho que diria una lista vacia-, asi que
-    // una segunda peticion solo podria repetirlo. Tampoco se menciona un
-    // historial vacio en pantalla: el hecho se dice UNA vez.
+    // Y el historial de la DECLARACION no se pide: `version_vigente` en
+    // `null` ya dijo que no hay ninguna declaracion -el mismo hecho que diria
+    // una lista vacia-, asi que una segunda peticion solo podria repetirlo.
+    // Tampoco se ofrece ese historial vacio en pantalla: el hecho se dice UNA
+    // vez.
+    //
+    // DECISION #39 (paso 6): la aserción original comprobaba
+    // `not.toMatch(/historial/i)` sobre TODO el texto de la pantalla. Eso
+    // dejo de ser cierto al montar el historial de RESOLUCIONES manuales
+    // (`HistorialResoluciones`, seccion no relacionada que ahora vive al
+    // final de la ficha SIEMPRE, con o sin declaracion) y que tambien dice
+    // "historial" en su titulo. Se acota la aserción a la frase que usa el
+    // enlace de la declaracion ("Ver el historial completo") en vez de
+    // perder la cobertura entera: sigue siendo falso que esta pantalla
+    // ofrezca el historial de una declaracion que no existe.
     expect(consultas()).toEqual(["/api/obras/obra-3"]);
-    expect(document.body.textContent).not.toMatch(/historial/i);
+    expect(document.body.textContent).not.toMatch(/historial completo/i);
+    expect(
+      screen.queryByRole("link", { name: "Ver el historial completo" }),
+    ).toBeNull();
     expect(
       screen.getByText("Esta obra no tiene ninguna declaración."),
     ).toBeTruthy();
