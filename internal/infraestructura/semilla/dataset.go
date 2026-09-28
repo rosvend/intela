@@ -43,6 +43,8 @@ const (
 	ObraSketch   = "obra-sketch"
 
 	Periodo = "2025-01"
+	// PeriodoCasos es el de la cola de identificacion: sin bolsa, asi que no toca ninguna cifra del reparto de Periodo.
+	PeriodoCasos = "2025-02"
 
 	// Dos canales de TV abierta en el MISMO periodo, que es lo que hace
 	// comprobable la independencia de `RD 9.1`: cada uno tiene su bolsa y por
@@ -95,9 +97,11 @@ type Dataset struct {
 	Obras             []Obra
 	Declaraciones     []repertorio.Declaracion
 	Reportes          []Reporte
-	Bolsas            []aplicacion.BolsaPersistida
-	Canales           []Canal
-	Parametros        []Parametro
+	// CasosIdentificacion no traen obra: los resuelve la cascada real y lo que no casa queda en la cola (ADR 0007).
+	CasosIdentificacion []Reporte
+	Bolsas              []aplicacion.BolsaPersistida
+	Canales             []Canal
+	Parametros          []Parametro
 }
 
 // Canal es una entrada del registro de canales con su clasificacion anual.
@@ -200,6 +204,7 @@ func Construir() Dataset {
 	d.usuarios()
 	d.obrasYDeclaraciones()
 	d.reportes()
+	d.casosIdentificacion()
 	d.usuariosDeRecaudo()
 	d.canales()
 	d.bolsas()
@@ -388,6 +393,27 @@ func (d *Dataset) reportes() {
 			u.Evidencia = evidenciaAlias(r.Fuente, r.TipoID, valor)
 		}
 		r.Bytes = csvDe(r.Usos)
+	}
+}
+
+// casosIdentificacion arma un reporte de Caracol con ids nuevos, para que ni el alias ni el id global lo resuelvan.
+// "Pelicula Equis" cae en la banda ambigua frente a "Pelicula X"; "Noticiero Regional" no se parece a nada.
+func (d *Dataset) casosIdentificacion() {
+	usos := []aplicacion.UsoPersistido{
+		usoTV(FuenteTV, "", "Pelicula Equis", "PXE-1", "", "70", 1, "3.5"),
+		usoTV(FuenteTV, "", "Noticiero Regional", "NR-1", "", "30", 20, "1.0"),
+	}
+	for j := range usos {
+		u := &usos[j]
+		ids, err := aplicacion.EscribirIDsFuente(aplicacion.IDFuente{Clave: TipoIDCaracol, Valor: u.IDsFuente})
+		if err != nil {
+			panic("semilla: " + err.Error())
+		}
+		u.Fuente = FuenteTV
+		u.IDsFuente = ids
+	}
+	d.CasosIdentificacion = []Reporte{
+		{Fuente: FuenteTV, TipoID: TipoIDCaracol, Periodo: PeriodoCasos, Usos: usos, Bytes: csvDe(usos)},
 	}
 }
 

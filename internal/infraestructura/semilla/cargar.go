@@ -78,6 +78,10 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 			return err
 		}
 	case hay.completo(d):
+		// Una base sembrada antes de la cola de identificacion la recibe aqui; sembrarCasos es idempotente.
+		if err := sembrarCasos(ctx, store, almacen, d, log); err != nil {
+			return err
+		}
 		log.Info("dataset ya sembrado; pase SEED_RESET=true para recargar")
 		return nil
 	case !hay.vacio():
@@ -143,11 +147,47 @@ func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.Alm
 			slog.Int("usos", len(r.Usos)))
 	}
 
+	if err := sembrarCasos(ctx, store, almacen, d, log); err != nil {
+		return err
+	}
+
 	log.Info("dataset sintetico cargado",
 		slog.Int("titulares", len(d.Titulares)),
 		slog.Int("obras", len(d.Obras)),
 		slog.Int("bolsas", len(d.Bolsas)),
 		slog.Int("parametros", len(d.Parametros)))
+	return nil
+}
+
+// sembrarCasos carga los reportes de CasosIdentificacion y corre la cascada real sobre su periodo.
+// Idempotente: un reporte ya entregado se salta y la cascada no reescribe filas ya resueltas (D9).
+func sembrarCasos(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, d Dataset, log *slog.Logger) error {
+	ingesta := aplicacion.Ingesta{Reportes: store, Almacen: almacen}
+	for _, r := range d.CasosIdentificacion {
+		rep, err := ingesta.GuardarReporte(ctx, r.Fuente, r.Periodo, r.Bytes)
+		if errors.Is(err, aplicacion.ErrReporteDuplicado) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("guardar reporte de casos %q: %w", r.Fuente, err)
+		}
+		rechazados, err := ingesta.GuardarUsos(ctx, rep, usosCrudos(r.Usos))
+		if err != nil {
+			return fmt.Errorf("guardar usos de casos %q: %w", r.Fuente, err)
+		}
+		if len(rechazados) > 0 {
+			return fmt.Errorf("guardar usos de casos %q: %d filas rechazadas (%s)",
+				r.Fuente, len(rechazados), rechazados[0].RechazoMotivo)
+		}
+	}
+	cascada := aplicacion.ResolverUsos{
+		Usos: store, Identificacion: store, Similitud: store, Parametros: store, Unidad: store,
+	}
+	resueltos, err := cascada.ResolverUsos(ctx, PeriodoCasos)
+	if err != nil {
+		return fmt.Errorf("cascada sobre %s: %w", PeriodoCasos, err)
+	}
+	log.Info("casos de identificacion sembrados", slog.String("periodo", PeriodoCasos), slog.Int("resueltos", resueltos))
 	return nil
 }
 
@@ -174,11 +214,13 @@ func recuento(ctx context.Context, pool *pgxpool.Pool) (estado, error) {
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&e.obras); err != nil {
 		return estado{}, fmt.Errorf("contar obras: %w", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM reportes`).Scan(&e.reportes); err != nil {
+	// Los de PeriodoCasos no cuentan: son la cola, que se completa aparte y con o sin ella la base esta sembrada.
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM reportes WHERE periodo <> $1`, PeriodoCasos).Scan(&e.reportes); err != nil {
 		return estado{}, fmt.Errorf("contar reportes: %w", err)
 	}
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM usos WHERE obra_id IS NULL`).Scan(&e.usosSinIdentificar); err != nil {
+		// 'pendiente' es lo que la cascada no proceso; una ONI ya es un resultado, la cola de CasosIdentificacion.
+		`SELECT COUNT(*) FROM usos WHERE escalon = 'pendiente'`).Scan(&e.usosSinIdentificar); err != nil {
 		return estado{}, fmt.Errorf("contar usos sin identificar: %w", err)
 	}
 	return e, nil
