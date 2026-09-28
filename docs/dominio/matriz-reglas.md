@@ -61,7 +61,7 @@ pasando (`go test ./...`).
 | R-18 Publicación del listado ONI (sin montos) | `RD 13.8.1`–`RD 13.8.4` | Vista `oni_publico`; identificación | `TestGuardarMatchExcluidoNoEsONI`; `TestResolverUsosIntegracionCriterio4Repertorio` | partial |
 | R-19 Prescripción ONI: 3 años | `RD 13.8.7`, `RD 15.2` | `internal/dominio/prescripcion` (andamiaje) | — | partial |
 | R-20 Prescripción general: 10 años | `RD 15.1` | `prescripcion` + `notificaciones` | — | partial |
-| R-21 Notificación válida (correo o portal) | `RD 13.8.8` | Esquema `notificaciones.via` | — | partial |
+| R-21 Notificación válida (correo o portal) | `RD 13.8.8` | Esquema `notificaciones.via`; aviso de portal `postgres.AvisoPortal` en la transacción de la orden (ADR 0024); correo pendiente (#55) | `TestAvisoPortalSeNiegaFueraDeUnaUnidad`; `TestLaLiquidacionDelPeriodoEsperaALaUltimaCorrida` | partial |
 | R-22 Plazo de respuesta a reclamos: 15 días hábiles | `RD 14.3` | Tabla / paquete `reclamaciones` | — | partial |
 | R-23 No se atienden reclamos por errores de declaración | `RD 14.5.6` | `reclamaciones` (andamiaje) | — | partial |
 | R-24 Solo reclama quien estaba afiliado en el periodo | `RD 14.5.5`, `RD 14.5.8` | `afiliacion` (andamiaje); P-11 | — | partial |
