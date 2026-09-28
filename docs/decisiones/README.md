@@ -32,6 +32,7 @@ proposito.
 | [0018 El contrato de `usos.ids_fuente`](0018-contrato-de-ids-fuente.md) | Vigente |
 | [0019 Una corrida por bolsa; la liquidacion agrega por periodo](0019-corrida-por-bolsa-liquidacion-agrega.md) | Vigente |
 | [0020 Las compuertas de RD 13.5 firman con dos roles, no con los tres del texto](0020-compuertas-de-doble-firma-no-triple.md) | Vigente, con deuda declarada |
+| [0021 Las anomalias de un periodo son un recurso propio, no la cola de revision](0021-alertas-como-recurso-propio.md) | Vigente |
 
 Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
 nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico

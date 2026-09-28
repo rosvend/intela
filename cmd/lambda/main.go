@@ -193,6 +193,27 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	// La deteccion de anomalias de un periodo (#37). Mismo cableado que
+	// cmd/api: los seis puertos los satisface este mismo *Store, que este
+	// binario ya construyo, y ninguno necesita boveda ni sistema de ficheros.
+	//
+	// Va cableado AQUI y no solo en cmd/api porque este es el binario que
+	// atiende el trafico real: `docs/cd.md` pone la API de produccion en esta
+	// Lambda detras de una Function URL, con Amplify reescribiendo `/api/*`
+	// hacia ella. Sin esto, `GET /alertas` responde 503 en el unico sitio
+	// donde hay operadores mirando -- y el tablero de #104 pinta un 503 como
+	// "Sin datos todavia" (`web/src/tablero/ausente.ts`), o sea que el periodo
+	// se leeria LIMPIO con el backend desconectado.
+	anomalias := aplicacion.Anomalias{
+		Entregas:      store,
+		Declaraciones: store,
+		Coautores:     store,
+		Alertas:       store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
 	reporte := aplicacion.ServicioLiquidacion{
 		Repo: store,
 		Exportador: exportacion.Combinado{
@@ -212,6 +233,7 @@ func construir() (http.Handler, error) {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Anomalias:     anomalias,
 		Bitacora:      store,
 		Reloj:         reloj.Sistema{},
 		Origen:        store,
@@ -238,6 +260,7 @@ func construir() (http.Handler, error) {
 		Reporte:        reporte,
 		Procesos:       procesos,
 		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
 		Auditoria:      aplicacion.Auditoria{Bitacora: store},
 		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
 		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
