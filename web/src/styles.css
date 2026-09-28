@@ -34,6 +34,14 @@
   --error-fondo: #fdeaea;
   --ok-fondo: #eaf5ee;
   --alerta-fondo: #fdf3e7;
+  /*
+   * Tokens del Make v9 (D8 del plano de #39, bandeja de identificacion): el
+   * rosa de fondo de la pastilla de puntaje y las fichas de evidencia, y el
+   * gris intermedio de los metadatos ("2016 · Drama · ..."), entre
+   * `--texto` y `--texto-suave`.
+   */
+  --acento-borde: #f5c6d0;
+  --texto-medio: #5f5f70;
   --radio: 8px;
   --radio-tarjeta: 16px; /* tarjetas del catalogo: todas con la misma curva */
   --radio-boton: 99px; /* todos los botones del mockup son pill */
@@ -240,6 +248,22 @@ a {
   border-radius: var(--radio-boton);
   padding: 0.05rem 0.45rem;
   line-height: 1.4;
+}
+
+/*
+ * Texto solo para lectores de pantalla: presente en el DOM, oculto a la
+ * vista. Mismo patron que `.ingesta-soltar-oculto`, generico para cualquier
+ * pantalla que necesite anadir contexto que no le hace falta a quien ve -el
+ * badge del sidebar dice "3" a la vista y "3 pendientes" al lector-.
+ */
+.solo-lector {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .sidebar-pie {
@@ -2787,4 +2811,638 @@ table button {
   .evidencia-datos {
     grid-template-columns: 1fr;
   }
+}
+
+/* ---------- Dialogo.tsx: el primitivo de panel lateral / modal (#39, D6) ---------- */
+
+.dialogo-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 29, 33, 0.35);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 100;
+}
+
+.dialogo {
+  background: var(--superficie);
+  display: flex;
+  flex-direction: column;
+  max-height: 100vh;
+  overflow-y: auto;
+  outline: none;
+}
+
+.dialogo-lateral {
+  width: min(480px, 100vw);
+  height: 100vh;
+  box-shadow: -8px 0 24px rgba(28, 29, 33, 0.12);
+}
+
+.dialogo-centrado {
+  margin: auto;
+  width: min(560px, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: 0 16px 40px rgba(28, 29, 33, 0.2);
+}
+
+.dialogo-fondo:has(.dialogo-centrado) {
+  align-items: center;
+  justify-content: center;
+}
+
+.dialogo-cerrar {
+  border: none;
+  background: transparent;
+  color: var(--texto-suave);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radio);
+}
+
+.dialogo-cerrar:hover:not(:disabled) {
+  color: var(--texto);
+}
+
+.dialogo-cerrar:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- BandejaIdentificacion.tsx (#39) ---------- */
+
+.bandeja {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 960px;
+}
+
+.bandeja-cabecera {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.bandeja-titulo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.bandeja-titulo-fila h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.pastilla-conteo {
+  background: var(--acento);
+  color: var(--superficie);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.25rem 0.85rem;
+  border-radius: var(--radio-boton);
+}
+
+.bandeja-intro {
+  color: var(--texto-medio);
+  margin: 0;
+}
+
+.bandeja-aviso {
+  background: var(--ok-fondo);
+  color: var(--ok);
+  border-radius: var(--radio);
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+.bandeja-error,
+.bandeja-vacia,
+.bandeja-mas {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  padding: 1.5rem;
+}
+
+.bandeja-error {
+  border-color: var(--error-fondo);
+  color: var(--error);
+}
+
+.bandeja-vacia p:first-child {
+  font-weight: 600;
+  margin: 0;
+}
+
+.bandeja-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.bandeja-caso {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  overflow: hidden;
+}
+
+.bandeja-caso-cabecera {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 1.1rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font: inherit;
+  color: inherit;
+}
+
+.bandeja-caso-titulo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.bandeja-caso-titulo-fila h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.etiqueta-modalidad,
+.etiqueta-id {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radio-boton);
+  background: var(--fondo);
+  color: var(--texto-medio);
+}
+
+.bandeja-caso-cuerpo {
+  padding: 0 1.4rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  border-top: 1px solid var(--borde);
+  padding-top: 1.25rem;
+}
+
+.bandeja-caso-datos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1.25rem;
+  background: var(--fondo);
+  border-radius: var(--radio);
+  padding: 1rem 1.25rem;
+}
+
+.bandeja-caso-entrada h3,
+.bandeja-caso-evidencia h3,
+.bandeja-candidatas h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.bandeja-caso-entrada dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.bandeja-caso-entrada dt {
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+}
+
+.bandeja-caso-entrada dd {
+  margin: 0.1rem 0 0;
+}
+
+.bandeja-fichas {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.ficha {
+  background: var(--acento-borde);
+  color: var(--acento-hondo);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radio);
+}
+
+.bandeja-candidatas-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.bandeja-sin-candidatas {
+  background: var(--fondo);
+  border-radius: var(--radio);
+  padding: 1rem 1.25rem;
+}
+
+.bandeja-sin-candidatas p:first-child {
+  font-weight: 600;
+  margin: 0;
+}
+
+.bandeja-lista-candidatas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.bandeja-candidato {
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 0.9rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.bandeja-candidato-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.bandeja-candidato-titulo {
+  font-weight: 600;
+}
+
+.pastilla-puntaje {
+  background: var(--acento-borde);
+  color: var(--acento-hondo);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radio-boton);
+}
+
+.bandeja-caso-pie {
+  display: flex;
+  gap: 0.75rem;
+  border-top: 1px solid var(--borde);
+  padding-top: 1.1rem;
+}
+
+@media (max-width: 720px) {
+  .bandeja-caso-pie {
+    flex-direction: column;
+  }
+}
+
+/* ---------- PanelResolucion.tsx (#39) ---------- */
+
+.panel-resolucion {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.panel-resolucion-cabecera {
+  position: relative;
+  padding: 1.5rem 3rem 1rem 1.5rem;
+  border-bottom: 1px solid var(--borde);
+}
+
+.panel-resolucion-etiqueta {
+  margin: 0 0 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--texto-suave);
+}
+
+.panel-resolucion-titulo {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.panel-resolucion-cabecera .dialogo-cerrar {
+  position: absolute;
+  top: 1.3rem;
+  right: 1.3rem;
+}
+
+.panel-resolucion-cuerpo {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.panel-entrada {
+  background: var(--fondo);
+  border-radius: var(--radio);
+  padding: 1rem 1.1rem;
+}
+
+.panel-entrada-cabecera {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-suave);
+  margin-bottom: 0.4rem;
+}
+
+.panel-entrada-titulo {
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+
+.panel-aviso-descarte {
+  background: var(--alerta-fondo);
+  border-radius: var(--radio);
+  padding: 1rem 1.1rem;
+}
+
+.panel-aviso-descarte-titulo {
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+  color: var(--alerta);
+}
+
+.panel-busqueda {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.panel-busqueda > span.muted {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.panel-busqueda input {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  font: inherit;
+}
+
+.panel-resultados {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.panel-resultado {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--superficie);
+  cursor: pointer;
+  font: inherit;
+}
+
+.panel-resultado[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-activo);
+}
+
+.panel-obra-elegida {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.panel-obra-elegida > span.muted {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.panel-obra-elegida-caja {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--acento-borde);
+  border-radius: var(--radio);
+  padding: 0.85rem 1rem;
+}
+
+.panel-obra-elegida-titulo {
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+
+.panel-nota {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.panel-nota-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.panel-nota textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  font: inherit;
+  resize: vertical;
+}
+
+.panel-error {
+  background: var(--error-fondo);
+  color: var(--error);
+  border-radius: var(--radio);
+  padding: 0.85rem 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.panel-error p {
+  margin: 0;
+}
+
+.panel-resolucion-pie {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--borde);
+}
+
+/* ---------- ListaOni.tsx (#39) ---------- */
+
+.lista-oni {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.lista-oni-cabecera {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.lista-oni-cabecera h1 {
+  margin: 0;
+}
+
+/* Misma tarjeta blanca que `.catalogo-caja`, con nombre propio: la lista ONI
+   no depende de que el catalogo no renombre la suya. */
+.lista-oni-caja {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  overflow: hidden;
+}
+
+.tabla-lista-oni td {
+  vertical-align: top;
+}
+
+.lista-oni-titulo-texto {
+  margin: 0;
+  font-weight: 600;
+}
+
+.lista-oni-id {
+  margin: 0.15rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.lista-oni-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lista-oni-estado {
+  font-weight: 600;
+}
+
+.lista-oni-estado-pendiente {
+  color: var(--alerta);
+}
+
+.lista-oni-estado-asignado {
+  color: var(--ok);
+}
+
+.lista-oni-estado-descartado {
+  color: var(--texto-suave);
+}
+
+.lista-oni-pie {
+  padding: 1rem 1.25rem;
+}
+
+/* ---------- HistorialDelRegistro, dentro de ListaOni.tsx (#39) ---------- */
+
+.historial-registro {
+  display: flex;
+  flex-direction: column;
+}
+
+.historial-registro-cabecera {
+  padding: 1.25rem 1.5rem 0;
+}
+
+.historial-registro-cabecera p {
+  margin: 0 0 0.25rem;
+}
+
+.historial-registro-cabecera h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.historial-registro-cuerpo {
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.historial-registro-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.historial-registro-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.historial-registro-datos dd {
+  margin: 0.15rem 0 0;
+}
+
+.historial-registro-pie {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--borde);
 }
