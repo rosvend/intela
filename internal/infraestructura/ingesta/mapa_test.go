@@ -930,6 +930,12 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"fila 2: trae 2 campos y 0 de 1 fila de este archivo trae 3;"},
 		},
 		{
+			// Una fila de un solo campo tambien va en singular.
+			nombre: "fila de un solo campo",
+			datos:  "titulo,id,taquilla\nA,A-1,5\nB,B-1,6\nC\n",
+			quiere: []string{"", "", "fila 4: trae 1 campo y 2 de 3 filas de este archivo traen 3;"},
+		},
+		{
 			nombre: "comas parciales en empate",
 			datos:  "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
 			quiere: []string{"mezcla filas de 3 y 4 campos", "mezcla"},
