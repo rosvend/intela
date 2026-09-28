@@ -73,7 +73,7 @@ const claveProvisionInicial = 0x1E7E1A_9204
 // titular_tiene_titular_id solo lo exige para el rol titular. Un administrador
 // con titular_id se leeria como si representara a un socio.
 func (s *Store) CrearPrimerAdministrador(ctx context.Context, u aplicacion.Usuario, hash string) error {
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, claveProvisionInicial); err != nil {
 			return traducirError(err, "tomar el lock de provision inicial")
 		}

@@ -72,6 +72,12 @@
       "sourceType": "github",
       "skillPath": "skills/golang-troubleshooting/SKILL.md",
       "computedHash": "4a8aa539b6cbcf242edd4aa713f57eef2582bdd832df9c799e1cd36eb48a24c7"
+    },
+    "iterative-planner": {
+      "source": "NikolasMarkou/iterative-planner",
+      "sourceType": "github",
+      "skillPath": "src/SKILL.md",
+      "computedHash": "2d343ccf029b14ada7abb02fbbe4355984df9e6e1cd94c67de273733cb51be35"
     }
   }
 }

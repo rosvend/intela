@@ -79,7 +79,7 @@ func TestRegistrarYLeerLaObraCompleta(t *testing.T) {
 		t.Fatalf("Registrar: %v", err)
 	}
 
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRegistrarRechazaElIdentificadorDuplicado(t *testing.T) {
 	}
 
 	// Y el rechazo no dejo nada a medias: la obra sigue siendo la primera.
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRegistrarEsAtomico(t *testing.T) {
 func TestPorIDDeUnaObraQueNoExiste(t *testing.T) {
 	s, _ := sembrar(t)
 
-	_, err := s.PorID(t.Context(), "obra-que-no-existe")
+	_, err := s.CatalogoObras().PorID(t.Context(), "obra-que-no-existe")
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -207,7 +207,7 @@ func TestActualizarReemplazaMetadatosYCoautores(t *testing.T) {
 		t.Fatalf("Actualizar: %v", err)
 	}
 
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -331,8 +331,8 @@ func TestBuscarCombinaLosFiltrosConY(t *testing.T) {
 	}
 }
 
-// Un filtro vacio es el listado del catalogo. Y el orden es explicito: el ADR
-// 0005 exige que una corrida se reproduzca bit a bit.
+// Un filtro vacio es el listado del catalogo (primera pagina). Y el orden es
+// explicito: el ADR 0005 exige que una corrida se reproduzca bit a bit.
 func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	s, _ := sembrar(t)
 
@@ -345,6 +345,87 @@ func TestBuscarSinFiltroDevuelveElCatalogoOrdenado(t *testing.T) {
 	}
 	if got := ids(obras); !slices.IsSorted(got) {
 		t.Fatalf("el catalogo no viene ordenado por id: %v", got)
+	}
+}
+
+func TestBuscarRespetaLimiteYDesplazamiento(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 2, Desplazamiento: 1},
+	})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	todas, err := s.Buscar(t.Context(), aplicacion.FiltroObras{
+		Paginacion: aplicacion.Paginacion{Limite: 10},
+	})
+	if err != nil {
+		t.Fatalf("Buscar completo: %v", err)
+	}
+	if got := ids(obras); !slices.Equal(got, []string{todas[1].ID(), todas[2].ID()}) {
+		t.Fatalf("ids = %v, se esperaba [%s %s]", got, todas[1].ID(), todas[2].ID())
+	}
+}
+
+// IPI + otro filtro + paginacion ejercitan la rama $5 <> ” junto al LIMIT,
+// que es el camino que el UNION ALL existe para proteger.
+func TestBuscarPorIPICombinaFiltrosYPaginacion(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	casos := []struct {
+		nombre string
+		filtro aplicacion.FiltroObras
+		quiero []string
+	}{
+		{
+			nombre: "ipi solo",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001"},
+			quiero: []string{obraCompleta, obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi y genero",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Genero: "Drama"},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi y anio",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-00000001", Anio: 1991},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con limite",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1},
+			},
+			quiero: []string{obraCompleta},
+		},
+		{
+			nombre: "ipi con desplazamiento",
+			filtro: aplicacion.FiltroObras{
+				IPI:        "IPI-00000001",
+				Paginacion: aplicacion.Paginacion{Limite: 1, Desplazamiento: 1},
+			},
+			quiero: []string{obraSinDeclaracion},
+		},
+		{
+			nombre: "ipi inexistente",
+			filtro: aplicacion.FiltroObras{IPI: "IPI-99999999"},
+			quiero: nil,
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			obras, err := s.Buscar(ctx, c.filtro)
+			if err != nil {
+				t.Fatalf("Buscar: %v", err)
+			}
+			if got := ids(obras); !slices.Equal(got, c.quiero) {
+				t.Fatalf("ids = %v, se esperaba %v", got, c.quiero)
+			}
+		})
 	}
 }
 
@@ -491,4 +572,62 @@ func TestLaBaseRechazaUnCoautorConRolNoAutoral(t *testing.T) {
 			t.Fatalf("el CHECK rechaza un rol que el reglamento admite: %v", err)
 		}
 	})
+}
+
+// El buscador ordena por parecido: lo primero que se ve es lo que mas se
+// parece a lo que se escribio. Es el camino del usuario de #32.
+func TestBuscarOrdenaPorParecido(t *testing.T) {
+	s, pool := sembrar(t)
+	obraConTitulo(t, pool, "obra-casi", "La Casa de las Dos Palmeras")
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Titulo: "La Casa de las Dos Palmas"})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	if len(obras) < 2 {
+		t.Fatalf("se esperaban las dos parecidas, llegaron %v", ids(obras))
+	}
+	if obras[0].ID() != obraCompleta {
+		t.Fatalf("la mas parecida no llego primera: %v", ids(obras))
+	}
+}
+
+// Lo que el ILIKE no puede: tildes que no se escriben, mayusculas del catalogo
+// de origen y palabras en otro orden.
+func TestBuscarTituloTolerasTildesCajaYOrden(t *testing.T) {
+	s, pool := sembrar(t)
+	obraConTitulo(t, pool, "obra-tildes", "¿Dónde está Elisa?")
+
+	casos := map[string]string{
+		"sin tildes":      "Donde esta Elisa",
+		"en mayusculas":   "DONDE ESTA ELISA",
+		"en otro orden":   "Elisa, donde esta",
+		"con las tildes":  "¿Dónde está Elisa?",
+		"tildes cruzadas": "Dónde esta Elisa",
+	}
+	for nombre, consulta := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Titulo: consulta})
+			if err != nil {
+				t.Fatalf("Buscar: %v", err)
+			}
+			if len(obras) == 0 || obras[0].ID() != "obra-tildes" {
+				t.Fatalf("%q no encontro la obra: %v", consulta, ids(obras))
+			}
+		})
+	}
+}
+
+// Sin titulo no hay contra que parecerse: el orden vuelve a ser el de id, y la
+// paginacion sigue siendo la de siempre.
+func TestBuscarSinTituloSigueOrdenadoPorID(t *testing.T) {
+	s, _ := sembrar(t)
+
+	obras, err := s.Buscar(t.Context(), aplicacion.FiltroObras{Genero: "Comedia"})
+	if err != nil {
+		t.Fatalf("Buscar: %v", err)
+	}
+	if got := ids(obras); !slices.IsSorted(got) {
+		t.Fatalf("sin titulo el orden deberia ser por id: %v", got)
+	}
 }

@@ -124,7 +124,9 @@ linters:
             - pkg: encoding/csv
               desc: "ADR 0002: parsing a file format is the job of an ingesta adapter."
             - pkg: github.com/xuri/excelize
-              desc: "ADR 0002: reading an .xlsx is the job of an ingesta adapter."
+              desc: "ADR 0002: reading or writing an .xlsx is the job of an adapter (ingesta or exportacion)."
+            - pkg: github.com/johnfercher/maroto
+              desc: "ADR 0002: generating a PDF is the job of an export adapter. aplicacion talks to Exportador."
             - pkg: net/http
               desc: "ADR 0002: HTTP is an inbound adapter."
             - pkg: database/sql
@@ -156,6 +158,42 @@ linters:
             - pkg: github.com/rosvend/intela/internal/dominio/reparto
               desc: "ADR 0003: reparto reads from recaudo. recaudo does not know reparto."
 
+        # Reparto mueve dinero: solo habla con repertorio (declaraciones) y
+        # recaudo (bolsa). No conoce liquidacion, anticipos, ONI ni afiliacion.
+        modulos-reparto:
+          files:
+            - "**/internal/dominio/reparto/*.go"
+            - "**/internal/dominio/reparto/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: liquidacion consumes the corrida; reparto does not know it."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: anticipos settle against liquidacion, not against the engine."
+            - pkg: github.com/rosvend/intela/internal/dominio/prescripcion
+              desc: "ADR 0003: prescribing is not recomputing."
+            - pkg: github.com/rosvend/intela/internal/dominio/oni
+              desc: "ADR 0003: the manual queue does not feed the engine."
+            - pkg: github.com/rosvend/intela/internal/dominio/afiliacion
+              desc: "ADR 0003: the padron is resolved before the corrida."
+            - pkg: github.com/rosvend/intela/internal/dominio/reclamaciones
+              desc: "ADR 0005: a reclamacion does not reopen a corrida."
+
+        # Normalizacion produces the canonical Uso the engine consumes; it
+        # does not touch money, recaudo or the matching cascade.
+        modulos-normalizacion:
+          files:
+            - "**/internal/dominio/normalizacion/*.go"
+            - "**/internal/dominio/normalizacion/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: normalizacion does not touch money. It yields a canonical row; reparto consumes it."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: normalizacion does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: normalizacion does not touch money."
+            - pkg: github.com/rosvend/intela/internal/dominio/identificacion
+              desc: "ADR 0007: identifying the obra is a later cascade, not a schema transform."
+
         # ADR 0003: "Identificacion escribe alias y emite ONI, y no toca dinero."
         modulos-identificacion:
           files:
@@ -183,6 +221,36 @@ linters:
               desc: "ADR 0003: the manual queue does not touch money."
             - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
               desc: "ADR 0003: the manual queue does not touch money."
+
+        # Anomalias inspects an assembled period BEFORE it is distributed and
+        # names what blocks or falsifies the run: ONI, duplicate deliveries,
+        # duplicate records, missing declared shares, obras retained under
+        # R-04, and rows with no RD 9.1.1 category.
+        #
+        # It reads two vocabularies and touches no money. `repertorio` gives it
+        # Declaracion.Completa(), the single criterion for R-04 (re-summing
+        # here would open a second one). `identificacion` gives it the escalon
+        # constants, so that "oni" and "excluido" are never re-spelled as
+        # literals. Both edges point the same way the pipeline runs.
+        #
+        # What it must never import is the money side: an alerta says a row is
+        # not fit to weight, never how much it is worth. The day a detector can
+        # reach reparto, "this obra is retained" becomes one import away from
+        # "this obra is retained for $N", which is a figure no reglamento
+        # backs.
+        modulos-anomalias:
+          files:
+            - "**/internal/dominio/anomalias/*.go"
+            - "**/internal/dominio/anomalias/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio/reparto
+              desc: "ADR 0003: detecting an anomaly does not touch money. The engine consumes the period; this inspects it."
+            - pkg: github.com/rosvend/intela/internal/dominio/recaudo
+              desc: "ADR 0003: an anomaly knows nothing of bolsas, tarifas or convenios."
+            - pkg: github.com/rosvend/intela/internal/dominio/liquidacion
+              desc: "ADR 0003: liquidacion consumes a corrida that has not run yet when this pass executes."
+            - pkg: github.com/rosvend/intela/internal/dominio/anticipos
+              desc: "ADR 0003: an anticipo settles against a liquidacion, not against a pre-distribution check."
 
         # Afiliacion keeps the padron: who is a Socio and who a Titular
         # Administrado. Existing in the padron is independent of anything

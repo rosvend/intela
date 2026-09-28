@@ -5,10 +5,26 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/oni"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
+
+// HechoListadoONIPublicado es el hecho que deja PublicarListadoONI en la
+// bitacora. El modulo ONI publica sus propios asientos (ADR 0003, ADR 0006).
+const HechoListadoONIPublicado = "oni.listado_publicado"
+
+// RefTipoPublicacionONI es la referencia de ese asiento. El id es el de la
+// fila en oni_publicaciones, no un id derivado del periodo: publicar dos
+// veces el mismo periodo no debe ser idempotente en silencio.
+const RefTipoPublicacionONI = "oni_publicacion"
+
+// ExplicacionListadoONI es el texto de RD 13.8.4.4: una explicacion clara
+// del proceso de Distribucion en el que se incluyen los derechos de las ONI.
+// Vive aqui, no en el frontend, para que el contrato HTTP y la pagina
+// publica no divergjan.
+const ExplicacionListadoONI = "REDES SGC publica este listado de obras no identificadas (ONI) para que los titulares documenten su autoria y soliciten la remuneracion en el siguiente proceso de Distribucion (RD 13.8). Se publican titulos e informacion identificatoria, sin montos: la informacion economica se mantiene en reserva (RD 13.8.2-13.8.3). La prescripcion de estos recaudos es de tres anos contados desde esta publicacion (RD 13.8.7, R-19)."
 
 // Rol de un actor. La autorizacion de cada caso de uso se decide contra esto,
 // no contra la mera existencia de una sesion.
@@ -57,6 +73,59 @@ type Obra struct {
 	EstadoDecl string
 }
 
+// ObraDelCatalogo es una entrada del catalogo maestro tal como la sirve el
+// catalogo: sus metadatos y, ademas, lo que el sistema sabe hoy de su
+// Declaracion de Obra.
+//
+// # Por que es una proyeccion y no la entidad
+//
+// [repertorio.Obra] es identidad y metadatos: no tiene donde poner un estado
+// que sale de `declaraciones`, y no debe tenerlo -el porcentaje de reparto
+// nace en la Declaracion de Obra y en ningun otro sitio (`R-02`, `R-03`)-.
+// Los tres campos que van aqui son LEIDOS de la declaracion vigente, no
+// declarables desde el catalogo.
+//
+// # VersionVigente es el ORIGEN del estado, no un tercer estado
+//
+// `EstadoDecl` solo distingue "completa" de "incompleta", y con eso una obra
+// que nunca se declaro y una declarada que no suma 100 son indistinguibles:
+// las dos son `incompleta`, y las dos se retienen (`R-04`). Una pantalla que
+// pintara "incompleta" sobre una obra sin ninguna declaracion afirmaria una
+// declaracion que nadie hizo. `VersionVigente` en nil dice lo que de verdad
+// pasa -no hay ninguna version- y por eso el estado no necesita un tercer
+// valor: `invalida` no es un estado del modelo sino lo que el backend
+// RECHAZA al escribir (una suma por encima de 100), asi que no puede estar
+// persistido ni aparecer en un listado.
+type ObraDelCatalogo struct {
+	// La entidad entera -identidad y metadatos- se embebe para que una obra
+	// proyectada siga respondiendo ID(), Metadatos() y Coautores(): el
+	// catalogo y su estado son la misma obra, no dos cosas que haya que
+	// volver a cruzar por id.
+	repertorio.Obra
+
+	// EstadoDecl es "completa" o "incompleta", y lo calcula el dominio
+	// ([repertorio.Declaracion.Estado]): no hay un tercer valor. Una suma por
+	// debajo de 100 es `incompleta`, un estado VALIDO del negocio -se retiene
+	// el total de esa obra, nunca se reparte a medias-, no un error.
+	EstadoDecl string
+
+	// SumaPorcentajes es la suma de los porcentajes de las partes de la
+	// version vigente; cero si la obra no tiene ninguna.
+	//
+	// No es "cuanto le toca a nadie" ni un reparto: es cuanto esta declarado.
+	// Y no se deduce del estado ni el estado de ella: una parte sin IPI deja
+	// la declaracion `incompleta` con la suma en 100, asi que quien muestre
+	// las dos cosas tiene que mostrar las dos -ver el comentario de arriba
+	// sobre no afirmar mas de lo que el sistema sabe-.
+	SumaPorcentajes decimal.Decimal
+
+	// VersionVigente es la version ABIERTA de la declaracion de la obra, y
+	// nil quiere decir que la obra no tiene ninguna declaracion -distincion
+	// que `EstadoDecl` por si solo no puede hacer: ver el comentario del
+	// tipo-.
+	VersionVigente *int
+}
+
 // VersionDeclaracion es una Declaracion de Obra con su ventana de vigencia.
 //
 // La vigencia vive aqui y no en [repertorio.Declaracion] porque depguard
@@ -92,6 +161,74 @@ type Reporte struct {
 	SHA256      string
 	ClaveObjeto string
 	NBytes      int
+
+	// SubidoPor es el id del usuario autenticado que hizo la entrega (#116).
+	//
+	// Vacio NO es un dato perdido: es la ausencia de atribucion, y se persiste
+	// como NULL. Son dos casos y los dos son ciertos -- las entregas anteriores
+	// a la columna, que se documentan como "anterior a la atribucion", y las
+	// que escribe el sembrador, que no tienen a nadie detras --. Inventar un
+	// actor para cualquiera de los dos seria una atribucion falsa en la tabla
+	// que la auditoria revisa (RD 16).
+	//
+	// Guarda el id y no el nombre ni el correo, igual que usos.resuelto_por:
+	// esos cambian sin que cambie quien entrego el archivo.
+	SubidoPor string
+}
+
+// Recepcion es el acuse de una entrega INGERIDA entera: congelada, parseada y
+// persistida.
+//
+// Los rechazos viajan enteros y no como recuento. Quien sube un archivo tiene
+// que poder leer, sin abrir la base, que linea le falta y por que: es criterio
+// de aceptacion de OE-1, y un numero a secas obliga a otra consulta para saber
+// que pedirle al cliente.
+//
+// Aceptados es un recuento y no una lista a proposito: las filas buenas ya
+// estan en `usos` y quien las quiera las lee de ahi. Devolverlas aqui seria
+// materializar una parrilla entera en memoria para que casi siempre nadie la
+// mire.
+type Recepcion struct {
+	Reporte    Reporte
+	Aceptados  int
+	Rechazados []UsoPersistido
+}
+
+// CargaReporte es una entrega tal como aparece en el listado de cargas hechas.
+//
+// Es una PROYECCION de lectura, no el [Reporte] con campos de mas: los dos
+// recuentos salen de contar `usos` y `usos_rechazados`, o sea de otras dos
+// tablas, y meterlos en Reporte obligaria a que toda escritura de una entrega
+// -- que ocurre ANTES de que exista ninguna fila -- cargara dos ceros sin
+// significado.
+//
+// Recibido es el `creado` de la fila. Sale del reloj de la base y no del
+// [Reloj] del nucleo porque es la marca de un hecho de almacenamiento, no de
+// negocio: nada del reparto se calcula con el.
+type CargaReporte struct {
+	Reporte
+	Recibido   time.Time
+	Aceptados  int
+	Rechazados int
+}
+
+// EntregaRecibida es el acuse de un reporte con lo JUSTO para cotejar sus
+// bytes contra los de otra entrega: quien la entrego, de que periodo y que
+// huella trae.
+//
+// Existe aparte de [CargaReporte] por coste, no por gusto. La deteccion de
+// anomalias pide TODAS las entregas conocidas en cada pasada -- el
+// UNIQUE (sha256, fuente) de `reportes` no lleva el periodo, asi que la otra
+// pata de una colision puede estar en otro mes -- y de cada una solo mira estos
+// cuatro campos. `ListarCargas` ademas calcula dos COUNT correlacionados por
+// fila (usos y usos_rechazados) que esta lectura DESCARTA: medido sobre 5.001
+// reportes y 50.000 usos son 130,8 ms contra 4,8 ms sin ellos, en cada pasada y
+// creciendo para siempre.
+type EntregaRecibida struct {
+	ID      string
+	Fuente  string
+	Periodo string
+	SHA256  string
 }
 
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
@@ -99,24 +236,38 @@ type Reporte struct {
 //
 // Igual que reparto.Uso, no tiene campo de dinero, y por la misma razon.
 type UsoPersistido struct {
-	ID            string
-	ReporteID     string
-	Fuente        string
-	Titulo        string
-	IDsFuente     string
-	ObraID        string
-	Escalon       string
-	Evidencia     string
-	ONI           bool
-	Modalidad     reparto.Modalidad
-	TipoObra      string
-	DuracionMin   decimal.Decimal
-	Emisiones     int64
-	Rating        decimal.Decimal
-	Taquilla      decimal.Decimal
-	Vistas        decimal.Decimal
-	MinutosVistos decimal.Decimal
-	PB            decimal.Decimal
+	ID             string
+	ReporteID      string
+	Fuente         string
+	Titulo         string
+	TituloOrig     string
+	IDsFuente      string
+	ObraID         string
+	Escalon        string
+	Evidencia      string
+	ONI            bool
+	Modalidad      reparto.Modalidad
+	TipoObra       string
+	CanalID        string
+	Fecha          string
+	Hora           string
+	Moneda         string
+	UnidadDuracion string
+	// DuracionTexto y EmisionesTexto conservan el crudo del adaptador cuando
+	// el campo viaja como texto hacia [normalizacion.Fila]. Si estan vacios,
+	// aFila re-serializa DuracionMin / Emisiones.
+	DuracionTexto  string
+	EmisionesTexto string
+	DuracionMin    decimal.Decimal
+	Emisiones      int64
+	Rating         decimal.Decimal
+	Taquilla       decimal.Decimal
+	Espectadores   decimal.Decimal
+	Exhibiciones   int64
+	Vistas         decimal.Decimal
+	MinutosVistos  decimal.Decimal
+	PB             decimal.Decimal
+	Autopromo      bool
 
 	// RechazoMotivo: por que esta fila no se pudo normalizar.
 	//
@@ -131,6 +282,86 @@ type UsoPersistido struct {
 	// CON su razon. Donde acaba cada una de las dos clases de fila lo decide
 	// el adaptador (ADR 0016).
 	RechazoMotivo string
+
+	// RechazoTipo y RechazoCodigo son el discriminante tipado de la cola de
+	// revision (B3). Sin columnas propias, cortar el motivo por ": " inventaba
+	// codigos a partir de prosa del adaptador y afirmaba origen normalizacion
+	// sobre filas que nunca pasaron por ese detector.
+	RechazoTipo   string
+	RechazoCodigo string
+}
+
+// UsoDeReparto es una fila canonica lista para el motor: el uso mas la
+// clasificacion anual del canal que lo emitio (`RD 9.5.4`).
+//
+// El grupo no es columna de `usos` porque no es un hecho del reporte: se
+// resuelve por ano contra `canales_clasificacion`, y una reejecucion de un
+// periodo pasado tiene que leer la fila de aquel ano (ADR 0005). Llega vacio
+// cuando el catalogo no clasifico el canal, que solo es legal fuera de
+// suscripcion.
+type UsoDeReparto struct {
+	Uso           UsoPersistido
+	GrupoEfectivo string
+}
+
+// ResumenUsosDeCanal cuenta, dentro de un (periodo, canal), los usos que NO
+// llegan al motor porque no tienen obra identificada (`usos.obra_id IS NULL`).
+// Ningun tratamiento se puede confundir con otro, porque el reglamento los
+// trata distinto:
+//
+//   - Pendientes: la cascada de identificacion (ADR 0007) todavia no corrio
+//     sobre la fila. No es lo mismo que "no se reconocio nada" -- es "no se
+//     ha intentado".
+//   - ONI: la cascada corrio y no reconocio ninguna obra.
+//   - Excluidos: el canal esta fuera del catalogo de REDES SGC (R-27), asi
+//     que la fila nunca tuvo obra que identificar.
+//   - Descartados: una persona decidio que no es un uso del repertorio de
+//     REDES SGC (#175): no pondera y no es ONI.
+//
+// # Esto SOLO cuenta. No reserva nada
+//
+// `RD 13.8` / R-18 / R-19 mandan que la parte de una obra no identificada
+// quede en reserva, no que se pierda ni que se reparta entre las demas obras.
+// Este tipo no implementa eso: es un conteo, para que el hueco sea visible.
+// Quien tome los `[]reparto.Uso] que devuelve UsosDeCanal y los pase
+// directamente a [reparto.Reparto] -- que es lo unico que existe hoy, porque
+// ProcesoDeReparto (#33/#34) todavia no orquesta una corrida -- reparte el
+// 100% de la bolsa entre las obras IDENTIFICADAS: la parte que le habria
+// correspondido a una fila ONI desaparece DENTRO de esas obras, no en
+// reserva. Reservarla de verdad -- y decidir como se libera cuando la obra se
+// identifica (R-19: 3 anos) -- es trabajo de #33/#34, registrado con
+// implementacion pendiente bajo R-18 en docs/dominio/reglas-negocio.md.
+type ResumenUsosDeCanal struct {
+	Pendientes  int
+	ONI         int
+	Excluidos   int
+	Descartados int
+}
+
+// ItemRevision es una fila de la cola de revision: lo que no se pudo
+// normalizar, y los rechazos del adaptador de formato.
+//
+// Tipo discrimina el origen ("normalizacion" | "adaptador" | "anomalia") para
+// que un solo listado sirva sin mezclar los vocabularios. Codigo es el motivo
+// tipado; Motivo es el texto que nombra el campo.
+//
+// # Las anomalias del #37 NO salen por aqui
+//
+// El comentario anterior decia que llegarian, y no llegaron: una anomalia
+// necesita estado de resolucion -- actor e instante -- y este tipo no lo
+// tiene; y `/admin/cola-revision` es solo de `administrador` mientras el
+// tablero de anomalias lo miran ademas `distribucion` y `auditor`. Viven en
+// [Alerta], con tabla y recurso propios (ADR 0021). El valor "anomalia" se
+// queda en el vocabulario porque la columna `usos_rechazados.tipo` lo admite
+// desde la migracion 00010.
+type ItemRevision struct {
+	ID        string
+	Tipo      string
+	Codigo    string
+	Motivo    string
+	Fuente    string
+	Titulo    string
+	ReporteID string
 }
 
 // BolsaPersistida es una [recaudo.Bolsa] con lo que la fila anade: su
@@ -171,14 +402,90 @@ type Asiento struct {
 	RefTipo string
 	RefID   string
 	ActorID string
-	Payload []byte
-	Cuando  time.Time
+	// RefiereA queda reservado para enlazar una correccion (ADR 0006); ningun caso de uso lo escribe todavia.
+	RefiereA string
+	Payload  []byte
+	Cuando   time.Time
 }
 
+// Alerta es una anomalia de un periodo tal como queda persistida (#37).
+//
+// Es la forma de ESTADO del [anomalias.Hallazgo], que es la forma de HECHO: el
+// hallazgo lo produce el dominio sin identidad ni instante, y esto es lo que
+// la fila anade -- quien es, cuando se detecto y si alguien ya la resolvio.
+//
+// # No es un asiento, y por eso si se actualiza
+//
+// La bitacora del ADR 0006 es append-only y `asientos` lo impone por trigger;
+// esta tabla no. La diferencia no es de rigor: un asiento registra que algo
+// PASO, y una alerta registra que algo SIGUE pasando. Resolver una alerta es
+// cambiar ese estado, y el rastro de quien lo cambio y cuando va donde tiene
+// que ir -- a un asiento, escrito en la misma unidad de trabajo que el UPDATE
+// (ver [Anomalias.Resolver]).
 type Alerta struct {
-	ID      string
-	Tipo    string
+	ID string
+
+	// Periodo al que pertenece la evaluacion que la levanto, en la forma
+	// `AAAA` o `AAAA-MM`. Va en la fila y no se deduce del registro ofensor
+	// porque una misma obra puede quedar retenida en dos periodos seguidos, y
+	// cada periodo tiene su propia alerta que perseguir.
+	Periodo string
+
+	// Tipo es uno de los seis de [anomalias.Tipos].
+	Tipo string
+
+	// RefTipo, RefID y RefTitular apuntan al registro EXACTO que la disparo.
+	// Mismo par polimorfico que `asientos` (migracion 00001); RefTitular es la
+	// segunda coordenada y solo la usa `titular_sin_porcentaje`.
+	RefTipo    string
+	RefID      string
+	RefTitular string
+
 	Detalle string
+
+	// Critica es DERIVADO ([anomalias.EsCritica]) y no una columna.
+	//
+	// Persistirlo congelaria la clasificacion en el momento de detectar: el
+	// dia que el Consejo decida que un tipo pasa a bloquear, habria que migrar
+	// las filas ya escritas o convivir con dos criterios. Derivarlo al leer
+	// hace que la regla viva en un solo sitio, que es el dominio.
+	Critica bool
+
+	Detectada time.Time
+
+	// Resuelta, ResueltaPor, ResueltaEn y Nota son la decision humana (#39).
+	// ResueltaEn es puntero: nil es "sin resolver", y un cero de time.Time
+	// seria un instante del ano 1 indistinguible de un dato mal escrito.
+	Resuelta    bool
+	ResueltaPor string
+	ResueltaEn  *time.Time
+	Nota        string
+	// Autocerrada: la cerro el sistema porque una reevaluacion ya no la detecto (ResueltaPor vacio).
+	Autocerrada bool
+}
+
+// FiltroAlertas recorta el listado de alertas. Un campo en su valor cero NO
+// filtra, y los que vienen se combinan con Y, igual que [FiltroObras].
+//
+// Resueltas es PUNTERO por lo mismo que `FiltroTitulares.PersonaNatural`: con
+// un bool a secas, "no filtrar" y "solo las resueltas" serian el mismo valor
+// cero y no habria forma de pedir el historial de lo ya cerrado.
+type FiltroAlertas struct {
+	Periodo   string
+	Tipo      string
+	Resueltas *bool
+
+	// Paginacion, con la MISMA forma que `/obras`, `/titulares` y el historial
+	// de declaraciones, y por la misma razon de la nota 4 de #86: los listados
+	// de este sistema paginan juntos, no cada uno a su aire.
+	//
+	// Aqui hace falta ademas por volumen. `oni`, `duplicado_registro` y
+	// `tipo_obra_sin_mapear` emiten UNA alerta por fila de uso, y la meta KR-1
+	// habla de lotes de 10.000 registros: una evaluacion real puede dejar del
+	// orden de 10.000 alertas en un periodo. Sin paginar, `GET /alertas`
+	// devolvia ese array entero -- del orden de 4 MB -- y el panel de #104
+	// sondea cada 15 segundos.
+	Paginacion
 }
 
 type Anticipo struct {
@@ -186,4 +493,121 @@ type Anticipo struct {
 	TitularID string
 	Monto     decimal.Decimal
 	Estado    string
+}
+
+// PublicacionONI es la instantanea de un listado publicado.
+//
+// FechaProceso es el ancla de R-19. Obras es la proyeccion publica: titulos
+// e identificadores, nunca importes.
+type PublicacionONI struct {
+	ID                   string
+	Periodo              string
+	FechaProceso         time.Time
+	DireccionFisica      string
+	DireccionElectronica string
+	Obras                []oni.ProyeccionPublica
+}
+
+// Formatos de exportacion que entiende [Exportador]. Cualquier otro es
+// ErrFormatoInvalido. FormatoXLSX vive en puertos.go (mismo paquete).
+const (
+	FormatoPDF = "pdf"
+)
+
+// FilaLiquidacion es lo que el repositorio lee de una corrida: el neto del
+// titular en una obra y los totales del proceso, todavia sin prorratear.
+//
+// El prorrateo vive en dominio/liquidacion, no aqui ni en el SQL: si una
+// cifra se puede calcular mal, se calcula una sola vez (postgres/doc.go).
+//
+// NetosProceso e Indice permiten [liquidacion.ProrratearProceso]: todos los
+// importes del proceso, ordenados de forma estable, y la posicion de esta
+// fila. Vacios → el caso de uso prorratea solo esta linea (tests en memoria).
+type FilaLiquidacion struct {
+	Periodo        string
+	ObraID         string
+	Titulo         string
+	Neto           decimal.Decimal
+	ProcesoID      string
+	ProcesoBruto   decimal.Decimal
+	ProcesoAdmin   decimal.Decimal
+	ProcesoSocial  decimal.Decimal
+	ProcesoReserva decimal.Decimal
+	ProcesoNeto    decimal.Decimal
+	NetosProceso   []decimal.Decimal
+	Indice         int
+}
+
+// LineaLiquidacion es una obra en el reporte del titular, con bruto,
+// cada deduccion y neto ya prorrateados.
+type LineaLiquidacion struct {
+	Periodo string
+	ObraID  string
+	Titulo  string
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// TotalesLiquidacion suma las lineas. Es lo que el panel y el archivo
+// exportado tienen que coincidir.
+type TotalesLiquidacion struct {
+	Bruto   decimal.Decimal
+	Admin   decimal.Decimal
+	Social  decimal.Decimal
+	Reserva decimal.Decimal
+	Neto    decimal.Decimal
+}
+
+// Liquidacion es el reporte de un titular, filtrado por periodo si viene.
+type Liquidacion struct {
+	TitularID string
+	Periodo   string
+	Lineas    []LineaLiquidacion
+	Totales   TotalesLiquidacion
+}
+
+// Archivo es un PDF o un Excel ya renderizado. Lleva las cifras embebidas:
+// abrirlo sin red muestra la liquidacion completa (OE-6).
+type Archivo struct {
+	Nombre    string
+	TipoMIME  string
+	Contenido []byte
+}
+
+// SolicitudAfiliacion es lo que el asistente de alta manda al caso de uso.
+//
+// Los documentos van en bytes, no en claves: quien llama no conoce el
+// almacen. El caso de uso los guarda y deja las claves en el Afiliado.
+type SolicitudAfiliacion struct {
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	PerteneceOtraSGC   bool
+	Clave              string
+	RUT                []byte
+	CertBancaria       []byte
+	Renuncia           []byte
+}
+
+// AfiliacionVista es la solicitud (o el afiliado ya admitido) tal como
+// sale del nucleo hacia el adaptador. Sin etiquetas json: la forma de
+// red la decide HTTP.
+type AfiliacionVista struct {
+	ID                 string
+	Nombre             string
+	Email              string
+	DocumentoIdentidad string
+	IPI                string
+	Subtipo            string
+	Estado             string
+	ElegibleAnticipo   bool
+	TieneRUT           bool
+	TieneCertBancaria  bool
+	TieneRenuncia      bool
+	TitularID          string
 }

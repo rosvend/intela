@@ -110,6 +110,37 @@ func TestNuevaBolsaRechaza(t *testing.T) {
 	}
 }
 
+// PeriodoValido es la puerta que la capa de aplicacion usa en los dos sitios
+// donde comprueba un periodo antes de escribir -la clave de la cola y la
+// entrega de un reporte-, asi que su respuesta tiene que ser la misma que la de
+// [ValidarPeriodo] en todo lo que no sea el recorte: con dos criterios hay
+// periodos que el nucleo acepta al escribir y que la ingesta rechaza al subir,
+// o al reves.
+func TestPeriodoValidoEsLaMismaReglaQueValidarPeriodo(t *testing.T) {
+	casos := []string{
+		"2026", "2025-01", "2025-12",
+		"2025-13", "2025-00", "2025-99", "2025-1", "2025-01-15",
+		"enero de 2025", "",
+	}
+	for _, periodo := range casos {
+		_, err := ValidarPeriodo(periodo)
+		if tiene, quiere := PeriodoValido(periodo), err == nil; tiene != quiere {
+			t.Errorf("PeriodoValido(%q) = %v y ValidarPeriodo dice %v",
+				periodo, tiene, quiere)
+		}
+	}
+
+	// La unica diferencia, dicha en voz alta: PeriodoValido no recorta. Quien la
+	// use esperando el mismo trato que [ValidarPeriodo] guardaria los espacios
+	// dentro del periodo.
+	if PeriodoValido(" 2025-01 ") {
+		t.Error("PeriodoValido no puede dar por bueno un periodo con espacios")
+	}
+	if _, err := ValidarPeriodo(" 2025-01 "); err != nil {
+		t.Errorf("ValidarPeriodo si recorta: %v", err)
+	}
+}
+
 func TestCircuitosSonLosDosDelReglamento(t *testing.T) {
 	// El orden importa: es el mismo del CHECK de la columna `bolsas.circuito`,
 	// y el mensaje de error lo cita tal cual.

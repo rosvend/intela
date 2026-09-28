@@ -40,6 +40,13 @@ type Recaudo struct {
 // Devuelve ErrBolsaDuplicada si ya hay una bolsa de ese usuario, periodo y
 // circuito, y ErrUsuarioRecaudoInexistente si cita un pagador que no esta.
 func (r Recaudo) Registrar(ctx context.Context, b BolsaPersistida, actorID string) (BolsaPersistida, error) {
+	// Antes de cualquier escritura: [GestionRecaudo.RegistrarBolsa] asienta
+	// dentro de su propia transaccion, y un actor vacio dejaria ahi un asiento
+	// sin firmar -- la fila es valida para la base y no para el ADR 0006.
+	if err := exigirActor(actorID, fmt.Sprintf("registrar la bolsa %q", strings.TrimSpace(b.ID))); err != nil {
+		return BolsaPersistida{}, err
+	}
+
 	// El id no lo valida el dominio -- al motor de reparto la bolsa le llega
 	// como valor y no necesita saber de que fila salio-, pero sin el no se
 	// puede referenciar desde `procesos` ni desde un asiento de la bitacora.
@@ -100,11 +107,12 @@ func (r Recaudo) Listar(ctx context.Context, periodo string) ([]BolsaPersistida,
 		return bolsas, nil
 	}
 
-	// Valida con el MISMO validador que [recaudo.NuevaBolsa] y no con
-	// `periodoValido` de este paquete, que usa `[0-9]{2}` para el mes: con esa
+	// Valida con el MISMO validador que [recaudo.NuevaBolsa] y no con una copia
+	// del patron en este paquete, que usaba `[0-9]{2}` para el mes: con esa
 	// copia, `?periodo=2025-13` pasaba el filtro y devolvia una lista vacia con
 	// 200, que se lee como "ese mes no tuvo recaudo" en vez de "ese mes no
-	// existe".
+	// existe". Esa copia ya no existe: hoy lo que este paquete comprueba es
+	// `recaudo.PeriodoValido`, la misma regla del constructor.
 	periodo, err := recaudo.ValidarPeriodo(periodo)
 	if err != nil {
 		return nil, err
@@ -133,6 +141,12 @@ func (r Recaudo) PorID(ctx context.Context, id string) (BolsaPersistida, error) 
 // categoria -- que compila, y escribirlo dejaria que el CHECK de la tabla
 // devolviera un 500 generico donde lo que hay es un dato mal formado.
 func (r Recaudo) RegistrarUsuario(ctx context.Context, u recaudo.Usuario, actorID string) (recaudo.Usuario, error) {
+	// Mismo motivo que en Registrar: el alta y su asiento son una transaccion
+	// del adaptador, y esta es la ultima linea donde todavia no se escribio.
+	if err := exigirActor(actorID, fmt.Sprintf("dar de alta el usuario de recaudo %q", u.ID())); err != nil {
+		return recaudo.Usuario{}, err
+	}
+
 	usuario, err := recaudo.NuevoUsuario(u.ID(), u.Datos())
 	if err != nil {
 		return recaudo.Usuario{}, err

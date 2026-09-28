@@ -29,7 +29,9 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -135,15 +137,48 @@ func construir() (http.Handler, error) {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	ordenes := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: registro},
+		Bitacora:    store,
+		Unidad:      store,
+	}
 
-	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
-	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
-	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91). Mismo cableado que cmd/api.
+	catalogo := aplicacion.Catalogo{
+		Obras:         store.CatalogoObras(),
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
+	}
+
+	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
+	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
+	// al contrario que la boveda de la ingesta de abajo.
+	padron := aplicacion.Titulares{Padron: store}
+
+	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
+	// cmd/api: `padron` es el modelo de lectura y un modelo de lectura recorta
+	// -hoy por el tope de pagina, manana por lo que a alguien le parezca que el
+	// padron debe mostrar-, y un guardia que mira lo recortado deja pasar en
+	// silencio lo que no ve. `padron` sigue construido arriba porque lo usa el
+	// handler HTTP de `GET /titulares`.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
@@ -155,11 +190,90 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
-	api := httpapi.Nueva(store, httpapi.Casos{
-		Auth:          autenticacion,
-		Catalogo:      catalogo,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
+	// La deteccion de anomalias de un periodo (#37). Mismo cableado que
+	// cmd/api: los seis puertos los satisface este mismo *Store, que este
+	// binario ya construyo, y ninguno necesita boveda ni sistema de ficheros.
+	//
+	// Va cableado AQUI y no solo en cmd/api porque este es el binario que
+	// atiende el trafico real: `docs/cd.md` pone la API de produccion en esta
+	// Lambda detras de una Function URL, con Amplify reescribiendo `/api/*`
+	// hacia ella. Sin esto, `GET /alertas` responde 503 en el unico sitio
+	// donde hay operadores mirando -- y el tablero de #104 pinta un 503 como
+	// "Sin datos todavia" (`web/src/tablero/ausente.ts`), o sea que el periodo
+	// se leeria LIMPIO con el backend desconectado.
+	anomalias := aplicacion.Anomalias{
+		Entregas:      store,
+		Declaraciones: store,
+		Coautores:     store,
+		Alertas:       store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
+	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
+	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
+	// cablear aqui abajo.
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+		Anomalias:     anomalias,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
+	}
+
+	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
+	//
+	// La boveda (reportes crudos y documentos de afiliacion) es hoy
+	// `objetos.Disco`, y el ADR 0006 le exige inmutabilidad y retencion. El
+	// sistema de ficheros de Lambda es de solo lectura salvo /tmp, y /tmp se
+	// recicla con el contenedor: montar la boveda ahi daria un acuse (o una
+	// solicitud admitida) que certifica una evidencia que desaparece a la
+	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
+	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
+	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
+	api := httpapi.Nueva(httpapi.Casos{
+		Salud:      store,
+		Auth:       autenticacion,
+		Ordenes:    ordenes,
+		Catalogo:   catalogo,
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
+		Padron:         padron,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Resolucion: aplicacion.ResolucionIdentificacion{
+			Repo: store, Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+		},
+		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
+		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

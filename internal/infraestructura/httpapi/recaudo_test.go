@@ -59,7 +59,7 @@ func servidorConRecaudo(t *testing.T, rec Recaudo) http.Handler {
 	auth := &autenticacionFalsa{
 		usuario: aplicacion.Usuario{ID: "usr-conta", Rol: aplicacion.RolContabilidad},
 	}
-	return Nueva(nil, Casos{Auth: auth, Recaudo: rec}, Opciones{}).Router()
+	return Nueva(Casos{Auth: auth, Recaudo: rec}, Opciones{}).Router()
 }
 
 const cuerpoRecaudo = `{
@@ -103,7 +103,7 @@ func TestRecaudoExigeRolQuePuedaTocarDinero(t *testing.T) {
 		{http.MethodGet, "/bolsas/bolsa-1", ""},
 	}
 	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolTitular}}
-	h := Nueva(nil, Casos{Auth: auth, Recaudo: &recaudoFalso{}}, Opciones{}).Router()
+	h := Nueva(Casos{Auth: auth, Recaudo: &recaudoFalso{}}, Opciones{}).Router()
 
 	for _, p := range peticiones {
 		t.Run(p.metodo+" "+p.ruta, func(t *testing.T) {
@@ -119,7 +119,7 @@ func TestDistribucionLeeBolsasPeroNoRegistraRecaudo(t *testing.T) {
 	// `distribucion` necesita la bolsa para correr el reparto, y no es quien
 	// factura. Las dos mitades de la separacion de funciones del RD 13.5.
 	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-dist", Rol: aplicacion.RolDistribucion}}
-	h := Nueva(nil, Casos{Auth: auth, Recaudo: &recaudoFalso{bolsa: bolsaDeEjemplo()}}, Opciones{}).Router()
+	h := Nueva(Casos{Auth: auth, Recaudo: &recaudoFalso{bolsa: bolsaDeEjemplo()}}, Opciones{}).Router()
 
 	if rec := pedir(t, h, http.MethodGet, "/bolsas", "", "tok"); rec.Code != http.StatusOK {
 		t.Fatalf("GET /bolsas = %d, se esperaba 200. Cuerpo: %s", rec.Code, rec.Body)

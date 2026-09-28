@@ -29,11 +29,12 @@ const codigoUnicidad = "23505"
 // No vive dentro de traducirError, y es deliberado: "ya existe una fila igual"
 // no significa lo mismo en todas las tablas. En `reportes` es la deteccion de
 // duplicado por huella, que es una respuesta del negocio; en `obras` es un alta
-// repetida; en otra tabla puede ser un identificador mal generado, que si es un
-// fallo. Traducirlo a un unico centinela desde el traductor general convertiria
-// el ultimo caso en los primeros sin que nadie lo notara. Asi que cada sitio de
-// llamada decide: pregunta por esto ANTES de pasar por traducirError y pone el
-// nombre que la violacion tiene en SU tabla.
+// repetida; en la publicacion ONI es ErrYaPublicado (republicar reescribiria
+// el ancla de R-19); en otra tabla puede ser un identificador mal generado,
+// que si es un fallo. Traducirlo a un unico centinela desde el traductor
+// general convertiria el ultimo caso en los primeros sin que nadie lo notara.
+// Asi que cada sitio de llamada decide: pregunta por esto ANTES de pasar por
+// traducirError y pone el nombre que la violacion tiene en SU tabla.
 //
 // errors.As y no una asercion de tipo: pgx envuelve el *pgconn.PgError cuando
 // el error sale de un lote o de una transaccion.
@@ -44,6 +45,14 @@ func esClaveDuplicada(err error) bool {
 
 // codigoForanea es el SQLSTATE 23503, foreign_key_violation.
 const codigoForanea = "23503"
+
+// codigoBitacoraInmutable es el ERRCODE de bitacora_solo_append (migracion 00020).
+const codigoBitacoraInmutable = "IN006"
+
+func esBitacoraInmutable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == codigoBitacoraInmutable
+}
 
 // esClaveForanea dice si el error es una violacion de FOREIGN KEY.
 //
@@ -97,5 +106,41 @@ func traducirError(err error, formato string, args ...any) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%s: %w", contexto, aplicacion.ErrNoEncontrado)
 	}
+	if esBitacoraInmutable(err) {
+		return fmt.Errorf("%s: %w: %w", contexto, aplicacion.ErrBitacoraInmutable, err)
+	}
+	// Detail/Where de PgError suelen traer la pista que el Message omite: en
+	// un COPY, "COPY usos, line N" vive en Where (o Detail). Sin esto, un
+	// lote de miles de filas falla con "copiar el lote del reporte X" y nadie
+	// sabe cual fila lo rompio.
+	if pista := pistaPgError(err); pista != "" {
+		return fmt.Errorf("%s (%s): %w", contexto, pista, err)
+	}
 	return fmt.Errorf("%s: %w", contexto, err)
+}
+
+// esConflictoUnico reconoce una violacion de UNIQUE (23505). El caso de uso
+// la traduce a ErrConflicto: "ya hay una solicitud con ese correo" no es un
+// 500.
+func esConflictoUnico(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// pistaPgError junta Detail y Where no vacios de un *pgconn.PgError. Vacio si
+// el error no es de Postgres o no trae ninguna de las dos.
+func pistaPgError(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return ""
+	}
+	switch {
+	case pgErr.Detail != "" && pgErr.Where != "":
+		return pgErr.Detail + "; " + pgErr.Where
+	case pgErr.Detail != "":
+		return pgErr.Detail
+	case pgErr.Where != "":
+		return pgErr.Where
+	}
+	return ""
 }

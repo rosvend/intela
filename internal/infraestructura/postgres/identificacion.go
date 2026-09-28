@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 )
@@ -14,7 +16,7 @@ var _ aplicacion.RepositorioIdentificacion = (*Store)(nil)
 // garantiza como mucho una fila.
 func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, error) {
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT obra_id FROM alias_obra WHERE fuente = $1 AND tipo_id = $2 AND valor = $3`,
 		fuente, tipo, valor).Scan(&obraID)
 	if err != nil {
@@ -30,7 +32,7 @@ func (s *Store) Alias(ctx context.Context, fuente, tipo, valor string) (string, 
 //
 // quien vacio entra como NULL: la columna es nullable y "" no es un actor.
 func (s *Store) GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.ejecutorDe(ctx).Exec(ctx,
 		`INSERT INTO alias_obra (fuente, tipo_id, valor, obra_id, quien)
 		 VALUES ($1, $2, $3, $4, NULLIF($5, ''))
 		 ON CONFLICT (fuente, tipo_id, valor) DO NOTHING`,
@@ -53,7 +55,7 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 		return "", fmt.Errorf("obra por id global sin ningun identificador poblado: %w", aplicacion.ErrNoEncontrado)
 	}
 	var obraID string
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id FROM obras
 		  WHERE ($1 <> '' AND ida = $1) OR ($2 <> '' AND eidr = $2) OR ($3 <> '' AND imdb = $3)
 		  ORDER BY id LIMIT 1`,
@@ -77,17 +79,48 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // guarda un match con obra; se corrige aqui y se anota en la PR.
 //
 // resuelto_por y resuelto_en no se tocan: el CHECK manual_tiene_autor los
-// reserva a escalon='manual', que este puerto no escribe en este issue.
+// reserva a escalon='manual' y a 'descartado' (00022), que este puerto no
+// escribe.
 //
 // AND escalon = escalonPrevio: la escritura es condicional al estado que el
 // caso de uso leyo. Una fila que otro proceso cambio entre la lectura y este
 // UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
 // ErrNoEncontrado y la salta.
+//
+// # tipo_obra: se rellena desde el catalogo, no desde la fuente
+//
+// El UPDATE copia `obras.tipo` cuando la fila se resuelve con obra y
+// `usos.tipo_obra` venia vacio. Es lo que entro con #165/#169 y lo que hace que
+// la parrilla de Caracol -- cuyo mapa no trae la columna (P-05) -- no llegue al
+// motor con el tipo en blanco. Un tipo que la fuente SI trajo no se pisa.
+//
+// # Lo que este comentario decia antes, y por que estaba mal
+//
+// Afirmaba que `tipo_obra` "NO se rellena aqui, y es una decision medida", con
+// el argumento de que el backfill convertia un fallo RUIDOSO
+// -ErrRepartoInvalido, que para la corrida y se ve- en uno SILENCIOSO -cero
+// puntos, cero pagos, sin una sola senal-. Ese razonamiento era correcto
+// MIENTRAS el backfill fuera lo unico que se cerraba: quedaban abiertos
+// `canal_id` (que `MapaCaracol` tampoco mapea) y `rating`, y cerrar uno solo
+// empeoraba el conjunto.
+//
+// Ya no describe lo que hace el SQL: #169 cerro los tres, y con los tres
+// cerrados el silencio que describia no ocurre. El texto sobrevivio al squash
+// de #171, que reintrodujo la version vieja del bloque. Se corrige aqui en vez
+// de dejarlo: un comentario que miente sobre el codigo que tiene debajo es peor
+// que no tenerlo.
 func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos
 		    SET obra_id = NULLIF($2, ''), escalon = $3, evidencia = $4, puntaje = $5,
-		        oni = ($2 = '' AND $3 <> 'excluido')
+		        oni = ($2 = '' AND $3 <> 'excluido'),
+		        -- La parrilla no trae tipo_obra (P-05). Con obra y el campo vacio,
+		        -- el tipo sale del catalogo. Un tipo que si trajo la fuente no se pisa.
+		        -- El mismo CASE esta en semilla.identificar (#165).
+		        tipo_obra = CASE
+		          WHEN $2 = '' OR tipo_obra <> '' THEN tipo_obra
+		          ELSE COALESCE((SELECT tipo FROM obras WHERE id = $2), tipo_obra)
+		        END
 		  WHERE id = $1 AND escalon = $6`,
 		usoID, r.ObraID, r.Escalon, r.Evidencia, r.Puntaje, escalonPrevio)
 	if err != nil {
@@ -98,4 +131,53 @@ func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r
 			usoID, escalonPrevio, aplicacion.ErrNoEncontrado)
 	}
 	return nil
+}
+
+// GuardarCandidatos reemplaza la bandeja de revision de un uso (D9).
+//
+// En transaccion porque borrar y escribir son la misma operacion. Dentro de una
+// unidad de trabajo ([Store.EnUnidad]) participa en ella y no confirma por su
+// cuenta: asi el caso de uso puede atar la bandeja al match de la misma fila.
+// `orden` va explicito y no se deduce del puntaje: el desempate es regla del
+// dominio.
+func (s *Store) GuardarCandidatos(ctx context.Context, usoID string, cs []identificacion.Candidato) error {
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM candidatos_match WHERE uso_id = $1`, usoID); err != nil {
+			return traducirError(err, "limpiar candidatos del uso %q", usoID)
+		}
+		for i, c := range cs {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO candidatos_match (uso_id, obra_id, puntaje, orden, titulo_consultado)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				usoID, c.ObraID, c.Puntaje, i, c.TituloConsultado)
+			if err != nil {
+				return traducirError(err, "guardar candidato %q del uso %q", c.ObraID, usoID)
+			}
+		}
+		return nil
+	})
+}
+
+// CandidatosDeUso lee la bandeja de un uso, en su orden. La consume #39.
+func (s *Store) CandidatosDeUso(ctx context.Context, usoID string) ([]identificacion.Candidato, error) {
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
+		`SELECT obra_id, puntaje, titulo_consultado FROM candidatos_match WHERE uso_id = $1 ORDER BY orden`, usoID)
+	if err != nil {
+		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+	}
+	defer filas.Close()
+
+	var cs []identificacion.Candidato
+	for filas.Next() {
+		var c identificacion.Candidato
+		if err := filas.Scan(&c.ObraID, &c.Puntaje, &c.TituloConsultado); err != nil {
+			return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+		}
+		cs = append(cs, c)
+	}
+	// No es opcional: sin esto una lista truncada pasa por completa.
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "leer candidatos del uso %q", usoID)
+	}
+	return cs, nil
 }

@@ -5,6 +5,9 @@ fuentes: Reglamento de Distribucion IX, Reglamento de Tarifas VI, Reglamento de 
 
 # Registro de reglas de negocio
 
+La matriz regla ↔ artículo ↔ implementación ↔ prueba (Objetivo 12) vive en
+[`matriz-reglas.md`](matriz-reglas.md).
+
 Cada regla es operativa: se puede implementar y se puede verificar. La columna de fuente
 apunta a la seccion exacta del reglamento, en `docs/reglamentos/`, para que cualquier cifra
 del sistema sea explicable.
@@ -126,6 +129,14 @@ Se publica en la web de REDES SGC con titulos e informacion identificatoria, **s
 los montos**. La informacion economica se mantiene en reserva. Debe indicarse fecha del
 proceso, periodo, y direccion fisica y electronica para allegar documentacion.
 Estado: Firme. Fuente: `RD 13.8.1` a `RD 13.8.4`
+Implementacion: **pendiente**, dueno #33/#34. `internal/aplicacion.Reparto.UsosDeCanal`
+(#119) cuenta las filas sin obra identificada en `ResumenUsosDeCanal`, pero no reserva su
+importe: hoy quien pasa su resultado directo a `reparto.Reparto` reparte el 100% de la bolsa
+entre las obras identificadas, y la parte ONI desaparece dentro de ellas en vez de quedar en
+reserva. `internal/dominio/reparto` (#33) no tiene todavia una linea de resultado para esto, y
+`ProcesoDeReparto` (#34) es quien tendria que orquestarla. `TestElResumenNoReservaLaParteONIDocumentaElHueco`
+en `internal/infraestructura/postgres/reparto_test.go` fija el hueco y esta escrito para
+fallar el dia que se cierre.
 
 ### R-19 Prescripcion ONI: 3 anos
 Contados desde la publicacion del listado. Prescribe a favor de REDES SGC.
@@ -174,6 +185,8 @@ Para television por suscripcion, se excluyen del reparto los canales que no tran
 contenido del catalogo de REDES SGC.
 Estado: Firme. Fuente: `RD 9.5`
 Implementacion: hace falta un filtro de repertorio a nivel de canal **y** a nivel de programa.
+Hoy conviven tres granularidades sin reconciliar del todo: `Uso.FueraDeRepertorio` (por uso,
+comentario "canal"), `identificacion.FuentesExcluidas` (por fuente) y el texto de esta regla.
 Los noticieros y magazines de la parrilla de muestra probablemente no son repertorio. Ver
 `docs/dominio/fuentes-datos.md`.
 
@@ -223,6 +236,53 @@ Estado: Firme. Fuente: `RD 10.1`, `RD 10.2.1`
 ### R-35 Inversiones nacional e internacional separadas
 Para poder identificar a que tipo de reparto corresponden los rendimientos.
 Estado: Firme. Fuente: `RD 10.3`
+
+### R-36 Resolucion manual de un caso ONI
+Una persona con rol `administrador` cierra a mano un uso que la cascada dejo en ONI
+(`RD 13.8`), de dos formas:
+
+- **Asignar**: le da una obra del catalogo. El uso queda en el escalon `manual`, con
+  `oni = false`, y pondera como cualquier otro. Puede ser una de las obras que el motor
+  propuso (banda ambigua) o cualquiera del catalogo, buscada a mano. Ademas se **aprende el
+  alias** del par canonico (fuente, tipo, valor) del uso, con `quien` = el usuario que
+  decidio, para que el reporte siguiente de la misma fuente resuelva solo en el escalon 1
+  (ADR 0007: resolver una vez, reutilizar siempre).
+- **Descartar**: dice que el uso **no es del repertorio de REDES SGC**. El uso queda en el
+  escalon `descartado`: sin obra, `oni = false` y **sin ponderar**. Su parte no existe y la
+  bolsa se reparte entre las obras que si ponderan, el mismo efecto monetario que una
+  exclusion R-27.
+
+En las dos hace falta **nota** (hasta 300 caracteres, tras recortar espacios) y queda
+**firmado** con el usuario de la sesion y el instante del reloj del nucleo (ADR 0006). La
+resolucion se puede hacer aunque el periodo este en reparto o ya distribuido: se serializa
+con el cerrojo de periodo de #171. Corregir una decision anterior -reasignar o deshacer un
+descarte- queda fuera de alcance hoy.
+
+`descartado` **no es** `excluido`: la exclusion es configuracion (R-27,
+`FuentesExcluidas`), y la cascada la vuelve a evaluar en cada corrida; una decision humana no
+se pisa, asi que `descartado` y `manual` quedan fuera de `ResolverUsos`. Y **no es ONI**: una
+obra sin identificar sigue publicandose en el listado de `RD 13.8`, y un descartado no, porque
+no es del repertorio (`RD 7.1`: REDES SGC solo representa autores de guion o libreto;
+`RD 9.5`).
+
+Matiz: hoy el motor **todavia no reserva la parte ONI** (R-18 pendiente, dueno #33/#34), asi
+que ONI y descartado pesan lo mismo, cero. La diferencia se vuelve real cuando llegue la
+reserva ONI.
+
+Estado: **Decidido por el equipo** (sanmemu09, 2026-09-27); confirmar con el PO
+(P-22). Fuente: `RD 7.1`, `RD 9.5` (R-27), `RD 13.8`, ADR 0006, ADR 0007.
+Implementacion: `internal/dominio/identificacion/resolucion.go`;
+`internal/aplicacion/resolucion_identificacion.go`;
+`internal/infraestructura/postgres/resolucion_identificacion.go`;
+`POST /identificacion/casos/{id}/resolucion`. Asientos `identificacion.asignada` (referencia
+la obra) e `identificacion.descartada` (referencia el uso). Migracion
+`00022_resolucion_manual_identificacion.sql`. Pruebas: `TestResolverCaso` y
+`TestNormalizarNota` (dominio); `TestResolverAsignaAUnaCandidata`,
+`TestResolverDescarta`, `TestResolverSiElAsientoFallaNoQuedaNadaHecho` (aplicacion);
+`TestResolverIntegracionAsignaAUnaCandidata`,
+`TestResolverIntegracionDosResolucionesConcurrentesSoloUnaGana`,
+`TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte` (postgres);
+`TestElCheckDeUsosSostieneLaResolucionManual` (esquema).
 
 ## Tarifas
 

@@ -12,6 +12,7 @@ la sociedad de gestion colectiva de los escritores audiovisuales de Colombia.
 </h3>
 
 <p align="center">
+  <a href="./docs/QUICKSTART.md"><b>Quickstart</b></a> ·
   <a href="./docs/ARRANQUE.md"><b>Arranque</b></a> ·
   <a href="./docs/architecture/"><b>Arquitectura</b></a> ·
   <a href="./docs/dominio/"><b>Dominio</b></a> ·
@@ -58,10 +59,15 @@ completo de tres paginas.
 ### La aplicacion
 
 ```bash
-docker compose up --build   # API, worker, scheduler, Postgres y el tablero
-make verificar              # tidy, build, vet, gofmt y test — lo mismo que corre CI
+docker compose --profile demo up --build   # todo lo anterior, ya migrado y sembrado
+deploy/smoke.sh                            # comprueba que sirve — lo mismo que corre CI
+make verificar                             # tidy, build, vet, gofmt y test — tambien lo de CI
 ```
 
+El perfil `demo` es lo que anade la siembra: sin el, la base queda migrada y vacia
+y el tablero pinta cero obras. Entrar con `admin@redes.co` / `admin-local`.
+
+→ [`docs/QUICKSTART.md`](docs/QUICKSTART.md) para prerequisitos, URLs y como parar y limpiar.
 → [`docs/ARRANQUE.md`](docs/ARRANQUE.md) para variables de entorno y datos de prueba.
 
 Los hooks locales viven en [`lefthook.yml`](lefthook.yml) y corren un subconjunto de lo mismo antes

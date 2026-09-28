@@ -112,6 +112,11 @@ func TestClaveTrabajoValida(t *testing.T) {
 		{"periodo vacio", ClaveTrabajo{TrabajoEjecutarReparto, "", 1}, false},
 		{"periodo con mes de tres cifras", ClaveTrabajo{TrabajoEjecutarReparto, "2026-123", 1}, false},
 		{"periodo en otro formato", ClaveTrabajo{TrabajoEjecutarReparto, "dic-2026", 1}, false},
+		// El mes tiene que existir: la regla es la del dominio
+		// (`recaudo.PeriodoValido`), no una copia de este paquete. Con la copia
+		// floja que habia aqui, `2026-13` se encolaba.
+		{"periodo con mes trece", ClaveTrabajo{TrabajoEjecutarReparto, "2026-13", 1}, false},
+		{"periodo con mes cero", ClaveTrabajo{TrabajoResolverUsos, "2026-00", 1}, false},
 		{"corrida cero", ClaveTrabajo{TrabajoEjecutarReparto, "2026", 0}, false},
 		{"corrida negativa", ClaveTrabajo{TrabajoEjecutarReparto, "2026", -1}, false},
 	}

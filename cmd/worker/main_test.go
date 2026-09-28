@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,59 @@ func TestMain(m *testing.M) {
 }
 
 func mudo() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// TestManejadoresEjecutarRepartoYaNoEsElStub prueba el cableado real de
+// manejadores(), no un doble: que TrabajoEjecutarReparto llegue de verdad
+// hasta aplicacion.Procesos.AbrirCorridaDelPeriodo contra Postgres, con los
+// seis puertos que necesita -Repo, Parametros, Bolsas, Declaraciones, Usos,
+// Resultados, Unidad- resueltos por *postgres.Store sin ningun nil de por
+// medio.
+//
+// No siembra `parametros`: eso ya lo prueba a fondo
+// postgres/parametros_test.go, y repetirlo aqui solo duplicaria seed. Lo que
+// SI prueba este archivo es que el manejador YA NO es pendiente(): el error
+// que vuelve tiene que nombrar la clausula normativa que falta (ADR 0004),
+// no "#33 y #34" -eso es lo que distingue "el cableado esta mal" de "faltan
+// datos normativos en este entorno de prueba", y solo lo segundo es
+// aceptable aqui.
+func TestManejadoresEjecutarRepartoYaNoEsElStub(t *testing.T) {
+	ctx := t.Context()
+	cadena := testhelp.DSN(t)
+
+	store, err := postgres.Abrir(ctx, cadena)
+	if err != nil {
+		t.Fatalf("abrir el store: %v", err)
+	}
+	t.Cleanup(store.CerrarPool)
+
+	if _, err := store.Pool().Exec(ctx,
+		`INSERT INTO usuarios_recaudo (id, nombre, categoria) VALUES ('usuario-1', 'Usuario 1', 'tv_abierta')`); err != nil {
+		t.Fatalf("sembrar usuario_recaudo: %v", err)
+	}
+	if _, err := store.Pool().Exec(ctx,
+		`INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
+		 VALUES ('bolsa-1', 'usuario-1', '2026-01', 'nacional', 1000.00)`); err != nil {
+		t.Fatalf("sembrar bolsa: %v", err)
+	}
+
+	manejador, ok := manejadores(store, mudo())[aplicacion.TrabajoEjecutarReparto]
+	if !ok {
+		t.Fatal("TrabajoEjecutarReparto no tiene manejador registrado")
+	}
+
+	err = manejador.Manejar(ctx, aplicacion.Trabajo{
+		Clave: aplicacion.ClaveTrabajo{Tipo: aplicacion.TrabajoEjecutarReparto, Periodo: "2026-01", Corrida: 1},
+	})
+	if err == nil {
+		t.Fatal("se esperaba error: no hay parametros normativos sembrados en este entorno")
+	}
+	if strings.Contains(err.Error(), "#33") || strings.Contains(err.Error(), "#34") {
+		t.Fatalf("el manejador todavia es el stub pendiente(): %v", err)
+	}
+	if !errors.Is(err, aplicacion.ErrParametroAusente) {
+		t.Fatalf("error = %v, se esperaba ErrParametroAusente (llego hasta SnapshotEnFecha de verdad)", err)
+	}
+}
 
 // relojDetenido es un reloj que solo avanza cuando alguien lo mueve.
 //

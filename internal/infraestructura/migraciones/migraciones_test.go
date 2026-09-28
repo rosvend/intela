@@ -17,6 +17,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/rosvend/intela/internal/infraestructura/migraciones"
+	"github.com/rosvend/intela/internal/infraestructura/migraciones/numeracion"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 	"github.com/rosvend/intela/migrations"
 )
@@ -85,24 +86,6 @@ func TestAplicarDSNInvalido(t *testing.T) {
 // La numeracion de las migraciones
 // ---------------------------------------------------------------------------
 
-// desplegadas son los ficheros de migracion que `main` ya tiene APLICADOS en
-// la base de produccion.
-//
-// Se enumeran a mano, y eso es lo que hace util la prueba de abajo: son un
-// hecho sobre el DESPLIEGUE, no sobre este arbol de trabajo. Derivarlas de
-// migrations.FS -"las que no anade esta rama"- haria que la prueba pasara
-// siempre, porque compararia el arbol consigo mismo.
-//
-// Hoy la lista es 1, 2 y 5: el PR #85 renumero su migracion a 00005 y su
-// despliegue corrio `goose up` de verdad, asi que produccion esta en la
-// version 5 con el hueco 3-4 libre PARA SIEMPRE. Cuando main avance, esta
-// lista avanza con ella.
-var desplegadas = []string{
-	"00001_init.sql",
-	"00002_catalogo_obras.sql",
-	"00005_cola_clave_natural.sql",
-}
-
 // TestAplicarSobreLaVersionDesplegada es la regresion de la numeracion.
 //
 // `Aplicar` llama a goose.RunContext SIN opciones, asi que corre con
@@ -110,7 +93,7 @@ var desplegadas = []string{
 // version que la base ya tiene aplicada no es una migracion que llegue tarde:
 // es un error que para a goose en seco antes de aplicar NADA.
 //
-//	found N missing migrations before current version 5
+//	found N missing migrations before current version X
 //
 // Y no para solo el esquema. El despliegue corre las migraciones ANTES de sacar
 // la API y condiciona el rollout a que terminen bien, asi que una version libre
@@ -121,9 +104,17 @@ var desplegadas = []string{
 // hace falta escribirlo: contra una base recien creada -la que da testhelp- las
 // migraciones se aplican de la 1 a la ultima en orden, no falta ninguna, y todo
 // pasa. El hueco solo existe contra una base que YA vivio el despliegue de main.
+//
+// Las desplegadas se derivan de MIGRACIONES_BASE_REF (main), no de una lista a
+// mano: esa lista se quedo en 1/2/5 mientras produccion avanzaba (#110).
 func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	ctx := t.Context()
 	dsn := testhelp.DSN(t)
+
+	desplegadas, err := numeracion.DesplegadasEn(numeracion.BaseRef())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	// testhelp entrega la base con TODAS las migraciones de esta rama
 	// aplicadas, que es justo el estado en el que el hueco no se nota. Volver a
@@ -131,7 +122,7 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	if err := migraciones.Aplicar(ctx, dsn, "reset", mudo()); err != nil {
 		t.Fatalf("volver la base a cero: %v", err)
 	}
-	ponerEnLaVersionDesplegada(ctx, t, dsn)
+	ponerEnLaVersionDesplegada(ctx, t, dsn, desplegadas)
 
 	if err := migraciones.Aplicar(ctx, dsn, "up", mudo()); err != nil {
 		t.Fatalf("una base en la version ya desplegada tiene que poder migrar, "+
@@ -139,25 +130,44 @@ func TestAplicarSobreLaVersionDesplegada(t *testing.T) {
 	}
 }
 
-// ponerEnLaVersionDesplegada aplica SOLO las migraciones de [desplegadas].
+// ponerEnLaVersionDesplegada aplica SOLO las migraciones de desplegadas que
+// esta rama ya tiene embebidas.
 //
-// Con un FS recortado y no con `up-to`: `up-to 5` aplicaria tambien cualquier
+// MIGRACIONES_BASE_REF es la punta de main al disparar el evento, no el
+// merge-base. Una rama que no ha rebasado no tiene los .sql que main gano
+// mientras tanto: leerlos del FS embebido fallaria por un motivo que no es
+// la numeracion de esta PR. La interseccion ignora esos nombres -son justo
+// las migraciones sobre las que aun no se ha rebasado- y la pregunta de la
+// prueba (¿una nueva por debajo rompe el up?) no las necesita.
+//
+// Con un FS recortado y no con `up-to`: `up-to N` aplicaria tambien cualquier
 // version intermedia que anada esta rama, que es exactamente el hueco que hay
 // que dejar sin tapar para que la prueba signifique algo.
 //
 // Con Provider y no con las funciones globales de goose porque [migraciones.Aplicar]
 // usa esas globales: pisarlas aqui dejaria la prueba siguiente montada sobre el
 // FS recortado.
-func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string) {
+func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string, desplegadas []string) {
 	t.Helper()
 
 	soloMain := fstest.MapFS{}
+	var omitidas []string
 	for _, nombre := range desplegadas {
 		sql, err := migrations.FS.ReadFile(nombre)
 		if err != nil {
-			t.Fatalf("leer %s de las migraciones embebidas: %v", nombre, err)
+			omitidas = append(omitidas, nombre)
+			continue
 		}
 		soloMain[nombre] = &fstest.MapFile{Data: sql}
+	}
+	if len(soloMain) == 0 {
+		t.Skipf("la rama va por detras de main: ninguna de las %d migraciones "+
+			"desplegadas esta embebida; rebasa antes de confiar en esta prueba",
+			len(desplegadas))
+	}
+	if len(omitidas) > 0 {
+		t.Logf("rama por detras de main: se omiten %d migraciones aun no rebaseadas (%s)",
+			len(omitidas), strings.Join(omitidas, ", "))
 	}
 
 	db, err := sql.Open("pgx", dsn)
@@ -174,5 +184,119 @@ func ponerEnLaVersionDesplegada(ctx context.Context, t *testing.T, dsn string) {
 	}
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("dejar la base en la version desplegada: %v", err)
+	}
+}
+
+// TestUpYDownRecorrenTodasLasMigraciones baja y vuelve a subir el esquema
+// entero, que hasta ahora no lo hacia nadie: CI solo prueba el `up`, y un
+// bloque `-- +goose Down` roto no se descubriria hasta necesitarlo, que es el
+// peor momento posible.
+//
+// Con Provider y no con las globales de [migraciones.Aplicar]: esas son estado
+// del proceso y esto corre dentro de un binario de pruebas con -race.
+//
+// # No empieza en cero
+//
+// testhelp.DSN entrega una base ya migrada a la version mas alta (es su
+// plantilla, para que las pruebas de este paquete no repitan el costo de
+// migrar). El primer Up de aqui abajo es por tanto un no-op de verificacion,
+// no el ejercicio real. Lo que de verdad prueba esta funcion es el ciclo
+// DownTo(0) -> Up: si algun bloque Down deja algo a medio revertir -- una
+// tabla, un indice, un CHECK -- el Up que le sigue choca contra lo que quedo,
+// y sin datos de por medio ese choque solo puede venir de un Down mal escrito.
+func TestUpYDownRecorrenTodasLasMigraciones(t *testing.T) {
+	ctx := t.Context()
+
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir el esquema: %v", err)
+	}
+	version, err := p.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("leer la version: %v", err)
+	}
+	if version == 0 {
+		t.Fatal("el esquema quedo en la version 0 despues de un up")
+	}
+
+	if _, err := p.DownTo(ctx, 0); err != nil {
+		t.Fatalf("bajar el esquema entero: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != 0 {
+		t.Fatalf("version tras el down = %d (err %v), se esperaba 0", v, err)
+	}
+
+	// Volver a subir sobre lo que dejo el down: si un Down olvida soltar algo,
+	// el Up siguiente choca contra el resto.
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir despues de un down limpio: %v", err)
+	}
+	if v, err := p.GetDBVersion(ctx); err != nil || v != version {
+		t.Fatalf("version tras el segundo up = %d (err %v), se esperaba %d", v, err, version)
+	}
+}
+
+// El Down de refiere_a restaura el cuerpo anterior de bitacora_solo_append y suelta la columna; el Up los repone.
+func TestDownDeRefiereARestauraLaFuncionAnterior(t *testing.T) {
+	ctx := t.Context()
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	var version int64
+	for _, s := range p.ListSources() {
+		if strings.HasSuffix(s.Path, "_bitacora_refiere_a.sql") {
+			version = s.Version
+		}
+	}
+	if version == 0 {
+		t.Fatal("no se encontro la migracion *_bitacora_refiere_a.sql")
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+
+	estado := func() (codigo, columna bool) {
+		var def string
+		if err := db.QueryRowContext(ctx, `SELECT pg_get_functiondef('bitacora_solo_append'::regproc)`).Scan(&def); err != nil {
+			t.Fatalf("leer la funcion: %v", err)
+		}
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'asientos' AND column_name = 'refiere_a')`).Scan(&columna); err != nil {
+			t.Fatalf("leer la columna: %v", err)
+		}
+		return strings.Contains(def, "IN006"), columna
+	}
+
+	if codigo, columna := estado(); !codigo || !columna {
+		t.Fatalf("tras el up: IN006=%v refiere_a=%v, se esperaban los dos", codigo, columna)
+	}
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar a %d: %v", version-1, err)
+	}
+	if codigo, columna := estado(); codigo || columna {
+		t.Fatalf("tras el down: IN006=%v refiere_a=%v, se esperaba el cuerpo anterior sin columna", codigo, columna)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+	if codigo, columna := estado(); !codigo || !columna {
+		t.Fatalf("tras el segundo up: IN006=%v refiere_a=%v", codigo, columna)
 	}
 }

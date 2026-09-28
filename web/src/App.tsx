@@ -1,12 +1,82 @@
+import type { ReactElement } from "react";
 import { Route, Routes } from "react-router-dom";
+import WizardAfiliacion from "./afiliacion/Wizard";
 import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
 import Inicio from "./Inicio";
 import Layout from "./Layout";
 import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
+import ListadoONI from "./pages/ListadoONI";
 import RutaProtegida from "./RutaProtegida";
+import Auditoria from "./auditoria/Auditoria";
+import HistoriaObra from "./auditoria/HistoriaObra";
+import Catalogo from "./catalogo/Catalogo";
+import DetalleObra from "./catalogo/DetalleObra";
+import EditorReparto from "./catalogo/EditorReparto";
+import HistorialVersiones from "./catalogo/HistorialVersiones";
+import BandejaIdentificacion from "./identificacion/BandejaIdentificacion";
+import ListaOni from "./identificacion/ListaOni";
+import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
+import PanelCorridas from "./reparto/PanelCorridas";
+import TableroAnomalias from "./reparto/TableroAnomalias";
+
+/**
+ * Las pantallas reales de los modulos de `RUTAS`, por ruta. Un modulo que no
+ * esta aqui monta <EnConstruccion>. Esta tabla es lo unico que toca el PR de
+ * cada pantalla para pasar del placeholder al componente de verdad (issue
+ * #19: "so the feature screens are pure additions").
+ */
+const PANTALLAS: Partial<Record<string, ReactElement>> = {
+  "/ingesta": <Ingesta />,
+  "/catalogo": <Catalogo />,
+  "/identificacion": <BandejaIdentificacion />,
+  "/lista-oni": <ListaOni />,
+  "/distribucion": <PanelCorridas />,
+  "/anomalias": <TableroAnomalias />,
+  "/auditoria": <Auditoria />,
+};
+
+/**
+ * Las sub-rutas del detalle de obra, anidadas a mano y NO como entradas de
+ * `RUTAS` (D-007).
+ *
+ * `/catalogo/:id` no es un modulo del mockup: es una vista de detalle. Meterla
+ * en `RUTAS` la pondria en la barra lateral y obligaria a decidir su
+ * visibilidad por rol en cada entrada; como ruta hija, el detalle conserva el
+ * item de nav activo y hereda el guard de rol sin tocar el shell, porque
+ * `Layout.tsx` resuelve el modulo por PREFIJO. El precio, aceptado: `App.tsx`
+ * deja de ser un mapeo plano de `RUTAS`.
+ *
+ * Las tres vistas son de #30 y las tres tienen ya pantalla: el detalle (paso 6),
+ * el historial (paso 7) y el editor de reparto (paso 8). Se declaran todas aqui
+ * para que su direccion sea la que D-007 fijo, y cada paso solo cambio el
+ * elemento -el ultimo, el editor, dejo de montar <EnConstruccion> cuando su
+ * pantalla existio: un placeholder sobre una ruta que ya funciona dice lo
+ * contrario de lo que pasa-.
+ *
+ * Quien enlaza a cada una: el detalle se abre desde la fila de su obra en el
+ * catalogo, el historial desde el detalle -al final de su declaracion vigente-,
+ * y el editor desde el detalle tambien, en el bloque de la declaracion. Ninguna
+ * de las tres es alcanzable solo escribiendo su URL.
+ */
+const SUBRUTAS_DEL_DETALLE: readonly { path: string; element: ReactElement }[] =
+  [
+    { path: "/catalogo/:id", element: <DetalleObra /> },
+    { path: "/catalogo/:id/historial", element: <HistorialVersiones /> },
+    { path: "/catalogo/:id/declaracion", element: <EditorReparto /> },
+  ];
+
+/**
+ * La historia de una obra, anidada a mano y NO como entrada de `RUTAS`
+ * (D-007, igual que el detalle del catalogo): no es un modulo del mockup,
+ * es la vista de detalle de la auditoria. Se abre desde la linea de tiempo
+ * o desde el buscador de la pantalla.
+ */
+const SUBRUTAS_AUDITORIA: readonly { path: string; element: ReactElement }[] = [
+  { path: "/auditoria/obra/:id", element: <HistoriaObra /> },
+];
 
 /**
  * Shell del tablero.
@@ -15,15 +85,23 @@ import { RUTAS } from "./navegacion";
  * recarga la pagina entera y pierde el estado; y sin `try_files` en nginx
  * -que hasta ahora tampoco estaba- devuelve 404 directamente.
  *
- * Las rutas de `RUTAS` (Sprint 3-5) entran aqui como placeholder: la pantalla
- * real llega con su propio PR, y esta tabla es lo unico que ese PR toca para
- * pasar de <EnConstruccion> al componente de verdad (issue #19: "so the
- * feature screens are pure additions").
+ * /afiliacion va FUERA de RutaProtegida: el alta la rellena quien todavia no
+ * es afiliado, igual que el POST /afiliaciones del backend va sin sesion.
+ * Las rutas de `RUTAS` (Sprint 3-5) salen de `PANTALLAS`, o de
+ * <EnConstruccion> mientras su pantalla no exista. Las tres sub-rutas del
+ * detalle van aparte, en `SUBRUTAS_DEL_DETALLE`, y la historia de una obra
+ * en `SUBRUTAS_AUDITORIA`.
+ *
+ * `/publico/oni` queda FUERA de `RutaProtegida`: R-18 es publicacion en la
+ * web, no un informe interno. Montarla detras del login convertiria la
+ * obligacion legal en una pagina de la intranet.
  */
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/publico/oni" element={<ListadoONI />} />
+      <Route path="/afiliacion" element={<WizardAfiliacion />} />
       <Route element={<RutaProtegida />}>
         <Route element={<Layout />}>
           <Route index element={<Inicio />} />
@@ -32,7 +110,24 @@ export default function App() {
             <Route
               key={ruta.to}
               path={ruta.to}
-              element={<EnConstruccion titulo={ruta.label} />}
+              element={
+                PANTALLAS[ruta.to] ?? <EnConstruccion titulo={ruta.label} />
+              }
+            />
+          ))}
+          <Route path="/distribucion/:id" element={<PanelCorridas />} />
+          {SUBRUTAS_DEL_DETALLE.map((subruta) => (
+            <Route
+              key={subruta.path}
+              path={subruta.path}
+              element={subruta.element}
+            />
+          ))}
+          {SUBRUTAS_AUDITORIA.map((subruta) => (
+            <Route
+              key={subruta.path}
+              path={subruta.path}
+              element={subruta.element}
             />
           ))}
         </Route>

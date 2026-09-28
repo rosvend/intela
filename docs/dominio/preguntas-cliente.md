@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-13
+actualizado: 2026-09-26
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -49,6 +49,13 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-13 | Campos de episodio en la parrilla de Caracol | @rosvend | **Abierta** |
 | P-14 | Extractos del mismo periodo y de mayor volumen | @rosvend | **Abierta** |
 | P-15 | Padron de titulares con IPI poblado y al dia | @rosvend | **Abierta** |
+| P-16 | Alcance del 80% artistico de `RD 9.1.1` | @rosvend | **Abierta** |
+| P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
+| P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
+| P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
+| P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
+| P-21 | Clave de registro por fuente para el detector de duplicados (#37): `cine`, `rcn`, `expreso-bolivariano` | @rosvend | Provisional (`cine`) / **Abierta** (`rcn`, transporte) |
+| P-22 | Que significa descartar un caso ONI y quien puede hacerlo | @rosvend, @sanmemu09 | Respondida provisionalmente |
 
 ## Respuestas
 
@@ -101,6 +108,10 @@ Drama son `serie`; Magazine, Noticiero, Agro, Entretenimientos y Religioso **no 
 la columna `TIPO` da `cinematografica`, `unitario` y `sketches`.
 El mas dudoso es **Entretenimientos**: si son shows con libretista de planta, si son repertorio y
 hay que asignarles ponderacion. Preguntarlo explicitamente.
+Consecuencia (#165): mientras P-05 no este confirmada, el mapa de Caracol **no**
+escribe `tipo_obra`. Una fila ya identificada toma el tipo de `obras.tipo`. Una
+fila sin obra y sin tipo sigue vacia, y el detector `tipo_obra_sin_mapear` (#37)
+solo mira las identificadas.
 
 ### P-06 Proveedor y formato del rating por franja
 Estado: **Parcial**. El formato quedo definido; el proveedor no.
@@ -109,6 +120,9 @@ Respuesta: el dato se indexa por **(canal, franja horaria, ano)**. Es lo que enc
 canales haria ponderar igual a dos canales con audiencias muy distintas.
 Sigue abierto: **quien es el proveedor**, en que formato entrega y con que periodicidad real
 -el glosario dice anual-.
+Consecuencia (#165): la parrilla no es ese feed. Una fila de TV, hotel o
+suscripcion con `rating` 0 se rechaza en la ingesta. Si se guardara, `RD 9.1.1`
+la ponderaria como audiencia cero y el neto iria a `NoDistribuido` sin error.
 
 ### P-07 Export de Declaraciones de Obra desde REDES-SYS
 Estado: **Provisional**.
@@ -154,8 +168,8 @@ Consecuencia: **afecta a la PR #106.** Exigir IPI en la entrada es incorrecto: e
 fuente no lo tiene. Si conviene conservar una instantanea del IPI para reproducibilidad
 (ADR 0005) es una decision aparte.
 
-### P-12 a P-15
-Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`:
+### P-12 a P-19
+Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado de #26 y del alcance de #120:
 - **P-12** `eidr` poblado por Netflix, o acceso a IDA. Sin uno de los dos, el escalon 2 de la
   cascada (#28) solo funciona sobre lo que ya tenga el catalogo.
 - **P-13** Campos de episodio en la parrilla de Caracol, para identificar capitulos de series.
@@ -163,9 +177,68 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`:
   cruzar de verdad: cero coincidencias de titulo entre las dos muestras.
 - **P-15** Padron de titulares con IPI poblado y al dia. `data/IPI - form to report members to
   IPI 01-03-24.xls` ya esta en el repo pero **no esta perfilado**.
+- **P-16** Alcance del 80% artistico de `RD 9.1.1`: ¿aplica a los minutos de la parrilla del
+  canal o solo a la cifra del proveedor especializado de audiencia? El codigo hoy asume lo
+  primero para toda fila de TV/hotel sin `unidad_duracion`. Si es lo segundo, hay que dejar de
+  transformar la parrilla y esperar el feed de audiencia.
+- **P-17** Proveedor especializado, formato y periodicidad del **feed de quintil de audiencia**
+  para clasificar canales cerrados como *lideres en rating* (`RD 9.5.4`). La clasificacion
+  usa el ano inmediatamente anterior al periodo que se reparte y queda congelada en
+  `canales_clasificacion` para poder reejecutar un periodo pasado (ADR 0005). Sin este feed
+  no se puede poblar `9.5.4` de forma defendible; `9.5.5` (estandar) absorberia el resto
+  solo por exclusion.
+- **P-18** Base de ponderacion de cine/teatro: `RD 9.2` dice "ingresos de taquilla" y el
+  ejemplo calcula sobre espectadores; `RD 9.3` remite a ese ejemplo. No es P-01 (base
+  tarifaria). Hasta confirmar, el motor lee `Snapshot.BaseCineTeatro`.
+- **P-19** Destino del recaudo de un **grupo de suscripcion sin obras** (y de importes
+  enteros excluidos por R-27). `RD 9.5` no contempla el caso; `RD 14.5.3` cierra la reserva
+  a reclamaciones administrativas; ONI (`RD 13.8`) es autor desconocido. El chapeau de
+  `RD 15` ("seran preservados") es el unico anclaje. El motor los deja en
+  `Resultado.NoDistribuido` con motivo, no en el residuo de redondeo.
+- **P-20** Quien puebla `usos.canal_id` en produccion. Los adaptadores de ingesta reales
+  (`MapaCaracol`, `MapaNetflix`, `MapaCine`) no mapean ninguna columna del archivo del
+  cliente a esa columna. Desde #165 la ingesta **rechaza** la fila sin `canal_id`
+  (va a `usos_rechazados` y el motivo nombra el campo) en vez de guardarla y
+  dejarla fuera de `UsosDeCanal` sin error. Sigue abierto que columna -- o que
+  tabla de correspondencia -- identifica el canal que pago. El seed si lo trae,
+  porque no pasa por esos mapas.
+
+### P-21 Clave de registro por fuente (detector `duplicado_registro`, #37)
+
+`duplicado_registro` es una anomalia **critica**: bloquea la salida de `deducciones` de toda
+corrida del periodo (ADR 0021). Su clave por fuente vive en `aplicacion.clavesDeRegistro`.
+
+- **`cine: {id_pelicula}` es Provisional.** El formato de salas es sintetico
+  (`MapaCine`). Con esa clave, dos exhibiciones legitimas de la misma pelicula en dos entregas
+  del mismo periodo (dos salas, o dos cortes de taquilla) saldrian como duplicado critico.
+  Hay que confirmar con REDES que identifica una fila de cine (sala, funcion, fecha) antes de
+  tratar ese detector como defendible para cine.
+- **`rcn` y `expreso-bolivariano` no tienen clave, a proposito.** No hay formato del cliente
+  para ninguna de las dos: solo existen en el sembrador. Declararles una clave seria inventar el
+  criterio de un detector que bloquea el pago. Mientras tanto sus filas cuentan en
+  `usos_sin_cotejar` (en el seed, 4 de 10), que es el tamano del punto ciego y viaja en la
+  respuesta de `POST /alertas/evaluacion` y en su asiento.
+
+### P-22 Que significa descartar un caso ONI y quien puede hacerlo
+
+Estado: **Respondida provisionalmente** (equipo, 2026-09-27; falta la confirmacion del PO).
+Pregunta: la bandeja de casos ONI permite dos cosas: darle una obra al uso, o decir que no
+es del repertorio. Falta que REDES confirme (a) que "no es del repertorio" es una decision
+legitima y no un simple "no lo se todavia", (b) que efecto tiene sobre el dinero -- hoy la
+reserva ONI de `RD 13.8` no esta implementada, asi que descartar y dejar en ONI pesan lo
+mismo, cero --, y (c) quien puede tomarla.
+Respuesta del equipo, provisional: **descartar existe y es distinto de ONI**. El uso queda
+sin obra, `oni = false`, no pondera y no sale en el listado publico de ONI; el mismo efecto
+monetario que una exclusion R-27. Solo el rol `administrador`, y firmado, con nota de hasta
+300 caracteres. La razon de fondo es `RD 7.1`: REDES SGC solo representa autores de guion o
+libreto, asi que hay material que se emitio y no es de su repertorio.
+Consecuencia: R-36 en `reglas-negocio.md`, y el escalon `descartado` de `usos`
+(migracion 00022).
+Lo que falta confirmar: si el PO quiere el descarte como concepto propio o prefiere una
+marca de "revisado, no es repertorio" en otra forma; y si el efecto monetario debe ser el de
+R-27 (la parte no existe) o el de `RD 13.8` (la parte queda en reserva hasta que prescriba).
 
 ## Agenda para la reunion con REDES
-
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
 cifra defendible.
 
@@ -179,4 +252,7 @@ cifra defendible.
 5. **Confirmar P-03**: que Intela ocupa el lugar de AVSYS y que REDES-SYS sigue como esta.
 6. **Confirmar P-01, P-02, P-05, P-07, P-09 y P-11**, que hoy van con respuesta del equipo.
 7. **Entretenimientos**: es o no repertorio (P-05).
-8. Pedir P-12 a P-15: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI.
+8. Pedir P-12 a P-17: `eidr`/IDA, campos de episodio, extractos mas grandes, padron con IPI,
+   alcance del 80% artistico, feed de quintil `RD 9.5.4`.
+9. **P-20**: que columna del archivo -- si existe alguna -- identifica el canal que pago,
+   por fuente. Sin esto, RD 9.1 no se puede repartir por canal sobre datos reales.

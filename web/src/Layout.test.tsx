@@ -9,6 +9,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Layout from "./Layout";
 import { setToken, token } from "./api";
+import { useFijarPendientes } from "./identificacion/pendientes";
 import { ProveedorDeSesion } from "./sesion";
 
 function montar() {
@@ -38,6 +39,37 @@ function respuestaUsuario(rol: string, nombre = "Persona de Prueba") {
   );
 }
 
+function json(cuerpo: unknown, status = 200) {
+  return new Response(JSON.stringify(cuerpo), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function urlDe(input: Parameters<typeof fetch>[0]): string {
+  return typeof input === "string" ? input : input.toString();
+}
+
+/** Responde el conteo de pendientes segun la URL, y la sesion en lo demas. */
+function conFetchDelBadge(rol: string, pendientes: number) {
+  vi.mocked(fetch).mockImplementation((input) => {
+    if (urlDe(input).includes("/identificacion/casos")) {
+      return Promise.resolve(json({ pendientes, casos: [] }));
+    }
+    return Promise.resolve(respuestaUsuario(rol));
+  });
+}
+
+/** Ruta hija de prueba: empuja un nuevo conteo al badge del shell. */
+function HijoQueFijaPendientes({ valor }: { valor: number }) {
+  const fijarPendientes = useFijarPendientes();
+  return (
+    <button type="button" onClick={() => fijarPendientes(valor)}>
+      fijar pendientes
+    </button>
+  );
+}
+
 describe("Layout", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -60,13 +92,13 @@ describe("Layout", () => {
     expect(screen.queryByText("Configuración")).toBeNull();
   });
 
-  it("con rol administrador el sidebar tiene nueve enlaces en sus dos secciones", async () => {
+  it("con rol administrador el sidebar tiene once enlaces en sus dos secciones", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
 
     montar();
 
-    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(9));
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(11));
     expect(screen.getByText("Principal")).toBeTruthy();
     expect(screen.getByText("Configuración")).toBeTruthy();
   });
@@ -96,23 +128,112 @@ describe("Layout", () => {
     expect(screen.getByText("Auditor")).toBeTruthy();
   });
 
-  it("logout llama a DELETE /auth/session y limpia el token", async () => {
+  it("el perfil abre un menu con Configuración y Salir, con iconos", async () => {
     setToken("tok");
-    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("administrador"));
-    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    montar();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
+      ).toBeTruthy(),
+    );
+    // Cada enlace del sidebar y el perfil traen su icono Heroicons.
+    expect(
+      screen.getByRole("link", { name: "Inicio" }).querySelector("svg"),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Abrir menú de usuario" })
+        .querySelector("svg"),
+    ).not.toBeNull();
+    // Cerrado al inicio: no hay menu ni item de salida a la vista.
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Salir" })).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+
+    const configuracion = screen.getByRole("menuitem", {
+      name: "Configuración",
+    });
+    const salir = screen.getByRole("menuitem", { name: "Salir" });
+    expect(configuracion.querySelector("svg")).not.toBeNull();
+    expect(salir.querySelector("svg")).not.toBeNull();
+  });
+
+  it("Configuración lleva al primer modulo de esa seccion (Deducciones)", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<p>contenido de inicio</p>} />
+              <Route
+                path="/deducciones"
+                element={<p>pantalla de deducciones</p>}
+              />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Configuración" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("pantalla de deducciones")).toBeTruthy(),
+    );
+  });
+
+  it("logout llama a DELETE /auth/session y limpia el token", async () => {
+    // Con rol administrador, `Layout` tambien pide el conteo de pendientes
+    // (badge de /identificacion) apenas monta: encolar por ORDEN asumiria que
+    // la segunda llamada es el DELETE del logout, y esa peticion del badge se
+    // la roba. Se responde por URL y METODO -lo que de verdad identifica cada
+    // peticion-, y el DELETE se busca igual, no por indice de `mock.calls`.
+    setToken("tok");
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const metodo = init?.method ?? "GET";
+      if (metodo === "DELETE" && url.includes("/api/auth/session")) {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(respuestaUsuario("administrador"));
+    });
 
     montar();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Cerrar sesión" }),
+        screen.getByRole("button", { name: "Abrir menú de usuario" }),
       ).toBeTruthy(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Abrir menú de usuario" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Salir" }));
 
     await waitFor(() => expect(token()).toBe(""));
-    const llamadaDelete = vi.mocked(fetch).mock.calls[1];
-    expect(llamadaDelete[1]?.method).toBe("DELETE");
+    const llamadaDelete = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.toString();
+      return init?.method === "DELETE" && url.includes("/api/auth/session");
+    });
+    expect(llamadaDelete).toBeTruthy();
+    expect(llamadaDelete?.[1]?.method).toBe("DELETE");
   });
 
   it("una ruta fuera de la nav del rol actual muestra 'No autorizado' (guard cosmetico)", async () => {
@@ -155,5 +276,116 @@ describe("Layout", () => {
       expect(screen.getByText("pantalla de estado")).toBeTruthy(),
     );
     expect(screen.queryByText("No autorizado")).toBeNull();
+  });
+
+  it("el administrador ve el badge de Identificación con el conteo de pendientes", async () => {
+    setToken("tok");
+    conFetchDelBadge("administrador", 3);
+
+    montar();
+
+    const enlace = await screen.findByRole("link", {
+      name: /Identificación/,
+    });
+    await waitFor(() => expect(enlace.textContent).toContain("3"));
+    // El numero es lo unico visible; " pendientes" es solo para el lector.
+    expect(enlace.querySelector(".solo-lector")?.textContent).toBe(
+      " pendientes",
+    );
+  });
+
+  it("un rol que no es administrador no pide el conteo de pendientes en absoluto", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("titular"));
+
+    montar();
+
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(1));
+    const rutasPedidas = vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => urlDe(input));
+    expect(
+      rutasPedidas.some((ruta) => ruta.includes("/identificacion/casos")),
+    ).toBe(false);
+  });
+
+  it("con pendientes en 0 el badge de Identificación no se pinta", async () => {
+    setToken("tok");
+    conFetchDelBadge("administrador", 0);
+
+    montar();
+
+    const enlace = await screen.findByRole("link", {
+      name: /Identificación/,
+    });
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) =>
+            urlDe(input).includes("/identificacion/casos"),
+          ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(enlace.querySelector(".sidebar-badge")).toBeNull(),
+    );
+  });
+
+  it("con un 404 en el conteo de pendientes el badge de Identificación no se pinta", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockImplementation((input) => {
+      if (urlDe(input).includes("/identificacion/casos")) {
+        return Promise.resolve(json({ error: "no encontrado" }, 404));
+      }
+      return Promise.resolve(respuestaUsuario("administrador"));
+    });
+
+    montar();
+
+    const enlace = await screen.findByRole("link", {
+      name: /Identificación/,
+    });
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) =>
+            urlDe(input).includes("/identificacion/casos"),
+          ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(enlace.querySelector(".sidebar-badge")).toBeNull(),
+    );
+  });
+
+  it("una ruta hija que llama a useFijarPendientes cambia el badge del shell (D1)", async () => {
+    setToken("tok");
+    conFetchDelBadge("administrador", 2);
+
+    render(
+      <MemoryRouter initialEntries={["/identificacion"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route
+                path="/identificacion"
+                element={<HijoQueFijaPendientes valor={9} />}
+              />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+
+    const enlace = await screen.findByRole("link", {
+      name: /Identificación/,
+    });
+    await waitFor(() => expect(enlace.textContent).toContain("2"));
+
+    fireEvent.click(screen.getByRole("button", { name: "fijar pendientes" }));
+
+    await waitFor(() => expect(enlace.textContent).toContain("9"));
   });
 });

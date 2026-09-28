@@ -18,10 +18,20 @@ type Entrada struct {
 	TituloOrig string
 }
 
+// MaxCandidatos es cuantos candidatos se conservan por fila: una bandeja de
+// revision con veinte filas parecidas no se revisa, se cierra. Lo respeta el
+// adaptador al recuperar y [UnirCandidatos] al juntar los de varios titulos.
+const MaxCandidatos = 5
+
 // Candidato es una obra propuesta por el motor de similitud, con su puntaje.
 type Candidato struct {
 	ObraID  string
 	Puntaje decimal.Decimal
+
+	// TituloConsultado es contra que titulo de la fila se puntuo -el emitido o el
+	// original-. Es evidencia: dice de donde sale el puntaje, y no entra en el
+	// orden ni en la decision.
+	TituloConsultado string
 }
 
 // Resultado de la cascada. No tiene campo de dinero y no lo tendra:
@@ -36,4 +46,7 @@ type Resultado struct {
 	Puntaje   decimal.Decimal
 	ONI       bool
 	Evidencia string
+
+	// Candidatos solo viaja en la banda ambigua: es lo que revisa #39 (D2).
+	Candidatos []Candidato
 }

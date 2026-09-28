@@ -51,44 +51,102 @@ type Opciones struct {
 	Log                *slog.Logger
 }
 
+// Casos agrupa los casos de uso que sirve el adaptador.
+//
+// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
+// se cablea en cmd/api. Iban como parametros sueltos de [Nueva] mientras fueron
+// dos; con el tercero la lista deja de ser legible en la llamada -- tres
+// interfaces seguidas se pueden cruzar sin que el compilador diga nada si dos
+// comparten forma -- y pasan a campos con nombre.
+type Casos struct {
+	Salud          Salud
+	Auth           Autenticacion
+	Ordenes        ConsultaLiquidaciones
+	Admision       Admision
+	Catalogo       Catalogo
+	ListadoONI     LecturaONI
+	PublicarONI    EscrituraONI
+	Padron         Padron
+	Ingesta        Ingesta
+	Declaraciones  Declaraciones
+	Recaudo        Recaudo
+	Reporte        ReporteLiquidaciones
+	Procesos       Procesos
+	Cola           ColaRevision
+	Anomalias      Anomalias
+	Auditoria      Auditoria
+	Identificacion CasosIdentificacion
+	Resolucion     ResolucionIdentificacion
+	Explicar       Explicador
+	Ingresos       ConsultaIngresos
+}
+
+// ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
+type ColaRevision interface {
+	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
+}
+
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud         Salud
-	auth          Autenticacion
-	catalogo      Catalogo
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	opts          Opciones
-	log           *slog.Logger
-}
-
-// Casos agrupa los casos de uso que Nueva necesita.
-//
-// Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
-// se cablea en cmd/api. El comentario que este struct reemplaza decia "cuando
-// la lista pase de tres, se agrupa"; con Declaraciones ya son tres.
-type Casos struct {
-	Auth          Autenticacion
-	Catalogo      Catalogo
-	Declaraciones Declaraciones
-	Recaudo       Recaudo
+	salud          Salud
+	auth           Autenticacion
+	ordenes        ConsultaLiquidaciones
+	admision       Admision
+	catalogo       Catalogo
+	listadoONI     LecturaONI
+	publicarONI    EscrituraONI
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	reporte        ReporteLiquidaciones
+	procesos       Procesos
+	cola           ColaRevision
+	anomalias      Anomalias
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	resolucion     ResolucionIdentificacion
+	explicar       Explicador
+	ingresos       ConsultaIngresos
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Nueva construye el adaptador.
-func Nueva(salud Salud, casos Casos, opts Opciones) *API {
+//
+// Un caso de uso nil no es un fallo de arranque: su ruta responde 503. Ver
+// [API.conIngesta] y [API.conAdmision]. Es lo que permite que un binario que
+// todavia no cablea la boveda -- cmd/lambda, cuyo sistema de ficheros es de
+// solo lectura -- siga sirviendo el resto de la API.
+func Nueva(casos Casos, opts Opciones) *API {
 	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         salud,
-		auth:          casos.Auth,
-		catalogo:      casos.Catalogo,
-		declaraciones: casos.Declaraciones,
-		recaudo:       casos.Recaudo,
-		opts:          opts,
-		log:           log,
+		salud:          casos.Salud,
+		auth:           casos.Auth,
+		ordenes:        casos.Ordenes,
+		admision:       casos.Admision,
+		catalogo:       casos.Catalogo,
+		listadoONI:     casos.ListadoONI,
+		publicarONI:    casos.PublicarONI,
+		padron:         casos.Padron,
+		ingesta:        casos.Ingesta,
+		declaraciones:  casos.Declaraciones,
+		recaudo:        casos.Recaudo,
+		reporte:        casos.Reporte,
+		procesos:       casos.Procesos,
+		cola:           casos.Cola,
+		anomalias:      casos.Anomalias,
+		auditoria:      casos.Auditoria,
+		identificacion: casos.Identificacion,
+		resolucion:     casos.Resolucion,
+		explicar:       casos.Explicar,
+		ingresos:       casos.Ingresos,
+		opts:           opts,
+		log:            log,
 	}
 }
 
@@ -115,6 +173,11 @@ func (a *API) Router() http.Handler {
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
 
+	// R-18: el listado ONI se publica en la web, sin autenticacion.
+	// security: [] en el contrato. Montarlo detras de conSesion violaría
+	// RD 13.8.1 y no arrancaria el reloj de R-19 para quien no tenga cuenta.
+	r.Get("/publico/oni", a.obtenerListadoONI)
+
 	// El login es la unica ruta de /auth/session que se llama sin token; las
 	// otras dos van detras del middleware. Se agrupan con r.Group para que la
 	// diferencia se vea de un vistazo: quien anada una ruta protegida la mete
@@ -124,20 +187,47 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		// Ordenes de pago (ADR 0019). El rol lo decide el caso de uso:
+		// /liquidaciones es staff y /mis-liquidaciones es el titular.
+		protegido.Get("/liquidaciones", a.listarLiquidaciones)
+		protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
+		protegido.Post("/afiliaciones/{id}/aprobar", a.conAdmision(a.aprobarAfiliacion))
+		protegido.Post("/afiliaciones/{id}/rechazar", a.conAdmision(a.rechazarAfiliacion))
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
 		// docs/architecture/roles.md; quien anada un endpoint lo mete
 		// en el grupo que le corresponde y no escribe el chequeo a mano.
+
+		protegido.Group(func(roles chi.Router) {
+			roles.Use(a.conRoles(aplicacion.RolAdministrador, aplicacion.RolDistribucion))
+			roles.Post("/oni/publicaciones", a.crearPublicacionONI)
+		})
+
 		protegido.Route("/admin", func(admin chi.Router) {
 			admin.Use(requiereRol(aplicacion.RolAdministrador))
 			admin.Get("/pipeline", superficieOK)
+			admin.Get("/cola-revision", a.listarColaRevision)
+		})
+		protegido.Route("/identificacion", func(ident chi.Router) {
+			ident.Use(requiereRol(aplicacion.RolAdministrador))
+			ident.Get("/casos", a.listarCasosIdentificacion)
+			ident.Post("/casos/{id}/resolucion", a.resolverCasoIdentificacion)
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
-			audit.Get("/asientos", superficieOK)
+			audit.Get("/asientos", a.listarAsientos)
+			audit.Get("/obra/{id}", a.historialDeObra)
 		})
+		protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+			Get("/explicar/{ref}", a.explicarCifra)
 
+		// Panel del titular (OE-6). El middleware cierra el prefijo al
+		// rol; el caso de uso recorta por TitularID de la sesion.
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-ingresos", a.misIngresos)
+		})
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo
@@ -157,6 +247,20 @@ func (a *API) Router() http.Handler {
 			cat.Post("/{id}/declaracion", a.declararObra)
 			cat.Put("/{id}/declaracion", a.editarDeclaracion)
 			cat.Get("/{id}/declaracion/historial", a.historialDeclaracion)
+		})
+
+		// El padron de titulares, que es lo que llena el selector de partes
+		// del editor de splits (#30). Mismo rol que el catalogo -quien edita
+		// una declaracion ve el repertorio entero, y el padron es la otra
+		// mitad de esa superficie-.
+		//
+		// Se sirve SIN recortar las personas juridicas: R-01 (`RD 4.5`) deja
+		// fuera del reparto a todo el que no sea persona natural, y quien
+		// edita tiene que poder ver que el titular que busca existe en el
+		// padron y que no se le ofrece por esa regla.
+		protegido.Route("/titulares", func(pad chi.Router) {
+			pad.Use(requiereRol(aplicacion.RolAdministrador))
+			pad.Get("/", a.buscarTitulares)
 		})
 
 		// El lado del ingreso (#27). Entra dinero, asi que escribe
@@ -183,9 +287,120 @@ func (a *API) Router() http.Handler {
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
 		})
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			// El desglose por obra y su export (#43). No pisa
+			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
+			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
+			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
+		})
+
+		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
+		protegido.Route("/alertas", func(al chi.Router) {
+			al.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.conAnomalias(a.listarAlertas))
+			})
+			al.Group(func(escritura chi.Router) {
+				escritura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+				))
+				escritura.Post("/evaluacion", a.conAnomalias(a.evaluarAnomalias))
+				escritura.Post("/{id}/resolver", a.conAnomalias(a.resolverAlerta))
+			})
+		})
+
+		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,
+		// porque no comparten roles: administrador OPERA el pipeline (abre y
+		// avanza etapas), y distribucion/contabilidad son las dos firmas de
+		// sus compuertas (firmar, rechazar) -- la MISMA separacion que ya
+		// aplica a /recaudo y /bolsas, y por la misma razon: quien co-firma
+		// la salida del dinero no debe ser quien opera el pipeline que la
+		// prepara. La lectura la comparten los tres, mas auditor.
+		protegido.Route("/procesos", func(proc chi.Router) {
+			proc.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.listarProcesos)
+				lectura.Get("/{id}", a.procesoPorID)
+			})
+			proc.Group(func(pipeline chi.Router) {
+				pipeline.Use(requiereRol(aplicacion.RolAdministrador))
+				pipeline.Post("/", a.abrirProceso)
+				pipeline.Post("/{id}/avanzar", a.avanzarEtapaProceso)
+			})
+			proc.Group(func(compuerta chi.Router) {
+				compuerta.Use(requiereRol(aplicacion.RolDistribucion, aplicacion.RolContabilidad))
+				compuerta.Post("/{id}/firmar", a.firmarProceso)
+				compuerta.Post("/{id}/rechazar", a.rechazarGateProceso)
+			})
+		})
+
+		// La ingesta manual de reportes de uso. Pide `administrador` por lo
+		// mismo que el catalogo: una entrega pondera el reparto de un periodo
+		// entero, y el listado de cargas deja ver de que fuentes vive la
+		// sociedad. La pantalla de ingesta de #29 lo confirmo: es solo de
+		// administrador, y el log de rechazos de una carga va en el mismo
+		// grupo porque es la misma pantalla.
+		protegido.Route("/reportes", func(rep chi.Router) {
+			rep.Use(requiereRol(aplicacion.RolAdministrador))
+			rep.Post("/", a.conIngesta(a.subirReporte))
+			rep.Get("/", a.conIngesta(a.listarCargas))
+			rep.Get("/{id}/rechazos", a.conIngesta(a.listarRechazosDeCarga))
+		})
+	})
+
+	// El alta la rellena quien todavia no es afiliado, asi que va sin
+	// sesion. Completar el IPI tambien: el identificador de la solicitud
+	// es el token. Ambas llevan rate limit porque aceptan trafico anonimo
+	// y la primera escribe a disco. conAdmision contesta 503 si el binario
+	// no cableo la boveda (cmd/lambda hoy); sin eso seria un 404 o un 500.
+	r.Group(func(alta chi.Router) {
+		alta.Use(limitarPorIP(10, time.Minute))
+		alta.Post("/afiliaciones", a.conAdmision(a.solicitarAfiliacion))
+		alta.Patch("/afiliaciones/{id}/ipi", a.conAdmision(a.completarIPI))
 	})
 
 	return r
+}
+
+// conIngesta responde 503 si el binario no cableo el caso de uso de ingesta.
+//
+// Sin esto, la ruta existe y el handler llama a una interfaz nil: el Recoverer
+// lo convierte en un 500 sin cuerpo, que se lee como "el servidor esta roto"
+// cuando lo que pasa es que a ESA instalacion le falta la boveda. 503 lo dice,
+// y ademas es lo que un balanceador entiende.
+func (a *API) conIngesta(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.ingesta == nil {
+			escribirError(w, http.StatusServiceUnavailable,
+				"la ingesta de reportes no esta configurada en esta instalacion")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// conAdmision responde 503 si el binario no cableo el caso de uso de admision.
+//
+// Misma razon que [API.conIngesta]: sin boveda durable (objetos.Disco no sirve
+// en Lambda) el alta no puede guardar RUT ni certificacion bancaria. Mejor un
+// 503 honesto que un 500 por mkdir en FS de solo lectura, o un 404 porque la
+// ruta ni se registro.
+func (a *API) conAdmision(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.admision == nil {
+			escribirError(w, http.StatusServiceUnavailable,
+				"el alta de afiliacion no esta configurada en esta instalacion")
+			return
+		}
+		h(w, r)
+	}
 }
 
 // health dice que el proceso esta vivo. No toca la base: si lo hiciera, una
@@ -219,6 +434,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origen)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 			h.Set("Access-Control-Max-Age", "600")
 			// El origen entra en la respuesta, asi que las caches
 			// intermedias tienen que variar por el.

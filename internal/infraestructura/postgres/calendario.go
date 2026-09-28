@@ -34,7 +34,7 @@ var _ aplicacion.Calendario = (*Store)(nil)
 // scheduler podrian encolar los mismos periodos en distinto orden, y el ADR
 // 0005 pide que una corrida se reproduzca igual.
 func (s *Store) Pendientes(ctx context.Context, hoy time.Time) ([]string, error) {
-	filas, err := s.pool.Query(ctx,
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
 		`SELECT periodo
 		   FROM calendario
 		  WHERE NOT disparado AND fecha_apertura <= $1::date
@@ -70,7 +70,7 @@ func (s *Store) Pendientes(ctx context.Context, hoy time.Time) ([]string, error)
 // que administra el Consejo Directivo (ADR 0004)-, y por eso cero filas
 // afectadas sale como ErrNoEncontrado.
 func (s *Store) MarcarDisparado(ctx context.Context, periodo string) error {
-	etiqueta, err := s.pool.Exec(ctx,
+	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE calendario SET disparado = TRUE WHERE periodo = $1`, periodo)
 	if err != nil {
 		return traducirError(err, "marcar disparado %q", periodo)

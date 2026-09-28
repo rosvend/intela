@@ -1,6 +1,11 @@
 package aplicacion
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Errores que los adaptadores devuelven y los casos de uso distinguen.
 //
@@ -11,6 +16,12 @@ import "errors"
 var (
 	// ErrNoEncontrado: la consulta fue bien y no hay fila.
 	ErrNoEncontrado = errors.New("no encontrado")
+
+	// ErrBitacoraInmutable: se intento UPDATE, DELETE o TRUNCATE sobre la bitacora (ADR 0006).
+	ErrBitacoraInmutable = errors.New("la bitacora es append-only")
+
+	// ErrLinajeIncompleto: falta un eslabon del origen de una cifra; asentar a medias es peor que no asentar (ADR 0006).
+	ErrLinajeIncompleto = errors.New("linaje incompleto")
 
 	// ErrSinTrabajo: la cola esta vacia. No es un fallo.
 	ErrSinTrabajo = errors.New("sin trabajo pendiente")
@@ -24,7 +35,82 @@ var (
 
 	// ErrParametroAusente: falta un parametro normativo para el calculo.
 	// No se inventa un valor por defecto: se falla (ADR 0004).
+	//
+	// Quien resuelve un snapshot entero lo devuelve dentro de
+	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
+
+	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
+	ErrFormatoInvalido = errors.New("formato invalido")
+
+	// ErrPeriodoInvalido: el periodo no tiene la forma YYYY o YYYY-MM.
+	ErrPeriodoInvalido = errors.New("periodo invalido")
+
+	// ErrYaPublicado: ese periodo ya tiene listado ONI. Re-publicar
+	// reescribiria el ancla de R-19.
+	ErrYaPublicado = errors.New("el listado ONI de ese periodo ya fue publicado")
+
+	// ErrDireccionPublicacionAusente: no hay direccion fisica o electronica
+	// configurada, y RD 13.8.4.3 las exige en el listado.
+	ErrDireccionPublicacionAusente = errors.New("faltan las direcciones de publicacion ONI")
+
+	// ErrConflicto: la fila ya existe. En afiliaciones, el indice parcial
+	// cubre correo e IPI no vacio de una solicitud activa (pendiente o
+	// admitida). En titulares, el IPI no vacio es unico. Distinto de
+	// ErrNoEncontrado: aqui la consulta encontro de mas, no de menos.
+	ErrConflicto = errors.New("ya existe una solicitud o afiliacion con esos datos")
+
+	// ErrClaveInvalida: la clave del alta no cumple el minimo. Se distingue
+	// de ErrDocumentoInvalido porque quien la recibe tiene que saber que
+	// campo rehacer, y de ErrCredenciales porque aqui todavia no hay
+	// sesion que rechazar.
+	ErrClaveInvalida = errors.New("la clave tiene que tener entre 8 y 72 caracteres")
+
+	// ErrDocumentoInvalido: el adjunto no es un PDF o una imagen, o viene
+	// vacio. El dominio no mira bytes; esto lo decide el caso de uso antes
+	// de mandarlos al almacen.
+	ErrDocumentoInvalido = errors.New("el documento tiene que ser un pdf o una imagen y no puede estar vacio")
+
+	// ErrSnapshotCorrupto: bajo ese id hay filas congeladas que no forman el
+	// snapshot que el id anuncia.
+	//
+	// El id de un snapshot esta direccionado por contenido: es el sha256 de
+	// sus pares (clave, valor) ordenados. Eso lo convierte en una suma de
+	// verificacion, y entonces "las filas no hashean a su id" es un caso
+	// posible y hay que poder decirlo. Lo mismo cuando al conjunto congelado
+	// le falta una clausula: nunca fue un snapshot valido.
+	//
+	// Es la hermana de ErrEvidenciaCorrupta y existe por lo mismo: servir esas
+	// filas como si fueran el snapshot devolveria una corrida "reproducida"
+	// con cifras que no son las que se pagaron, y eso no se puede distinguir
+	// mirando el resultado. No es un fallo de infraestructura ni un "no
+	// encontrado".
+	ErrSnapshotCorrupto = errors.New("snapshot de parametros corrupto")
+
+	// ErrTasaAmbigua: dos claves `cambio.*` normalizan al mismo codigo ISO.
+	//
+	// `cambio.USD` y `cambio.usd` son filas DISTINTAS para el esquema --
+	// `parametros.clave` no tiene collation especial -- pero [reparto.Snapshot]
+	// solo tiene una entrada por moneda (`Tasas[iso]`). Sin este centinela, la
+	// que ordena despues por bytes pisa a la otra en el mapa sin que nada lo
+	// diga, y un factor de conversion que alguien cargo de verdad desaparece.
+	// Es la misma disciplina de "una sola respuesta por clave" que ya exige la
+	// EXCLUDE de vigencias, aplicada al codigo ISO derivado en vez de a la
+	// clave literal.
+	ErrTasaAmbigua = errors.New("tasa de cambio ambigua")
+
+	// ErrActorAusente: un hecho que va FIRMADO llego sin quien lo firme.
+	//
+	// El ADR 0006 exige saber quien hizo cada hecho de los que nacen de una
+	// accion de una persona. La base no lo impide -- `asientos.actor_id` es
+	// nullable y el adaptador convierte el actor vacio en NULL --, y ese hueco es
+	// deliberado: el ADR solo pide el actor "en ese ultimo caso", el de la
+	// decision manual, asi que un hecho que el sistema produzca solo (un
+	// calculo, una identificacion automatica) podra asentarse sin firma el dia
+	// que exista. Lo que NO puede pasar es que un caso de uso que recibe un
+	// actor de la sesion lo pierda por el camino y deje el asiento sin firmar:
+	// eso lo cierra [exigirActor], en esta capa, antes de escribir nada.
+	ErrActorAusente = errors.New("actorID vacio")
 
 	// ErrUsuarioInvalido: los datos de una cuenta nueva no cumplen el esquema.
 	//
@@ -68,6 +154,9 @@ var (
 	// porque es lo que permite volver a pedirle al cliente exactamente eso.
 	ErrReporteInvalido = errors.New("reporte invalido")
 
+	// ErrFiltroCasosInvalido: un filtro de la cola de identificacion no se puede leer (estado o periodo).
+	ErrFiltroCasosInvalido = errors.New("filtro de casos invalido")
+
 	// ErrObjetoYaExiste: esa clave del almacen ya tiene contenido.
 	//
 	// Un AlmacenObjetos no sobrescribe (ADR 0006), asi que necesita una forma
@@ -103,6 +192,56 @@ var (
 	// titular_id en el JSON del cliente en un 404 que dice "la obra no esta en
 	// el catalogo", que no es lo que paso.
 	ErrTitularInexistente = errors.New("ese titular no existe")
+
+	// ErrTitularNoEsPersonaNatural: la declaracion nombra un titular que SI
+	// esta en el padron y que no puede recibir reparto, porque no es persona
+	// natural (`R-01`, `RD 4.5`).
+	//
+	// No es ErrTitularInexistente, y la diferencia es la razon de ser de los
+	// dos: alli el titular_id no resuelve a nadie y el defecto esta en el dato
+	// que llego; aqui el dato es correcto -una productora tiene su fila en el
+	// padron, con su nombre y su clase- y lo que la rechaza es la REGLA. Los
+	// dos salen como 400 porque el campo viene en el cuerpo de la peticion,
+	// pero dicen cosas distintas y por eso llevan mensajes distintos: decirle
+	// "no existe" a quien mando el id de una sociedad que si existe lo manda a
+	// buscar un error que no cometio.
+	//
+	// Existe porque hasta ahora la unica barrera de R-01 en el camino de la
+	// declaracion era el trigger `resultados_titular_persona_natural`
+	// (migracion 00001), que dispara en `resultados_titular`, es decir al
+	// PAGAR: la declaracion con una sociedad dentro se guardaba con 200 y el
+	// reparto la rechazaba mucho mas tarde, con una excepcion cruda de
+	// Postgres y con el dinero ya en juego. Este centinela es lo que permite
+	// decirlo en la puerta de entrada, antes de abrir la version.
+	//
+	// El trigger no se toca: sigue siendo la ultima linea, y la unica que
+	// cubre lo que entre por SQL crudo -lo dice el comentario de
+	// `afiliacion.Titular.PuedeRecibirReparto`-. Esto es la mitad del nucleo.
+	ErrTitularNoEsPersonaNatural = errors.New("ese titular no es persona natural")
+
+	// ErrIPIQueNoCuadra: la parte declara un IPI que no es el del titular en el
+	// padron.
+	//
+	// El IPI es el identificador de la sociedad de gestion en el sistema CISAC
+	// (`RD 3`), y es lo que aguas abajo dice A QUIEN se le paga: la columna
+	// `resultados_titular.ipi` guarda el valor que llego en la declaracion, no
+	// el del padron. Dos numeros distintos para el mismo titular significan que
+	// el reparto puede pagarle a una persona con el identificador de otra, y eso
+	// no lo caza ninguna otra comprobacion: `declaraciones.ipi` es TEXT NOT NULL
+	// sin FK ni CHECK (migracion 00001), asi que el esquema acepta cualquier
+	// cadena.
+	//
+	// No es ErrTitularInexistente ni ErrTitularNoEsPersonaNatural, y la
+	// diferencia importa: ahi lo que falla es la ENTIDAD -no resuelve a nadie, o
+	// resuelve a quien la regla no admite-, y aqui la entidad esta bien y lo que
+	// discrepa es un DATO de la parte. Quien edita tiene que corregir un numero,
+	// no cambiar de titular.
+	//
+	// Se compara contra el padron y no se sobrescribe en silencio: poblar el IPI
+	// desde el padron ignorando lo que llego haria que la pantalla y la base
+	// discrepasen sin decirlo, y una discrepancia que nadie ve es la que se
+	// descubre en una auditoria.
+	ErrIPIQueNoCuadra = errors.New("el IPI declarado no es el del padron")
 
 	// ErrBolsaDuplicada: ya hay una bolsa para ese usuario, periodo y circuito.
 	//
@@ -140,4 +279,222 @@ var (
 	// filas para el mismo canal partirian su recaudo en dos y cada mitad se
 	// repartiria como si fuera el total de un usuario distinto.
 	ErrUsuarioDeRecaudoDuplicado = errors.New("ya existe un usuario de recaudo con ese identificador")
+
+	// ErrCanalVacio: UsosDeCanal necesita saber contra que bolsa pondera cada
+	// fila, y el canal es esa identidad (ADR 0019). Un canal vacio no es "dame
+	// todo lo que no tiene canal": eso mezclaria las filas sin atribuir de
+	// TODOS los pagadores en una sola corrida, un valor punto que el
+	// reglamento no reconoce. Ver UsosSinCanal para detectar ese hueco.
+	ErrCanalVacio = errors.New("el canal no puede quedar vacio")
+
+	// ErrFiltroInvalido: un filtro de listado trae un valor que no pertenece a
+	// su vocabulario cerrado.
+	//
+	// Es un 400 y no una lista vacia, por el mismo criterio que `?periodo=` ya
+	// aplica en [Recaudo.Listar]: un filtro invalido que se ignora devuelve
+	// resultados de mas, y uno que devuelve la lista vacia hace pasar una
+	// errata de grafia -- `oni_` por `oni` -- por "no hay nada de eso". Las dos
+	// respuestas son afirmaciones falsas sobre el estado del sistema.
+	ErrFiltroInvalido = errors.New("filtro invalido")
+
+	// ErrAlertaYaResuelta: la alerta existe y alguien ya la cerro.
+	//
+	// No es ErrNoEncontrado y no es un fallo de escritura: distinguirlo es lo
+	// que deja responder 409 -- "llegaste segundo" -- en vez de un 404 que
+	// diria que la alerta no existe, o un 200 que afirmaria que esta
+	// resolucion la hizo quien acaba de pulsar el boton. Dos personas mirando
+	// el mismo tablero es el caso normal, no la excepcion: la resolucion de
+	// una anomalia es una decision humana sobre a quien se le paga, y el
+	// asiento tiene que nombrar a quien la tomo DE VERDAD (ADR 0006).
+	ErrAlertaYaResuelta = errors.New("esa alerta ya estaba resuelta")
+
+	// ErrProcesoNoListo: se pidio liquidar una corrida que todavia no puede
+	// pagar.
+	//
+	// Son las dos condiciones del RD 13.5, y se comprueban juntas porque
+	// juntas son la compuerta: la corrida tiene que estar en
+	// `liquidacion_final` Y llevar las firmas de distribucion y contabilidad
+	// SOBRE SU REVISION ACTUAL. Un rechazo sube la revision y las firmas de la
+	// anterior dejan de contar, asi que "tiene dos firmas" sin mirar la
+	// revision no es la regla.
+	//
+	// No es ErrNoEncontrado -- el proceso existe -- ni ErrNoAutorizado -- no
+	// es quien pregunta lo que falla, es el estado del proceso --. Se
+	// distingue porque emitir ordenes de pago es lo que hace salir el dinero:
+	// sin este centinela, liquidar una corrida a medio verificar es una
+	// llamada que devuelve 200 y paga.
+	//
+	// Se envuelve siempre nombrando la etapa que se encontro y los roles que
+	// faltan: quien lo recibe es distribucion, y tiene que saber si le falta
+	// avanzar la etapa o pedir una firma.
+	ErrProcesoNoListo = errors.New("el proceso no esta listo para liquidar")
+
+	// ErrCorridaNoCuadra: los totales de la corrida no sostienen las lineas
+	// que dice haber repartido.
+	//
+	// Dos formas: el neto de la corrida (`bruto - admin - social - reserva`)
+	// sale negativo, o la suma de las lineas de titular lo SUPERA. Las dos
+	// hacen inutilizable el prorrateo de [liquidacion.Prorratear], porque el
+	// denominador deja de ser una cota de los numeradores y las proporciones
+	// suman mas de uno: cada orden mostraria menos deducciones de las que la
+	// corrida aplico, y la suma de los netos de las ordenes seria mayor que el
+	// neto que la corrida cerro.
+	//
+	// `resultados_proceso` ya comprueba la primera en la base, asi que llegar
+	// aqui significa que se esta agregando lo que no se puede agregar. Se
+	// falla en vez de recortar: recortar reparte de menos a alguien sin
+	// decirlo, y eso no se ve mirando la orden.
+	ErrCorridaNoCuadra = errors.New("la corrida no cuadra")
+
+	// ErrUsoSinObra: un uso sin obra identificada (`obra_id` NULL: pendiente,
+	// ONI o excluido) nunca puede llegar a [reparto.Reparto]. Sin este
+	// guardian, COALESCE(obra_id, '') convierte las tres en una obra fantasma
+	// de id "" que suma puntos e importe de verdad y que ningun `resultados_obra`
+	// puede persistir (`obra_id NOT NULL REFERENCES obras(id)`). Es defensa en
+	// profundidad: el filtro real vive en el SQL de UsosDeCanal, esto es lo
+	// que impide que un adaptador futuro que lo olvide pase desapercibido.
+	ErrUsoSinObra = errors.New("el uso no tiene obra identificada")
+
+	// ErrReservaYaRegistrada: ya existe una reserva para ese proceso.
+	//
+	// CrearReserva es de una sola vez por corrida: un segundo alta con otra
+	// tasa u otro monto no puede pisar la fila en silencio -- una reserva
+	// registrada dos veces con valores distintos es exactamente el tipo de
+	// discrepancia que una auditoria de RD 16 encuentra y que nadie puede
+	// explicar despues.
+	ErrReservaYaRegistrada = errors.New("ya existe una reserva registrada para ese proceso")
+
+	// ErrProcesoIDReutilizado: IniciarProceso es idempotente por id -- un
+	// reintento del mismo trabajo (Intentos, no Corrida) tiene que poder
+	// llamarlo dos veces sin reabrir el proceso -- pero solo cuando el
+	// periodo, circuito y bolsa que trae son LOS MISMOS que abrieron esa
+	// corrida. Un id que colisiona con un proceso de otros datos no es un
+	// reintento legitimo: es un identificador mal generado o reutilizado por
+	// error, y devolver el proceso existente en silencio valorizaria la
+	// bolsa equivocada bajo el nombre de otra.
+	ErrProcesoIDReutilizado = errors.New("ese id de proceso ya existe con otro periodo, circuito o bolsa")
+
+	// ErrProcesoBolsaNoCoincide: el circuito o el periodo que se declaran al
+	// abrir un proceso tienen que ser los mismos que los de la bolsa que
+	// referencia -- si no, la corrida valorizaria con las reglas de un
+	// circuito, o los usos de un periodo, que no son los de esa bolsa.
+	ErrProcesoBolsaNoCoincide = errors.New("el circuito o el periodo no coinciden con los de la bolsa")
+
+	// ErrProcesoConflictoDeConcurrencia: la fila de `procesos` cambio entre
+	// que se leyo y que se escribio. Dos transiciones concurrentes sobre el
+	// mismo proceso -dos AvanzarEtapa, o un AvanzarEtapa y un RechazarGate
+	// corriendo a la vez- no pueden pisarse: la segunda en llegar tiene que
+	// releer el estado actual y decidir de nuevo, no sobreescribir a ciegas
+	// lo que la primera ya guardo.
+	ErrProcesoConflictoDeConcurrencia = errors.New("el proceso cambio de estado mientras se procesaba esta peticion, vuelva a intentar")
+
+	// ErrNotaObligatoria: resolver una alerta exige una nota; es la justificacion auditable de la decision (ADR 0021).
+	ErrNotaObligatoria = errors.New("la nota es obligatoria para resolver una alerta")
+
+	// ErrAnomaliasCriticasAbiertas: el periodo tiene alertas criticas sin resolver y la corrida no puede entrar a calcular (#37, ADR 0021).
+	ErrAnomaliasCriticasAbiertas = errors.New("el periodo tiene anomalias criticas sin resolver")
+
+	// ErrObraInexistente: resolver un caso nombra un obra_id que no esta en el
+	// catalogo.
+	//
+	// Es la hermana de ErrTitularInexistente y se distingue de ErrNoEncontrado
+	// por lo mismo: ese es "el recurso de la URL no esta" (el caso), este es "un
+	// dato DENTRO del cuerpo senala una entidad que no existe". Confundirlos
+	// convertiria un typo de obra_id en el JSON en un 404 que dice que el caso
+	// no existe, mandando a buscar el error donde no esta.
+	//
+	// Va con la convencion de ErrTitularInexistente: un dato del cuerpo que
+	// senala una entidad inexistente es un 400, no un 5xx.
+	ErrObraInexistente = errors.New("esa obra no esta en el catalogo")
+
+	// ErrAliasEnConflicto: el par canonico (fuente, tipo, valor) del uso ya
+	// tiene alias hacia OTRA obra (#175, D6).
+	//
+	// No es "no se pudo escribir" y no es un dato invalido: el pedido estaba
+	// bien y el alias ya existia apuntando a otra obra. Distinguirlo es lo que
+	// deja responder 409 en vez de pisar el alias en silencio -- y pisarlo
+	// desharia una decision humana anterior, que es justo lo que el ADR 0007
+	// pide no hacer: resolver una vez, reutilizar siempre.
+	ErrAliasEnConflicto = errors.New("ese identificador ya apunta a otra obra")
 )
+
+// ErrorParametroAusente nombra las clausulas normativas que no tienen valor
+// vigente en la fecha pedida.
+//
+// Es un tipo y no solo el centinela porque el ADR 0004 pide que un reparto que
+// no encuentre un parametro "falle ruidosamente en vez de producir una cifra
+// falsa", y ruidosamente quiere decir diciendo CUAL falta. Quien recibe el
+// fallo -- distribucion, no un programador -- tiene que poder cargar la fila
+// que falta, y para eso necesita su clave, no un "parametro normativo
+// ausente" que no se puede accionar.
+//
+// errors.Is lo sigue reconociendo como [ErrParametroAusente], que es lo que ya
+// distingue el resto del sistema; errors.As da las claves.
+//
+// Lleva la lista ENTERA y no la primera que falte: si faltan cinco, enterarse
+// de una por intento son cinco viajes para la misma carga de datos.
+type ErrorParametroAusente struct {
+	// Fecha es el dia contra el que se resolvio, ya reducido a fecha en UTC.
+	// Va en el mensaje porque la misma clave puede estar y no estar segun el
+	// dia: un parametro "ausente" suele ser una vigencia que empieza mas
+	// tarde, no una fila que nadie cargo.
+	Fecha time.Time
+
+	// Claves son las clausulas sin valor, ordenadas.
+	Claves []string
+}
+
+func (e *ErrorParametroAusente) Error() string {
+	return fmt.Sprintf("%s en %s: %s",
+		ErrParametroAusente, e.Fecha.UTC().Format(time.DateOnly), strings.Join(e.Claves, ", "))
+}
+
+// Unwrap deja que quien solo quiera saber "falta un parametro" siga usando
+// errors.Is(err, ErrParametroAusente) sin conocer este tipo.
+func (e *ErrorParametroAusente) Unwrap() error { return ErrParametroAusente }
+
+// ErrorTasaAmbigua nombra el codigo ISO y las dos claves de `parametros` que
+// compiten por el.
+//
+// Es un tipo y no solo el centinela por la misma razon que ErrorParametroAusente:
+// quien lo recibe tiene que poder actuar, y "tasa de cambio ambigua" a secas no
+// dice cual de las dos filas hay que cerrar o corregir.
+type ErrorTasaAmbigua struct {
+	// Codigo es el ISO ya normalizado a mayusculas, p.ej. "USD".
+	Codigo string
+	// Claves son las dos claves originales que colisionan.
+	Claves []string
+}
+
+func (e *ErrorTasaAmbigua) Error() string {
+	return fmt.Sprintf("%s %s: %s", ErrTasaAmbigua, e.Codigo, strings.Join(e.Claves, ", "))
+}
+
+// Unwrap deja que quien solo quiera saber "hay una tasa ambigua" siga usando
+// errors.Is(err, ErrTasaAmbigua) sin conocer este tipo.
+func (e *ErrorTasaAmbigua) Unwrap() error { return ErrTasaAmbigua }
+
+// exigirActor rechaza un actor vacio en los casos de uso que asientan un hecho
+// FIRMADO por una persona. operacion es lo que se estaba haciendo, para que el
+// mensaje diga que se quedo sin hacer y no solo que faltaba un campo.
+//
+// Vive en esta capa y no en el adaptador a proposito. El adaptador convierte
+// el actor vacio en NULL -- con un NULLIF sobre la cadena vacia, ver
+// bitacora.go -- sobre una columna nullable porque el ADR 0006 pide el actor
+// para la DECISION MANUAL -- "y en ese ultimo caso quien la tomo y cuando" --
+// y no para un hecho que el sistema produzca solo. Meter la guarda en
+// [postgres.asentar] cerraria de paso esa puerta, que hoy no tiene usuario
+// pero es la prevista para el calculo de una corrida o una identificacion
+// automatica. Lo que hay que cerrar es lo otro: un caso de uso que SI recibe
+// un actor de la sesion y lo pierde por el camino.
+//
+// Se recorta antes de comparar: un actor de solo espacios no lo atrapa el
+// NULLIF -- solo casa con la cadena vacia --, y llega hasta la clave foranea
+// contra `usuarios`, que devuelve un 500 generico en vez de decir que falta la
+// firma.
+func exigirActor(actorID, operacion string) error {
+	if strings.TrimSpace(actorID) == "" {
+		return fmt.Errorf("%s: %w", operacion, ErrActorAusente)
+	}
+	return nil
+}

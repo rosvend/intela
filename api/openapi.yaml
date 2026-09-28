@@ -48,15 +48,52 @@ tags:
     description: |
       Autenticacion. La sesion es un token opaco con caducidad, no un JWT: se
       revoca del lado del servidor borrando su fila (ADR 0013).
+  - name: afiliacion
+    description: |
+      Alta de un titular. La solicitud la rellena quien todavia no es afiliado
+      y queda pendiente de admision del Consejo Directivo (`RS 5.2`, `RS 5.3`).
+      El RUT y la certificacion bancaria son obligatorios (`R-12`). Pertenecer
+      a otra SGC del mismo genero sin renuncia expresa bloquea el alta (`R-28`).
+  - name: publico
+    description: |
+      Rutas sin autenticacion. El listado ONI se publica en la web (R-18,
+      RD 13.8.1): titulos e informacion identificatoria, nunca montos.
+  - name: oni
+    description: |
+      Publicacion del listado ONI. La lectura es publica (`/publico/oni`);
+      congelar un periodo exige sesion de administrador o distribucion.
+  - name: liquidaciones
+    description: |
+      Ordenes de pago. Bruto, cada deduccion y neto viajan por separado
+      (RD 13.2). El admin ve todas; el titular, solo las suyas.
   - name: admin
     description: |
       Superficie del pipeline. Solo `administrador` (Consejo Directivo).
       Requiere Bearer y el rol; sin sesion es 401, con otro rol es 403.
+  - name: identificacion
+    description: |
+      Cola de resolucion manual de la cascada de identificacion (ADR 0007).
+      Solo `administrador`. Sin importes: la identificacion no toca dinero.
   - name: auditoria
     description: |
       Superficie de lectura de la bitacora. `auditor` (Revisor Fiscal) o
       `administrador`. Requiere Bearer y el rol; sin sesion es 401, con
       otro rol es 403.
+  - name: trazabilidad
+    description: |
+      Linaje de una cifra (ADR 0006, RD 16): de que bolsa salio, que
+      reportes la ponderaron, como se identifico la obra, con que reglas,
+      que declaracion la partio, que se dedujo y quien firmo. Se lee solo de
+      la bitacora append-only; nunca se recalcula desde las tablas actuales.
+  - name: liquidaciones
+    description: |
+      Liquidacion del titular autenticado: panel y export PDF/Excel (OE-6).
+      Solo `titular`. El identificador sale de la sesion, no de la URL.
+  - name: titular
+    description: |
+      Panel de consulta del titular (OE-6). Solo `titular`. El recorte es
+      el `titular_id` de la sesion: no hay parametro para pedir los de
+      otro. Cada monto es neto; el bruto vive en `/explicar/{ref}`.
   - name: repertorio
     description: |
       Catalogo maestro de obras: el cubo contra el que resuelve todo el
@@ -66,6 +103,18 @@ tags:
       porcentajes: el uso vive en los reportes y los porcentajes salen solo
       de la Declaracion de Obra (`R-02`, `R-03`, `RD 7.3.1`). Por eso un
       coautor de este catalogo no tiene campo de participacion.
+  - name: padron
+    description: |
+      El padron de titulares: quien figura ante la sociedad y quien puede
+      cobrar. Solo `administrador`, lectura incluida, igual que el catalogo de
+      obras -es la otra mitad de la misma superficie: quien edita una
+      declaracion ve el repertorio entero y el padron entero-.
+
+      **Estar en el padron no es poder cobrar.** `R-01` (`RD 4.5`) solo admite
+      orden de pago a un escritor persona natural, asi que una productora esta
+      en el padron y NO puede recibir reparto. El padron se sirve entero, con
+      `persona_natural` a la vista, para que esa regla se pueda explicar en vez
+      de dejar invisible al titular que no se ofrece como parte.
   - name: recaudo
     description: |
       El lado del ingreso: los usuarios que pagan y lo que pagaron.
@@ -91,6 +140,54 @@ tags:
       Nacional e internacional no se mezclan (`RD 10.3`, `R-35`): son dos
       circuitos que se gestionan por separado, con reservas y fechas de corte
       distintas.
+
+  - name: anomalias
+    description: |
+      La bandeja de anomalias de un periodo: lo que impide, o falsea, el
+      reparto de ese periodo (OE-5 / KR-4). Seis detectores corren sobre el
+      periodo ya armado y cada alerta nombra su tipo y el registro exacto que
+      la disparo.
+
+      **No es la cola de revision.** `/admin/cola-revision` lista filas que no
+      se pudieron NORMALIZAR y no tiene estado de resolucion; esto lista
+      anomalias del periodo, se resuelve con firma y lo miran cuatro roles
+      distintos. Son dos colas y dos recursos (ADR 0021).
+
+      Lee `administrador`, `distribucion`, `contabilidad` y `auditor`. Resuelve solo
+      `administrador` y `distribucion`: el Revisor Fiscal lee todo y no opera
+      el pipeline ni firma, y cerrar una alerta es una decision sobre a quien
+      se le paga.
+
+      **Critica no quiere decir grave.** Una obra retenida por declaracion
+      incompleta (`R-04`, `RD 13.1.3`) es un estado VALIDO del modelo: se
+      retiene el total de esa obra y el periodo se reparte igual. Lo que
+      bloquea es lo que hace salir mal las cifras de las demas obras.
+
+  - name: ingesta
+    description: |
+      Recepcion de reportes de uso: la subida manual y el listado de cargas
+      hechas. Solo `administrador`.
+
+      Ningun reporte de uso trae importes. Estos archivos PONDERAN la bolsa
+      que se cobro en Recaudo, no la aportan: por eso ni la entrega ni sus
+      filas tienen campo de dinero.
+
+      Una fila que no se puede normalizar no se descarta: queda con su motivo
+      en el log de rechazos (ADR 0016). Es criterio de aceptacion de OE-1.
+
+  - name: procesos
+    description: |
+      El flujo de aprobaciones de `RD 13.5` (ADR 0008): abrir una corrida,
+      avanzarla y firmar o rechazar sus compuertas.
+
+      Nacional e internacional son dos maquinas de estado distintas, no una
+      con bandera: el internacional no valoriza por puntos (`RD 7.4`), asi
+      que nunca pasa por `importe_obra` ni `importe_titular`.
+
+      `administrador` opera el pipeline -abre y avanza-; `distribucion` y
+      `contabilidad` son las dos firmas de sus compuertas, no quien lo opera.
+      El rol con el que se firma sale de la sesion del actor autenticado,
+      nunca de un campo del cuerpo.
 
 paths:
   /health:
@@ -245,6 +342,554 @@ paths:
               example:
                 error: sesion invalida o expirada
 
+  /afiliaciones:
+    post:
+      tags: [afiliacion]
+      summary: Solicitar afiliacion
+      description: |
+        Recibe el alta de un titular nuevo y la deja en estado `pendiente`.
+
+        Va sin sesion: quien se da de alta todavia no es afiliado.
+
+        El RUT actualizado y la certificacion bancaria son obligatorios
+        (`R-12` / `RD 13.1.6`). El IPI se puede omitir en esta peticion;
+        una persona natural no se admite al padron sin el (`RD 3`). Hay
+        `PATCH /afiliaciones/{id}/ipi` para completarlo despues.
+
+        La clave (8 a 72 caracteres) se recoge aqui: al admitir se crea
+        la cuenta con la que el titular entra.
+
+        Este endpoint es publico y esta limitado por IP. Un correo ya
+        afiliado no responde 409: enumeraria el padron.
+
+        Si el aspirante declara pertenecer a otra sociedad de gestion
+        colectiva del mismo genero y no adjunta la renuncia, responde 409
+        con la explicacion de `R-28`.
+      operationId: solicitarAfiliacion
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/SolicitudAfiliacion"
+      responses:
+        "201":
+          description: Solicitud creada, pendiente de admision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: pendiente
+                elegible_anticipo: false
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: ""
+        "400":
+          description: |
+            Faltan datos o documentos, el adjunto no es un PDF o una imagen,
+            o no se pudo registrar (incluido un correo ya activo: no se
+            distingue a proposito).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "r-12: el rut actualizado y la certificacion bancaria son obligatorios"
+        "409":
+          description: Conflicto de exclusividad (`R-28`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "r-28: no se acepta como afiliado a quien pertenezca a otra sociedad de gestion colectiva del mismo genero sin renuncia previa y expresa"
+        "413":
+          description: El cuerpo supera 18 MiB (tres documentos de 5 MiB mas el formulario).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el cuerpo supera el tamano maximo permitido
+        "429":
+          description: Demasiadas solicitudes desde la misma IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: demasiadas solicitudes, reintente en un momento
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
+
+  /afiliaciones/{id}/ipi:
+    patch:
+      tags: [afiliacion]
+      summary: Completar IPI de una solicitud pendiente
+      description: |
+        Rellena el IPI que el alta permite omitir. Va sin sesion: el
+        `{id}` es un token opaco de 256 bits. Una persona natural no se
+        admite al padron sin este identificador (`RD 3`).
+      operationId: completarIPI
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ipi]
+              properties:
+                ipi:
+                  type: string
+                  description: Identificador IPI de la persona.
+            example:
+              ipi: IPI-00000001
+      responses:
+        "200":
+          description: IPI guardado. La solicitud sigue pendiente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+        "400":
+          description: IPI vacio, o no se pudo completar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el ipi es obligatorio para admitir a una persona natural
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya no esta pendiente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
+        "429":
+          description: Demasiadas solicitudes desde la misma IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: demasiadas solicitudes, reintente en un momento
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
+
+  /afiliaciones/{id}/aprobar:
+    post:
+      tags: [afiliacion]
+      summary: Aprobar afiliacion
+      description: |
+        Admite una solicitud pendiente, crea la fila del padron y la
+        cuenta en `usuarios` con la clave que el aspirante eligio al
+        solicitar.
+
+        Solo el rol `administrador`, que en este andamiaje representa al
+        Consejo Directivo (`RS 5.2`). A partir de la admision el subtipo
+        gobierna el derecho a pedir anticipo: solo un Socio lo tiene (`R-30`).
+      operationId: aprobarAfiliacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Solicitud admitida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: admitido
+                elegible_anticipo: true
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: tit-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+        "400":
+          description: Falta el IPI para admitir a una persona natural.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el ipi es obligatorio para admitir a una persona natural
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no es el del Consejo Directivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya estaba resuelta, o el padron ya tiene esa fila.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
+
+  /afiliaciones/{id}/rechazar:
+    post:
+      tags: [afiliacion]
+      summary: Rechazar afiliacion
+      description: |
+        Cierra una solicitud pendiente. Libera el correo y el IPI para
+        que el aspirante pueda volver a presentarse. Solo el Consejo
+        Directivo (`RS 5.2`).
+      operationId: rechazarAfiliacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la solicitud, opaco.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Solicitud rechazada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Afiliacion"
+              example:
+                id: afil-9qYQ2vJmXk3pR7wLfNbTzA5cHdEgSuVxYnMoPiKjRlQ
+                nombre: Ana Escritora
+                email: ana@redes.co
+                documento_identidad: "12345678"
+                ipi: IPI-00000001
+                subtipo: socio
+                estado: rechazado
+                elegible_anticipo: false
+                tiene_rut: true
+                tiene_certificacion_bancaria: true
+                tiene_renuncia: false
+                titular_id: ""
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol de la sesion no es el del Consejo Directivo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay una solicitud con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: solicitud no encontrada
+        "409":
+          description: La solicitud ya estaba resuelta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la solicitud no esta pendiente de admision
+        "503":
+          description: |
+            Esta instalacion no cablea la admision. Es el caso de `cmd/lambda`:
+            el sistema de ficheros no sirve de boveda para el RUT y la
+            certificacion bancaria.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el alta de afiliacion no esta configurada en esta instalacion
+
+  /publico/oni:
+    get:
+      tags: [publico]
+      summary: Listado publico de ONI
+      description: |
+        Publica el listado de obras no identificadas (R-18, RD 13.8.1 a
+        13.8.4): titulos e informacion identificatoria, **sin montos**, con
+        la fecha del proceso, el periodo y las direcciones fisica y
+        electronica a las que se allega documentacion.
+
+        Esta publicacion arranca el reloj de prescripcion de tres anos
+        (R-19, RD 13.8.7). Por eso la ruta no pide autenticacion: `security: []`.
+
+        Sin `periodo` devuelve la publicacion mas reciente. Con `periodo`
+        (YYYY o YYYY-MM) filtra a esa instantanea.
+      operationId: listadoONIPublico
+      security: []
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          description: Periodo de la publicacion. Vacio = la mas reciente.
+          example: "2026-01"
+      responses:
+        "200":
+          description: Listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoONI"
+              example:
+                periodo: "2026-01"
+                fecha_proceso: "2026-08-31T12:00:00Z"
+                direccion_fisica: "Calle 74 #7-35, Bogota D.C."
+                direccion_electronica: oni@redescritores.com
+                explicacion: >
+                  REDES SGC publica este listado de obras no identificadas
+                  (ONI) para que los titulares documenten su autoria.
+                obras:
+                  - id: uso-1
+                    titulo: Serie Desconocida
+                    fuente: caracol
+                    ids_fuente: ID-99
+                    modalidad: tv
+        "400":
+          description: El periodo no tiene la forma YYYY o YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo invalido
+        "404":
+          description: No hay listado publicado (o no hay uno de ese periodo).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no hay listado ONI publicado
+
+  /oni/publicaciones:
+    post:
+      tags: [oni]
+      summary: Publicar el listado ONI de un periodo
+      description: |
+        Congela la cola viva de ONI del periodo como listado publico, registra
+        la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
+        asiento en la bitacora.
+
+        Solo `administrador` y `distribucion`. Republicar el mismo periodo
+        responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+      operationId: publicarListadoONI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicarONI"
+            example:
+              periodo: "2026-01"
+      responses:
+        "201":
+          description: Listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoONI"
+        "400":
+          description: Falta el periodo o no tiene la forma YYYY o YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo invalido
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol no basta para publicar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: Ese periodo ya tiene listado publicado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el listado ONI de ese periodo ya fue publicado
+
+  /liquidaciones:
+    get:
+      tags: [liquidaciones]
+      summary: Listar liquidaciones (admin)
+      description: |
+        Devuelve las ordenes de pago de todos los titulares.
+
+        Cada orden muestra bruto, cada deduccion y neto por separado
+        (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
+        bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
+        silencio (`R-10`).
+
+        Reservada a administrador, distribucion, contabilidad y auditor.
+        Un titular usa `/mis-liquidaciones`.
+      operationId: listarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Listado de ordenes de pago.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-2026-nacional-tit-ana
+                    proceso_id: prc-nac-2026
+                    procesos: [prc-nac-2026]
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    circuito: nacional
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                      - concepto: bienestar_social
+                        monto: "100.00"
+                      - concepto: reserva_errores_tecnicos
+                        monto: "50.00"
+                    neto: "650.00"
+                    estado: aceptada_por_silencio
+                    pagable: true
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "500":
+          description: |
+            No se pudieron leer las liquidaciones, o falta un parametro
+            normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+            valor por defecto).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: parametro normativo ausente
+
   /admin/pipeline:
     get:
       tags: [admin]
@@ -281,24 +926,113 @@ paths:
               example:
                 error: no autorizado
 
-  /auditoria/asientos:
+  /mis-liquidaciones:
     get:
-      tags: [auditoria]
-      summary: Superficie de la bitacora
+      tags: [liquidaciones]
+      summary: Liquidaciones del titular autenticado
       description: |
-        Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
-        `administrador`. Los asientos aterrizan con el PR de bitacora;
-        hoy el grupo existe para que el rol se haga cumplir en un solo
-        sitio.
+        Devuelve las ordenes de pago del titular de la sesion.
 
-        Sin sesion responde 401. Con sesion de otro rol responde 403.
-      operationId: auditoriaAsientos
+        El identificador no viaja en la URL: sale del token, para que un
+        titular no consulte las de otro. Mismo desglose bruto / deducciones
+        / neto que el listado de administracion (`RD 13.2`).
+      operationId: misLiquidaciones
       security:
         - bearerAuth: []
-      x-required-roles: [auditor, administrador]
+      x-required-roles: [titular]
       responses:
-        "204":
-          description: Autorizado. Sin cuerpo; la superficie aun no tiene payload.
+        "200":
+          description: Las ordenes del titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListadoLiquidaciones"
+              example:
+                liquidaciones:
+                  - id: liq-2026-nacional-tit-ana
+                    proceso_id: prc-nac-2026
+                    procesos: [prc-nac-2026]
+                    titular_id: tit-ana
+                    periodo: "2026"
+                    circuito: nacional
+                    bruto: "1000.00"
+                    deducciones:
+                      - concepto: gastos_administrativos
+                        monto: "200.00"
+                    neto: "800.00"
+                    estado: enviada
+                    pagable: false
+                    enviada: "2026-01-01"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "500":
+          description: |
+            No se pudieron leer las liquidaciones, o falta un parametro
+            normativo para evaluar el plazo (`ADR 0004`: no se inventa un
+            valor por defecto).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: parametro normativo ausente
+
+  /admin/cola-revision:
+    get:
+      tags: [admin]
+      summary: Cola de revision
+      description: |
+        Lista las filas que esperan ojo humano antes de ponderar: las que no
+        se pudieron normalizar (fecha inparseable, moneda no reconocida,
+        parametro normativo ausente) y los rechazos del adaptador de formato.
+
+        **Las anomalias de un periodo NO salen por aqui.** Esta descripcion
+        prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
+        necesita estado de resolucion y este schema no lo tiene, y este prefijo
+        es solo de `administrador` mientras el tablero de anomalias lo miran
+        ademas `distribucion`, `contabilidad` y `auditor`. Viven en `/alertas` (ADR 0021).
+
+        Un solo listado y un solo schema. `tipo` discrimina el origen
+        (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
+        tipado persistido, no re-derivado del texto; `motivo` nombra el
+        campo. La fila no se descarto: esta aqui, con su razon.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403.
+      operationId: listarColaRevision
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      responses:
+        "200":
+          description: Cola actual. Lista vacia si no hay nada que revisar.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ItemRevision"
+              example:
+                - id: tv-fecha
+                  tipo: normalizacion
+                  codigo: fecha_inparseable
+                  motivo: "fecha_inparseable: fecha \"ayer\": no es YYYYMMDD, ISO ni serial de Excel"
+                  fuente: caracol
+                  titulo: Fecha rota
+                  reporte_id: rep-1
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -316,21 +1050,878 @@ paths:
               example:
                 error: no autorizado
 
+  /identificacion/casos:
+    get:
+      tags: [identificacion]
+      summary: Casos de identificacion
+      description: |
+        Lista los usos que la cascada no pudo identificar (`pendiente`,
+        escalon `oni`), los que una persona ya resolvio asignandoles una obra
+        (`asignado`, escalon `manual`) y los que una persona descarto
+        (`descartado`: no es un uso del repertorio, no pondera y no sale en el
+        listado publico de ONI), con la evidencia y los candidatos de la banda
+        ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
+
+        Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
+        cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
+
+        `pendientes` cuenta los casos pendientes bajo los mismos filtros de
+        `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
+        contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
+        caso resuelto y el alta del reporte para uno pendiente. `nota` es la
+        justificacion de la decision: `null` mientras el caso este pendiente.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403. Un
+        filtro mal formado responde 400.
+      operationId: listarCasosIdentificacion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          description: Filtra por estado del caso. Si se omite, lista los tres.
+          schema:
+            type: string
+            enum: [pendiente, asignado, descartado]
+          example: pendiente
+        - name: fuente
+          in: query
+          required: false
+          description: Fuente del uso, exacta.
+          schema:
+            type: string
+          example: caracol
+        - name: periodo
+          in: query
+          required: false
+          description: Periodo del reporte, `AAAA` o `AAAA-MM` con mes entre 01 y 12.
+          schema:
+            type: string
+            pattern: "^[0-9]{4}(-(0[1-9]|1[0-2]))?$"
+          example: 2025-01
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: Cuantos casos saltarse. Cero o ausente es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: Pagina de casos, en orden de llegada del reporte.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginaCasosIdentificacion"
+              example:
+                pendientes: 1
+                casos:
+                  - id: uso-1
+                    titulo: La Casa
+                    titulo_original: The House
+                    fuente: caracol
+                    modalidad: tv
+                    reporte_id: rep-1
+                    periodo: 2025-01
+                    ids_fuente: "id_ficha=871732"
+                    evidencia: "banda ambigua: 1 candidatos, mejor obra-12 (0.61000) para \"la casa\" bajo umbral 0.85000"
+                    estado: pendiente
+                    candidatos:
+                      - obra_id: obra-12
+                        titulo: La Casa de las Dos Palmas
+                        anio: 1990
+                        genero: Drama
+                        puntaje: 0.61
+                        titulo_consultado: la casa
+                    obra_asignada: null
+                    resuelto_por: null
+                    resuelto_en: null
+                    ultima_actualizacion: "2025-02-01T10:00:00Z"
+                    nota: null
+        "400":
+          description: Un filtro o la paginacion vienen mal formados.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "filtro de casos invalido: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: El binario no cableo la cola de identificacion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la cola de identificacion no esta disponible
+
+  /identificacion/casos/{id}/resolucion:
+    post:
+      tags: [identificacion]
+      summary: Resolver un caso ONI a mano
+      description: |
+        Cierra un caso que la cascada dejo en `oni`, asignandole una obra
+        (`asignar`) o diciendo que no es un uso del repertorio de REDES SGC
+        (`descartar`). Quien firma sale de la SESION y no del cuerpo: la firma
+        del asiento del ADR 0006 tiene que nombrar a quien tomo la decision de
+        verdad.
+
+        **Asignar** deja el uso en el escalon `manual`, con la obra, `oni=false`
+        y el puntaje del candidato cuando la obra elegida estaba entre los
+        propuestos. Aprende ademas el alias del par canonico (fuente, tipo,
+        valor) del uso, para que el reporte siguiente de la misma fuente
+        resuelva solo en el escalon 1 (ADR 0007: resolver una vez, reutilizar
+        siempre).
+
+        **Descartar** deja el uso en el escalon `descartado`: sin obra, con
+        `oni=false` y sin ponderar. No sale en el listado publico de ONI de
+        `RD 13.8` -- no es una obra sin identificar, es una que no es del
+        repertorio (`RD 7.1`, `RD 9.5`, R-27) -- y la cascada no lo vuelve a
+        tocar: una decision humana no se pisa. Su parte no existe y la bolsa se
+        reparte entre las obras que si ponderan.
+
+        La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
+        Se puede resolver aunque el periodo este en reparto o ya distribuido:
+        la operacion se serializa con el cerrojo de periodo que comparten la
+        compuerta de anomalias, la ingesta y la valorizacion.
+
+        **Esta ruta no escribe titulares, porcentajes ni importes**: identificar
+        no mueve dinero (ADR 0007). Tampoco corrige una decision anterior:
+        reasignar o deshacer un descarte queda fuera de alcance.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403. Un caso
+        desconocido responde 404. El 409 tiene tres causas, distinguidas por el
+        mensaje: otra persona ya resolvio el caso, el caso ya no esta pendiente
+        (la cascada lo cerro), o el identificador de la fuente ya apunta a otra
+        obra.
+      operationId: resolverCasoIdentificacion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del uso, tal como lo devuelve `GET /identificacion/casos`.
+          schema:
+            type: string
+          example: uso-1
+      requestBody:
+        required: true
+        description: |
+          La decision, la obra cuando se asigna, y la nota. Quien resolvio sale
+          de la sesion.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolucionDeCaso"
+            examples:
+              asignar:
+                summary: Asignar el caso a una obra del catalogo
+                value:
+                  decision: asignar
+                  obra_id: obra-12
+                  nota: coincide la ficha tecnica con la declaracion
+              descartar:
+                summary: Descartar el caso
+                value:
+                  decision: descartar
+                  nota: no es un uso del repertorio de REDES
+      responses:
+        "200":
+          description: El caso, ya resuelto y firmado, con el mismo esquema que la lista.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CasoIdentificacion"
+              examples:
+                asignar:
+                  summary: Caso asignado a una obra
+                  value:
+                    id: uso-1
+                    titulo: La Nina T3 E12
+                    titulo_original: ""
+                    fuente: caracol
+                    modalidad: tv
+                    reporte_id: rep-1
+                    periodo: 2024-11
+                    ids_fuente: "id_ficha=871732"
+                    evidencia: "manual: candidata obra-12 (0.52941) de 2 propuestas"
+                    estado: asignado
+                    candidatos: []
+                    obra_asignada:
+                      id: obra-12
+                      titulo: La Nina T3
+                    resuelto_por:
+                      id: usr-admin
+                      nombre: Ana Perez
+                    resuelto_en: "2026-09-27T15:04:05Z"
+                    ultima_actualizacion: "2026-09-27T15:04:05Z"
+                    nota: coincide la ficha tecnica con la declaracion
+                descartar:
+                  summary: Caso descartado
+                  value:
+                    id: uso-2
+                    titulo: Magazine de farandula
+                    titulo_original: ""
+                    fuente: caracol
+                    modalidad: tv
+                    reporte_id: rep-1
+                    periodo: 2024-11
+                    ids_fuente: ""
+                    evidencia: "descartado a mano: no es un uso del repertorio"
+                    estado: descartado
+                    candidatos: []
+                    obra_asignada: null
+                    resuelto_por:
+                      id: usr-admin
+                      nombre: Ana Perez
+                    resuelto_en: "2026-09-27T15:04:05Z"
+                    ultima_actualizacion: "2026-09-27T15:04:05Z"
+                    nota: no es un uso del repertorio de REDES
+        "400":
+          description: |
+            El cuerpo no es un JSON valido, la nota falta o pasa de 300
+            caracteres, la decision no es `asignar` ni `descartar`, `asignar`
+            viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
+            catalogo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la nota es obligatoria para resolver un caso
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: Ese caso no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese caso no existe
+        "409":
+          description: |
+            Tres causas, cada una con su mensaje: otra persona ya resolvio el
+            caso, el caso ya no esta pendiente (la cascada lo cerro), o el
+            identificador de la fuente ya apunta a otra obra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                yaResuelto:
+                  summary: Otra persona lo resolvio antes
+                  value:
+                    error: 'otra persona ya resolvio este caso: el caso esta en "manual"'
+                noPendiente:
+                  summary: La cascada ya lo cerro
+                  value:
+                    error: 'el caso ya no esta pendiente: el caso esta en "difuso"'
+                aliasEnConflicto:
+                  summary: El identificador ya apunta a otra obra
+                  value:
+                    error: 'ese identificador ya apunta a otra obra: caracol id_ficha=871732 ya apunta a "obra-40"'
+        "503":
+          description: El binario no cableo la resolucion de casos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la resolucion de casos no esta disponible
+
+  /auditoria/asientos:
+    get:
+      tags: [auditoria]
+      summary: Pagina de la bitacora
+      description: |
+        Devuelve una pagina de asientos en orden de timeline: lo mas reciente
+        primero. Sin filtros de servidor, a proposito: los filtros de la vista
+        (tipo, fecha, actor) se aplican en el cliente sobre la pagina.
+
+        Solo lectura: no hay POST, PUT ni DELETE bajo `/auditoria/*`, y la
+        tabla ademas los rechaza por trigger (`asientos_inmutables`, ADR 0006).
+
+        Reserva el prefijo `/auditoria/*` a `auditor` (Revisor Fiscal) o
+        `administrador`. Sin sesion responde 401. Con sesion de otro rol
+        responde 403.
+      operationId: auditoriaAsientos
+      security:
+        - bearerAuth: []
+      x-required-roles: [auditor, administrador]
+      parameters:
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantos asientos saltarse desde lo mas reciente. Cero o ausente
+            es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: |
+            Los asientos de la pagina, lo mas reciente primero. Bitacora
+            vacia devuelve una lista vacia, no un 404.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asiento"
+              example:
+                - id: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+                  hecho: declaracion.guardada
+                  ref_tipo: obra
+                  ref_id: obra-1
+                  actor: usr-admin
+                  payload:
+                    version: 2
+                    estado: completa
+                    partes:
+                      - TitularID: t1
+                        IPI: IPI-00000001
+                        Porcentaje: 60
+                  cuando: "2026-04-02T10:30:00Z"
+        "400":
+          description: Un parametro de paginacion esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: limite tiene que ser un entero positivo
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /auditoria/obra/{id}:
+    get:
+      tags: [auditoria]
+      summary: Historial de una obra
+      description: |
+        Devuelve los asientos que referencian a una obra, en orden de cadena:
+        del mas antiguo al mas nuevo, que es el orden en que ocurrieron los
+        hechos y el que espera `ExplicarCifra` para reconstruir.
+
+        Una obra sin asientos devuelve una lista vacia, no un 404: "sin
+        hechos" no es "la obra no existe".
+
+        Solo lectura, igual que `/auditoria/asientos`. Sin sesion responde
+        401. Con sesion de otro rol que `auditor` o `administrador` responde
+        403.
+      operationId: auditoriaHistorialDeObra
+      security:
+        - bearerAuth: []
+      x-required-roles: [auditor, administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la obra en el catalogo.
+          schema:
+            type: string
+          example: obra-1
+      responses:
+        "200":
+          description: |
+            Los asientos de la obra en orden de cadena. Sin asientos,
+            lista vacia.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asiento"
+              example:
+                - id: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+                  hecho: declaracion.guardada
+                  ref_tipo: obra
+                  ref_id: obra-1
+                  actor: usr-admin
+                  payload:
+                    version: 2
+                    estado: completa
+                    partes:
+                      - TitularID: t1
+                        IPI: IPI-00000001
+                        Porcentaje: 60
+                  cuando: "2026-04-02T10:30:00Z"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-liquidaciones/obras:
+    get:
+      tags: [liquidaciones]
+      summary: Panel de liquidacion del titular
+      description: |
+        Devuelve bruto, cada deduccion (admin, bienestar social, reserva) y
+        neto por obra del titular autenticado. El filtro `periodo` es el
+        mismo que usa el export: panel y archivo no pueden divergir.
+
+        El titular sale de la sesion, no de un parametro. Sin sesion es 401.
+        Con otro rol es 403.
+      operationId: consultarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - $ref: "#/components/parameters/Periodo"
+      responses:
+        "200":
+          description: Liquidacion del titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liquidacion"
+              example:
+                titular_id: tit-ana
+                periodo: "2026-01"
+                lineas:
+                  - periodo: "2026-01"
+                    obra_id: obra-completa
+                    titulo: La Casa de las Dos Palmas
+                    bruto: "6000.00"
+                    admin: "1200.00"
+                    social: "600.00"
+                    reserva: "300.00"
+                    neto: "3900.00"
+                totales:
+                  bruto: "6000.00"
+                  admin: "1200.00"
+                  social: "600.00"
+                  reserva: "300.00"
+                  neto: "3900.00"
+        "400":
+          description: El periodo no es YYYY ni YYYY-MM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: periodo tiene que ser YYYY o YYYY-MM
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-liquidaciones/export:
+    get:
+      tags: [liquidaciones]
+      summary: Exportar la liquidacion a PDF o Excel
+      description: |
+        Renderiza la misma liquidacion que `GET /mis-liquidaciones/obras` como
+        archivo. Las cifras van embebidas: el fichero se puede abrir sin
+        conexion al panel (OE-6).
+
+        `formato=pdf` usa maroto; `formato=xlsx` usa excelize. Cualquier
+        otro valor es 400. El filtro `periodo` es el mismo del panel.
+      operationId: exportarLiquidaciones
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - $ref: "#/components/parameters/Periodo"
+        - name: formato
+          in: query
+          required: true
+          description: pdf o xlsx.
+          schema:
+            type: string
+            enum: [pdf, xlsx]
+          example: pdf
+      responses:
+        "200":
+          description: Archivo con la liquidacion embebida.
+          headers:
+            Content-Disposition:
+              description: Nombre del fichero, p. ej. liquidacion-2026-01.pdf
+              schema:
+                type: string
+                example: attachment; filename="liquidacion-2026-01.pdf"
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Formato o periodo invalidos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: formato tiene que ser pdf o xlsx
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-ingresos:
+    get:
+      tags: [titular]
+      summary: Ingresos netos del titular de la sesion
+      description: |
+        Lista las cifras netas del titular autenticado, recortadas a las
+        obras donde tiene participacion registrada (OE-6).
+
+        El titular se toma de la sesion. Un `titular_id` en la query no
+        cambia a quien se consulta.
+
+        El unico monto de cada fila es `neto`. El bruto, las deducciones
+        y el linaje (fuente, reporte, regla, split) estan en
+        `/explicar/{ref}`.
+      operationId: misIngresos
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - name: obra
+          in: query
+          required: false
+          description: Identificador de obra. Vacio, todas las del titular.
+          schema:
+            type: string
+          example: obra-completa
+        - name: fuente
+          in: query
+          required: false
+          description: Fuente del reporte que pondero la bolsa (caracol, netflix, ...).
+          schema:
+            type: string
+          example: caracol
+        - name: periodo
+          in: query
+          required: false
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          example: "2026-01"
+      responses:
+        "200":
+          description: Lista de ingresos netos. Vacia si no hay cifras con esos filtros.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListaIngresos"
+              example:
+                ingresos:
+                  - ref: proc-2026-01:obra-completa:tit-ana
+                    obra_id: obra-completa
+                    obra: La Casa de las Dos Palmas
+                    fuente: caracol
+                    periodo: "2026-01"
+                    neto: "3600.00"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /explicar/{ref}:
+    get:
+      tags: [trazabilidad]
+      summary: Linaje de una cifra
+      description: |
+        Devuelve el linaje de una cifra distribuida, reconstruido solo desde
+        los asientos de la corrida (`reparto.valorizado`, `firma.registrada`),
+        de la obra (`reparto.obra_valorizada`) y de la bolsa
+        (`recaudo.registrado`). No recalcula nada contra las tablas actuales:
+        el snapshot, la declaracion y el archivo que valen son los que la
+        corrida uso.
+
+        `ref` es `proceso_id:obra_id:titular_id` para la linea de un titular,
+        o `proceso_id:obra_id` para la cifra de la obra, incluida una obra
+        retenida porque su declaracion no suma 100% (RD 13.1.3).
+
+        Si falta la valorizacion de la corrida o de la obra, la respuesta es
+        404: una explicacion a medias es peor que ninguna. Un eslabon
+        accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
+        no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
+        de la bolsa (`recaudo.registrado`) y el alta de la obra
+        (`obra.registrada`, que se nombra aunque haya correcciones asentadas).
+
+        Un titular solo ve lineas suyas; la de otro titular responde 403, no
+        404. `auditor` y `administrador` ven cualquiera.
+      operationId: explicarCifra
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular, auditor, administrador]
+      parameters:
+        - name: ref
+          in: path
+          required: true
+          description: |
+            `proceso_id:obra_id:titular_id` o `proceso_id:obra_id`. Cualquier
+            otra forma responde 404.
+          schema:
+            type: string
+          example: proc-bolsa-1-1:obra-1:titular-1
+      responses:
+        "200":
+          description: Linaje completo de la cifra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Explicacion"
+              example:
+                ref: proc-bolsa-1-1:obra-1:titular-1
+                titular_id: titular-1
+                neto: "650000.00"
+                bruto: "1000000.00"
+                retenida: false
+                corrida:
+                  proceso_id: proc-bolsa-1-1
+                  periodo: "2026-01"
+                  circuito: nacional
+                bolsa:
+                  id: bolsa-1
+                  usuario_id: caracol
+                  bruto: "1000000.00"
+                  recaudo:
+                    convenio: conv-2026
+                    tarifa: T-01
+                    factura: F-0001
+                reporte:
+                  id: rep-caracol-2026-01
+                  fuente: caracol
+                  sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  clave_objeto: reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                reportes:
+                  - id: rep-caracol-2026-01
+                    fuente: caracol
+                    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    clave_objeto: reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                obra:
+                  id: obra-1
+                  titulo: La Casa de las Dos Palmas
+                  escalon: difuso
+                  puntaje: "0.91"
+                identificacion:
+                  - uso_id: uso-1
+                    reporte_id: rep-caracol-2026-01
+                    escalon: difuso
+                    puntaje: "0.91"
+                    evidencia: trgm sobre titulo normalizado
+                regla:
+                  snapshot_id: snap-2026-01
+                  reglamento: RD-IX
+                split:
+                  titular_id: titular-1
+                  ipi: IPI-00000001
+                  porcentaje: "100"
+                  version: 3
+                deducciones:
+                  - concepto: gastos_administrativos
+                    porcentaje: "20"
+                    monto: "200000.00"
+                  - concepto: bienestar_social
+                    porcentaje: "10"
+                    monto: "100000.00"
+                  - concepto: reserva_errores_tecnicos
+                    porcentaje: "5"
+                    monto: "50000.00"
+                firmas:
+                  - rol: distribucion
+                    actor_id: usr-dist
+                    sobre_revision: 1
+                    etapa: verificacion
+                    cuando: "2026-02-01T10:00:00Z"
+                  - rol: contabilidad
+                    actor_id: usr-conta
+                    sobre_revision: 1
+                    etapa: verificacion
+                    cuando: "2026-02-01T11:00:00Z"
+                faltantes: []
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: |
+            Autenticado, pero el rol no basta, o el titular pide una cifra
+            que no es suya.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: |
+            La ref no tiene forma valida, o la corrida o la obra no tienen
+            valorizacion asentada, o el titular no tiene linea en esa obra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no hay linaje asentado para esa cifra
+
   /obras:
     get:
       tags: [repertorio]
       summary: Buscar en el catalogo maestro
       description: |
-        Devuelve las obras del catalogo. Sin parametros devuelve el catalogo
-        entero: "sin recorte" es un recorte mas y no merece una ruta aparte.
+        Devuelve las obras del catalogo. Sin filtros de busqueda devuelve la
+        primera pagina: "sin recorte" de titulo/genero/IPI/anio sigue siendo
+        un listado, y la paginacion es el tope que evita servir el catalogo
+        real de REDES SGC de un golpe.
 
-        Los filtros se combinan con Y. `titulo` es PARCIAL y no distingue
-        mayusculas -es el unico campo por el que se busca sin saber el dato
-        exacto: en la muestra, el titulo localizado y el original difieren en
-        16 de 59 filas-. `genero`, `anio` e `ipi` son exactos.
+        Los filtros se combinan con Y. `titulo` casa por SUBCADENA o por
+        PARECIDO -ignora mayusculas, tildes y el orden de las palabras- y
+        ordena el resultado de mas a menos parecido. Es el unico campo por el
+        que se busca sin saber el dato exacto: en la muestra, el titulo
+        localizado y el original difieren en 16 de 59 filas. `genero`, `anio`
+        e `ipi` son exactos.
 
         `ipi` cruza contra los COAUTORES de la obra: el IPI identifica
         personas, no obras (`RD 3`).
+
+        `limite` y `desplazamiento` son la misma forma que usa `ListarObras`
+        en el repositorio de reparto (issue #90). Sin `limite` el servidor
+        aplica 100; por encima de 500 responde 400.
+
+        Cada obra llega con el estado de su Declaracion de Obra vigente
+        (`estado_declaracion`, `suma_porcentajes` y `version_vigente`), que es
+        lo que el catalogo tiene que poder mostrar sin que el cliente tenga que
+        adivinar nada ni pedir la declaracion aparte. `version_vigente: null`
+        distingue una obra sin declaracion de una declarada que no suma 100:
+        las dos son `incompleta`, y solo la segunda tiene version.
       operationId: buscarObras
       security:
         - bearerAuth: []
@@ -339,7 +1930,9 @@ paths:
         - name: titulo
           in: query
           required: false
-          description: Trozo del titulo. Coincidencia parcial, sin distinguir mayusculas.
+          description: |
+            Trozo del titulo o titulo parecido. Ignora mayusculas, tildes y el
+            orden de las palabras, y ordena por parecido.
           schema:
             type: string
           example: dos palmas
@@ -369,10 +1962,35 @@ paths:
             type: integer
             minimum: 1
           example: 1991
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas obras saltarse desde el inicio del resultado. Cero o
+            ausente es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
           description: |
-            Las obras que cuadran, ordenadas por identificador. Sin
+            Las obras que cuadran, recortadas a la pagina pedida. Con `titulo`
+            van ordenadas de mas a menos parecido (y por identificador entre
+            las que empatan); sin `titulo`, por identificador. Sin
             coincidencias devuelve una lista vacia, no un 404.
           content:
             application/json:
@@ -393,8 +2011,11 @@ paths:
                     - nombre: Ana Escritora
                       ipi: IPI-00000001
                       rol: guionista
+                  estado_declaracion: completa
+                  suma_porcentajes: 100
+                  version_vigente: 3
         "400":
-          description: Un parametro de busqueda esta mal formado.
+          description: Un parametro de busqueda o de paginacion esta mal formado.
           content:
             application/json:
               schema:
@@ -429,6 +2050,14 @@ paths:
 
         Una vez creada, el identificador es inmutable: no hay operacion que lo
         cambie. Es lo que referencian las declaraciones, los alias y los usos.
+
+        La respuesta trae ademas el estado de la Declaracion de Obra, porque es
+        el mismo schema `Obra` y sus tres campos derivados son obligatorios en
+        las cuatro respuestas que devuelven una obra. En un alta recien hecha
+        ese estado es el cero -`incompleta`, `suma_porcentajes: 0` y
+        `version_vigente: null`-, y no por darlo por supuesto: una declaracion
+        necesita la fila de la obra, que es justo lo que este alta crea, asi
+        que no puede existir ninguna todavia.
       operationId: registrarObra
       security:
         - bearerAuth: []
@@ -438,7 +2067,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Obra"
+              $ref: "#/components/schemas/NuevaObra"
             example:
               id: obra-1
               titulo: La Casa de las Dos Palmas
@@ -484,6 +2113,9 @@ paths:
                   - nombre: Beto Libretista
                     ipi: IPI-00000002
                     rol: libretista
+                estado_declaracion: incompleta
+                suma_porcentajes: 0
+                version_vigente: null
         "400":
           description: |
             El cuerpo no es JSON, o lo que trae no forma una obra: falta el
@@ -533,7 +2165,10 @@ paths:
     get:
       tags: [repertorio]
       summary: Leer una obra del catalogo
-      description: Devuelve la obra con sus metadatos y sus coautores.
+      description: |
+        Devuelve la obra con sus metadatos, sus coautores y el estado de su
+        Declaracion de Obra vigente -incluido que no tenga ninguna, que es
+        `version_vigente: null`-.
       operationId: obraPorID
       security:
         - bearerAuth: []
@@ -558,6 +2193,9 @@ paths:
                   - nombre: Ana Escritora
                     ipi: IPI-00000001
                     rol: guionista
+                estado_declaracion: completa
+                suma_porcentajes: 100
+                version_vigente: 3
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -599,6 +2237,10 @@ paths:
         No crea la obra si no existe: responde 404. Un PATCH que inserta
         convierte un identificador mal escrito en una obra fantasma del
         catalogo contra el que resuelve todo el matching.
+
+        Solo se corrigen los metadatos: el estado de la Declaracion de Obra no
+        se toca -sus porcentajes no estan en el catalogo (`R-03`)- y viaja en la
+        respuesta, como en cualquier lectura de la obra.
       operationId: actualizarMetadatosObra
       security:
         - bearerAuth: []
@@ -641,6 +2283,9 @@ paths:
                   - nombre: Ana Escritora
                     ipi: IPI-00000001
                     rol: guionista
+                estado_declaracion: completa
+                suma_porcentajes: 100
+                version_vigente: 3
         "400":
           description: El cuerpo no es JSON, o los metadatos no forman una obra valida.
           content:
@@ -751,6 +2396,22 @@ paths:
             que no es positivo o que trae mas de 4 decimales, un titular
             repetido, la suma se pasa de 100, o nombra un titular_id que no
             esta en el padron.
+
+            Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+            no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+            persona natural como titular de una Declaracion de Obra, y esa
+            regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+            rechazo lleva su propio mensaje, distinto del de un `titular_id`
+            inexistente: alli el identificador no resuelve a nadie, y aqui
+            resuelve a una productora que existe y no puede figurar como parte.
+
+            Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+            para ese `titular_id`: el IPI declarado se concilia con el del padron
+            al guardar, porque es el que llega a quien se le paga, y si no
+            coincide no se escribe nada (no se abre ninguna version). El mensaje
+            es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+            sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+            que no es persona natural recibe el rechazo de `R-01` y no este.
           content:
             application/json:
               schema:
@@ -838,6 +2499,22 @@ paths:
             que no es positivo o que trae mas de 4 decimales, un titular
             repetido, la suma se pasa de 100, o nombra un titular_id que no
             esta en el padron.
+
+            Y tambien es 400 una parte cuyo titular_id SI este en el padron y
+            no sea persona natural: `R-01` (`RD 4.5`) solo admite a un escritor
+            persona natural como titular de una Declaracion de Obra, y esa
+            regla se comprueba aqui, al guardar, no solo cuando se paga. Ese
+            rechazo lleva su propio mensaje, distinto del de un `titular_id`
+            inexistente: alli el identificador no resuelve a nadie, y aqui
+            resuelve a una productora que existe y no puede figurar como parte.
+
+            Y tambien es 400 una parte cuyo `ipi` no es el que el padron tiene
+            para ese `titular_id`: el IPI declarado se concilia con el del padron
+            al guardar, porque es el que llega a quien se le paga, y si no
+            coincide no se escribe nada (no se abre ninguna version). El mensaje
+            es fijo y no repite ninguno de los dos IPI, para que este endpoint no
+            sirva para leer el padron. Se comprueba despues de `R-01`: una parte
+            que no es persona natural recibe el rechazo de `R-01` y no este.
           content:
             application/json:
               schema:
@@ -874,9 +2551,14 @@ paths:
       tags: [repertorio]
       summary: Ver todas las versiones de la Declaracion de Obra
       description: |
-        Devuelve las versiones ordenadas de mas antigua a mas reciente, cada
-        una con su ventana de vigencia. Es de solo lectura: no hay forma de
-        editar una version pasada, unicamente de abrir una nueva -eso es
+        Devuelve una pagina de versiones, cada una con su ventana de
+        vigencia. La pagina se toma desde la version MAS RECIENTE hacia atras
+        -la version abierta es la ultima, y es la que quien lee el historial
+        necesita aunque la obra tenga mas versiones que el limite-, y dentro de
+        la pagina el orden sigue siendo de mas antigua a mas reciente.
+        `desplazamiento` cuenta versiones desde la mas reciente: con el se
+        alcanzan las anteriores. Es de solo lectura: no hay forma de editar una
+        version pasada, unicamente de abrir una nueva -eso es
         `PUT .../declaracion`-.
 
         Una obra sin ninguna declaracion todavia devuelve una lista vacia, no
@@ -893,9 +2575,35 @@ paths:
           schema:
             type: string
           example: obra-1
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Cuantas versiones trae la pagina. Si se omite, el servidor aplica
+            100. Tiene que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 100
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas versiones saltarse contando desde la mas reciente. Cero o
+            ausente es la pagina que incluye la version abierta.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         "200":
-          description: Las versiones de la declaracion, en orden.
+          description: |
+            La pagina pedida de versiones, en orden ascendente dentro de ella.
+            Lista vacia si la obra no tiene declaracion o si el desplazamiento
+            cae mas alla de la primera version.
           content:
             application/json:
               schema:
@@ -925,6 +2633,172 @@ paths:
                     - titular_id: tit-2
                       ipi: IPI-00000002
                       porcentaje: 30
+        "400":
+          description: Un parametro de paginacion esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: limite tiene que ser un entero positivo
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /titulares:
+    get:
+      tags: [padron]
+      summary: Buscar en el padron de titulares
+      description: |
+        Devuelve las entradas del padron. Sin filtros devuelve la primera
+        pagina: la paginacion es el tope que evita servir el padron real de
+        REDES SGC de un golpe, igual que en el catalogo de obras.
+
+        **Devuelve el padron entero, personas juridicas incluidas.** No es un
+        listado de "quien puede cobrar": `R-01` (`RD 4.5`) solo admite orden de
+        pago a un escritor persona natural, y esa regla se aplica al armar una
+        declaracion, no al leer el padron. Recortar aqui a las personas
+        naturales dejaria a quien edita sin poder explicar por que el titular
+        del padron que no le ofrecen como parte existe y no se le ofrece.
+
+        Los filtros se combinan con Y. `nombre` es PARCIAL y no distingue
+        mayusculas; `ipi` es exacto. `ids` pide esos titulares y ninguno mas: es
+        la consulta ACOTADA por identificador.
+
+        `limite` y `desplazamiento` son la misma forma que en `/obras`. Sin
+        `limite` el servidor aplica 100; por encima de 500 responde 400.
+      operationId: buscarTitulares
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: nombre
+          in: query
+          required: false
+          description: Trozo del nombre. Coincidencia parcial, sin distinguir mayusculas.
+          schema:
+            type: string
+          example: escritora
+        - name: ipi
+          in: query
+          required: false
+          description: IPI exacto del titular. Un trozo de IPI no encuentra nada.
+          schema:
+            type: string
+          example: IPI-00000001
+        - name: persona_natural
+          in: query
+          required: false
+          description: |
+            Solo `true` o `false`; cualquier otro valor se rechaza con 400 en
+            vez de ignorarse. Ignorado, quien pregunta por las personas
+            juridicas -que son las que NO pueden recibir reparto- recibiria el
+            padron entero y leeria a las personas naturales como si fueran lo
+            que pidio.
+
+            Ausente NO filtra: devuelve las dos clases de titular.
+          schema:
+            type: boolean
+          example: false
+        - name: ids
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: |
+            Los identificadores del padron que se quieren, y ninguno mas. Es la
+            consulta ACOTADA que ya usa en produccion la comprobacion de `R-01`
+            (`RD 4.5`) al armar una declaracion: el reparto nombra unos pocos
+            titulares, y sin este filtro comprobar la regla obliga a leer el
+            padron entero -que no tiene tope- para responder por un punado de
+            ids. Es la misma pregunta que `FiltroTitulares.IDs` del puerto.
+
+            Se serializa de la forma estandar -la clave repetida,
+            `?ids=tit-ana&ids=tit-luis`-, que es lo que produce un cliente
+            generado a partir de este contrato. Una lista separada por comas
+            (`?ids=tit-ana,tit-luis`) se acepta tambien, porque es lo que
+            escribe una mano y es la misma pregunta. Los elementos vacios que
+            deje una coma de mas se ignoran: no son identificadores.
+
+            **Un identificador que no existe NO es un error**, ni del cliente ni
+            del servidor: `ids` es un filtro, no una promesa de existencia. La
+            respuesta es una lista vacia con 200 y quien pinta decide que hacer
+            con el hueco.
+
+            **Un `ids` vacio tampoco filtra**: `?ids=` -o solo comas- es la
+            misma pregunta que no mandar el parametro, o sea el padron entero.
+          schema:
+            type: array
+            items:
+              type: string
+          example: [tit-ana, tit-luis]
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantos titulares saltarse desde el inicio del resultado ordenado
+            por identificador. Cero o ausente es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: |
+            Los titulares que cuadran, ordenados por identificador, recortados
+            a la pagina pedida. Sin coincidencias devuelve una lista vacia, no
+            un 404.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Titular"
+              example:
+                - id: tit-ana
+                  nombre: Ana Escritora
+                  ipi: IPI-00000001
+                  persona_natural: true
+                  clase: socio
+                - id: tit-productora
+                  nombre: Productora del Caribe S.A.S.
+                  ipi: IPI-00000077
+                  persona_natural: false
+                  clase: administrado
+        "400":
+          description: Un filtro o un parametro de paginacion esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: persona_natural tiene que ser true o false
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -1175,8 +3049,9 @@ paths:
       summary: Listar las bolsas
       description: |
         Devuelve las bolsas, ordenadas por identificador. Sin el parametro
-        devuelve todas: "sin recorte" es un recorte mas y no merece una ruta
-        aparte. Sin coincidencias devuelve una lista vacia, no un 404.
+        `periodo` no filtra por periodo (todas las bolsas). Distinto de
+        `/obras`, que pagina siempre: aqui el listado sigue sin tope de
+        paginacion. Sin coincidencias devuelve una lista vacia, no un 404.
       operationId: listarBolsas
       security:
         - bearerAuth: []
@@ -1298,6 +3173,1107 @@ paths:
               example:
                 error: esa bolsa no existe
 
+  /alertas:
+    get:
+      tags: [anomalias]
+      summary: Listar las anomalias de un periodo
+      description: |
+        Devuelve las alertas que cuadran con el filtro, de la mas reciente a
+        la mas antigua. Sin coincidencias devuelve una lista vacia, no un 404.
+
+        Los tres filtros son opcionales y ninguno se ignora cuando llega mal:
+        un `periodo` mal formado o un `tipo` que no esta en la lista cerrada
+        salen con 400. Ignorados devolverian todo -o nada- y quien pregunta lo
+        leeria como "ese periodo no tuvo anomalias".
+
+        Esta ruta NO evalua: es una lectura. La pasada de deteccion se dispara
+        con `POST /alertas/evaluacion`.
+      operationId: listarAlertas
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          description: |
+            Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y `12`.
+            Un valor mal formado se rechaza con 400 en vez de ignorarse.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2025-01
+        - name: tipo
+          in: query
+          required: false
+          description: |
+            Uno de los seis tipos de anomalia. Una grafia que no este en la
+            lista se rechaza con 400: devolver la lista vacia haria pasar un
+            `onni` por "no hay ninguna de ese tipo".
+          schema:
+            $ref: "#/components/schemas/TipoDeAnomalia"
+        - name: resueltas
+          in: query
+          required: false
+          description: |
+            `false` deja solo las abiertas, `true` solo las cerradas. Sin el
+            parametro salen las dos: "no filtrar" y "solo las resueltas" no
+            pueden ser el mismo valor, o no habria forma de pedir el historial.
+          schema:
+            type: boolean
+          example: false
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Cuantas alertas devolver. Igual que en `/obras` y `/titulares`.
+            Sin el, el por defecto (100). Tres de los seis detectores emiten
+            UNA alerta por fila de uso, asi que una evaluacion real sobre un
+            lote de 10.000 registros deja del orden de 10.000 alertas: sin
+            recorte, el panel -que sondea cada 15 segundos- se traeria varios
+            MB en cada vuelta.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+          example: 100
+        - name: desplazamiento
+          in: query
+          required: false
+          description: Desde que fila. Cero es el principio.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+      responses:
+        "200":
+          description: Las alertas que cuadran.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alerta"
+              example:
+                - id: 3f1d0a4e-0000-4000-8000-000000000001
+                  tipo: reserva_declaracion_incompleta
+                  detalle: >-
+                    la declaracion vigente de la obra "obra-12" suma 60% en 1
+                    parte(s) y no llega a 100: se retiene el TOTAL de esa obra,
+                    no se reparte la parte declarada (R-04, RD 13.1.3)
+                  periodo: 2025-01
+                  referencia: obra:obra-12
+                  ref_tipo: obra
+                  ref_id: obra-12
+                  critica: false
+                  detectada: "2026-05-02T08:30:00Z"
+                  resuelta: false
+        "400":
+          description: Un filtro llego mal formado o fuera de su lista cerrada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: Esta instalacion no cableo la deteccion de anomalias.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la deteccion de anomalias no esta configurada en esta instalacion
+
+  /alertas/evaluacion:
+    post:
+      tags: [anomalias]
+      summary: Evaluar las anomalias de un periodo
+      description: |
+        Corre los seis detectores sobre el periodo ya armado y escribe las
+        alertas que encuentre.
+
+        **Es idempotente.** Se puede correr al cerrar la ingesta, otra vez
+        cuando un autor declara, y otra antes de la compuerta: la clave natural
+        de la tabla es la identidad del hallazgo (periodo, tipo y registro
+        ofensor), asi que la misma anomalia no se escribe dos veces. Por eso la
+        respuesta trae `detectadas` y `nuevas` por separado: la segunda pasada
+        sigue detectando seis y escribe cero.
+
+        Una alerta que una persona ya cerro **no se reabre** aunque la anomalia
+        siga ahi. Limitacion conocida, ver ADR 0021.
+
+        Responde 200 y no 201: la pasada no crea un recurso con URL, crea N
+        alertas o ninguna, y lo que devuelve es el recuento.
+
+        Escribe, asi que pide `administrador` o `distribucion`. `auditor` lee
+        la bandeja y no la dispara.
+      operationId: evaluarAnomalias
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PedidoDeEvaluacion"
+            example:
+              periodo: 2025-01
+      responses:
+        "200":
+          description: La pasada termino. Recuento de lo que se vio y de lo que se escribio.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResumenDeEvaluacion"
+              example:
+                periodo: 2025-01
+                detectadas: 6
+                nuevas: 6
+                autocerradas: 0
+                por_tipo:
+                  oni: 1
+                  duplicado_archivo: 1
+                  duplicado_registro: 1
+                  titular_sin_porcentaje: 1
+                  reserva_declaracion_incompleta: 1
+                  tipo_obra_sin_mapear: 1
+                criticas_abiertas: 3
+                usos_sin_cotejar: 0
+        "400":
+          description: El periodo falta o esta mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: Esta instalacion no cableo la deteccion de anomalias.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la deteccion de anomalias no esta configurada en esta instalacion
+
+  /alertas/{id}/resolver:
+    post:
+      tags: [anomalias]
+      summary: Resolver una alerta
+      description: |
+        Marca la alerta como atendida a nombre de quien la atiende. Quien firma
+        sale de la SESION y no del cuerpo: dejarlo llegar por JSON permitiria
+        firmar la decision a nombre de otro, y el asiento del ADR 0006 tiene
+        que nombrar a quien la tomo de verdad.
+
+        **No toca el registro ofensor.** Asignar la obra de un ONI o descartar
+        una fila es la bandeja de #39, con su propio caso de uso y su propio
+        asiento; esto solo deja constancia de que alguien se hizo cargo.
+
+        Resolver dos veces responde 409, no 200: quien pulsa el boton el
+        segundo tiene que saber que la firma escrita no es la suya. Dos
+        personas mirando el mismo tablero es el caso normal.
+      operationId: resolverAlerta
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la alerta (UUID).
+          schema:
+            type: string
+            format: uuid
+          example: 3f1d0a4e-0000-4000-8000-000000000001
+      requestBody:
+        required: true
+        description: |
+          La nota es obligatoria: es la justificacion auditable de la
+          decision y viaja al asiento `alerta.resuelta`. Quien resolvio sale
+          de la sesion.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolucionDeAlerta"
+            example:
+              nota: hablado con la autora, declara esta semana
+      responses:
+        "200":
+          description: La alerta, ya cerrada y firmada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alerta"
+              example:
+                id: 3f1d0a4e-0000-4000-8000-000000000001
+                tipo: reserva_declaracion_incompleta
+                detalle: >-
+                  la declaracion vigente de la obra "obra-12" suma 60% en 1
+                  parte(s) y no llega a 100
+                periodo: 2025-01
+                referencia: obra:obra-12
+                ref_tipo: obra
+                ref_id: obra-12
+                critica: false
+                detectada: "2026-05-02T08:30:00Z"
+                resuelta: true
+                resuelta_por: usr-admin
+                resuelta_en: "2026-05-03T14:05:00Z"
+                nota: hablado con la autora, declara esta semana
+        "400":
+          description: El id no es un UUID, el cuerpo no es un JSON valido, o la nota falta o esta vacia.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la nota es obligatoria para resolver una alerta
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna alerta con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa alerta no existe
+        "409":
+          description: La alerta existe y alguien la cerro antes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa alerta ya estaba resuelta
+        "503":
+          description: Esta instalacion no cableo la deteccion de anomalias.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la deteccion de anomalias no esta configurada en esta instalacion
+
+  /procesos:
+    post:
+      tags: [procesos]
+      summary: Abrir una corrida
+      description: |
+        Congela el snapshot de parametros normativos vigente a la fecha del
+        periodo (`ADR 0004`) y abre el proceso en `recaudo`, revision 1.
+
+        Idempotente por `id`, pero solo cuando `periodo`/`circuito`/`bolsa_id`
+        son LOS MISMOS que abrieron esa corrida: reabrir con esos tres datos
+        sin cambiar devuelve el proceso que ya hay, sin tocarlo. Es lo que
+        hace seguro reintentar -un trabajo de `TrabajoEjecutarReparto` que se
+        retoma no reinicia una corrida que un humano ya avanzo-. Un `id` que
+        colisiona con un proceso de OTROS datos es 409, no una devolucion en
+        silencio: el cliente no podria distinguir "se creo" de "se devolvio
+        otra cosa con este mismo id".
+
+        El `circuito` y el `periodo` declarados tienen que coincidir con los
+        de la bolsa referenciada -si no, la corrida valorizaria con las
+        reglas de otro circuito, o contra los usos de otro periodo- y eso
+        tambien es 409.
+
+        `ADR 0019`: una corrida es una bolsa y un proceso. Un periodo con dos
+        canales abre dos procesos, uno por bolsa -ver
+        `AbrirCorridaDelPeriodo`, que es lo que el calendario dispara para
+        cada bolsa del periodo.
+      operationId: abrirProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbrirProceso"
+            example:
+              id: proc-caracol-2026-01-1
+              periodo: 2026-01
+              circuito: nacional
+              bolsa_id: bolsa-caracol-2026-01-nacional
+      responses:
+        "201":
+          description: El proceso, recien abierto (o el que ya existia con ese id).
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /procesos/proc-caracol-2026-01-1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "400":
+          description: El cuerpo no es un proceso valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            El `id` ya existe con otro `periodo`/`circuito`/`bolsa_id`, o el
+            `circuito`/`periodo` declarados no coinciden con los de la bolsa
+            referenciada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags: [procesos]
+      summary: Listar los procesos
+      description: |
+        El panel de corridas: etapa, circuito, periodo y firmas de cada
+        proceso. Sin procesos devuelve una lista vacia, no un 404.
+      operationId: listarProcesos
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Los procesos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /procesos/{id}:
+    get:
+      tags: [procesos]
+      summary: Leer un proceso
+      description: |
+        Consulta de solo lectura: en que etapa esta una corrida, sin
+        avanzarla ni firmarla. Es la lectura que #69 (agente de staff)
+        necesitaba y que la issue original no traia.
+      operationId: procesoPorID
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+
+  /procesos/{id}/avanzar:
+    post:
+      tags: [procesos]
+      summary: Avanzar el proceso a la siguiente etapa
+      description: |
+        En una compuerta (`verificacion`, `pago_registro`) exige las firmas
+        de `distribucion` y `contabilidad` sobre la revision actual antes de
+        dejar pasar. Al entrar a `importe_obra` del circuito nacional invoca
+        el motor puro de valorizacion; el internacional nunca la alcanza
+        (`RD 7.4`).
+
+        Al salir de `deducciones` (hacia `importe_obra` o
+        `liquidacion_parcial`) evalua las anomalias del periodo y no deja
+        pasar si queda alguna critica sin resolver (ADR 0021).
+      operationId: avanzarEtapaProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso, en su nueva etapa.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            El estado del proceso no permite avanzar -por ejemplo, una
+            compuerta sin las dos firmas de la revision actual, o una etapa
+            terminal. El cuerpo de la peticion era correcto; lo que no cuadra
+            es el estado contra `RD 13.5`.
+
+            Tambien 409 si otra transicion escribio la fila entre que este
+            request la leyo y la escribio (control de concurrencia
+            optimista): releer el proceso y reintentar resuelve esto.
+
+            Y 409 si el periodo tiene anomalias criticas sin resolver al
+            salir de `deducciones`: se resuelven en `/alertas`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /procesos/{id}/firmar:
+    post:
+      tags: [procesos]
+      summary: Firmar la compuerta actual
+      description: |
+        Agrega la firma del actor autenticado a la compuerta actual del
+        proceso, sobre su revision vigente.
+
+        El rol con el que se firma es el de la SESION, nunca uno que elija el
+        cliente: si pudiera elegirse, un actor de `contabilidad` podria
+        firmar "como `distribucion`" y la doble firma de `RD 13.5` dejaria de
+        separar a dos personas. No hay cuerpo que mandar.
+      operationId: firmarProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [distribucion, contabilidad]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      responses:
+        "200":
+          description: El proceso, con la firma agregada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            La etapa actual no tiene compuerta, el rol de la sesion ya firmo
+            esta revision, o el actor ya cubre el otro rol. Firmar no toca la
+            revision de `procesos` -solo agrega una fila a `firmas`-, asi que
+            esta ruta no tiene el conflicto de concurrencia de avanzar o
+            rechazar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /procesos/{id}/rechazar:
+    post:
+      tags: [procesos]
+      summary: Rechazar la compuerta actual
+      description: |
+        Retrocede el proceso una etapa -nunca a un estado terminal- y sube la
+        revision: las firmas de la revision anterior dejan de contar. Un
+        rechazo RETROCEDE, no aborta (`ADR 0008`).
+      operationId: rechazarGateProceso
+      security:
+        - bearerAuth: []
+      x-required-roles: [distribucion, contabilidad]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: proc-caracol-2026-01-1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RechazarProceso"
+            example:
+              motivo: faltan soportes de la liquidacion parcial
+      responses:
+        "200":
+          description: El proceso, retrocedido una etapa.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Proceso"
+        "400":
+          description: Falta el motivo del rechazo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ningun proceso con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese proceso no existe
+        "409":
+          description: |
+            La etapa actual no tiene compuerta que rechazar, o otra
+            transicion escribio la fila entre que este request la leyo y la
+            escribio (control de concurrencia optimista): releer el proceso
+            y reintentar resuelve esto ultimo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /reportes:
+    get:
+      tags: [ingesta]
+      summary: Cargas hechas
+      description: |
+        El listado de entregas recibidas, de la mas reciente a la mas antigua.
+        Es la unica lectura que responde "¿entro completo lo que subi?": el
+        recuento de filas aceptadas y rechazadas por entrega solo se ve aqui.
+
+        Va paginado con la misma forma que el resto de listados (limite y
+        desplazamiento, mismo defecto y mismo techo): el listado crece sin
+        cota con cada entrega, y cada fila trae dos subconsultas de recuento.
+
+        Cada carga viene atada a su periodo de recaudo y a la evidencia cruda
+        de la que salio (`sha256`, `clave_objeto`), que es lo que permite
+        volver al archivo EXACTO que pondero una corrida y no "al archivo de
+        esa fuente" (ADR 0006).
+
+        Cada carga dice tambien QUIEN la subio (`subido_por`): es la parte de la
+        trazabilidad que faltaba, porque la escritura que decide como se pondera
+        la bolsa de un periodo entero era la unica del sistema sin actor. Las
+        entregas anteriores a esa columna lo traen vacio, que es "anterior a la
+        atribucion" y no un actor desconocido.
+      operationId: listarCargas
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: periodo
+          in: query
+          required: false
+          description: |
+            Periodo de recaudo, `AAAA` o `AAAA-MM`, con el mes entre `01` y
+            `12`. Ausente o vacio no filtra.
+
+            Un periodo mal escrito se rechaza con 400 en vez de ignorarse: no
+            casaria con ninguna fila y devolveria una lista vacia
+            indistinguible de "ese periodo no tuvo cargas". Un mes que no existe
+            -`2026-13`, `2026-00`- se rechaza por lo mismo, con la misma regla
+            que aplica el alta de una entrega: es la del dominio
+            (`internal/dominio/recaudo`), no una copia por capa.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2026-01
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+            que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 50
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantas cargas saltarse desde la mas reciente. Cero o ausente es
+            la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: Las cargas. Lista vacia si no hay ninguna, nunca `null`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Carga"
+        "400":
+          description: El periodo no tiene la forma AAAA o AAAA-MM, o el mes no existe,
+            o el limite y el desplazamiento no son enteros validos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: periodo "2026-1", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: |
+            Esta instalacion no cablea la ingesta. Es el caso de `cmd/lambda`,
+            cuyo sistema de ficheros no sirve de boveda inmutable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
+    post:
+      tags: [ingesta]
+      summary: Subir un reporte de uso
+      description: |
+        La subida manual, que el criterio de aceptacion de OE-1 declara
+        "fallback permanente": la adquisicion autonoma es otro issue.
+
+        El archivo se PARSEA antes de tocar nada. Un fallo estructural -el
+        libro no se abre, falta una columna requerida- responde 400 sin
+        persistir NADA, ni siquiera la evidencia cruda: de la boveda no se
+        borra (ADR 0006), y escribir el acuse quemaria la huella de ese archivo
+        para esa fuente, de modo que la correccion que el cliente mande despues
+        chocaria con 409 si resulta ser el mismo archivo.
+
+        Un lote con filas malas NO es un error: es el caso normal. Las buenas
+        se persisten y las malas vuelven en `rechazados`, cada una con su
+        motivo nombrando el campo y la columna. Ninguna se descarta.
+
+        El formato sale de la extension de `archivo` salvo que se mande
+        `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
+        que de el sale UNICAMENTE esa decision: la clave del objeto de la
+        boveda se deriva de la huella del contenido, no del nombre.
+
+        La entrega queda atribuida al usuario de la SESION, y el actor no viaja
+        en el formulario: un campo `subido_por` en el multipart se ignora. Quien
+        sube el archivo no elige a nombre de quien queda registrada una entrega
+        que pondera la bolsa de un periodo entero.
+      operationId: subirReporte
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [fuente, periodo, archivo]
+              properties:
+                fuente:
+                  type: string
+                  description: |
+                    Quien entrego. Es lo que se estampa en cada fila y lo que
+                    indexa la tabla de alias, asi que tiene que ser una de las
+                    fuentes con adaptador dado de alta; si no, 400 con la lista
+                    de las que hay.
+                  example: caracol
+                periodo:
+                  type: string
+                  description: |
+                    Periodo de recaudo al que pondera la entrega. `AAAA` o
+                    `AAAA-MM` con el mes entre `01` y `12`: un mes que no existe
+                    no se admite, y no hay vuelta atras que lo arregle -la
+                    unicidad es (sha256, fuente), la huella no incluye el periodo
+                    y no hay ruta de borrado-.
+                  pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+                  example: 2026-01
+                formato:
+                  type: string
+                  description: |
+                    Opcional. Si falta, se deduce de la extension de `archivo`.
+                  enum: [xlsx, csv, json]
+                archivo:
+                  type: string
+                  format: binary
+                  description: |
+                    El reporte tal como lo entrego la fuente. Tope de 32 MiB;
+                    el streaming de archivos grandes es el issue #46.
+      responses:
+        "201":
+          description: |
+            La entrega quedo congelada y sus filas persistidas. `rechazados`
+            puede venir con contenido: eso no es un fallo de la peticion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entrega"
+        "400":
+          description: |
+            La entrega no cumple la estructura minima: falta una columna
+            requerida, el archivo no se puede abrir, no hay adaptador para ese
+            par (fuente, formato), el periodo esta mal escrito o el mes no
+            existe, o el archivo no trae ninguna fila. NADA se persistio.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: a la entrega de "caracol" le faltan columnas requeridas: Duracion_total. El archivo trae: Canal, Titulo, ID_Ficha'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "409":
+          description: |
+            Esa fuente ya entrego exactamente esos bytes -lo decide el
+            UNIQUE (sha256, fuente), no el nombre del archivo-.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa fuente ya entrego exactamente ese archivo
+        "413":
+          description: |
+            El archivo pasa del tope de 32 MiB. El cuerpo de la peticion se
+            corta en el tope mas el margen de la envoltura multipart, asi que
+            una subida mayor deja de leerse en cuanto se pasa en vez de
+            recibirse entera para rechazarla despues.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el archivo pasa de 32 MiB
+        "500":
+          description: |
+            Incidente del servidor al recibir o registrar la entrega: el
+            temporal multipart no se pudo crear o escribir (TMPDIR roto, sin
+            permiso o lleno), fallo la lectura del archivo ya recibido, o la
+            boveda ya tiene contenido distinto bajo esa huella (evidencia
+            corrupta). No es un conflicto que el cliente pueda resolver
+            reintentando con otro archivo: hay que avisar a operacion. El
+            detalle queda en el log a nivel Error; el cuerpo no filtra la
+            causa interna.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la boveda ya tiene contenido distinto bajo esa huella; avise a operacion
+        "503":
+          description: Esta instalacion no cablea la ingesta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
+  /reportes/{id}/rechazos:
+    get:
+      tags: [ingesta]
+      summary: Log de rechazos de una carga
+      description: |
+        Las filas que no se pudieron normalizar en UNA entrega, cada una con
+        su motivo. Existe porque `GET /reportes` solo trae el RECUENTO de
+        rechazos por carga, y es lo que despliega una fila de ese listado.
+
+        Sale PAGINADO, con la misma forma que `GET /obras`. Un archivo con la
+        cabecera equivocada rechaza todas sus filas, y leer ese log entero -y
+        pintarlo entero, un renglon por fila- congela la pestana y puede tumbar
+        el proceso de la API.
+
+        La cota NO trunca la cifra: el total de rechazos de la carga sigue
+        viajando en `Carga.rechazados` (`GET /reportes`), que es de donde quien
+        pinta saca su "N de M". Nadie tiene que adivinar cuantas filas quedaron
+        fuera de la pagina, y el log completo sigue siendo alcanzable pagina a
+        pagina.
+
+        Las filas salen en el orden en que venian en el archivo, que es el
+        orden en que hay que pedirle al cliente lo que falta.
+
+        Una carga que no existe responde 404, y no una lista vacia: "no llego"
+        y "llego sin rechazos" son las dos respuestas que esta lectura existe
+        para distinguir. Una pagina vacia de una carga que SI existe es 200 con
+        la lista vacia, nunca un 404: quedar sin filas mas alla del final no
+        significa que la carga no este.
+      operationId: listarRechazosDeCarga
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Identificador de la carga, el `id` de `Carga` o de `Entrega`.
+          schema:
+            type: string
+          example: rep-9f2c...
+        - name: limite
+          in: query
+          required: false
+          description: |
+            Cuantos rechazos trae la pagina. Si se omite, el servidor aplica
+            100. Tiene que ser un entero positivo y no mayor que 500.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 100
+        - name: desplazamiento
+          in: query
+          required: false
+          description: |
+            Cuantos rechazos saltarse desde el inicio del log, que va en orden
+            de fila del archivo. Cero o ausente es la primera pagina.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: |
+            La pagina pedida del log, en orden de fila. Lista vacia si la carga
+            no tuvo rechazos o si el desplazamiento cae mas alla del final,
+            nunca `null`. El total de la carga no viene aqui: es
+            `Carga.rechazados` en `GET /reportes`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Rechazo"
+        "400":
+          description: El identificador de la carga llego en blanco, o el limite
+            y el desplazamiento no son enteros validos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: 'reporte invalido: falta el id de la carga'
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna carga con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: esa carga no existe
+        "503":
+          description: Esta instalacion no cablea la ingesta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la ingesta de reportes no esta configurada en esta instalacion
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1312,7 +4288,152 @@ components:
         respuesta es 401; con sesion de un rol no permitido, 403. La
         matriz Rol -> capacidad esta en docs/architecture/roles.md.
 
+  parameters:
+    Periodo:
+      name: periodo
+      in: query
+      required: false
+      description: |
+        Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+      schema:
+        type: string
+        pattern: '^[0-9]{4}(-[0-9]{2})?$'
+      example: "2026-01"
+
   schemas:
+    Entrega:
+      type: object
+      description: |
+        El acuse de una entrega ingerida entera.
+
+        No hay campo de dinero, y no lo va a haber: un reporte de uso PONDERA
+        la bolsa, no la aporta.
+      required:
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la entrega. Se deriva del par (fuente, huella), no
+            del nombre del archivo.
+          example: rep-9f2c...
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          description: |
+            Huella de los bytes crudos. Es como se cita una evidencia en toda
+            la trazabilidad (ADR 0006).
+          pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: Donde quedaron los bytes en la boveda. Se deriva de la huella.
+          example: reportes/9f2c...
+        nbytes:
+          type: integer
+          example: 21032
+        aceptados:
+          type: integer
+          description: Filas que entraron a la forma canonica.
+          example: 58
+        rechazados:
+          type: array
+          description: |
+            Las filas que no se pudieron normalizar, con su motivo. Lista vacia
+            si no hubo ninguna, nunca `null`.
+          items:
+            $ref: "#/components/schemas/Rechazo"
+
+    Rechazo:
+      type: object
+      description: |
+        Una fila que no se pudo normalizar. Lleva lo identificatorio y el
+        motivo, y NINGUNA columna de medida: una fila rechazada no pondera, y
+        sin las medidas nadie las puede sumar "solo para ver" (ADR 0016).
+      required: [id, titulo, ids_fuente, motivo]
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la fila. Vive en el log de rechazos y no en `usos`:
+            un id esta en una de las dos tablas, nunca en las dos.
+        titulo:
+          type: string
+        ids_fuente:
+          type: string
+          description: El identificador de la fuente, tal como venia.
+        motivo:
+          type: string
+          description: |
+            Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
+            archivo, que es lo que permite volver a pedirle al cliente
+            exactamente eso.
+          example: 'fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero'
+
+    Carga:
+      type: object
+      description: Una entrega en el listado de cargas hechas.
+      required:
+        [id, fuente, periodo, sha256, clave_objeto, nbytes, subido_por, recibido, aceptados, rechazados]
+      properties:
+        id:
+          type: string
+        fuente:
+          type: string
+          example: caracol
+        periodo:
+          type: string
+          example: 2026-01
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        clave_objeto:
+          type: string
+          description: |
+            Donde quedaron los bytes en la boveda. Se deriva de la huella, igual
+            que en el acuse de POST. Sin ella, tras recargar, el listado no
+            permite volver a la evidencia exacta (ADR 0006).
+          example: reportes/9f2c...
+        nbytes:
+          type: integer
+        subido_por:
+          type: string
+          description: |
+            Id del usuario autenticado que hizo la entrega (#116). Es la
+            respuesta a "quien entrego este archivo", que era lo que faltaba
+            para cerrar la cadena: de una entrega se sabia la fuente, el periodo
+            y la huella, pero no quien la subio, mientras que `usos.resuelto_por`
+            ya registraba el actor de una resolucion manual, que es una accion
+            menos consecuente.
+
+            Sale de la SESION, nunca del formulario: un campo `subido_por` en el
+            multipart se ignora. Si valiera, quien sube el archivo elegiria a
+            nombre de quien queda registrada la entrega que pondera la bolsa de
+            un periodo entero.
+
+            Cadena vacia cuando no hay actor: las entregas anteriores a la
+            columna, que son "anteriores a la atribucion", y las que escribe el
+            sembrador. Se persiste como NULL y no se rellena con un usuario
+            inventado, porque una atribucion falsa es peor que su ausencia
+            declarada.
+        recibido:
+          type: string
+          format: date-time
+          description: |
+            Cuando llego. Sale del reloj de la base: es la marca de un hecho de
+            almacenamiento, no de negocio. Nada del reparto se calcula con el.
+        aceptados:
+          type: integer
+        rechazados:
+          type: integer
+          description: |
+            Cuantas filas quedaron en el log de rechazos. Junto con `aceptados`
+            es lo que responde si la carga entro completa.
+
     Estado:
       type: object
       required: [estado]
@@ -1382,6 +4503,78 @@ components:
             el, cualquier peticion con este token responde 401.
         usuario:
           $ref: "#/components/schemas/Usuario"
+
+    PublicarONI:
+      type: object
+      required: [periodo]
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          description: Periodo que se publica, YYYY o YYYY-MM.
+
+    ObraONIPublica:
+      type: object
+      additionalProperties: false
+      required: [id, titulo, fuente, ids_fuente, modalidad]
+      description: |
+        Proyeccion publica de un uso en ONI. Titulo e informacion
+        identificatoria. No hay, y no va a haber, campo de dinero (R-18,
+        RD 13.8.2).
+      properties:
+        id:
+          type: string
+          description: Identificador del uso, opaco.
+        titulo:
+          type: string
+          description: Titulo tal como vino en el reporte.
+        fuente:
+          type: string
+          description: Fuente del reporte (canal, OTT, exhibidor).
+        ids_fuente:
+          type: string
+          description: Identificadores que trajo la fuente, si los hay.
+        modalidad:
+          type: string
+          enum: [tv, cine, ott, hotel]
+          description: Modalidad de comunicacion publica (RD 8).
+
+    ListadoONI:
+      type: object
+      additionalProperties: false
+      required:
+        - periodo
+        - fecha_proceso
+        - direccion_fisica
+        - direccion_electronica
+        - explicacion
+        - obras
+      description: |
+        Instantanea publicada del listado ONI. La fecha_proceso es el ancla
+        de los tres anos de R-19.
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2})?$'
+        fecha_proceso:
+          type: string
+          format: date-time
+          description: Fecha de la publicacion, RFC 3339. No se reescribe.
+        direccion_fisica:
+          type: string
+          description: Direccion fisica a la que se allega documentacion (RD 13.8.4.3).
+        direccion_electronica:
+          type: string
+          description: Direccion electronica a la que se allega documentacion (RD 13.8.4.3).
+        explicacion:
+          type: string
+          description: |
+            Explicacion del proceso de Distribucion en el que se incluyen
+            los derechos de las ONI (RD 13.8.4.4).
+        obras:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObraONIPublica"
 
     Coautor:
       type: object
@@ -1459,24 +4652,112 @@ components:
           items:
             $ref: "#/components/schemas/Coautor"
 
+    IdentidadObra:
+      type: object
+      required: [id]
+      description: El identificador de una obra, y nada mas.
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la obra. Opaco, unico e inmutable. Es el numero de
+            obra de REDES-SYS, que se asigna FUERA de este sistema: lo trae
+            quien da de alta la obra, y ninguna operacion posterior lo cambia.
+
+    NuevaObra:
+      description: |
+        El cuerpo de un alta de obra: el identificador y sus metadatos.
+
+        **No es `Obra`, y la diferencia importa.** `Obra` lleva ademas
+        `estado_declaracion`, `suma_porcentajes` y `version_vigente`, que el
+        servidor calcula a partir de la Declaracion de Obra vigente. Mandarlos
+        no cambia nada -el alta no los mira-, asi que un cuerpo que los exigiera
+        estaria afirmando una facultad que quien llama no tiene.
+
+        Es allOf y no un objeto plano por la misma razon que `Obra`: los
+        metadatos son los mismos en las dos, y duplicarlos aqui seria una
+        segunda copia que se desvia.
+      allOf:
+        - $ref: "#/components/schemas/IdentidadObra"
+        - $ref: "#/components/schemas/MetadatosObra"
+
     Obra:
       type: object
-      required: [id, titulo, genero, anio, tipo, coautores]
+      required: [id, titulo, genero, anio, tipo, coautores, estado_declaracion, suma_porcentajes, version_vigente]
       description: |
-        Una entrada del catalogo maestro: su identificador mas sus metadatos.
+        Una entrada del catalogo maestro: su identificador, sus metadatos, y lo
+        que el sistema sabe hoy de su Declaracion de Obra.
 
         El identificador es inmutable. Se asigna al crear la obra -lo trae
         quien la registra, es el numero de obra de REDES-SYS- y ninguna
         operacion lo cambia: es lo que referencian las declaraciones, los
         alias de fuente y los usos.
+
+        Los tres ultimos campos son DERIVADOS y de solo lectura: los calcula el
+        servidor a partir de la version vigente de la declaracion. No entran por
+        ningun cuerpo -para mandar una obra esta `NuevaObra`, y para corregir
+        sus metadatos, `MetadatosObra`-, y por eso no viven en `MetadatosObra`,
+        que es lo que un cliente puede enviar. Estan en las cuatro respuestas
+        que devuelven una obra porque el catalogo es donde un administrador ve
+        que obras se pueden repartir y cuales quedan retenidas.
       allOf:
-        - type: object
-          required: [id]
-          properties:
-            id:
-              type: string
-              description: Identificador de la obra. Opaco, unico e inmutable.
+        - $ref: "#/components/schemas/IdentidadObra"
         - $ref: "#/components/schemas/MetadatosObra"
+        - type: object
+          required: [estado_declaracion, suma_porcentajes, version_vigente]
+          properties:
+            estado_declaracion:
+              type: string
+              enum: [completa, incompleta]
+              description: |
+                Estado de la Declaracion de Obra vigente. `completa` si las
+                partes suman exactamente 100; `incompleta` en cualquier otro
+                caso, incluida una obra que no tiene ninguna declaracion.
+
+                **`incompleta` no es un error ni un rechazo.** Es un estado
+                valido del negocio: bajo `R-04` (`RD 13.1.3`) no se reparte nada
+                de esa obra y se retiene el total en reserva, nunca se reparte a
+                medias. Por eso el conjunto tiene DOS valores y no tres: no hay
+                ningun estado `invalida` guardado -lo que el sistema rechaza es
+                DECLARAR una suma por encima de 100, y eso es un 400 de la
+                escritura, no un estado que aparezca en un listado-.
+            suma_porcentajes:
+              type: number
+              format: decimal
+              minimum: 0
+              maximum: 100
+              description: |
+                Suma de los porcentajes de las partes de la version vigente.
+                Cero si la obra no tiene ninguna declaracion.
+
+                Es lo DECLARADO, no lo repartido. Viaja como numero, sin
+                comillas, igual que el `porcentaje` de una parte: un porcentaje
+                tiene hasta 4 decimales acotados por `NUMERIC(8,4)` y se muestra
+                tal cual -aqui no se redondea nada, los decimales los decide
+                quien lo pinta-. El dinero de las bolsas va al reves, como
+                cadena, porque una cifra de terceros no puede pasar por un
+                `double` (ADR 0005); un porcentaje de reparto no es esa cifra.
+
+                **No se deduce de `estado_declaracion`, ni al reves.** Una parte
+                sin IPI deja la declaracion `incompleta` con la suma en 100, asi
+                que las dos cosas viajan y las dos se muestran: deducir una de
+                la otra mentiria en un sentido o en el otro.
+            version_vigente:
+              type: integer
+              minimum: 1
+              nullable: true
+              description: |
+                Version de la Declaracion de Obra que rige ahora mismo, o `null`
+                si la obra no tiene ninguna declaracion.
+
+                **Existe porque `estado_declaracion` no basta para decirlo
+                todo.** Una obra que nunca se declaro y una declarada que no
+                suma 100 dan el MISMO estado -`incompleta`, y las dos quedan
+                retenidas bajo `R-04`-, asi que sin este campo una pantalla
+                tendria que pintar "incompleta" sobre obras que nadie declaro,
+                que es afirmar una declaracion inexistente. Es el ORIGEN del
+                estado, no un tercer estado: `null` es "no hay declaracion", y
+                un numero es la version que lo sostiene.
 
     Parte:
       type: object
@@ -1488,10 +4769,16 @@ components:
       properties:
         titular_id:
           type: string
-          description: Identificador del titular al que corresponde esta parte.
+          description: |
+            Identificador del titular al que corresponde esta parte. Se ignoran
+            los espacios al inicio y al final.
         ipi:
           type: string
-          description: IPI del titular. Obligatorio, igual que en un coautor del catalogo.
+          description: |
+            IPI del titular. Obligatorio, igual que en un coautor del catalogo,
+            y ademas tiene que ser el que el padron tiene para `titular_id`: al
+            guardar una declaracion, un IPI que no coincide se rechaza con 400.
+            Se ignoran los espacios al inicio y al final.
         porcentaje:
           type: number
           format: decimal
@@ -1549,6 +4836,55 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Parte"
+
+    Titular:
+      type: object
+      required: [id, nombre, ipi, persona_natural, clase]
+      description: |
+        Una entrada del padron: quien figura ante la sociedad.
+
+        **Estar en el padron no es poder cobrar.** `R-01` (`RD 4.5`) solo
+        admite orden de pago a un escritor persona natural, asi que una
+        productora aparece aqui y no puede recibir reparto. Por eso
+        `persona_natural` viaja en la respuesta -es lo que permite explicar la
+        regla- y por eso no se devuelven solo las personas naturales.
+
+        Figurar en el padron NO basta para ser `Parte` de una Declaracion de
+        Obra: solo una persona natural puede figurar como `Parte` (`R-01`,
+        `RD 4.5`), y nombrar a una que no lo sea se rechaza con 400. Eso NO le
+        da derecho a cobrar por si solo: el porcentaje sale de la declaracion
+        (`R-02`, `R-03`).
+
+        No lleva `email`, y no es un olvido: el padron se sirve para armar un
+        reparto, y la direccion de contacto de cada titular no es dato de
+        ninguna regla de reparto. Entra el dia que haya una pantalla que la
+        muestre.
+      properties:
+        id:
+          type: string
+          description: Identificador del titular en el padron. Opaco y estable.
+        nombre:
+          type: string
+          description: Nombre de la persona o de la empresa, para mostrar.
+        ipi:
+          type: string
+          description: |
+            IPI del titular, el identificador de autores de la CISAC (`RD 3`).
+            Vacio en una persona juridica que no lo tenga: el padron solo exige
+            IPI a las personas naturales.
+        persona_natural:
+          type: boolean
+          description: |
+            Si el titular es una persona fisica. `false` es una persona
+            juridica, y una persona juridica NO puede recibir reparto
+            (`R-01`, `RD 4.5`).
+        clase:
+          type: string
+          enum: [socio, administrado]
+          description: |
+            Tipo de afiliado, que decide quien vota (capitulo 4 del reglamento
+            de socios). No decide quien cobra: un administrado persona natural
+            cobra igual que un socio.
 
     UsuarioRecaudo:
       type: object
@@ -1705,6 +5041,134 @@ components:
           description: Cuenta de cobro con la que se recaudo este importe.
           example: FE-1024
 
+    Firma:
+      type: object
+      required: [rol, actor_id, revision]
+      description: |
+        Una firma sobre una compuerta, sobre una revision concreta del
+        proceso. Sin `cuando`: el agregado de dominio no la guarda -el
+        dominio no importa `time` (`ADR 0002`)-, y la fecha exacta no es lo
+        que decide si la compuerta esta completa.
+      properties:
+        rol:
+          type: string
+          enum: [distribucion, contabilidad]
+          example: distribucion
+        actor_id:
+          type: string
+          example: usr-dist-1
+        revision:
+          type: integer
+          description: |
+            Revision del proceso sobre la que se firmo. Un rechazo sube la
+            revision del proceso; las firmas de la anterior dejan de contar.
+          example: 1
+
+    Proceso:
+      type: object
+      required: [id, circuito, etapa, periodo, bolsa_id, snapshot_id, revision]
+      description: |
+        Una corrida de `RD 13.5`. Nacional e internacional son dos maquinas
+        de estado distintas (`ADR 0008`): el internacional no valoriza por
+        puntos (`RD 7.4`), asi que nunca pasa por `importe_obra` ni
+        `importe_titular`, y `fees_in_error` es solo suyo (`R-16`).
+      properties:
+        id:
+          type: string
+          example: proc-caracol-2026-01-1
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+          example: nacional
+        etapa:
+          type: string
+          enum:
+            - recaudo
+            - deducciones
+            - importe_obra
+            - importe_titular
+            - liquidacion_parcial
+            - verificacion
+            - liquidacion_final
+            - pago_registro
+            - fees_in_error
+            - auditoria
+          description: |
+            `verificacion` y `pago_registro` son compuertas: no se avanza sin
+            las firmas de `distribucion` y `contabilidad` sobre la revision
+            actual.
+          example: verificacion
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2026-01
+        bolsa_id:
+          type: string
+          description: |
+            La bolsa de la que sale esta corrida. `ADR 0019`: una corrida es
+            una bolsa, asi que un periodo con dos canales abre dos procesos.
+          example: bolsa-caracol-2026-01-nacional
+        snapshot_id:
+          type: string
+          description: |
+            El snapshot de parametros normativos congelado al abrir la
+            corrida (`ADR 0004`, `ADR 0005`). No se vuelve a resolver en un
+            reproceso.
+          example: snap-2026-01-a1b2c3
+        reglamento:
+          type: string
+          description: Version del reglamento vigente al abrir la corrida.
+          example: IX
+        revision:
+          type: integer
+          description: |
+            Sube en cada rechazo de compuerta, y tambien al pasar una:
+            `firmas` solo tiene clave (`proceso_id`, `rol`, `revision`), sin
+            etapa, asi que las firmas de una compuerta no bastan tambien para
+            la siguiente.
+          example: 1
+        firmas:
+          type: array
+          items:
+            $ref: "#/components/schemas/Firma"
+        rechazo_motivo:
+          type: string
+          description: Motivo del ultimo rechazo, si lo hay.
+          example: faltan soportes de la liquidacion parcial
+
+    AbrirProceso:
+      type: object
+      required: [id, periodo, circuito, bolsa_id]
+      properties:
+        id:
+          type: string
+          description: |
+            Lo trae el cliente, igual que el de una bolsa. Reabrir un proceso
+            con el mismo id devuelve el que ya existe, sin tocarlo.
+          example: proc-caracol-2026-01-1
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2026-01
+        circuito:
+          type: string
+          enum: [nacional, internacional]
+          example: nacional
+        bolsa_id:
+          type: string
+          example: bolsa-caracol-2026-01-nacional
+
+    RechazarProceso:
+      type: object
+      required: [motivo]
+      properties:
+        motivo:
+          type: string
+          description: |
+            Por que se rechaza la compuerta. Un rechazo sin motivo no es
+            explicable ante una auditoria (`RD 16`).
+          example: faltan soportes de la liquidacion parcial
+
     Error:
       type: object
       required: [error]
@@ -1714,6 +5178,987 @@ components:
           description: |
             Que fallo, en lenguaje de quien llama. Las respuestas de error van
             con `Content-Type: application/json`, no `text/plain`.
+
+    TipoDeAnomalia:
+      type: string
+      description: |
+        Los seis detectores de OE-5 / #37. Lista cerrada: lo que se guarde con
+        otra grafia no lo encuentra ningun filtro, y nada falla de forma
+        visible.
+
+        Los cinco primeros son el contrato que el tablero de anomalias ya fijo
+        antes de que existiera el backend; el sexto lo anade esta issue.
+
+        - `oni` — la cascada de identificacion corrio y no reconocio la obra
+          (ADR 0007). No es un fallo: es una etapa del diseno, y su parte queda
+          en reserva hasta que se resuelva o prescriba (`R-19`, `RD 13.8`).
+        - `duplicado_archivo` — los mismos bytes en dos entregas. El
+          `UNIQUE (sha256, fuente)` de `reportes` solo cierra la repeticion de
+          la MISMA fuente; esto caza la que cruza fuentes o periodos.
+        - `duplicado_registro` — el mismo registro logico en dos archivos del
+          mismo periodo. La repeticion DENTRO de un archivo ya la rechaza el
+          adaptador de formato al ingerir.
+        - `titular_sin_porcentaje` — un coautor del catalogo sin parte en la
+          declaracion vigente, o una parte sin IPI. Nombra a la PERSONA.
+        - `reserva_declaracion_incompleta` — `R-04` / `RD 13.1.3`: lo declarado
+          no suma 100 y se retiene el TOTAL de esa obra. Nombra la OBRA y el
+          dinero. Es un estado valido del modelo, no un error.
+        - `tipo_obra_sin_mapear` — un uso identificado llega sin `tipo_obra`
+          en una modalidad que pondera por el (TV, suscripcion, hotel): no cae
+          en ninguna de las cuatro categorias de `RD 9.1.1` y el motor aborta
+          la corrida. Nombra el USO: en el catalogo la obra si tiene tipo.
+      enum:
+        - oni
+        - duplicado_archivo
+        - duplicado_registro
+        - titular_sin_porcentaje
+        - reserva_declaracion_incompleta
+        - tipo_obra_sin_mapear
+
+    Alerta:
+      type: object
+      required:
+        [id, tipo, detalle, periodo, referencia, ref_tipo, ref_id, critica, detectada, resuelta]
+      description: |
+        Una anomalia de un periodo, con el registro exacto que la disparo.
+
+        No hay importes, y por la misma razon que no los tiene un uso: una
+        alerta dice que una fila o una obra no esta en condiciones de ponderar,
+        nunca cuanto vale.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador de la alerta. Lo genera la base.
+        tipo:
+          $ref: "#/components/schemas/TipoDeAnomalia"
+        detalle:
+          type: string
+          description: |
+            La frase que lee una persona de distribucion, con las cifras
+            concretas -que suma da, que otra entrega colisiona, en que fila
+            venia el registro repetido-. Quien persigue la alerta tiene que
+            poder actuar sin abrir la base.
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          description: |
+            Periodo de la evaluacion que la levanto. Va en la fila y no se
+            deduce del registro ofensor: la misma obra puede quedar retenida en
+            dos periodos seguidos y cada uno tiene su propia alerta.
+          example: 2025-01
+        referencia:
+          type: string
+          description: |
+            El registro ofensor en una sola cadena, para pintar:
+            `<ref_tipo>:<ref_id>`, y `#<ref_titular>` detras cuando lo hay.
+            Es lo que el tablero mete en la celda "Referencia"; para navegar al
+            registro usar `ref_tipo` y `ref_id`, que no hay que partir.
+          example: obra:obra-12#IPI-00000002
+        ref_tipo:
+          type: string
+          description: |
+            A que tabla apunta el registro ofensor. NO es una clave foranea, y
+            es deliberado: la referencia apunta a tablas distintas segun el
+            detector, y una FK con CASCADE se llevaria la alerta por delante el
+            dia que la resolucion de #39 borre el uso ofensor -y con ella el
+            rastro de que aquello paso.
+          enum: [uso, reporte, obra]
+        ref_id:
+          type: string
+          description: Identificador del registro ofensor dentro de su tabla.
+          example: obra-12
+        ref_titular:
+          type: string
+          description: |
+            IPI de la persona a la que le falta la parte. Solo lo trae
+            `titular_sin_porcentaje`: es la segunda coordenada del registro
+            ofensor, porque lo que falta es una fila de `declaraciones` y su
+            identidad es (obra, titular). Con la obra sola, dos coautores
+            ausentes de la misma obra serian la misma alerta.
+          example: IPI-00000002
+        critica:
+          type: boolean
+          description: |
+            Si este tipo BLOQUEA la distribucion del periodo. Es DERIVADO del
+            tipo, no un dato guardado: persistirlo congelaria la clasificacion
+            en el momento de detectar.
+
+            La linea no es "que tan grave suena" sino si dejarlo sin resolver
+            hace que las cifras del periodo salgan MAL. Bloquean los dos
+            duplicados -una emision contada dos veces infla los puntos de su
+            obra y desinfla los de todas las demas del mismo canal, y el valor
+            punto de `RD 9.1.1` es un cociente- y `tipo_obra_sin_mapear`. NO
+            bloquean `oni` -etapa del diseno- ni las dos de declaracion -estado
+            valido del modelo: se retiene esa obra y el periodo sigue-.
+        detectada:
+          type: string
+          format: date-time
+          description: |
+            Cuando se vio por PRIMERA vez. Una segunda pasada que vuelva a
+            detectarla no lo mueve, salvo que la reabra tras un autocierre.
+        resuelta:
+          type: boolean
+          description: |
+            Si alguien ya se hizo cargo, o si el sistema la autocerro porque
+            una reevaluacion ya no la detecta (ver `autocerrada`). La que cerro
+            una persona no se reabre aunque la anomalia siga ahi; la
+            autocerrada si (ADR 0021).
+        resuelta_por:
+          type: string
+          description: |
+            Cuenta que la cerro. Sale de la sesion, nunca del cuerpo. Ausente
+            si la autocerro el sistema.
+          example: usr-admin
+        resuelta_en:
+          type: string
+          format: date-time
+          description: Instante de la resolucion, tomado del reloj del nucleo.
+        nota:
+          type: string
+          description: |
+            Justificacion de quien la resolvio. Vacia solo mientras la alerta
+            esta abierta.
+        autocerrada:
+          type: boolean
+          description: |
+            La cerro el sistema porque una reevaluacion del periodo ya no la
+            detecto. Si la anomalia vuelve, la alerta se reabre.
+
+    PedidoDeEvaluacion:
+      type: object
+      required: [periodo]
+      description: |
+        El periodo que se va a evaluar. Va en el cuerpo y no en la query porque
+        esta operacion ESCRIBE: un POST cuyo unico argumento viaja en la URL se
+        copia y se repite desde la barra del navegador con demasiada facilidad.
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2025-01
+
+    ResolucionDeAlerta:
+      type: object
+      required: [nota]
+      description: |
+        La nota de quien resuelve, obligatoria. Todo lo demas -quien y
+        cuando- lo pone el servidor: la firma sale de la sesion y el instante
+        del reloj del nucleo.
+      properties:
+        nota:
+          type: string
+          minLength: 1
+          example: hablado con la autora, declara esta semana
+
+    ResumenDeEvaluacion:
+      type: object
+      required:
+        [periodo, detectadas, nuevas, autocerradas, por_tipo, criticas_abiertas, usos_sin_cotejar]
+      description: Recuento de una pasada de deteccion.
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2025-01
+        detectadas:
+          type: integer
+          minimum: 0
+          description: |
+            Cuantas anomalias tiene el periodo AHORA. No baja porque ya
+            estuvieran escritas.
+        nuevas:
+          type: integer
+          minimum: 0
+          description: |
+            Cuantas de esas no estaban antes de esta pasada (incluye las
+            autocerradas que se reabren, cada una con su asiento
+            `alerta.reabierta`). Las dos cifras hacen falta: con una
+            sola, correr la evaluacion dos veces daria 0 la segunda y se leeria
+            como "el periodo esta limpio".
+        autocerradas:
+          type: integer
+          minimum: 0
+          description: |
+            Alertas abiertas que esta pasada ya no detecto y el sistema cerro,
+            cada una con su asiento `alerta.autocerrada`.
+        por_tipo:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+          description: |
+            Lo detectado en esta pasada, por tipo. Trae los SEIS tipos siempre,
+            con cero explicito donde no hubo nada: una clave ausente no se
+            distingue de un cero al otro lado del JSON, y el tablero pinta una
+            tarjeta por tipo.
+        criticas_abiertas:
+          type: integer
+          minimum: 0
+          description: |
+            Alertas sin resolver del periodo cuyo tipo bloquea la distribucion.
+            Es la cifra que mira la compuerta de `/procesos/{id}/avanzar` al
+            salir de `deducciones` (ADR 0021).
+        usos_sin_cotejar:
+          type: integer
+          minimum: 0
+          description: |
+            Filas del periodo a las que no se les pudo componer clave de
+            registro, asi que el detector de duplicados NO las comparo con
+            ninguna otra. No cuenta anomalias: cuenta el tamano del punto
+            ciego.
+            Viaja porque sin ella "cero duplicados" y "no se miro" se leen
+            igual. El caso es real: `Hora` no es obligatoria en el mapa de
+            Caracol y a la vez forma parte de su clave de registro.
+
+    Monto:
+      type: string
+      description: |
+        Importe en COP con dos decimales, sin separador de miles. Es una
+        cadena para no perder centavos en JSON number.
+      pattern: '^-?[0-9]+\.[0-9]{2}$'
+      example: "3900.00"
+
+    TotalesLiquidacion:
+      type: object
+      required: [bruto, admin, social, reserva, neto]
+      properties:
+        bruto:
+          $ref: "#/components/schemas/Monto"
+        admin:
+          $ref: "#/components/schemas/Monto"
+        social:
+          $ref: "#/components/schemas/Monto"
+        reserva:
+          $ref: "#/components/schemas/Monto"
+        neto:
+          $ref: "#/components/schemas/Monto"
+
+    LineaLiquidacion:
+      type: object
+      required: [periodo, obra_id, titulo, bruto, admin, social, reserva, neto]
+      properties:
+        periodo:
+          type: string
+          example: "2026-01"
+        obra_id:
+          type: string
+          example: obra-completa
+        titulo:
+          type: string
+          example: La Casa de las Dos Palmas
+        bruto:
+          $ref: "#/components/schemas/Monto"
+        admin:
+          $ref: "#/components/schemas/Monto"
+        social:
+          $ref: "#/components/schemas/Monto"
+        reserva:
+          $ref: "#/components/schemas/Monto"
+        neto:
+          $ref: "#/components/schemas/Monto"
+
+    Liquidacion:
+      type: object
+      required: [titular_id, periodo, lineas, totales]
+      properties:
+        titular_id:
+          type: string
+          description: Titular de la sesion, no un parametro de la URL.
+          example: tit-ana
+        periodo:
+          type: string
+          description: Filtro aplicado. Cadena vacia si no se filtro.
+          example: "2026-01"
+        lineas:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineaLiquidacion"
+        totales:
+          $ref: "#/components/schemas/TotalesLiquidacion"
+    SolicitudAfiliacion:
+      type: object
+      required:
+        - nombre
+        - email
+        - documento_identidad
+        - subtipo
+        - clave
+        - rut
+        - certificacion_bancaria
+      properties:
+        nombre:
+          type: string
+          description: Nombre del aspirante.
+        email:
+          type: string
+          format: email
+          description: Correo al que se comunica la decision del Consejo.
+        documento_identidad:
+          type: string
+          description: Cedula o pasaporte (`RS 5.2` / `RS 5.3`).
+        ipi:
+          type: string
+          description: |
+            Identificador IPI de la persona. Opcional en el alta; obligatorio
+            para admitir a una persona natural. Se puede completar despues
+            con `PATCH /afiliaciones/{id}/ipi`.
+        clave:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          description: |
+            Clave con la que el titular entra una vez admitido. No se
+            devuelve. El hash se guarda con la solicitud y pasa a
+            `usuarios` al admitir.
+        subtipo:
+          type: string
+          enum: [socio, administrado]
+          description: |
+            `socio` es vinculo societario (`RS 4.1`). `administrado` es
+            vinculo contractual (`RS 4.2`). Solo el socio admitido puede
+            pedir anticipo (`R-30`).
+        pertenece_otra_sgc:
+          type: string
+          description: |
+            `true` si el aspirante pertenece a otra SGC del mismo genero.
+            En ese caso `renuncia` es obligatorio (`R-28`).
+        rut:
+          type: string
+          format: binary
+          description: RUT actualizado (`R-12`). PDF o imagen.
+        certificacion_bancaria:
+          type: string
+          format: binary
+          description: Certificacion bancaria (`R-12`). PDF o imagen.
+        renuncia:
+          type: string
+          format: binary
+          description: |
+            Documento de renuncia a la otra SGC. Obligatorio si
+            `pertenece_otra_sgc` es verdadero.
+
+    Afiliacion:
+      type: object
+      required:
+        - id
+        - nombre
+        - email
+        - documento_identidad
+        - ipi
+        - subtipo
+        - estado
+        - elegible_anticipo
+        - tiene_rut
+        - tiene_certificacion_bancaria
+        - tiene_renuncia
+        - titular_id
+      properties:
+        id:
+          type: string
+          description: Identificador de la solicitud, opaco.
+        nombre:
+          type: string
+        email:
+          type: string
+          format: email
+        documento_identidad:
+          type: string
+        ipi:
+          type: string
+          description: Vacio si se omitio en el alta.
+        subtipo:
+          type: string
+          enum: [socio, administrado]
+        estado:
+          type: string
+          enum: [pendiente, admitido, rechazado]
+          description: Maquina de admision. El alta deja `pendiente`.
+        elegible_anticipo:
+          type: boolean
+          description: |
+            `true` solo si el subtipo es socio y el estado es admitido
+            (`R-30`).
+        tiene_rut:
+          type: boolean
+        tiene_certificacion_bancaria:
+          type: boolean
+        tiene_renuncia:
+          type: boolean
+        titular_id:
+          type: string
+          description: |
+            Fila del padron, rellenada al admitir. Cadena vacia mientras
+            la solicitud esta pendiente.
+
+    Deduccion:
+      type: object
+      required: [concepto, monto]
+      properties:
+        concepto:
+          type: string
+          description: |
+            Que se desconto. Los de la corrida son `gastos_administrativos`,
+            `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
+            entra con su propio concepto.
+        monto:
+          type: string
+          description: |
+            Importe descontado, decimal exacto con dos decimales. String y
+            no number: un JSON number es IEEE-754 y no puede representar
+            dinero.
+
+    OrdenDePago:
+      type: object
+      required:
+        - id
+        - proceso_id
+        - procesos
+        - titular_id
+        - periodo
+        - circuito
+        - bruto
+        - deducciones
+        - neto
+        - estado
+        - pagable
+        - enviada
+      properties:
+        id:
+          type: string
+          description: |
+            Identificador de la orden. Es `liq-{periodo}-{circuito}-{titular}`:
+            hay UNA orden por esa terna (ADR 0019), no una por corrida.
+        proceso_id:
+          type: string
+          description: |
+            Proceso de reparto de REFERENCIA. Cuando varias corridas del mismo
+            periodo y circuito aportan, es la primera por orden lexicografico;
+            la lista completa va en `procesos`.
+        procesos:
+          type: array
+          description: |
+            Corridas cuyas lineas entraron en esta orden. Es lo que explica un
+            bruto agregado: `proceso_id` a secas afirmaria que todo vino de una
+            sola corrida.
+          items:
+            type: string
+        titular_id:
+          type: string
+          description: Titular que cobra.
+        periodo:
+          type: string
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+        circuito:
+          type: string
+          description: |
+            Circuito de la orden. El nacional y el internacional del mismo
+            periodo son dos recorridos distintos (`RD 7.4`) y no se suman en una
+            sola orden.
+          enum:
+            - nacional
+            - internacional
+        bruto:
+          type: string
+          description: Monto bruto, decimal exacto con dos decimales.
+        deducciones:
+          type: array
+          description: |
+            Desglose. No se colapsa en el neto: `RD 13.2` exige ver cada
+            renglon.
+          items:
+            $ref: "#/components/schemas/Deduccion"
+        neto:
+          type: string
+          description: Bruto menos la suma de las deducciones.
+        estado:
+          type: string
+          description: |
+            Maquina de R-10 y R-11. `enviada` significa que la notificacion al
+            titular salio y dejo acuse, y que el plazo corre desde ese acuse;
+            `aceptada_por_silencio` a los 15 dias calendario si el neto supera
+            el 2% SMMLV; `diferida` si no lo supera, y entonces el monto se
+            arrastra al periodo siguiente; `acumulada` es una diferida cuyo neto
+            ya se incorporo a una orden posterior.
+          enum:
+            - enviada
+            - aceptada
+            - aceptada_por_silencio
+            - diferida
+            - acumulada
+            - objetada
+        pagable:
+          type: boolean
+          description: |
+            Aceptada (por respuesta o por silencio) y con RUT mas
+            certificacion bancaria en expediente (`R-12`). Falso no es
+            un error: se liquido, todavia no se puede girar.
+        enviada:
+          type: string
+          format: date
+          description: |
+            Dia civil del envio, sobre el que corre el plazo de 15 dias
+            calendario de `R-10` / `RD 13.2`.
+
+            El plazo corre desde el ACUSE de la notificacion registrado: la
+            fecha se fija cuando el aviso al titular ya salio, y el acuse queda
+            en el asiento de auditoria de la emision (ADR 0006). Una orden en
+            `enviada` con una fecha que no respalde ningun acuse le opondria al
+            titular un plazo que empezo sin que a el le llegara nada.
+
+    ListadoLiquidaciones:
+      type: object
+      required: [liquidaciones]
+      properties:
+        liquidaciones:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrdenDePago"
+
+    Asiento:
+      type: object
+      required: [id, hecho, ref_tipo, ref_id, actor, payload, cuando]
+      description: |
+        Un asiento de la bitacora (ADR 0006): quien hizo que, sobre que
+        referencia, cuando, y el detalle del hecho en `payload`. El payload
+        viaja tal cual lo guardo el modulo que asento -es su evidencia, no
+        una proyeccion-: `declaracion.guardada` trae version, estado y
+        partes; `recaudo.registrado` trae periodo, circuito, bruto, convenio,
+        tarifa y factura; `proceso.abierto`, `proceso.etapa_avanzada`,
+        `firma.registrada` y `proceso.gate_rechazado` traen la etapa, la
+        revision y, segun el caso, la firma o el motivo;
+        `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
+        su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
+        el importe de la obra, la version de su declaracion, las partes y la
+        identificacion de cada uso; `identificacion.asignada` trae la decision,
+        el estado del uso TAL COMO ESTABA al decidir, la nota, el nombre del
+        actor y el alias aprendido, y referencia la obra; `identificacion.descartada`
+        trae lo mismo con `decision: descartar` y sin obra, y referencia el uso.
+        Append-only: un asiento nunca se modifica ni se borra.
+      properties:
+        id:
+          type: string
+          description: Identificador opaco del asiento, asignado por la base.
+          example: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+        hecho:
+          type: string
+          description: |
+            Que ocurrio, en forma `modulo.evento` (`declaracion.guardada`,
+            `recaudo.registrado`, `matching.cascada`).
+          example: declaracion.guardada
+        ref_tipo:
+          type: string
+          description: Tipo de la referencia (`obra`, `bolsa`, `uso`).
+          example: obra
+        ref_id:
+          type: string
+          description: Identificador de la referencia dentro de su tipo.
+          example: obra-1
+        actor:
+          type: string
+          description: |
+            Quien actuo. Vacio cuando el hecho no tiene un usuario detras
+            (una corrida automatica).
+          example: usr-admin
+        refiere_a:
+          type: string
+          description: |
+            Columna reservada para enlazar una correccion con el asiento que
+            corrige (ADR 0006). Ningun caso de uso escribe correcciones todavia,
+            asi que hoy siempre esta ausente.
+          example: 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+        payload:
+          type: object
+          additionalProperties: true
+          description: |
+            Detalle del hecho, tal cual lo guardo el modulo que asento:
+            cualquier JSON. `declaracion.guardada` trae version, estado y
+            partes; `recaudo.registrado` trae periodo, circuito, bruto,
+            convenio, tarifa y factura; `identificacion.asignada` trae
+            `uso_id`, `decision`, `obra_id`, `candidata`, `puntaje`, el estado
+            anterior del uso (`titulo`, `fuente`, `periodo`, `reporte_id`,
+            `ids_fuente`, `escalon_anterior`, `evidencia_anterior`), `nota`,
+            `actor_nombre` y `alias`.
+        cuando:
+          type: string
+          format: date-time
+          description: Instante del hecho.
+          example: "2026-04-02T10:30:00Z"
+
+    ListaIngresos:
+      type: object
+      required: [ingresos]
+      properties:
+        ingresos:
+          type: array
+          description: |
+            Cifras netas del titular de la sesion. El bruto no forma parte
+            de este objeto (OE-6).
+          items:
+            $ref: "#/components/schemas/Ingreso"
+
+    Ingreso:
+      type: object
+      required: [ref, obra_id, obra, fuente, periodo, neto]
+      properties:
+        ref:
+          type: string
+          description: |
+            Identificador de la linea, para `GET /explicar/{ref}`.
+          example: proc-2026-01:obra-completa:tit-ana
+        obra_id:
+          type: string
+          description: Identificador interno de la obra.
+        obra:
+          type: string
+          description: Titulo para mostrar.
+        fuente:
+          type: string
+          description: |
+            Fuentes de los reportes que ponderaron esta cifra en el periodo,
+            separadas por coma si hay mas de una. El detalle del archivo
+            crudo esta en la explicacion.
+        periodo:
+          type: string
+          description: Periodo de la corrida.
+          example: "2026-01"
+        neto:
+          type: string
+          description: Monto neto despues de deducciones. Nunca el bruto.
+          example: "3600.00"
+
+    Explicacion:
+      type: object
+      required: [ref, neto, bruto, retenida, corrida, bolsa, reporte, reportes, obra, identificacion, regla, split, deducciones, firmas, faltantes]
+      description: |
+        Linaje de una cifra (ADR 0006). Montos como cadena con dos decimales
+        (ADR 0010); porcentajes como cadena en escala 0-100.
+      properties:
+        ref:
+          type: string
+          description: La ref pedida.
+        titular_id:
+          type: string
+          description: Titular de la linea. Ausente en la cifra de una obra.
+        neto:
+          type: string
+          description: La cifra explicada, despues de deducciones.
+          example: "650000.00"
+        bruto:
+          type: string
+          description: Neto mas las deducciones que le corresponden.
+          example: "1000000.00"
+        retenida:
+          type: boolean
+          description: La obra se retuvo entera (RD 13.1.3, R-04).
+        motivo:
+          type: string
+          description: Por que se retuvo. Ausente si no se retuvo.
+        corrida:
+          type: object
+          required: [proceso_id, periodo, circuito]
+          properties:
+            proceso_id: {type: string}
+            periodo: {type: string, example: "2026-01"}
+            circuito: {type: string, enum: [nacional, internacional]}
+        bolsa:
+          type: object
+          required: [id, usuario_id, bruto, recaudo]
+          description: De donde salio el dinero.
+          properties:
+            id: {type: string}
+            usuario_id: {type: string, description: Usuario de recaudo que pago la bolsa.}
+            bruto: {type: string, example: "1000000.00"}
+            recaudo:
+              type: object
+              nullable: true
+              description: Como se cobro. Null si el recaudo no tiene asiento; ver `faltantes`.
+              required: [convenio, tarifa, factura]
+              properties:
+                convenio: {type: string}
+                tarifa: {type: string}
+                factura: {type: string}
+        reporte:
+          $ref: "#/components/schemas/ReporteDeLinaje"
+        reportes:
+          type: array
+          description: Los archivos exactos que ponderaron esta obra en la corrida.
+          items:
+            $ref: "#/components/schemas/ReporteDeLinaje"
+        obra:
+          type: object
+          required: [id, titulo, escalon, puntaje]
+          description: La obra, resumida por su identificacion menos cierta.
+          properties:
+            id: {type: string}
+            titulo: {type: string, description: "De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos."}
+            escalon: {type: string, enum: [alias, id_global, difuso, manual]}
+            puntaje: {type: string, description: "Vacio para alias e id global, que son exactos."}
+        identificacion:
+          type: array
+          description: Como se reconocio la obra en cada uso que peso (ADR 0007).
+          items:
+            type: object
+            required: [uso_id, reporte_id, escalon]
+            properties:
+              uso_id: {type: string}
+              reporte_id: {type: string}
+              escalon: {type: string}
+              puntaje: {type: string}
+              evidencia: {type: string}
+              resuelto_por: {type: string, description: "Quien decidio, si fue manual."}
+              resuelto_en: {type: string, format: date-time}
+        regla:
+          type: object
+          required: [snapshot_id, reglamento]
+          properties:
+            snapshot_id: {type: string}
+            reglamento: {type: string}
+        split:
+          type: object
+          nullable: true
+          description: La parte declarada del titular. Null en la cifra de una obra.
+          required: [titular_id, ipi, porcentaje, version]
+          properties:
+            titular_id: {type: string}
+            ipi: {type: string}
+            porcentaje: {type: string, example: "60"}
+            version:
+              type: integer
+              nullable: true
+              description: Version de la declaracion que uso la corrida.
+        deducciones:
+          type: array
+          items:
+            type: object
+            required: [concepto, porcentaje, monto]
+            properties:
+              concepto:
+                type: string
+                enum: [gastos_administrativos, bienestar_social, reserva_errores_tecnicos]
+              porcentaje: {type: string, example: "20"}
+              monto: {type: string, example: "200000.00"}
+        firmas:
+          type: array
+          description: Firmas de compuerta de la corrida, incluidas las de revisiones rechazadas.
+          items:
+            type: object
+            required: [rol, actor_id, sobre_revision, etapa, cuando]
+            properties:
+              rol: {type: string, enum: [distribucion, contabilidad]}
+              actor_id: {type: string}
+              sobre_revision: {type: integer}
+              etapa: {type: string}
+              cuando: {type: string, format: date-time}
+        faltantes:
+          type: array
+          description: |
+            Eslabones accesorios sin asiento, por el nombre del hecho que falta:
+            `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
+            de la obra; una correccion asentada no la sustituye). Vacio solo si
+            los dos estan asentados; la cadena del dinero nunca falta, sin ella
+            la respuesta es 404.
+          items:
+            type: string
+
+    ReporteDeLinaje:
+      type: object
+      required: [id, fuente, sha256, clave_objeto]
+      description: La version exacta de un archivo crudo en la boveda.
+      properties:
+        id: {type: string}
+        fuente: {type: string}
+        sha256: {type: string}
+        clave_objeto: {type: string}
+
+    PaginaCasosIdentificacion:
+      type: object
+      required: [casos, pendientes]
+      description: Una pagina de la cola manual y el total de pendientes bajo los mismos filtros.
+      properties:
+        casos:
+          type: array
+          items:
+            $ref: "#/components/schemas/CasoIdentificacion"
+        pendientes:
+          type: integer
+          minimum: 0
+          description: Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion.
+    CasoIdentificacion:
+      type: object
+      required: [id, titulo, titulo_original, fuente, modalidad, reporte_id, periodo, ids_fuente, evidencia, estado, candidatos, obra_asignada, resuelto_por, resuelto_en, ultima_actualizacion, nota]
+      description: |
+        Un uso que la cascada no resolvio, tal como llego, con la evidencia
+        para que una persona decida. Sin importes ni medidas (ADR 0007).
+      properties:
+        id:
+          type: string
+          description: Id del uso.
+        titulo:
+          type: string
+        titulo_original:
+          type: string
+        fuente:
+          type: string
+        modalidad:
+          type: string
+        reporte_id:
+          type: string
+        periodo:
+          type: string
+          description: Periodo del reporte del que salio el uso.
+        ids_fuente:
+          type: string
+          description: Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018).
+        evidencia:
+          type: string
+          description: Por que la cascada no lo resolvio, o como lo resolvio una persona.
+        estado:
+          type: string
+          enum: [pendiente, asignado, descartado]
+          description: |
+            `pendiente`: la cascada no lo reconocio y nadie lo ha mirado.
+            `asignado`: una persona le dio una obra. `descartado`: una persona
+            decidio que no es un uso del repertorio de REDES SGC: no pondera y
+            no sale en el listado publico de ONI.
+        candidatos:
+          type: array
+          description: Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda.
+          items:
+            $ref: "#/components/schemas/CandidatoIdentificacion"
+        obra_asignada:
+          type: object
+          description: La obra que una persona le dio al caso. `null` si esta pendiente.
+          nullable: true
+          required: [id, titulo]
+          properties:
+            id:
+              type: string
+            titulo:
+              type: string
+        resuelto_por:
+          type: object
+          description: Quien resolvio el caso. `null` si esta pendiente.
+          nullable: true
+          required: [id, nombre]
+          properties:
+            id:
+              type: string
+            nombre:
+              type: string
+              description: Nombre para mostrar del usuario.
+        resuelto_en:
+          type: string
+          format: date-time
+          nullable: true
+        ultima_actualizacion:
+          type: string
+          format: date-time
+          description: "`resuelto_en` si esta resuelto; si no, el alta del reporte."
+        nota:
+          type: string
+          nullable: true
+          maxLength: 300
+          description: |
+            La justificacion de la decision, obligatoria al resolver (#175).
+            `null` mientras el caso este pendiente.
+
+    ResolucionDeCaso:
+      type: object
+      required: [decision, nota]
+      description: |
+        La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
+        servidor: la firma sale de la sesion y el instante del reloj del nucleo
+        (ADR 0006).
+      properties:
+        decision:
+          type: string
+          enum: [asignar, descartar]
+          description: |
+            `asignar` da una obra al caso y aprende el alias de su
+            identificador de fuente. `descartar` dice que no es un uso del
+            repertorio: el caso queda sin obra, sin ponderar y sin salir en el
+            listado publico de ONI.
+        obra_id:
+          type: string
+          description: |
+            Obligatoria si `decision` es `asignar`; prohibida si es
+            `descartar`. Tiene que existir en el catalogo. Lo valida el
+            servidor: no es un `oneOf` en el contrato porque la regla cruza los
+            dos campos.
+          example: obra-12
+        nota:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: |
+            Por que se decidio. Obligatoria y de hasta 300 caracteres: la firma
+            dice quien, la nota dice por que, y la auditoria de RD 16 pregunta
+            las dos cosas.
+          example: coincide la ficha tecnica con la declaracion
+    CandidatoIdentificacion:
+      type: object
+      required: [obra_id, titulo, anio, genero, puntaje, titulo_consultado]
+      properties:
+        obra_id:
+          type: string
+        titulo:
+          type: string
+          description: Titulo de la obra en el catalogo.
+        anio:
+          type: integer
+        genero:
+          type: string
+        puntaje:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Similitud del escalon difuso.
+        titulo_consultado:
+          type: string
+          description: El titulo del uso con el que se obtuvo el puntaje.
+    ItemRevision:
+      type: object
+      required: [id, tipo, codigo, motivo, fuente, titulo, reporte_id]
+      description: |
+        Una fila de la cola de revision. Sirve a la normalizacion (OE-1) y a
+        los rechazos del adaptador de formato (#25): `tipo` dice de cual
+        detector salio, `codigo` es el motivo tipado (columna propia) y
+        `motivo` nombra el campo. No hay importes: una fila en revision no
+        pondera.
+
+        `anomalia` sigue en el enum de `tipo` porque la columna
+        `usos_rechazados.tipo` lo admite desde la migracion 00010, pero las
+        anomalias de OE-5 / #37 **no se sirven por aqui**: van por `/alertas`,
+        que si tiene estado de resolucion y roles propios (ADR 0021).
+      properties:
+        id:
+          type: string
+          description: Identificador de la fila, el mismo espacio que `usos`.
+        tipo:
+          type: string
+          description: Origen del item.
+          enum: [normalizacion, anomalia, adaptador]
+        codigo:
+          type: string
+          description: |
+            Motivo tipado (`fecha_inparseable`, `moneda_desconocida`,
+            `parametro_ausente`, `rechazo_formato`). Permite filtrar sin
+            parsear prosa. Se persiste en columna propia; no se re-deriva
+            cortando el texto del motivo.
+        motivo:
+          type: string
+          description: Texto que nombra el campo y explica que falta o esta mal.
+        fuente:
+          type: string
+          description: Fuente del reporte (Caracol, Netflix, ...).
+        titulo:
+          type: string
+          description: Titulo tal como vino. Pista para pedirle al cliente la linea.
+        reporte_id:
+          type: string
+          description: Entrega de la que salio la fila.
 
 security:
   - bearerAuth: []

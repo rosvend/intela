@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ApiError, ErrorDeRed, api } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, esErrorDeApi } from "../api";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
 import {
@@ -61,10 +61,23 @@ export function useDashboard(rol: Rol): Tablero {
   };
 }
 
-export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
+/**
+ * `recarga` fuerza un refetch (sondeo del panel de corridas, o tras firmar).
+ * Si el path no cambio y el recurso ya estaba resuelto, no se pinta
+ * "Cargando…" otra vez: un parpadeo cada 15s haria ilegible el pipeline.
+ * Resuelto incluye `ausente` y `error`, que hoy son los estados que el
+ * usuario ve mientras el backend no exista; remontar su mensaje cada 15s
+ * parpadea igual y ademas re-anuncia el `role="alert"` en lectores.
+ */
+export function useRecurso<T>(
+  path: string,
+  habilitado = true,
+  recarga = 0,
+): Recurso<T> {
   const [recurso, setRecurso] = useState<Recurso<T>>(
     habilitado ? { tipo: "cargando" } : { tipo: "inactivo" },
   );
+  const pathAnterior = useRef(path);
 
   useEffect(() => {
     if (!habilitado) {
@@ -72,8 +85,13 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
       return;
     }
 
+    const cambioDePath = pathAnterior.current !== path;
+    pathAnterior.current = path;
+
     let vigente = true;
-    setRecurso({ tipo: "cargando" });
+    setRecurso((actual) =>
+      !cambioDePath && esResuelto(actual) ? actual : { tipo: "cargando" },
+    );
 
     (api(path) as Promise<T>)
       .then((datos) => {
@@ -85,17 +103,32 @@ export function useRecurso<T>(path: string, habilitado = true): Recurso<T> {
           setRecurso({ tipo: "ausente" });
           return;
         }
-        const mensaje =
-          error instanceof ApiError || error instanceof ErrorDeRed
-            ? error.message
-            : "no se pudo cargar este indicador";
+        // Los mismos errores tipados que en `useApi` -incluido el 2xx con el
+        // cuerpo ilegible, cuyo mensaje dice mas que el generico de abajo-, y
+        // decididos por el mismo predicado de `api.ts`: la lista se escribe una
+        // vez, donde estan las clases. Ver D-016.
+        const mensaje = esErrorDeApi(error)
+          ? error.message
+          : "no se pudo cargar este indicador";
         setRecurso({ tipo: "error", mensaje });
       });
 
     return () => {
       vigente = false;
     };
-  }, [path, habilitado]);
+  }, [path, habilitado, recarga]);
 
   return recurso;
+}
+
+/**
+ * `inactivo` no cuenta: viene de `habilitado: false` y al encenderse hay que
+ * pintar la carga, no el vacio que dejo el recurso apagado.
+ */
+function esResuelto<T>(recurso: Recurso<T>): boolean {
+  return (
+    recurso.tipo === "listo" ||
+    recurso.tipo === "ausente" ||
+    recurso.tipo === "error"
+  );
 }

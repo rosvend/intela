@@ -33,20 +33,34 @@ const (
 // sembrarReportes deja dos reportes de periodos distintos y devuelve el Store.
 func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
-
 	pool := testhelp.Pool(t)
+	return sembrarReportesEn(t, pool), pool
+}
+
+// sembrarReportesEn siembra los dos reportes sobre un pool ya abierto.
+//
+// Existe para la sonda de la unidad de trabajo, que no puede usar
+// [testhelp.Pool]: ese deja MaxConns=1 y la lectura desde fuera de la
+// transaccion abierta se interbloquea.
+//
+// Los dos acuses van SIN actor, que es el caso "anterior a la atribucion"
+// (#116): este sembrador no crea ningun usuario, y pasarle un id inventado
+// haria fallar la clave foranea. De paso, las pruebas de listado ejercitan el
+// COALESCE de subido_por sobre filas que lo tienen NULL.
+func sembrarReportesEn(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 
 	if err := s.GuardarReporte(ctx, reporteEnero, "caracol", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("sembrar reporte de enero: %v", err)
 	}
 	if err := s.GuardarReporte(ctx, reporteFebrero, "caracol", "2026-02",
-		shaOtro, "reportes/"+shaOtro, 256); err != nil {
+		shaOtro, "reportes/"+shaOtro, 256, ""); err != nil {
 		t.Fatalf("sembrar reporte de febrero: %v", err)
 	}
-	return s, pool
+	return s
 }
 
 func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
@@ -59,6 +73,10 @@ func usoPendiente(id, reporteID, titulo string) aplicacion.UsoPersistido {
 		Escalon:   "pendiente",
 		ONI:       true,
 		Emisiones: 3,
+		// Sin canal o sin rating la ingesta rechaza la fila (#165). Los tests
+		// que quieren ese hueco lo vacian a proposito.
+		CanalID: "caracol",
+		Rating:  decimal.NewFromInt(1),
 	}
 }
 
@@ -97,7 +115,7 @@ func TestGuardarReporteTraduceElDuplicadoDeHuella(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	err := s.GuardarReporte(t.Context(), "rep-otro-id", "caracol", "2026-03",
-		shaParrilla, "reportes/"+shaParrilla, 128)
+		shaParrilla, "reportes/"+shaParrilla, 128, "")
 	if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
 		t.Fatalf("se esperaba ErrReporteDuplicado, se obtuvo %v", err)
 	}
@@ -114,8 +132,116 @@ func TestGuardarReporteAdmiteLaMismaHuellaDeOtraFuente(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	if err := s.GuardarReporte(t.Context(), "rep-netflix", "netflix", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("otra fuente con los mismos bytes es una entrega valida: %v", err)
+	}
+}
+
+// reporteDeEntrega arma un acuse valido para las pruebas de GuardarEntrega:
+// huella de 64 hexadecimales, periodo con forma y nbytes > 0, que es lo que
+// exigen los CHECK de `reportes`.
+func reporteDeEntrega(id, sha, subidoPor string) aplicacion.Reporte {
+	return aplicacion.Reporte{
+		ID: id, Fuente: "caracol", Periodo: "2026-01",
+		SHA256: sha, ClaveObjeto: "reportes/" + sha, NBytes: 128, SubidoPor: subidoPor,
+	}
+}
+
+// La atribucion de la entrega (#116): quien sube queda en la fila de `reportes`,
+// y la ausencia de actor es NULL -- no la cadena vacia, que no referencia a
+// ningun usuario y la clave foranea rechazaria.
+//
+// Va contra Postgres de verdad porque lo que se comprueba es el NULLIF del
+// INSERT y la forma de la columna, y ninguna de las dos cosas existe en un
+// doble.
+func TestGuardarEntregaPersisteQuienSubioYDejaNuloSinActor(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	conActor := reporteDeEntrega("rep-con-actor", shaParrilla, usuarioAdmin)
+	if err := s.GuardarEntrega(ctx, conActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	sinActor := reporteDeEntrega("rep-sin-actor", shaOtro, "")
+	if err := s.GuardarEntrega(ctx, sinActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	var subidoPor *string
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por FROM reportes WHERE id = $1`, conActor.ID).Scan(&subidoPor); err != nil {
+		t.Fatalf("leer subido_por: %v", err)
+	}
+	if subidoPor == nil || *subidoPor != usuarioAdmin {
+		t.Fatalf("subido_por = %v, se esperaba %q", subidoPor, usuarioAdmin)
+	}
+
+	// NULL y no "": si aqui llegara "" seria que el NULLIF no hace su trabajo,
+	// y la FK solo lo estaria tapando en el camino del actor.
+	var esNulo bool
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por IS NULL FROM reportes WHERE id = $1`, sinActor.ID).Scan(&esNulo); err != nil {
+		t.Fatalf("leer subido_por sin actor: %v", err)
+	}
+	if !esNulo {
+		t.Fatal("una entrega sin actor tiene que quedar con subido_por NULL")
+	}
+}
+
+// Un id que no existe lo rechaza la clave foranea: la columna no es texto
+// libre, es una referencia al padron. Y la entrega NO queda escrita, que es lo
+// que impide confundir "sin actor" (NULL, legitimo) con "actor inventado".
+func TestGuardarEntregaConActorInexistenteNoEscribeNada(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	const fantasma = "rep-actor-fantasma"
+	err := s.GuardarEntrega(ctx, reporteDeEntrega(fantasma, shaParrilla, "usr-que-no-existe"), nil)
+	if !esClaveForanea(err) {
+		t.Fatalf("se esperaba una violacion de clave foranea, se obtuvo %v", err)
+	}
+
+	var hay bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM reportes WHERE id = $1)`, fantasma).Scan(&hay); err != nil {
+		t.Fatalf("comprobar la fila: %v", err)
+	}
+	if hay {
+		t.Fatal("la entrega quedo escrita con un actor que no existe")
+	}
+}
+
+// La atribucion vuelve por la PROYECCION del listado, que es de donde la lee
+// `GET /reportes`. El COALESCE tiene que devolver "" para las filas sin actor
+// -- las anteriores a la migracion y las del sembrador -- sin que el escaneo
+// falle: sin el, media tabla de `reportes` seria ilegible.
+func TestListarCargasDevuelveQuienSubioCadaEntrega(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-atribuido", shaParrilla, usuarioAdmin), nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-anterior", shaOtro, ""), nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	porID := map[string]aplicacion.CargaReporte{}
+	for _, c := range cargas {
+		porID[c.ID] = c
+	}
+	if got := porID["rep-atribuido"].SubidoPor; got != usuarioAdmin {
+		t.Errorf("subido_por de la entrega atribuida = %q, se esperaba %q", got, usuarioAdmin)
+	}
+	if _, hay := porID["rep-anterior"]; !hay {
+		t.Fatal("la entrega sin actor no volvio en el listado")
+	}
+	if got := porID["rep-anterior"].SubidoPor; got != "" {
+		t.Errorf("subido_por de la entrega sin actor = %q, se esperaba vacio", got)
 	}
 }
 
@@ -160,7 +286,7 @@ func TestGuardarUsosPersisteLaFormaCanonica(t *testing.T) {
 	ctx := t.Context()
 
 	u := usoPendiente("uso-1", reporteEnero, "La Casa de las Dos Palmas")
-	u.IDsFuente = "ID_Ficha=1234"
+	u.IDsFuente = "id_ficha=1234"
 	u.TipoObra = "serie"
 	u.DuracionMin = decimal.RequireFromString("52.5000")
 	u.Rating = decimal.RequireFromString("3.250000")
@@ -204,7 +330,7 @@ func TestGuardarUsosSeparaElLoteEnCanonicoYRechazado(t *testing.T) {
 
 	mala := usoPendiente("uso-mala", reporteEnero, "Radio Novela")
 	mala.Modalidad = "radio"
-	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel`
+	mala.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
 
 	err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
 		usoPendiente("uso-1", reporteEnero, "La Casa"),
@@ -300,6 +426,78 @@ func TestGuardarUsosEsAtomico(t *testing.T) {
 	}
 }
 
+// El acuse y sus filas son UN hecho, y la prueba de que lo son es que un fallo
+// del lote no deja la huella quemada.
+//
+// El estado que no puede existir: fila en `reportes` con cero usos. El duplicado
+// lo decide el UNIQUE (sha256, fuente), asi que a partir de ahi el mismo archivo
+// reenviado -- que es justo lo que manda el cliente cuando le dicen que su carga
+// fallo -- choca con ErrReporteDuplicado para siempre y la entrega no se
+// recupera sin cirugia en la base.
+//
+// Contra PostgreSQL de verdad y no contra el doble: lo que hay que comprobar es
+// que la transaccion existe, y un doble no tiene transacciones. La fila mala
+// apunta a una obra que no esta en `obras`, que es una violacion de clave
+// foranea: no la ve ninguna validacion de Go y llega viva hasta el INSERT.
+func TestGuardarEntregaNoDejaAcuseSiElLoteFalla(t *testing.T) {
+	pool := testhelp.Pool(t)
+	s := &Store{pool: pool}
+	ctx := t.Context()
+
+	rep := aplicacion.Reporte{
+		ID: "rep-entrega", Fuente: "caracol", Periodo: "2026-01",
+		SHA256: shaParrilla, ClaveObjeto: "reportes/" + shaParrilla, NBytes: 128,
+	}
+	rota := usoPendiente("uso-rota", rep.ID, "Apunta a la nada")
+	rota.ONI = false
+	rota.ObraID = "obra-que-no-existe"
+	rota.Escalon = "alias"
+
+	err := s.GuardarEntrega(ctx, rep, []aplicacion.UsoPersistido{
+		usoPendiente("uso-1", rep.ID, "La Casa"),
+		rota,
+	})
+	if err == nil {
+		t.Fatal("se esperaba error: la fila apunta a una obra inexistente")
+	}
+
+	var reportes, usos int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM reportes`).Scan(&reportes); err != nil {
+		t.Fatalf("contar reportes: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM usos`).Scan(&usos); err != nil {
+		t.Fatalf("contar usos: %v", err)
+	}
+	if reportes != 0 || usos != 0 {
+		t.Fatalf("quedo media entrega: %d reportes, %d usos", reportes, usos)
+	}
+
+	// Y la huella sigue libre: la misma entrega, ya sin la fila rota, entra.
+	if err := s.GuardarEntrega(ctx, rep, []aplicacion.UsoPersistido{
+		usoPendiente("uso-1", rep.ID, "La Casa"),
+	}); err != nil {
+		t.Fatalf("la reentrega del mismo archivo tendria que entrar: %v", err)
+	}
+}
+
+// El duplicado por huella se traduce igual por este camino que por
+// GuardarReporte: es el mismo UNIQUE (sha256, fuente), y quien llama espera el
+// mismo centinela.
+func TestGuardarEntregaTraduceElDuplicadoDeHuella(t *testing.T) {
+	s, _ := sembrarReportes(t)
+
+	rep := aplicacion.Reporte{
+		ID: "rep-otro-id", Fuente: "caracol", Periodo: "2026-03",
+		SHA256: shaParrilla, ClaveObjeto: "reportes/" + shaParrilla, NBytes: 128,
+	}
+	err := s.GuardarEntrega(t.Context(), rep, []aplicacion.UsoPersistido{
+		usoPendiente("uso-dup", rep.ID, "La Casa"),
+	})
+	if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
+		t.Fatalf("err = %v, se esperaba ErrReporteDuplicado", err)
+	}
+}
+
 func TestGuardarUsosSinFilasNoEsError(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
@@ -309,7 +507,7 @@ func TestGuardarUsosSinFilasNoEsError(t *testing.T) {
 }
 
 // "Sin resolver" es escalon pendiente, no ONI: la cola manual es otro puerto
-// (RepositorioONI) y otra pregunta. Una fila ya resuelta por alias no vuelve a
+// (RepositorioCasosIdentificacion) y otra pregunta. Una fila ya resuelta por alias no vuelve a
 // la cascada.
 func TestUsosSinResolverSoloDevuelveLasPendientes(t *testing.T) {
 	s, _ := sembrarReportes(t)
@@ -504,7 +702,7 @@ func TestIngestaDePuntaAPunta(t *testing.T) {
 // a leer #26 y el reparto.
 //
 // Los DEFAULT del esquema (`oni DEFAULT TRUE`, `emisiones DEFAULT 1`) no
-// intervienen: insertarUso manda los tres valores siempre, asi que el unico
+// intervienen: el COPY manda los tres valores siempre, asi que el unico
 // sitio donde pueden ponerse es el caso de uso.
 func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	s, pool := sembrarReportes(t)
@@ -524,9 +722,11 @@ func TestIngestaEstampaLosDefaultsDelEsquemaEnLaTabla(t *testing.T) {
 	recien := aplicacion.UsoPersistido{
 		Titulo:      "La Casa de las Dos Palmas",
 		Modalidad:   reparto.TV,
-		IDsFuente:   "ID_Ficha=1234",
+		IDsFuente:   "id_ficha=1234",
 		TipoObra:    "serie",
 		DuracionMin: decimal.NewFromInt(52),
+		CanalID:     "caracol",
+		Rating:      decimal.NewFromInt(1),
 	}
 
 	rechazados, err := ingesta.GuardarUsos(ctx, rep, []aplicacion.UsoPersistido{recien})
@@ -734,8 +934,8 @@ func TestIngestaRechazaEnLaTablaLaFilaQueLlegaYaIdentificada(t *testing.T) {
 //     ingesta"- acusando de traer una obra a una fila que no traia ninguna.
 //     Eso se ve con un doble en memoria.
 //  2. En cuanto se arregla SOLO en Go, la fila pasa como vacia y llega al
-//     INSERT con el blanco intacto. El NULLIF del INSERT compara con la cadena
-//     vacia LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
+//     COPY con el blanco intacto. valoresUso compara contra la cadena vacia
+//     LITERAL, asi que no lo anula, y el CHECK uso_resuelto_tiene_obra
 //     la rechaza con un 23514 DENTRO de la transaccion del lote. No se pierde
 //     esa fila: se pierden TODAS. Ese sintoma no existe contra un doble -no
 //     hay CHECK que violar- y es el mas caro de los dos: el reporte ya quedo
@@ -1254,4 +1454,427 @@ func contar(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reporteID str
 		t.Fatalf("usos = %d, rechazos = %d; se esperaba %d y %d",
 			hayCanonicos, hayRechazos, canonicos, rechazos)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ListarCargas: el listado de cargas hechas
+// ---------------------------------------------------------------------------
+
+func TestListarCargasCuentaCadaTablaPorSuLado(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Tres canonicas y dos rechazadas en la MISMA entrega. Es la forma que
+	// rompe el listado si los dos recuentos salen de un JOIN doble: 3 x 2 da
+	// seis combinaciones, y los dos COUNT devuelven 6 y 6 sin que nada falle.
+	mala1 := usoPendiente("uso-mala-1", reporteEnero, "Radio Novela")
+	mala1.Modalidad = "radio"
+	mala1.RechazoMotivo = `modalidad "radio" fuera de tv|cine|ott|hotel|teatro|transporte|suscripcion`
+	mala2 := usoPendiente("uso-mala-2", reporteEnero, "Sin duracion")
+	mala2.RechazoMotivo = `duracion_min: "cuarenta y cinco" no es un numero`
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		usoPendiente("uso-1", reporteEnero, "La Casa"),
+		usoPendiente("uso-2", reporteEnero, "Cronica"),
+		usoPendiente("uso-3", reporteEnero, "Rebelde"),
+		mala1,
+		mala2,
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	if len(cargas) != 2 {
+		t.Fatalf("cargas = %d, se esperaban 2", len(cargas))
+	}
+
+	enero := cargaPorID(t, cargas, reporteEnero)
+	if enero.Aceptados != 3 || enero.Rechazados != 2 {
+		t.Errorf("enero: aceptados/rechazados = %d/%d, se esperaba 3/2",
+			enero.Aceptados, enero.Rechazados)
+	}
+	// La entrega sin filas cuenta cero, no desaparece del listado: una carga
+	// que no dejo ni una fila es justamente la que hay que poder ver.
+	febrero := cargaPorID(t, cargas, reporteFebrero)
+	if febrero.Aceptados != 0 || febrero.Rechazados != 0 {
+		t.Errorf("febrero: aceptados/rechazados = %d/%d, se esperaba 0/0",
+			febrero.Aceptados, febrero.Rechazados)
+	}
+
+	// El acuse completo viaja en la proyeccion: sin la huella y la clave del
+	// objeto, el listado no sirve para volver a la evidencia (ADR 0006).
+	if enero.SHA256 != shaParrilla || enero.ClaveObjeto != "reportes/"+shaParrilla {
+		t.Errorf("enero no trae su evidencia: %+v", enero.Reporte)
+	}
+	if enero.NBytes != 128 || enero.Fuente != "caracol" || enero.Periodo != "2026-01" {
+		t.Errorf("enero: acuse incompleto: %+v", enero.Reporte)
+	}
+	if enero.Recibido.IsZero() {
+		t.Errorf("enero no trae el instante de recepcion")
+	}
+	_ = pool
+}
+
+func TestListarCargasFiltraPorPeriodoYElVacioNoFiltra(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	enero, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas(2026-01): %v", err)
+	}
+	if len(enero) != 1 || enero[0].ID != reporteEnero {
+		t.Fatalf("cargas de enero = %+v", enero)
+	}
+
+	// El filtro va como parametro y el vacio significa "todas". Cada caso
+	// tiene su sentencia y su plan: el `OR` evitaba el indice `reportes_periodo`
+	// en plan generico.
+	todas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas(): %v", err)
+	}
+	if len(todas) != 2 {
+		t.Fatalf("cargas = %d, se esperaban 2", len(todas))
+	}
+
+	// Un periodo sin cargas es lista vacia, no error.
+	ninguna, err := s.ListarCargas(ctx, "2025-12", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas(2025-12): %v", err)
+	}
+	if len(ninguna) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba ninguna", ninguna)
+	}
+}
+
+func TestListarCargasDevuelveLaMasRecientePrimero(t *testing.T) {
+	s, pool := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Las dos entregas se escriben con microsegundos de diferencia, asi que el
+	// orden se fija a mano: sin instantes distintos esta prueba comprobaria el
+	// desempate por id y no el orden que interesa.
+	if _, err := pool.Exec(ctx,
+		`UPDATE reportes SET creado = '2026-01-05T10:00:00Z' WHERE id = $1`, reporteEnero); err != nil {
+		t.Fatalf("fijar creado de enero: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE reportes SET creado = '2026-02-05T10:00:00Z' WHERE id = $1`, reporteFebrero); err != nil {
+		t.Fatalf("fijar creado de febrero: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	if cargas[0].ID != reporteFebrero || cargas[1].ID != reporteEnero {
+		t.Fatalf("orden = %s, %s; se esperaba la mas reciente primero",
+			cargas[0].ID, cargas[1].ID)
+	}
+}
+
+func TestListarCargasPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	primera, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas(desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// La rama filtrada por periodo tambien pagina: es la que usa la pantalla tras
+// cada subida (GET /reportes?periodo=...&limite=...&desplazamiento=...). Sin el
+// LIMIT/OFFSET en esa rama, el listado filtrado volvia entero y la suite
+// seguia en verde porque TestListarCargasPagina solo ejerce la rama sin
+// filtro.
+func TestListarCargasFiltradaPagina(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Una segunda carga en el mismo periodo de enero: con dos en 2026-01 y una
+	// en 2026-02, la pagina filtrada tiene que recortar y avanzar.
+	const (
+		reporteEnero2 = "rep-caracol-enero-2"
+		shaEnero2     = "3333333333333333333333333333333333333333333333333333333333333333"
+	)
+	if err := s.GuardarReporte(ctx, reporteEnero2, "caracol", "2026-01",
+		shaEnero2, "reportes/"+shaEnero2, 64, ""); err != nil {
+		t.Fatalf("sembrar segunda carga de enero: %v", err)
+	}
+
+	primera, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (limite 1): %v", err)
+	}
+	if len(primera) != 1 {
+		t.Fatalf("cargas filtradas = %d, se esperaba 1", len(primera))
+	}
+	segunda, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 1})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada (desplazamiento 1): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].ID == primera[0].ID {
+		t.Fatalf("la segunda pagina filtrada no avanza: %+v", segunda)
+	}
+	vacia, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{Limite: 1, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("ListarCargas filtrada mas alla del final: %v", err)
+	}
+	if len(vacia) != 0 {
+		t.Fatalf("cargas filtradas = %+v, se esperaba pagina vacia", vacia)
+	}
+}
+
+// ListarCargas tiene que participar en Store.EnUnidad: lee por ejecutorDe, no
+// por el pool. Sin esto, una lectura dentro de la unidad no ve lo que la
+// unidad acaba de escribir (y con el pool agotado se interbloquea). El merge
+// que separo la consulta en dos ramas revirtio s.ejecutorDe a s.pool; esta
+// sonda es lo que evita que vuelva a pasar en silencio.
+func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
+	// Dos conexiones: EnUnidad ocupa una con la transaccion y el conteo de
+	// fuera (pool directo) pide otra. Con el MaxConns=1 de testhelp.Pool la
+	// segunda espera al pool mientras la unidad espera a la segunda: el
+	// timeout de 10 minutos del paquete. Mismo arreglo que
+	// TestCandidatosParticipaEnLaUnidad.
+	dsn := testhelp.DSN(t)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("configurar el pool de dos conexiones: %v", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("abrir el pool de dos conexiones: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	s := sembrarReportesEn(t, pool)
+	const (
+		idSonda  = "rep-sonda"
+		periodo  = "2026-03"
+		shaSonda = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
+		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
+			shaSonda, "reportes/"+shaSonda, 32, ""); err != nil {
+			return err
+		}
+		cargas, err := s.ListarCargas(ctx, periodo, aplicacion.Paginacion{})
+		if err != nil {
+			t.Errorf("ListarCargas dentro de la unidad: %v", err)
+			return nil
+		}
+		if len(cargas) != 1 || cargas[0].ID != idSonda {
+			t.Errorf("ListarCargas no ve la carga escrita en la MISMA unidad: %d, se esperaba 1",
+				len(cargas))
+		}
+
+		// Desde otra conexion la fila no existe todavia: la unidad no confirmo.
+		var n int
+		if err := pool.QueryRow(t.Context(),
+			`SELECT count(*) FROM reportes WHERE id = $1`, idSonda).Scan(&n); err != nil {
+			t.Errorf("contar desde fuera: %v", err)
+			return nil
+		}
+		if n != 0 {
+			t.Errorf("ListarCargas confirmo la transaccion de la unidad por su cuenta")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("EnUnidad: %v", err)
+	}
+
+	fuera, err := s.ListarCargas(t.Context(), periodo, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas fuera de la unidad: %v", err)
+	}
+	if len(fuera) != 1 || fuera[0].ID != idSonda {
+		t.Fatalf("la unidad confirmo y la carga tenia que verse: %+v", fuera)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RechazosDeReporte: el log de rechazos de una carga
+// ---------------------------------------------------------------------------
+
+// rechazoDe es una fila del log de rechazos de una entrega, con su motivo.
+func rechazoDe(id, reporteID, motivo string) aplicacion.UsoPersistido {
+	u := usoPendiente(id, reporteID, "Titulo de "+id)
+	u.RechazoMotivo = motivo
+	return u
+}
+
+func TestRechazosDeReporteDevuelveSoloLosDeEsaCargaEnOrdenDeFila(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Los ids de fila son `<reporte>-<n>` sin ceros a la izquierda, que es lo
+	// que deriva la ingesta. Con -1, -2 y -10 el orden lexico (-1, -10, -2) y el
+	// de fila (-1, -2, -10) se separan, y se insertan desordenados para que el
+	// orden de insercion tampoco lo tape.
+	diez := rechazoDe(reporteEnero+"-10", reporteEnero, `modalidad "radio" fuera de tv|cine|ott|hotel`)
+	diez.Modalidad = "radio"
+	diez.IDsFuente = "ID_Ficha 77"
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		diez,
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+		rechazoDe(reporteEnero+"-1", reporteEnero, `duracion_min: "x" no es un numero`),
+		// La otra entrega tiene su propio log, y no puede colarse en el de enero.
+		rechazoDe(reporteFebrero+"-1", reporteFebrero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	rechazos, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeReporte: %v", err)
+	}
+	ids := make([]string, 0, len(rechazos))
+	for _, u := range rechazos {
+		ids = append(ids, u.ID)
+	}
+	quiero := []string{reporteEnero + "-1", reporteEnero + "-2", reporteEnero + "-10"}
+	if strings.Join(ids, ",") != strings.Join(quiero, ",") {
+		t.Fatalf("ids = %v, se esperaba %v (solo los de enero, en orden de fila)", ids, quiero)
+	}
+
+	// La proyeccion entera, campo a campo: una columna corrida no falla, deja
+	// el motivo en el titulo.
+	got := rechazos[2]
+	if got.ReporteID != reporteEnero || got.Fuente != "caracol" || got.Titulo != "Titulo de "+diez.ID ||
+		got.IDsFuente != "ID_Ficha 77" || got.Modalidad != "radio" || got.RechazoMotivo != diez.RechazoMotivo {
+		t.Errorf("rechazo = %+v", got)
+	}
+	if got.RechazoTipo != aplicacion.TipoRevisionAdaptador || got.RechazoCodigo != aplicacion.CodigoRechazoFormato {
+		t.Errorf("tipo/codigo = %q/%q", got.RechazoTipo, got.RechazoCodigo)
+	}
+}
+
+func TestRechazosDeReporteDistingueSinRechazosDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	// Enero con una fila canonica y ningun rechazo: la fila de `usos` no es un
+	// rechazo y no puede salir por aqui.
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		usoPendiente(reporteEnero+"-0", reporteEnero, "La Casa"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// Existe y no tuvo rechazos: lista VACIA, no nil. Es la fila nula del LEFT
+	// JOIN, y no puede salir como un rechazo con id vacio.
+	ninguno, err := s.RechazosDeReporte(ctx, reporteEnero, aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("RechazosDeReporte(enero): %v", err)
+	}
+	if ninguno == nil || len(ninguno) != 0 {
+		t.Fatalf("rechazos = %#v, se esperaba una lista vacia y no nil", ninguno)
+	}
+
+	// No existe: ErrNoEncontrado, que la capa HTTP convierte en 404.
+	if _, err := s.RechazosDeReporte(ctx, "rep-que-no-existe", aplicacion.Paginacion{}); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("err = %v, se esperaba ErrNoEncontrado", err)
+	}
+}
+
+// La pagina no puede cambiar lo que la lectura DICE sobre la entrega. Con el
+// LIMIT en la sentencia de arriba, una pagina vacia -un desplazamiento mas alla
+// del final, o una entrega sin rechazos consultada desde la pagina 2- devolvia
+// cero filas y el adaptador la leia como "esa entrega no existe": un 404 sobre
+// una entrega que si existe.
+func TestRechazosDeReportePaginadoDistinguePaginaVaciaDeNoExiste(t *testing.T) {
+	s, _ := sembrarReportes(t)
+	ctx := t.Context()
+
+	if err := s.GuardarUsos(ctx, []aplicacion.UsoPersistido{
+		rechazoDe(reporteEnero+"-1", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-2", reporteEnero, "titulo vacio"),
+		rechazoDe(reporteEnero+"-3", reporteEnero, "titulo vacio"),
+	}); err != nil {
+		t.Fatalf("GuardarUsos: %v", err)
+	}
+
+	// La primera pagina, corta.
+	primera, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2})
+	if err != nil {
+		t.Fatalf("primera pagina: %v", err)
+	}
+	if ids := idsDe(primera); strings.Join(ids, ",") != reporteEnero+"-1,"+reporteEnero+"-2" {
+		t.Fatalf("primera pagina = %v", ids)
+	}
+
+	// La segunda, con la que queda.
+	segunda, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("segunda pagina: %v", err)
+	}
+	if ids := idsDe(segunda); strings.Join(ids, ",") != reporteEnero+"-3" {
+		t.Fatalf("segunda pagina = %v", ids)
+	}
+
+	// Mas alla del final: lista VACIA, no ErrNoEncontrado. La entrega existe.
+	mas, err := s.RechazosDeReporte(ctx, reporteEnero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 50})
+	if err != nil {
+		t.Fatalf("una pagina vacia de una entrega que existe no es un error: %v", err)
+	}
+	if mas == nil || len(mas) != 0 {
+		t.Fatalf("pagina vacia = %#v, se esperaba [] y no nil", mas)
+	}
+
+	// Y una entrega SIN rechazos, pedida desde la pagina 2, tampoco desaparece.
+	vacia, err := s.RechazosDeReporte(ctx, reporteFebrero,
+		aplicacion.Paginacion{Limite: 2, Desplazamiento: 2})
+	if err != nil {
+		t.Fatalf("una entrega sin rechazos consultada desde la pagina 2 existe: %v", err)
+	}
+	if vacia == nil || len(vacia) != 0 {
+		t.Fatalf("rechazos de febrero = %#v", vacia)
+	}
+}
+
+func idsDe(usos []aplicacion.UsoPersistido) []string {
+	ids := make([]string, 0, len(usos))
+	for _, u := range usos {
+		ids = append(ids, u.ID)
+	}
+	return ids
+}
+
+func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {
+	t.Helper()
+	for _, c := range cargas {
+		if c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("no esta la carga %q en %+v", id, cargas)
+	return aplicacion.CargaReporte{}
 }

@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,10 +20,20 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
+	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
+
+// dirObjetosPorDefecto es la boveda de reportes crudos cuando nadie fija
+// OBJECT_DIR. Relativa al directorio de trabajo, igual que en cmd/seed y por
+// lo mismo: `/data` no se puede crear en una maquina de desarrollo. En
+// contenedor la ruta la fija OBJECT_DIR, que es lo que hace docker-compose.yml.
+const dirObjetosPorDefecto = "./data/objetos"
 
 func main() {
 	log := config.Logger("api")
@@ -70,32 +81,165 @@ func ejecutar(log *slog.Logger) error {
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 	}
 
-	// El mismo *Store satisface tambien CatalogoObras. El nucleo sigue viendo
-	// puertos separados: que el adaptador sea uno solo es asunto suyo.
-	catalogo := aplicacion.Catalogo{Obras: store}
+	admision := aplicacion.Admision{
+		Solicitudes: store,
+		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		IDs:         cripto.TokensAleatorios{},
+		Claves:      cripto.Bcrypt{},
+	}
 
-	// Y tambien GestionDeclaraciones: el editor de splits de la #30. El
-	// asiento de auditoria (#23) lo escribe el propio adaptador dentro de la
-	// misma transaccion -no un BitacoraAuditoria aparte-, ver puertos.go.
+	// La ingesta de reportes de uso: la base para el acuse y las filas, la
+	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
+	// formato para leer lo que llega.
+	//
+	// El catalogo se construye AL ARRANCAR y su error tumba el proceso. Un mapa
+	// de columnas mal escrito es un defecto del programa, no de la entrega:
+	// descubrirlo aqui cuesta un arranque fallido, y descubrirlo en la primera
+	// subida cuesta una entrega perdida con el cliente esperando.
+	lectores, err := ingesta.CatalogoDelCliente()
+	if err != nil {
+		return fmt.Errorf("construir los adaptadores de ingesta: %w", err)
+	}
+	log.Info("adaptadores de ingesta listos", slog.Any("fuentes", ingesta.Fuentes(lectores)))
+
+	// Cinco puertos y no dos desde el ADR 0019 y el 0006: emitir una orden de
+	// pago son la orden, el cierre de las diferidas que absorbe, el asiento de
+	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
+	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
+	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	ordenes := aplicacion.Liquidaciones{
+		Ordenes:     store,
+		Reloj:       reloj.Sistema{},
+		Notificador: notificaciones.Bitacora{Log: log},
+		Bitacora:    store,
+		Unidad:      store,
+	}
+
+	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
+	// CatalogoObras, BitacoraAuditoria y UnidadDeTrabajo. CatalogoObras va por
+	// un envoltorio (ver postgres/catalogo.go): PorID ya es el de la bitacora.
+	// Declaraciones se lee aparte para componer el estado de cada obra. El
+	// nucleo sigue viendo puertos separados: que el adaptador sea uno solo es
+	// asunto suyo, y es lo que permite que el asiento del alta comparta
+	// transaccion con la obra (ADR 0006, #91).
+	catalogo := aplicacion.Catalogo{
+		Obras:         store.CatalogoObras(),
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+		Declaraciones: store,
+	}
+
+	// El padron de titulares, que es de donde el editor de splits saca las
+	// partes de una declaracion. La satisface el mismo *Store, y con esto es
+	// la primera lectura de `titulares` en produccion.
+	padron := aplicacion.Titulares{Padron: store}
+
+	// El asiento de auditoria de declaraciones y recaudo lo escribe el
+	// propio adaptador dentro de la misma transaccion -no un
+	// BitacoraAuditoria aparte-, ver puertos.go.
+	//
+	// El guardia de R-01 apunta al STORE, no a `padron`. Es el mismo adaptador
+	// -por eso los dos satisfacen el puerto-, pero no es el mismo camino:
+	// `padron` es el MODELO DE LECTURA, y un modelo de lectura recorta. Hoy
+	// mete un tope por defecto de pagina
+	// ([aplicacion.Titulares.BuscarTitulares] lo aplica con `ConDefecto`), y
+	// cualquier dia puede recortar por algo mas -"el padron es de escritores"-
+	// sin que nadie lo mire. Un guardia que mira otra cosa que la tabla que
+	// guarda lo que se le pide comprueba lo que le dejen, y ese dia R-01
+	// dejaria pasar a una sociedad en silencio, que es el defecto caro de esta
+	// regla. El cableado es decision de este main, asi que la decision se
+	// escribe aqui: el nucleo no conoce ninguno de los dos.
 	declaraciones := aplicacion.Declaraciones{
 		Gestion: store,
+		Padron:  store,
 		Reloj:   reloj.Sistema{},
 	}
 
-	// El lado del ingreso (#27). Dos puertos del mismo adaptador: se lee desde
-	// mas sitios de los que se escriben, y quien solo consulta bolsas no tiene
-	// por que poder registrar dinero.
 	recaudo := aplicacion.Recaudo{
 		Bolsas:  store,
 		Gestion: store,
 		Reloj:   reloj.Sistema{},
 	}
 
-	api := httpapi.Nueva(store, httpapi.Casos{
-		Auth:          autenticacion,
-		Catalogo:      catalogo,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
+	recepcion := aplicacion.Ingesta{
+		Reportes:              store,
+		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Lectores:              lectores,
+		SnapshotNormalizacion: store.SnapshotNormalizacion,
+	}
+
+	// La deteccion de anomalias de un periodo (#37). Seis puertos del mismo
+	// *Store, y tres de ellos son ESTRECHOS a proposito: `Entregas` solo lee
+	// -- no puede llamar a GuardarEntrega, que quema la huella de un archivo
+	// --, `Declaraciones` es el mismo LectorDeDeclaraciones que usa el
+	// catalogo y `Coautores` es una sola consulta. La unidad de trabajo esta
+	// porque las alertas y su asiento tienen que ser un solo hecho (ADR 0006).
+	anomalias := aplicacion.Anomalias{
+		Entregas:      store,
+		Declaraciones: store,
+		Coautores:     store,
+		Alertas:       store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
+	// El flujo de aprobaciones de RD 13.5 (#34). Seis puertos, un solo
+	// *Store: es el mismo patron que declaraciones/recaudo de mas arriba,
+	// aplicado a un agregado con mas costuras.
+	procesos := aplicacion.Procesos{
+		Repo:          store,
+		Parametros:    store,
+		Bolsas:        store,
+		Declaraciones: store,
+		Usos:          store,
+		Resultados:    store,
+		Unidad:        store,
+		Anomalias:     anomalias,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
+	}
+
+	api := httpapi.Nueva(httpapi.Casos{
+		Salud:      store,
+		Auth:       autenticacion,
+		Ordenes:    ordenes,
+		Admision:   admision,
+		Catalogo:   catalogo,
+		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
+		PublicarONI: aplicacion.PublicarListadoONI{
+			ONI:         store,
+			Bitacora:    store,
+			Reloj:       reloj.Sistema{},
+			Tx:          store,
+			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
+			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
+		},
+		Padron:         padron,
+		Ingesta:        recepcion,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Resolucion: aplicacion.ResolucionIdentificacion{
+			Repo: store, Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+		},
+		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
+		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

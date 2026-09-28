@@ -49,6 +49,11 @@ los reportes anuales del proveedor especializado de parrillas.
 - Es el tiempo estimado en minutos durante el cual la obra es emitida.
 - **La hora de emision televisiva se computa como 48 minutos**, salvo prueba en contrario.
 - **La duracion artistica es el 80% de la reportada por el proveedor especializado.**
+- **Las dos transformaciones no se encadenan.** Si la fuente reporta minutos, se aplica el
+  80%; si reporta horas, se aplica la hora de 48 minutos. Encadenarlas contaria los anuncios
+  dos veces: 80% de 60 minutos YA es 48, que es la hora televisiva del ejemplo de Serie Y.
+  Queda abierto (ver `preguntas-cliente.md`) si el 80% aplica a toda cifra de parrilla o solo
+  a la del proveedor especializado de audiencia.
 - No computan los avances publicitarios de obras audiovisuales emitidos para promocionar la
   programacion propia del canal.
 
@@ -96,6 +101,12 @@ la informacion suministrada por el usuario.
 
 Ejemplo del reglamento: bolsa de $1.000.000, Pelicula X con 10.000 espectadores (67%) recibe
 $666.667 y Pelicula Y con 5.000 (33%) recibe $333.333.
+
+La contradiccion taquilla vs espectadores es **P-18** (no P-01): `RD 9.2` dice
+"ingresos de taquilla" en el cuerpo y su ejemplo calcula sobre espectadores;
+`RD 9.3` la hereda por remision. El motor acepta cualquiera de las dos bases
+via `Snapshot.BaseCineTeatro` (`espectadores` | `taquilla`), nunca fijada en
+codigo. P-01 es otra pregunta: la base **tarifaria** (`RT 3.2` vs `RT 4`).
 
 ## 9.3 Teatros
 

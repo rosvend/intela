@@ -28,6 +28,35 @@ if: always()
 > El nombre del job `ci` es el contrato con la proteccion de rama. Renombrarlo deja `main`
 > esperando un check que ya no existe, y no se puede mergear nada hasta arreglarlo.
 
+### Numeracion de migraciones
+
+Goose toma la version del prefijo del fichero. Dos modos de fallo solo aparecian en el
+`terraform apply` ([#110](https://github.com/rosvend/intela/issues/110)):
+
+1. **Version duplicada** — dos `.sql` con el mismo numero y distinto nombre se mergean en git y
+   goose entra en panic dentro de `lambda-migrate`.
+2. **Numero por debajo de la version aplicada** — con `allowMissing = false`, goose rechaza el
+   `up` y `module.api` no se actualiza porque depende de `module.migrations`.
+
+La etapa `Migration versions` corre las pruebas estaticas de
+`internal/infraestructura/migraciones/numeracion/` (sin Postgres). Ese paquete es solo CI: no
+entra en los binarios de `migrate` / `lambda-migrate` (el embed sigue en `migrations/`). La
+version aplicada se deriva de `MIGRACIONES_BASE_REF` (el SHA base del PR, o el commit en `main`),
+no de una lista a mano. `Test (Go)` sigue corriendo `TestAplicarSobreLaVersionDesplegada` contra
+Postgres, y su filtro de rutas incluye `migrations/` para que un PR que solo anade un `.sql` no
+se salte la suite.
+
+La compuerta sostiene el caso concurrente porque la proteccion de `main` exige
+`strict: true`: toda PR debe estar al dia antes de mergear y el check se re-ejecuta contra
+`main` fresco. Sin ese `strict`, dos PRs con el mismo numero podrian mergear las dos con su
+check en verde.
+
+Lo que CI exige: versiones unicas, nombres parseables por goose, y ninguna migracion **nueva**
+(por nombre de fichero) con version `<=` la aplicada en el ref base. La practica de equipo —
+**el primero libre por encima de la aplicada, y se reasigna al mergear** — es mas estricta que
+la comprobacion: un `00015` con aplicada en `00010` pasa CI y quema 11-14; evitarlo es
+disciplina al abrir la PR, no un rojo automatico.
+
 ## Etapas
 
 | Etapa | Que corre | Cuando |
@@ -37,13 +66,17 @@ if: always()
 | `Lint (workflows)` | `actionlint` con shellcheck sobre cada `run:` | El PR toca `.github/` |
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
+| `Perf (10k batch)` | KR-1: el lote de 10.000 registros en menos de 5 min, sin `-race` | Hay `go.mod` y el PR toca Go |
+| `Reproducibility (engine re-run)` | ADR 0005: los dorados del Canal Z dos veces, byte a byte, con `-race` | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
+| `Migration versions` | Versiones goose unicas, nombres parseables, ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
-| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` |
-| `Test (frontend)` | `npm test` | Hay `web/package.json` y el PR toca `web/` |
-| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` |
+| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
-| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` |
+| `Smoke (compose bring-up)` | `docker compose --profile demo up --build` y despues [`deploy/smoke.sh`](../deploy/smoke.sh) contra nginx | Hay `docker-compose.yml` y `deploy/smoke.sh`, y el PR toca algo de lo que depende el arranque |
+| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` o `api/openapi.yaml` |
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
 
@@ -74,6 +107,28 @@ tipos lo tiene que reportar el check de lint, en segundos, no el final de un bui
 separados: la segunda usa `--enable-only=depguard`. Es deliberado. Cuando un check se
 pone en rojo, su nombre tiene que decir si se rompio la **frontera** (`0002`, `0003`) o si sobra un
 espacio. Mezclarlos convierte una violacion de arquitectura en un item mas de una lista de estilo.
+
+### Por que hay una etapa que levanta el sistema
+
+Todas las demas etapas verifican una capa aislada: `Test (Go)` corre la suite, `Docker build` dice
+que la imagen se construye, `Frontend build` que el bundle sale. Las tres pueden estar en verde con
+el sistema sin arrancar — un DSN que apunta a un host de otro compose, una migracion que no aplica,
+el `proxy_pass` sin barra final que hace que nginx mande `/api/obras` a la API como `/api/obras` y
+devuelva `404` al tablero entero. Nada de eso se ve hasta que alguien abre el navegador, y hasta
+esta etapa el primer alguien era quien revisaba el PR.
+
+`Smoke (compose bring-up)` corre **la misma orden que documenta el quickstart**,
+`docker compose --profile demo up --build`, y no un compose propio de CI. Un smoke test contra un
+stack montado de otra forma verifica un sistema que nadie ejecuta, y deja libre de pudrirse al que
+si se ejecuta. Las comprobaciones viven en [`deploy/smoke.sh`](../deploy/smoke.sh) por la misma
+razon: quien desarrolla tiene que poder correr exactamente lo que corre CI.
+
+Su patron de rutas es el mas ancho del fichero a proposito. Es la unica etapa que responde "el
+sistema sigue levantando", y las formas de romper eso estan repartidas por todas las capas;
+estrecharlo dejaria la etapa en verde justo en los PR que rompen el arranque.
+
+Es tambien lo unico que pasa `shellcheck` sobre `deploy/smoke.sh`: `actionlint` ya lo corre sobre
+cada bloque `run:`, pero no ve los scripts sueltos.
 
 ## El filtrado por ruta va en el job, nunca en el disparador
 
@@ -158,6 +213,9 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 - **El `plan` de infraestructura necesita AWS.** `Infrastructure` valida siempre, pero su job de
   `plan` solo corre si el secreto del rol esta cargado; sin el, la etapa reporta y no bloquea.
   Detalle en [`docs/cd.md`](cd.md).
-- **Sin golden files del reparto.** Los tests unitarios son el suelo. El `ADR 0005` pide que una
-  corrida sea reproducible bit a bit anos despues, y eso necesita casos construidos desde los
-  ejemplos resueltos de los propios reglamentos.
+- **Golden files y reejecucion del reparto.** Los dorados viven en
+  `internal/dominio/reparto` (Canal Z, RD 9.1.1) y la etapa `Reproducibility`
+  los corre dos veces comparando byte a byte (ADR 0005). La etapa `Perf`
+  cronometra el lote de 10.000 registros contra la KR-1 (menos de 5 min):
+  medido en decenas de ms en local, cuatro ordenes de magnitud por debajo,
+  sin cambios de indices ni de tamano de lote.

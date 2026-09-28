@@ -34,6 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # TestAplicarSobreLaVersionDesplegada derives the applied set from
+          # MIGRACIONES_BASE_REF; the PR base (or this commit on main) must be
+          # reachable. See #110.
+          fetch-depth: 0
+          # go test shares the runner; do not leave the contents token in
+          # git-credentials for test code to read (fork PRs included).
+          persist-credentials: false
 
       - uses: actions/setup-go@v7
         with:
@@ -60,6 +68,8 @@ jobs:
           fi
 
       - name: go test
+        env:
+          MIGRACIONES_BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
         run: |
           set -euo pipefail
           go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...

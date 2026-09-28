@@ -2,9 +2,15 @@ package aplicacion
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/afiliacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
+	"github.com/rosvend/intela/internal/dominio/oni"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
@@ -37,16 +43,32 @@ type Reloj interface {
 type AlmacenObjetos interface {
 	Poner(ctx context.Context, clave string, datos []byte) error
 	Obtener(ctx context.Context, clave string) ([]byte, error)
+
+	// Borrar quita un objeto. Existe para compensar una escritura que no
+	// llego a convertirse en evidencia: si Poner gano y el INSERT de la
+	// solicitud perdio, el RUT y la certificacion bancaria no pueden
+	// quedarse huerfanos en disco.
+	//
+	// No contradice el ADR 0006. Ese ADR pide que la copia CRUDA ya
+	// retenida sea inmutable; esto borra bytes que nunca tuvieron fila
+	// que los referencie. Borrar una clave inexistente no es error: la
+	// compensacion tiene que ser idempotente.
+	Borrar(ctx context.Context, clave string) error
 }
 
 type Notificador interface {
 	Notificar(ctx context.Context, dest, asunto, cuerpo string) (acuse string, err error)
 }
 
-// Similitud propone obras candidatas para un titulo. El umbral no se aplica
-// aqui: lo aplica la cascada, con el valor que venga del snapshot normativo.
+// Similitud propone obras candidatas para un titulo, puntuadas 0-1 y de mas a
+// menos parecida.
+//
+// El UMBRAL no se aplica aqui: lo aplica la cascada. `piso` es solo hasta donde
+// merece la pena buscar, y llega por argumento porque es el mismo parametro
+// que resuelve la cascada contra la fecha del periodo. Ver D1 y D3 de
+// docs/planes/32-difuso/diseno.md.
 type Similitud interface {
-	Candidatos(ctx context.Context, titulo string) ([]identificacion.Candidato, error)
+	Candidatos(ctx context.Context, titulo string, piso decimal.Decimal) ([]identificacion.Candidato, error)
 }
 
 // Hasher verifica y genera hashes de contrasena.
@@ -101,6 +123,53 @@ type RepositorioAfiliacion interface {
 	UsuarioPorID(ctx context.Context, id string) (Usuario, error)
 }
 
+// RepositorioAdmision cubre el flujo de alta: la solicitud que deja al
+// titular en pendiente y la admision que lo pasa al padron.
+//
+// Vive aparte de RepositorioAfiliacion para no ensanchar el puerto que usa
+// Autenticacion: si GuardarSolicitud viviera ahi, cada doble del login
+// tendria que fingir un metodo que no le compete.
+type RepositorioAdmision interface {
+	// GuardarSolicitud persiste el alta y el hash de la clave con la que
+	// el titular va a entrar una vez admitido. El hash viaja aparte del
+	// Afiliado: el dominio de admision no conoce credenciales.
+	GuardarSolicitud(ctx context.Context, a afiliacion.Afiliado, claveHash string) error
+	SolicitudPorID(ctx context.Context, id string) (afiliacion.Afiliado, error)
+	AdmitirSolicitud(ctx context.Context, a afiliacion.Afiliado) error
+
+	// ActualizarPendiente persiste cambios sobre una solicitud que TODAVIA
+	// esta pendiente: completar el IPI o rechazarla. El WHERE estado =
+	// 'pendiente' cierra la carrera con una admision concurrente; si no
+	// toco una fila, es ErrEstadoInvalido.
+	ActualizarPendiente(ctx context.Context, a afiliacion.Afiliado) error
+}
+
+// PadronTitulares es la lectura del padron: quien puede figurar como titular
+// de una Declaracion de Obra.
+//
+// Es la PRIMERA lectura de `titulares` en produccion. Hasta aqui su unico
+// consumidor era el trigger `exigir_persona_natural`, que la consulta al
+// pagar, y lo unico que la escribia era el seed: el padron no tenia ni tipo en
+// el nucleo, ni puerto, ni adaptador, y los tres entran con el editor de
+// reparto de la #30.
+//
+// # Devuelve el padron entero, personas juridicas incluidas
+//
+// Y no solo los elegibles para cobrar (`R-01`). Filtrar aqui la haria
+// invisible: quien edita un reparto tiene que poder ver que el titular del
+// padron que el editor no le ofrece como parte existe, y que no se lo ofrece
+// por una regla -`R-01`, `RD 4.5`- y no porque falte el dato. Un padron
+// recortado en silencio convierte la regla en una rareza inexplicable.
+//
+// # Por que el metodo no se llama Buscar
+//
+// Porque el mismo *Store ya tiene un `Buscar` -el del catalogo de obras, con
+// otra firma-, y dos metodos con el mismo nombre no caben en un tipo. Es la
+// misma razon por la que [BitacoraAuditoria.AsientoPorID] no se llama PorID.
+type PadronTitulares interface {
+	BuscarTitulares(ctx context.Context, f FiltroTitulares) ([]afiliacion.Titular, error)
+}
+
 // RepositorioProvisionInicial crea la primera cuenta de una instalacion vacia.
 //
 // Puerto aparte y no un metodo mas de RepositorioAfiliacion: eso es lectura de
@@ -126,7 +195,7 @@ type Sesiones interface {
 
 // RepositorioRepertorio cubre el catalogo maestro y las declaraciones.
 type RepositorioRepertorio interface {
-	ListarObras(ctx context.Context) ([]Obra, error)
+	ListarObras(ctx context.Context, p Paginacion) ([]Obra, error)
 	ObraPorID(ctx context.Context, id string) (Obra, error)
 	Declaraciones(ctx context.Context) (map[string]repertorio.Declaracion, error)
 	DeclaracionDeObra(ctx context.Context, obraID string) (repertorio.Declaracion, error)
@@ -156,11 +225,19 @@ type RepositorioRepertorio interface {
 // Registrar y Actualizar son ATOMICOS por contrato -la obra y sus coautores
 // entran o no entran-. Una obra a medias, sin coautores, viola la invariante
 // de [repertorio.Obra] en cuanto alguien la lea de vuelta.
+//
+// Bloquear toma el cerrojo de fila de una obra sin leerla, o devuelve
+// [ErrNoEncontrado]. Solo tiene sentido DENTRO de una [UnidadDeTrabajo]:
+// [Catalogo.ActualizarMetadatosObra] la llama justo antes de PorID para que
+// esa lectura no pueda adelantarse al commit de otro PATCH concurrente sobre
+// la MISMA obra -- ver el comentario de ese metodo para la carrera exacta que
+// evita.
 type CatalogoObras interface {
 	Registrar(ctx context.Context, o repertorio.Obra) error
 	Actualizar(ctx context.Context, o repertorio.Obra) error
 	PorID(ctx context.Context, id string) (repertorio.Obra, error)
 	Buscar(ctx context.Context, f FiltroObras) ([]repertorio.Obra, error)
+	Bloquear(ctx context.Context, id string) error
 }
 
 // GestionDeclaraciones es la escritura y el historial de la Declaracion de
@@ -193,8 +270,75 @@ type GestionDeclaraciones interface {
 	// es lo que evita que el llamador informe una ventana de vigencia que la
 	// base nunca tuvo.
 	Guardar(ctx context.Context, d repertorio.Declaracion, ahora time.Time, actorID string) (version int, vigenteDesde time.Time, err error)
-	Historial(ctx context.Context, obraID string) ([]VersionDeclaracion, error)
+	// Historial sirve una pagina de versiones, tomada desde la MAS RECIENTE
+	// hacia atras y devuelta en orden ascendente. Ver [Store.Historial].
+	Historial(ctx context.Context, obraID string, pag Paginacion) ([]VersionDeclaracion, error)
 	VigenteEn(ctx context.Context, obraID string, momento time.Time) (VersionDeclaracion, error)
+
+	// VigentesDeObras devuelve la version ABIERTA de cada una de las obras
+	// pedidas, indexada por obra, en UNA consulta para toda la lista.
+	//
+	// Existe aparte de [VigenteEn] porque responde otra pregunta. VigenteEn
+	// resuelve que regia en un INSTANTE -por eso recibe el momento y por eso
+	// su ausencia es [ErrNoEncontrado]-. Esto resuelve que rige AHORA MISMO
+	// para las obras de una pagina del catalogo, y con N obras preguntar una
+	// por una seria N+1 viajes contra la base: es la misma cuenta que
+	// [RepositorioRepertorio.ListarObras] ya evita para las partes.
+	//
+	// # Una obra sin declaracion NO aparece en el mapa
+	//
+	// Y la ausencia es el dato, no un hueco que rellenar con la Declaracion
+	// cero: `Estado()` da "incompleta" tanto para una obra que nunca se
+	// declaro como para una declarada que no suma 100 (`R-04`, `RD 13.1.3`),
+	// asi que devolver una entrada de ceros para la primera haria que el
+	// llamador no pudiera distinguir las dos -y una pantalla que las pinta
+	// igual afirma una declaracion que nadie hizo-. Quien necesite el estado
+	// de una obra ausente del mapa lo compone sabiendo que la version es nil.
+	VigentesDeObras(ctx context.Context, obraIDs []string) (map[string]VersionDeclaracion, error)
+}
+
+// Paginacion es el recorte comun de [CatalogoObras.Buscar] y
+// [RepositorioRepertorio.ListarObras]. Misma forma a proposito: la nota 4 de
+// #86 pide que GET /obras y ListarObras paginen juntos, no cada uno a su aire.
+//
+// Limite cero significa "usar el por defecto" ([LimiteObrasPorDefecto]): es el
+// tope que cierra el catalogo real de REDES SGC. [LimiteSinTope] es el
+// centinela explicito para pedir el catalogo entero -"todo" se dice, no se
+// obtiene dejando el campo a cero-. Desplazamiento cero es el inicio.
+//
+// Los valores ilegales -limite negativo distinto de LimiteSinTope, por encima
+// del maximo, o desplazamiento negativo- los rechaza el adaptador HTTP con
+// 400; el repositorio solo aplica el defecto.
+type Paginacion struct {
+	Limite         int
+	Desplazamiento int
+}
+
+const (
+	// LimiteObrasPorDefecto es el tope cuando quien llama no pide otro.
+	LimiteObrasPorDefecto = 100
+	// LimiteObrasMaximo es el techo que acepta GET /obras. Por encima es 400,
+	// no un silencio que lo recorte: quien pide 10_000 tiene que saber que no.
+	//
+	// Y el mismo techo que acepta GET /titulares (#30). El nombre se queda
+	// como esta a proposito: los dos son listados del mismo sistema, 500 es
+	// correcto para los dos, y renombrarlo a algo generico tocaria todo lo que
+	// ya lo usa para no cambiar ni un valor.
+	LimiteObrasMaximo = 500
+	// LimiteSinTope pide el catalogo entero. Solo tiene sentido en lecturas
+	// internas (p. ej. el motor de reparto via ListarObras); GET /obras lo
+	// rechaza como limite negativo.
+	LimiteSinTope = -1
+)
+
+// ConDefecto pone LimiteObrasPorDefecto cuando Limite llega en cero. No
+// toca [LimiteSinTope]: ese centinela ya es una eleccion explicita. No
+// recorta ni rechaza: eso es del adaptador HTTP.
+func (p Paginacion) ConDefecto() Paginacion {
+	if p.Limite == 0 {
+		p.Limite = LimiteObrasPorDefecto
+	}
+	return p
 }
 
 // FiltroObras recorta una busqueda en el catalogo. Un campo en su valor cero
@@ -205,11 +349,40 @@ type GestionDeclaraciones interface {
 // el titulo localizado y el original difieren en 16 de 59 filas de Caracol-.
 // Los otros tres son exactos: un genero, un anio y un IPI se conocen enteros
 // o no se conocen.
+//
+// La paginacion viaja embebida: Buscar y ListarObras comparten la misma forma
+// (issue #90, seguimiento de #86).
 type FiltroObras struct {
 	Titulo string
 	Genero string
 	IPI    string
 	Anio   int
+	Paginacion
+}
+
+// FiltroTitulares recorta una busqueda en el padron. Un campo en su valor cero
+// NO filtra, y los que vienen se combinan con Y, igual que [FiltroObras].
+//
+// Nombre es parcial porque por el padron se busca sin saber el nombre exacto
+// -"Ana Escritora" o "Ana Escritora de Perez"-, y sin distinguir mayusculas.
+// El IPI es exacto: un IPI se conoce entero o no se conoce.
+//
+// PersonaNatural es un PUNTERO, y no es un capricho. Con un bool a secas, "no
+// filtrar" y "solo personas juridicas" serian el mismo valor cero -`false`- y
+// no habria forma de preguntar por las productoras, que es lo que ofrece
+// `GET /titulares`: quien esta en el padron y NO puede recibir reparto.
+//
+// IDs pide esas filas del padron y ninguna otra, y una lista vacia NO filtra,
+// igual que los tres de arriba. Existe porque `R-01` tiene que decidir sobre
+// los titulares que NOMBRA una declaracion, y esos son unos pocos: sin este
+// filtro, comprobar la regla en cada guardado obliga a leer el padron entero
+// -que no tiene tope- para responder por un punado de ids.
+type FiltroTitulares struct {
+	Nombre         string
+	IPI            string
+	PersonaNatural *bool
+	IDs            []string
+	Paginacion
 }
 
 // RepositorioIdentificacion cubre alias, identificadores globales y el
@@ -222,26 +395,253 @@ type FiltroObras struct {
 // GuardarMatch escribe r solo si la fila sigue en escalonPrevio, el escalon
 // con que se leyo; si no existe o ya cambio, devuelve ErrNoEncontrado sin
 // escribir nada.
+// GuardarCandidatos REEMPLAZA la bandeja de un uso: son el resultado de una
+// corrida contra el catalogo tal como estaba (D9).
 type RepositorioIdentificacion interface {
 	Alias(ctx context.Context, fuente, tipo, valor string) (obraID string, err error)
 	GuardarAlias(ctx context.Context, fuente, tipo, valor, obraID, quien string) error
 	ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (obraID string, err error)
 	GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error
+	GuardarCandidatos(ctx context.Context, usoID string, cs []identificacion.Candidato) error
+}
+
+// RepositorioUsosDeReparto entrega los usos que ponderan la bolsa de un canal.
+//
+// El filtro es el par (periodo, canal) y no el periodo suelto: el valor punto
+// de `RD 9.1.1` se calcula por canal, y una corrida es una bolsa (ADR 0019).
+// Mezclar dos pagadores en una consulta produciria un valor punto que el
+// reglamento no reconoce.
+//
+// anioClasificacion llega resuelto desde el nucleo y no se deduce aqui: la
+// regla de que es el ano INMEDIATAMENTE ANTERIOR al periodo es `RD 9.5.4`, y
+// dejarla en el adaptador la volveria improbable sin una base de datos.
+//
+// Un canal sin filas devuelve la lista vacia, no ErrNoEncontrado. UsosDeCanal
+// solo devuelve filas con obra identificada (`obra_id IS NOT NULL`): una fila
+// pendiente, ONI o excluida (R-27) nunca llega al motor con un `ObraID`
+// vacio. [ResumenUsosDeCanal] cuenta cuantas se quedaron fuera y por que --
+// pero SOLO cuenta: no reserva su importe. Ver la advertencia en
+// [ResumenUsosDeCanal] antes de pasar el resultado de UsosDeCanal a
+// [reparto.Reparto].
+type RepositorioUsosDeReparto interface {
+	UsosDeCanal(
+		ctx context.Context, periodo, canalID string, anioClasificacion int,
+	) ([]UsoDeReparto, ResumenUsosDeCanal, error)
+
+	// UsosSinCanal cuenta los usos de un periodo -- de cualquier pagador -- que
+	// llegaron con `canal_id` vacio. La ingesta ya no los escribe (#165): un
+	// conteo distinto de cero es una fila que entro por fuera de validarUso.
+	UsosSinCanal(ctx context.Context, periodo string) (int, error)
 }
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
-	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
+	// GuardarReporte escribe SOLO el acuse, sin filas. Antes de usarlo, leer la
+	// advertencia de [Ingesta.GuardarReporte]: la pareja acuse + filas es
+	// [RepositorioIngesta.GuardarEntrega], y este metodo se queda para el seed.
+	//
+	// subidoPor es el id del usuario autenticado que hizo la entrega, o "" si no
+	// hay actor -el seed, o una entrega anterior a la atribucion (#116)-. Vacio
+	// se persiste como NULL y NUNCA como cadena vacia: no hay usuario con id ""
+	// y la clave foranea lo rechazaria.
+	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
+
+	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
+	// hecho: o entran los dos o no entra ninguno.
+	//
+	// # Por que no basta con llamar a los dos metodos de arriba
+	//
+	// Porque el acuse QUEMA la huella. El duplicado lo decide el
+	// UNIQUE (sha256, fuente), asi que una fila de `reportes` escrita y un lote
+	// que falla despues dejan una entrega registrada con CERO filas y la huella
+	// gastada: el cliente vuelve a mandar el mismo archivo -- que es exactamente
+	// lo que hace cuando le dicen que su carga fallo -- y se lleva un
+	// [ErrReporteDuplicado] para siempre. La entrega no se recupera sin cirugia
+	// en la base, y de la boveda no se borra (ADR 0006).
+	//
+	// Es el mismo agujero que [Ingesta.IngerirReporte] evita parseando antes de
+	// tocar nada, por la otra puerta: alli el archivo esta roto, aqui el archivo
+	// esta bien y lo que falla es la escritura.
+	//
+	// # Por que es un metodo del puerto y no una transaccion del caso de uso
+	//
+	// Por lo mismo que la atomicidad del lote en GuardarUsos: el nucleo no puede
+	// abrir una transaccion sin aprenderse el driver, que es justo lo que este
+	// puerto oculta -- y depguard deniega `pgx` en esta capa --. Lo que el caso de
+	// uso SI decide es el limite, y lo declara eligiendo esta llamada en vez de
+	// las otras dos. Es la misma forma que [CatalogoObras.Registrar], que mete la
+	// obra y sus coautores juntas, y que [RepositorioResultados.GuardarResultado].
+	//
+	// La boveda se queda FUERA, y no puede ser de otra manera: de un fichero
+	// escrito no se hace rollback. El resto que eso deja -- un objeto sin acuse --
+	// es inerte y se recupera solo, porque la clave del objeto es su contenido
+	// (ver [Ingesta.GuardarReporte]).
+	//
+	// Devuelve [ErrReporteDuplicado] si esa fuente ya entrego esos mismos bytes.
+	GuardarEntrega(ctx context.Context, rep Reporte, usos []UsoPersistido) error
+
 	UsosSinResolver(ctx context.Context) ([]UsoPersistido, error)
 	UsosDePeriodo(ctx context.Context, periodo string) ([]UsoPersistido, error)
 	UsoPorID(ctx context.Context, id string) (UsoPersistido, error)
+	ListarRechazos(ctx context.Context) ([]UsoPersistido, error)
+
+	// RechazosDeReporte devuelve una PAGINA del log de rechazos de una entrega,
+	// en el orden de fila del archivo.
+	//
+	// La cota la elige quien llama y la aplica la base. No es una comodidad: un
+	// archivo con la cabecera equivocada rechaza TODAS sus filas, y el log entero
+	// se leia, se traducia a JSON y se pintaba completo -un `<tr>` por fila-, con
+	// lo que eso hace a la pestana y a la memoria del proceso. Paginar no es
+	// truncar en silencio: el recuento total sigue viajando en `Carga.rechazados`
+	// (ver [Ingesta.Cargas]), que es de donde quien lee saca el "N de M" sin
+	// afirmar una cifra que nadie conto.
+	//
+	// Devuelve [ErrNoEncontrado] si la entrega no existe, y una lista vacia -no
+	// nil- si existe y no tuvo rechazos, o si la pagina pedida cae mas alla del
+	// final. Una lista vacia no puede significar "no existe": seria la misma
+	// ambiguedad que [Ingesta.Cargas] evita validando el periodo.
+	RechazosDeReporte(ctx context.Context, reporteID string, pag Paginacion) ([]UsoPersistido, error)
+
+	// ListarCargas devuelve las entregas recibidas, de la mas reciente a la
+	// mas antigua. Un periodo vacio NO filtra.
+	//
+	// Devuelve tambien los dos recuentos porque separados no significan nada:
+	// una carga de la que solo se sabe que llego no dice si entro entera, y
+	// "entro entera" es justamente lo que hay que poder mirar para saber si
+	// falta pedirle algo al cliente.
+	ListarCargas(ctx context.Context, periodo string, pag Paginacion) ([]CargaReporte, error)
 }
 
-// RepositorioONI es la cola manual. Separado de identificacion porque son dos
-// modulos distintos del ADR 0003.
-type RepositorioONI interface {
-	Listar(ctx context.Context) ([]UsoPersistido, error)
+// Formatos en los que puede llegar una entrega. Son la mitad de la clave con
+// la que se elige el adaptador que sabe leerla.
+//
+// Viven en el nucleo y no en el adaptador aunque nombren formatos de archivo:
+// lo que el nucleo necesita saber es que una misma fuente puede entregar lo
+// mismo de varias maneras, no como se parsea ninguna de ellas. Que detras del
+// XLSX haya excelize y detras del CSV encoding/csv no se sabe desde aqui, y
+// depguard lo deja por escrito denegando los dos paquetes en esta capa.
+const (
+	FormatoXLSX = "xlsx"
+	FormatoCSV  = "csv"
+	FormatoJSON = "json"
+)
+
+// FormatoDeNombre deduce el formato de una entrega por la extension de su
+// nombre de archivo.
+//
+// Vive en el nucleo y no en el adaptador HTTP ni en el de ingesta aunque
+// hable de extensiones: es la mitad de la [ClaveLector] con la que el caso de
+// uso elige adaptador, y el handler (que solo tiene un nombre de fichero) la
+// necesita sin importar un paquete hermano de infraestructura. El caso de uso
+// la expone como [Ingesta.DeducirFormato] para que la interfaz del consumidor
+// describa todo lo que el handler necesita.
+//
+// Devuelve "" para lo que no reconoce, y el caso de uso lo convierte en un
+// mensaje que lista los formatos que si sabe leer. NO adivina por el contenido:
+// un .csv renombrado a .xlsx tiene que fallar diciendolo, no colarse.
+//
+// `multipart.FileHeader.Filename` no es de fiar -- lo advierte la propia
+// documentacion de Go --, asi que de el sale UNICAMENTE esta decision, que se
+// puede equivocar sin consecuencias: un formato mal deducido da un error de
+// lectura. La clave del objeto de la boveda sigue derivandose de la huella.
+func FormatoDeNombre(nombre string) string {
+	i := strings.LastIndex(nombre, ".")
+	if i < 0 {
+		return ""
+	}
+	switch strings.ToLower(nombre[i+1:]) {
+	case "xlsx", "xlsm":
+		return FormatoXLSX
+	case "csv":
+		return FormatoCSV
+	case "json":
+		return FormatoJSON
+	default:
+		// .xls -- el formato binario viejo, el del padron IPI -- entra aqui a
+		// proposito: excelize no lo lee, y devolver FormatoXLSX daria un error
+		// de parseo en vez de decir que ese formato no esta soportado.
+		return ""
+	}
+}
+
+// ClaveLector identifica al adaptador de formato de una entrega.
+//
+// Es el PAR (fuente, formato) y no la fuente sola porque son dos ejes
+// independientes y los dos varian de verdad: la parrilla de Caracol y el
+// reporte de Netflix traen columnas distintas -- no comparten ni un nombre de
+// columna, esta medido en `docs/dominio/fuentes-datos.md` --, y una misma
+// fuente puede entregar su mismo contenido en .xlsx hoy y en CSV manana sin
+// que su mapa de columnas cambie una linea.
+//
+// Con la fuente sola como clave, dar de alta el CSV de Caracol obligaria a
+// inventarse una fuente "caracol-csv", y a partir de ahi la fuente dejaria de
+// significar quien entrego -- que es lo que indexa `alias_obra` y lo que ata
+// una fila a su usuario del `RD 8` --, para significar quien entrego y como.
+type ClaveLector struct {
+	Fuente  string
+	Formato string
+}
+
+// LectorReporte convierte los bytes de una entrega en filas del esquema
+// canonico.
+//
+// Es el puerto de los adaptadores de formato. Lo satisface un adaptador por
+// PAR (fuente, formato); ver [ClaveLector].
+//
+// # Por que devuelve las rechazadas mezcladas con las buenas
+//
+// Una fila que no se puede normalizar NO se descarta: viaja en el mismo
+// resultado con su [UsoPersistido.RechazoMotivo] puesto, y es
+// [Ingesta.GuardarUsos] quien la encamina al log de rechazos. Devolver dos
+// slices dejaria al adaptador decidir que es un rechazo y que es una perdida,
+// y la unica forma de perder una fila en silencio es que alguien pueda no
+// devolverla.
+//
+// El motivo lo escribe el adaptador porque ve cosas que aguas arriba ya no se
+// ven: que celda no se pudo convertir, que placeholder traia -- el `--` de
+// `episode_nbr` --, en que fila del archivo estaba. GuardarUsos respeta el
+// motivo que ya viene puesto justamente para no perderlo.
+//
+// # Y por que el error es otra cosa
+//
+// El error es el fallo ESTRUCTURAL: el archivo no se puede abrir, la hoja no
+// esta, falta una columna requerida. Ahi no hay filas buenas que salvar, y el
+// contrato es que no se persiste NADA -- ni la boveda --. Se devuelve envuelto
+// en [ErrReporteInvalido] y nombrando el campo, que es lo que permite volver a
+// pedirle al cliente exactamente eso.
+type LectorReporte interface {
+	// Leer convierte los bytes COMPLETOS de una entrega en filas. La firma
+	// fija de hecho el techo de 32 MiB: el parseo -la operacion mas larga de
+	// la peticion- no recibe ctx y no se puede cancelar, y el streaming de
+	// archivos grandes (#46) no sera un cambio de adaptador sino de puerto
+	// mas reescritura del caso de uso.
+	Leer(datos []byte) ([]UsoPersistido, error)
+}
+
+// RepositorioOrigenDeUsos devuelve, por id de uso, su reporte exacto y como se identifico su obra.
+type RepositorioOrigenDeUsos interface {
+	OrigenDeUsos(ctx context.Context, usoIDs []string) (map[string]OrigenDeUso, error)
+}
+
+// RepositorioCasosIdentificacion es la lectura de la cola manual (ADR 0007): pagina y conteo de pendientes en una sola lectura.
+type RepositorioCasosIdentificacion interface {
+	ListarCasosIdentificacion(ctx context.Context, q ConsultaCasos) (PaginaCasos, error)
+}
+
+// RepositorioPublicacionONI persiste el listado publico (R-18) y el ancla
+// de prescripcion (R-19).
+//
+// PendientesDePeriodo lee la cola viva. GuardarPublicacion toma una
+// instantanea: lo publicado no cambia si despues se resuelve un ONI. El
+// ancla (publicado_en) se escribe una sola vez; reescribirla resetearia
+// los tres anos de RD 13.8.7.
+type RepositorioPublicacionONI interface {
+	PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.DatosIdentificatorios, error)
+	GuardarPublicacion(ctx context.Context, p PublicacionONI) (PublicacionONI, error)
+	AnclarPrescripcion(ctx context.Context, usoIDs []string, cuando time.Time) error
+	PublicacionVigente(ctx context.Context) (PublicacionONI, error)
+	PublicacionDePeriodo(ctx context.Context, periodo string) (PublicacionONI, error)
 }
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
@@ -276,6 +676,15 @@ type GestionRecaudo interface {
 	RegistrarBolsa(ctx context.Context, b BolsaPersistida, ahora time.Time, actorID string) error
 }
 
+// ParametroEnFecha resuelve UN parametro normativo vigente en una fecha.
+//
+// Mas estrecho que [ParametrosNormativos] a proposito: identificar no mueve
+// dinero (ADR 0003) y no necesita el snapshot congelado de #118. Una clave sin
+// vigencia es un error que la nombra, nunca un cero (ADR 0004).
+type ParametroEnFecha interface {
+	ParametroVigente(ctx context.Context, clave string, fecha time.Time) (decimal.Decimal, error)
+}
+
 // ParametrosNormativos resuelve los parametros con vigencia y organo
 // aprobador que exige el ADR 0004.
 //
@@ -284,6 +693,30 @@ type GestionRecaudo interface {
 // corrida lee el snapshot del proceso con SnapshotPorID, nunca vuelve a
 // resolver: si volviera, cambiar un parametro cambiaria en silencio el
 // resultado de una corrida ya hecha.
+//
+// "Queda congelado" es una ESCRITURA, y por eso este puerto ya no es de solo
+// lectura desde la #118: resolver sin persistir el corte dejaria SnapshotPorID
+// sin nada que leer, y la unica forma de reproducir la corrida seria volver a
+// resolver la fecha -- que es exactamente lo que el parrafo anterior prohibe.
+// Lo que se congela es el corte, nunca la tabla de vigencias.
+//
+// # El id
+//
+// Esta direccionado por contenido: sale de los pares (clave, valor) que el
+// snapshot consume, ordenados. Tres consecuencias que forman parte del
+// contrato y no del adaptador que lo cumple:
+//
+//   - resolver dos veces la misma fecha sobre los mismos valores da el MISMO
+//     id, asi que abrir el proceso es idempotente;
+//   - dos conjuntos de valores distintos no pueden compartir id;
+//   - un parametro que el snapshot no consume no cambia el id, porque no
+//     cambia el snapshot.
+//
+// # Los ausentes
+//
+// Una clausula sin valor vigente en la fecha NO resuelve a cero ni a un valor
+// por defecto (ADR 0004): sale [ErrorParametroAusente], que la nombra. Un
+// snapshot a medias es una cifra falsa con aspecto de cifra buena.
 type ParametrosNormativos interface {
 	SnapshotEnFecha(ctx context.Context, fechaPeriodo time.Time) (id string, s reparto.Snapshot, err error)
 	SnapshotPorID(ctx context.Context, id string) (reparto.Snapshot, error)
@@ -292,6 +725,11 @@ type ParametrosNormativos interface {
 
 // FilaParametro es un parametro normativo con su procedencia. Sin vigencia y
 // organo aprobador no es un parametro, es una constante disfrazada.
+//
+// Valor es texto y no un decimal porque esta fila se LISTA, no se calcula con
+// ella: es la pantalla de administracion del ADR 0004. El adaptador lo entrega
+// en la misma forma canonica que entra en el id del snapshot, para que lo que
+// se ve en la lista y lo que se congelo sean comparables caracter a caracter.
 type FilaParametro struct {
 	Clave           string
 	Valor           string
@@ -301,13 +739,36 @@ type FilaParametro struct {
 	Reglamento      string
 }
 
+// CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo; nunca cuenta sin mirar (ADR 0021).
+type CompuertaAnomalias interface {
+	Bloqueantes(ctx context.Context, periodo string) (int, error)
+}
+
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
+//
+// Nombres largos y no Guardar/PorID a secas, por la misma razon que
+// [RepositorioResultados]: el mismo *Store satisface [GestionDeclaraciones]
+// (que ya tiene su propio Guardar) y [CatalogoObras] (que ya tiene su propio
+// PorID), y dos metodos con el mismo nombre y distinta firma no caben en un
+// solo tipo.
 type RepositorioProcesos interface {
-	Guardar(ctx context.Context, p ProcesoVista) error
-	PorID(ctx context.Context, id string) (ProcesoVista, error)
-	Listar(ctx context.Context) ([]ProcesoVista, error)
+	// GuardarProceso inserta un proceso nuevo, o actualiza uno existente con
+	// control de concurrencia optimista: revisionAnterior es la revision que
+	// el llamador leyo antes de calcular la transicion, y el UPDATE solo
+	// aplica si la fila sigue en esa revision. Sin esto, dos transiciones
+	// concurrentes sobre el mismo proceso -dos AvanzarEtapa, o un
+	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
+	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
+	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
+	// la escritura. Un alta pasa RevisionAlta: si la fila ya existe, es conflicto.
+	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
+	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
+	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
+
+// RevisionAlta como revisionAnterior de GuardarProceso solo inserta: el CHECK revision >= 1 impide que una fila existente la cumpla.
+const RevisionAlta = 0
 
 // ProcesoVista es el proceso tal como se persiste.
 //
@@ -315,12 +776,15 @@ type RepositorioProcesos interface {
 // distintas, una por circuito, y hasta que ese PR fije los tipos esta vista
 // guarda los campos planos.
 type ProcesoVista struct {
-	ID            string
-	Circuito      reparto.Circuito
-	Etapa         reparto.Etapa
-	Periodo       string
-	BolsaID       string
-	SnapshotID    string
+	ID         string
+	Circuito   reparto.Circuito
+	Etapa      reparto.Etapa
+	Periodo    string
+	BolsaID    string
+	SnapshotID string
+	// Reglamento es la version vigente al abrir la corrida (ADR 0004), copiada
+	// del snapshot congelado -- no se resuelve de nuevo en un reproceso.
+	Reglamento    string
 	Revision      int
 	Firmas        []reparto.Firma
 	RechazoMotivo string
@@ -328,16 +792,223 @@ type ProcesoVista struct {
 
 // RepositorioResultados guarda y lee las corridas.
 //
-// Guardar es transaccional por contrato: un resultado a medias es una cifra
-// que alguien puede leer y pagar.
+// GuardarResultado es transaccional por contrato: un resultado a medias es
+// una cifra que alguien puede leer y pagar.
+//
+// Nombres largos y no Guardar/PorProceso a secas: el mismo *Store satisface
+// [GestionDeclaraciones] (que ya tiene su propio Guardar) y este puerto, y
+// tambien [RepositorioReservas] y [RepositorioReclamacionesReserva] mas
+// abajo -- mismo patron que AsientoPorID en [BitacoraAuditoria].
 type RepositorioResultados interface {
-	Guardar(ctx context.Context, procesoID string, r reparto.Resultado) error
-	PorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
+	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
 }
 
-// RepositorioLiquidacion sirve lo que le corresponde a un titular.
+// RepositorioReporteLiquidacion lee las lineas de corrida del titular para
+// el panel y el export por obra (#43): bruto, deducciones y neto. Es
+// lectura de resultados_titular + resultados_proceso; el prorrateo vive
+// en dominio.
+//
+// No es [RepositorioLiquidacion]. Ese puerto es el de las ordenes de pago
+// (ADR 0019) y su DeTitular no filtra por periodo ni devuelve el desglose
+// por obra. El mismo *Store satisface los dos, con nombres distintos, por
+// la misma razon por la que AsientoPorID no se llama PorID.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
+type RepositorioReporteLiquidacion interface {
+	FilasDeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
+}
+
+// RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
+// corrida.
+//
+// El panel de cifras netas por obra (#42) no pasa por este puerto: usa
+// [RepositorioIngresos]. El linaje de cada cifra lo lee ExplicarCifra desde
+// la bitacora. DeTitular lista las ordenes de pago del titular, no las
+// lineas de ese panel.
+//
+// EmitirOrdenes y TransicionarOrdenes y no un Guardar: el mismo *Store
+// satisface tambien [GestionDeclaraciones], que ya tiene un Guardar con otra
+// firma. Y sobre todo porque emitir y transicionar NO son la misma escritura,
+// ver mas abajo.
+//
+// # Los metodos que solo valen dentro de una [UnidadDeTrabajo]
+//
+// BloquearPeriodo y DiferidasDeTitular toman cerrojos, y un cerrojo que se
+// suelta antes de la escritura que protege no protege nada. Las dos
+// implementaciones tienen que RECHAZAR la llamada si no hay transaccion en
+// curso en el contexto, en vez de tomar un cerrojo que se libera al volver:
+// [Liquidaciones.GenerarLiquidacion] las invoca dentro de su unidad, y un
+// adaptador que las aceptase suelto convertiria la serializacion en una
+// ilusion que ninguna prueba distingue de la real.
 type RepositorioLiquidacion interface {
-	DeTitular(ctx context.Context, titularID string) ([]reparto.LineaTitular, error)
+	DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
+	Listar(ctx context.Context) ([]liquidacion.OrdenDePago, error)
+	DeProceso(ctx context.Context, procesoID string) ([]liquidacion.OrdenDePago, error)
+
+	// DePeriodoCircuito es la lectura por la CLAVE de una orden desde el ADR
+	// 0019: hay una por (titular, periodo, circuito), asi que "que hay emitido
+	// para este periodo y circuito" es la pregunta que decide si generar o no.
+	// DeProceso ya no sirve para eso -- una orden agregada pertenece a varias
+	// corridas -- y sigue existiendo para la trazabilidad.
+	DePeriodoCircuito(ctx context.Context, periodo string, circuito reparto.Circuito) ([]liquidacion.OrdenDePago, error)
+
+	// BloquearPeriodo serializa la generacion de UN (periodo, circuito).
+	//
+	// Es un cerrojo de aviso sobre un par de valores y no una fila que
+	// bloquear, porque lo que hay que impedir es que dos generaciones
+	// concurrentes lean "no hay ordenes" las dos y emitan las dos: en ese
+	// instante no existe todavia ninguna fila que sirva de cerrojo. Se suelta
+	// al confirmar o revertir la transaccion, nunca antes.
+	BloquearPeriodo(ctx context.Context, periodo string, circuito reparto.Circuito) error
+
+	// DiferidasDeTitular devuelve las ordenes diferidas de un titular CON SU
+	// FILA BLOQUEADA, para que el arrastre de R-11 no se pueda incorporar dos
+	// veces.
+	//
+	// Solo las del mismo circuito y de un periodo ESTRICTAMENTE ANTERIOR a
+	// antesDe (ADR 0019, RD 7.4 / 13.3): nacional e internacional no se suman
+	// en una sola orden, y el monto diferido va al siguiente periodo, no a uno
+	// anterior ni a otro circuito.
+	//
+	// Sin el cerrojo, dos generaciones de periodos distintos del mismo titular
+	// leen la misma diferida, cada una le suma el neto a su orden y cada una la
+	// marca acumulada: el saldo arrastrado se paga DOS veces y nada lo
+	// registra. Con el, la segunda espera, vuelve a evaluar la condicion y ya
+	// no la ve diferida.
+	DiferidasDeTitular(ctx context.Context, titularID string, circuito reparto.Circuito, antesDe string) ([]liquidacion.OrdenDePago, error)
+
+	// EmitirOrdenes inserta ordenes NUEVAS con su desglose, y no pisa lo que
+	// ya hubiera bajo el mismo id.
+	//
+	// "No pisa" es el contrato, no un detalle: el id de una orden es estable
+	// (`liq-{periodo}-{circuito}-{titular}`), asi que un upsert que
+	// sobrescribiera estado, bruto y neto devolveria a `enviada` una orden ya
+	// aceptada por silencio -- reabriendo un plazo de 15 dias que ya vencio --
+	// o borraria un arrastre ya incorporado. Una orden que ya existe se deja
+	// como esta; quien llama relee para saber que quedo.
+	EmitirOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDePago) error
+
+	// TransicionarOrdenes mueve el ESTADO de cada orden, y solo si en la base
+	// sigue en `desde`. Devuelve las que de verdad cambiaron, en el orden en
+	// que llegaron.
+	//
+	// Es un UPDATE condicional y no un upsert por la misma razon que
+	// EmitirOrdenes no pisa: entre la lectura que decidio la transicion y esta
+	// escritura cabe otra que ya la hizo, o que hizo otra distinta. Escribir
+	// sin condicion convertiria una carrera en una sobrescritura silenciosa;
+	// con la condicion, la que llega tarde no cambia nada y quien llama lo
+	// sabe porque su orden no viene en el resultado.
+	//
+	// Solo el estado: bruto, neto y arrastres no son de una transicion. Una
+	// transicion que los tocara podria deshacer el arrastre que otra
+	// transaccion acaba de escribir.
+	TransicionarOrdenes(
+		ctx context.Context, ordenes []liquidacion.OrdenDePago, desde liquidacion.Estado,
+	) ([]liquidacion.OrdenDePago, error)
+
+	DocumentosDe(ctx context.Context, titularID string) (liquidacion.Documentos, error)
+	Documentos(ctx context.Context) (map[string]liquidacion.Documentos, error)
+
+	// MetaDeProceso es lo que hace falta para decidir si una corrida puede
+	// liquidar: donde esta (periodo, circuito), en que etapa, y quien firmo
+	// sobre que revision. Ver [MetaProceso].
+	MetaDeProceso(ctx context.Context, procesoID string) (MetaProceso, error)
+
+	// ProcesosListos devuelve los ids de las corridas de ese periodo y
+	// circuito que YA pasaron la compuerta del RD 13.5 -- etapa
+	// `liquidacion_final` y las dos firmas sobre la revision vigente --,
+	// ordenados lexicograficamente.
+	//
+	// El orden es parte del contrato: el primero es el que queda como
+	// [liquidacion.OrdenDePago.ProcesoID] de referencia, y el ADR 0005 exige
+	// que generar dos veces lo mismo de lo mismo.
+	ProcesosListos(ctx context.Context, periodo string, circuito reparto.Circuito) ([]string, error)
+
+	InsumoDeProceso(ctx context.Context, procesoID string) (InsumoLiquidacion, error)
+	SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error)
+}
+
+// MetaProceso es la cabecera de una corrida: donde esta y quien la firmo.
+//
+// Existe aparte de [ProcesoVista] -- que lleva los mismos campos -- porque es
+// lo que necesita [RepositorioLiquidacion] y ese puerto no debe arrastrar el
+// flujo de aprobaciones entero: liquidacion lee la compuerta, no la mueve.
+type MetaProceso struct {
+	ID       string
+	Periodo  string
+	Circuito reparto.Circuito
+	Etapa    reparto.Etapa
+
+	// Revision es la vigente. Las firmas de revisiones anteriores no cuentan:
+	// un rechazo sube la revision (ver la PK de `firmas`, migracion 00001).
+	Revision int
+
+	// Firmas son las de la corrida, de CUALQUIER revision. Filtrar por
+	// Revision es de quien comprueba la compuerta, no del adaptador: si el
+	// adaptador devolviera solo las vigentes, una corrida rechazada y una sin
+	// firmar se verian igual, y el mensaje de error no podria distinguirlas.
+	Firmas []reparto.Firma
+}
+
+// InsumoLiquidacion es lo que la corrida ya cerro: totales de la bolsa y
+// lineas por titular. Liquidacion no recalcula ninguno.
+//
+// Bruto NO es decorativo: con Admin, Social y Reserva forma el neto de la
+// corrida, que es el denominador del prorrateo (ver
+// [liquidacion.Prorratear]) y la cota contra la que se comprueba que las
+// lineas de titular no sumen mas de lo que habia para repartir.
+type InsumoLiquidacion struct {
+	ProcesoID string
+	Periodo   string
+	Bruto     decimal.Decimal
+	Admin     decimal.Decimal
+	Social    decimal.Decimal
+	Reserva   decimal.Decimal
+	Titulares []reparto.LineaTitular
+}
+
+// RepositorioIngresos lista las cifras netas del panel del titular (OE-6).
+//
+// El recorte es por titularID, que el caso de uso toma de la sesion y nunca
+// de un parametro de la peticion. Filtrar por obra, fuente o periodo recorta
+// esa lista; no amplia el alcance.
+type RepositorioIngresos interface {
+	IngresosDe(ctx context.Context, titularID string, f FiltroIngresos) ([]Ingreso, error)
+}
+
+// RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.
+// LiberarSaldoReserva bloquea reserva y rendimiento, entrega el saldo a fn, y persiste todo en una transaccion.
+type RepositorioReservas interface {
+	CrearReserva(ctx context.Context, r reparto.PoolReserva) error
+	ReservaPorProceso(ctx context.Context, procesoID string) (reparto.PoolReserva, error)
+	LiberarSaldoReserva(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal,
+		fn func(saldoActual decimal.Decimal) (nuevoSaldo decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
+}
+
+// RepositorioRendimientos guarda y lee los pools de rendimientos financieros (RD 10), uno por (circuito, vigencia).
+// AcrecerRendimiento suma en una sola sentencia; ActualizarMontoRendimiento bloquea, entrega el monto a fn, y persiste monto+lineas en una transaccion.
+type RepositorioRendimientos interface {
+	AcrecerRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia string, incremento decimal.Decimal) error
+	PorCircuitoYVigencia(ctx context.Context, circuito reparto.Circuito, vigencia string) (reparto.PoolRendimiento, error)
+	ActualizarMontoRendimiento(ctx context.Context, circuito reparto.Circuito, vigencia, procesoID string,
+		fn func(montoActual decimal.Decimal) (nuevoMonto decimal.Decimal, lineas []reparto.LineaTitular, err error)) error
+}
+
+// RepositorioReclamacionesReserva guarda y lee los reclamos contra la
+// reserva (RD 14.5).
+type RepositorioReclamacionesReserva interface {
+	GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error
+	ReclamacionPorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error)
 }
 
 // BitacoraAuditoria es el libro append-only del ADR 0006.
@@ -357,6 +1028,57 @@ type BitacoraAuditoria interface {
 	Asentar(ctx context.Context, a Asiento) error
 	De(ctx context.Context, refTipo, refID string) ([]Asiento, error)
 	AsientoPorID(ctx context.Context, id string) (Asiento, error)
+
+	// ListarAsientos devuelve una pagina de asientos en orden de timeline: lo
+	// mas reciente primero (`cuando DESC, id DESC`). Es lo que lee el Portal
+	// de Auditoria; el orden de cadena -el que necesita ExplicarCifra para
+	// reconstruir- lo da [BitacoraAuditoria.De], no este metodo.
+	//
+	// ListarAsientos y no Listar: el mismo *Store satisface tambien
+	// [RepositorioLiquidacion], que ya tiene un Listar con otra firma -misma
+	// razon por la que AsientoPorID no se llama PorID.
+	//
+	// Sin filtros de servidor, a proposito: los filtros de la vista (tipo,
+	// fecha, actor) se aplican en el cliente sobre la pagina. El dia que la
+	// bitacora tenga volumen para que eso no baste, los filtros entran aqui
+	// como un struct, no como mas metodos.
+	ListarAsientos(ctx context.Context, pag Paginacion) ([]Asiento, error)
+}
+
+// UnidadDeTrabajo es el limite de transaccion cuando un caso de uso escribe
+// por DOS puertos y las dos escrituras son un solo hecho.
+//
+// # Por que hace falta un puerto para esto
+//
+// Cuando el asiento y la fila que explica salen del MISMO puerto, el limite lo
+// declara el contrato de ese metodo y no hace falta nada mas: es lo que hacen
+// [GestionDeclaraciones.Guardar] y [GestionRecaudo.RegistrarBolsa], que
+// reciben `ahora` y `actorID` y asientan por dentro.
+//
+// El catalogo no puede resolverlo asi. El ADR 0003 pide que la trazabilidad
+// entre por [BitacoraAuditoria] y no por el contrato del modulo -- "ningun
+// modulo escribe en la trazabilidad de otro" solo es exigible si Asentar no
+// esta en el contrato que todos comparten --, asi que [Catalogo] sostiene los
+// dos puertos y es EL quien tiene que decir que la obra y su asiento son una
+// sola cosa. Sin esto solo quedan dos llamadas seguidas, y un alta confirmada
+// cuyo asiento fallo despues es justo la escritura huerfana que el ADR 0006
+// prohibe.
+//
+// # Por que fn recibe un context
+//
+// Porque es lo unico que puede transportar la transaccion sin que el nucleo
+// aprenda el driver: depguard deniega `pgx` en esta capa, asi que una firma
+// con la transaccion como parametro tipado no se puede ni escribir aqui. El
+// contrato es que los puertos invocados DENTRO de fn tienen que recibir ese
+// ctx -- el que fn recibe, no el de fuera --; un puerto llamado con el ctx
+// exterior escribe fuera de la unidad y se confirma aparte.
+//
+// Se confirma si fn devuelve nil y se revierte con cualquier error, que sube
+// sin envolver para que quien llama distinga sus centinelas. Una
+// implementacion puede ser reentrante (una unidad dentro de otra es la misma
+// unidad) pero nadie debe depender de que lo sea.
+type UnidadDeTrabajo interface {
+	EnUnidad(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 // ColaTrabajos desacopla la ingesta del matching y del reparto por lotes.
@@ -417,8 +1139,99 @@ type Calendario interface {
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 
+// RepositorioAlertas es la bandeja de anomalias de un periodo (#37).
+//
+// # Guardar tiene que ser IDEMPOTENTE, y no es un detalle del adaptador
+//
+// [Anomalias.Evaluar] se puede correr las veces que haga falta -- al cerrar la
+// ingesta, otra vez despues de arreglar una declaracion, otra vez antes de la
+// compuerta de #34 -- y las tres pasadas ven las mismas anomalias. Sin clave
+// natural, la tercera pasada triplica el tablero y el contador de la compuerta
+// deja de significar nada.
+//
+// La clave es (periodo, tipo, ref_tipo, ref_id, ref_titular), que es la
+// identidad del HALLAZGO: la misma anomalia sobre el mismo registro del mismo
+// periodo es una sola alerta, se detecte una vez o veinte. El detalle NO entra
+// en la clave a proposito -- es prosa, y reescribir una frase duplicaria la
+// fila --.
+//
+// Devuelve cuantas filas nuevas entraron, no cuantas se le pasaron: es la
+// unica forma de que quien llama pueda decir "esta pasada encontro tres
+// anomalias que antes no estaban".
+//
+// # Reapertura
+//
+// Una alerta que cerro una PERSONA no se reabre al volver a detectarla; una que autocerro el
+// sistema si (ADR 0021).
+//
+// # Los metodos llevan "Alerta(s)" en el nombre y no es redundancia
+//
+// `Listar`, `Guardar` y `Resolver` a secas serian mas cortos y no caben: el
+// mismo *Store satisface este puerto y [GestionDeclaraciones], que ya tiene un
+// `Guardar` con otra firma, y dos metodos con el mismo nombre no caben en un
+// tipo. Es lo mismo que le paso a `Store.Cerrar` cuando llego
+// [ColaTrabajos.Cerrar] (ver [postgres.Store.CerrarPool]). El issue ademas
+// nombra `ResolverAlerta` por su nombre.
 type RepositorioAlertas interface {
-	Listar(ctx context.Context) ([]Alerta, error)
+	// ListarAlertas devuelve las que cuadran con el filtro, de la mas reciente
+	// a la mas antigua y desempatando por id. Sin coincidencias devuelve la
+	// lista vacia, no ErrNoEncontrado.
+	//
+	// ESTA PAGINADO. `FiltroAlertas` lleva [Paginacion] y el cero significa
+	// [LimiteObrasPorDefecto], no "todo": una evaluacion real puede dejar del
+	// orden de 10.000 alertas -- tres de los seis detectores emiten una por
+	// fila de uso y KR-1 habla de lotes de 10.000 registros -- y devolverlas
+	// en un array de ~4 MB a un panel que sondea cada 15 segundos no es
+	// servible. Quien necesite TODAS tiene que pedirlo con [LimiteSinTope],
+	// explicitamente.
+	//
+	// Por eso una cuenta NO se hace sobre este metodo. Ver
+	// ContarAlertasSinResolver.
+	ListarAlertas(ctx context.Context, f FiltroAlertas) ([]Alerta, error)
+
+	// GuardarAlertas escribe las que todavia no estaban. El lote entra entero
+	// o no entra ninguna, por lo mismo que [RepositorioIngesta.GuardarUsos]:
+	// una evaluacion guardada a medias deja un tablero que no corresponde a
+	// ninguna pasada.
+	//
+	// Las autocerradas que el lote vuelve a traer se reabren: cuentan en nuevas y se devuelven en
+	// reabiertas para que el caso de uso deje su asiento `alerta.reabierta`.
+	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, reabiertas []Alerta, err error)
+
+	// ResolverAlerta marca una alerta y devuelve como quedo. Devuelve
+	// ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo estaba --
+	// que no es lo mismo: lo primero es un id equivocado, lo segundo es una
+	// carrera entre dos personas mirando el mismo tablero.
+	ResolverAlerta(ctx context.Context, id, actorID, nota string, cuando time.Time) (Alerta, error)
+
+	// AutocerrarAlertas cierra a nombre del sistema las abiertas del periodo que no estan en vigentes
+	// (misma clave natural) y devuelve las que cerro.
+	AutocerrarAlertas(ctx context.Context, periodo string, vigentes []Alerta, nota string, cuando time.Time) ([]Alerta, error)
+
+	// BloquearAlertasDePeriodo serializa las evaluaciones de un periodo hasta que la unidad termine; exige unidad abierta.
+	BloquearAlertasDePeriodo(ctx context.Context, periodo string) error
+
+	// ContarAlertasSinResolver cuenta las abiertas de un periodo entre los
+	// tipos que se le pidan. Una lista de tipos vacia cuenta TODOS.
+	//
+	// Los tipos llegan como parametro y no se deciden en el SQL: cuales
+	// bloquean es [anomalias.EsCritica], en el dominio, y un adaptador que
+	// llevara su propia lista seria un segundo criterio que nadie mira.
+	//
+	// # Cuenta en la base, y NO se puede reimplementar sobre ListarAlertas
+	//
+	// Es un COUNT(*) y no un `len()` de la lista a proposito, porque esta
+	// cuenta es la que lee la compuerta de #34: `ListarAlertas` pagina, asi
+	// que contar sus filas daria como mucho [LimiteObrasPorDefecto] y un
+	// periodo con 3.000 criticas abiertas se leeria como 100 -- o como 0 si
+	// alguien pide la segunda pagina de un periodo limpio. Una compuerta que
+	// cuenta de menos ABRE EL PASO al reparto, que es el unico sentido en el
+	// que puede fallar sin que nadie se entere. Es el mismo modo de fallo que
+	// el `cardinality(NULL)` que ya obligo a un COALESCE en el adaptador.
+	//
+	// [TestLaCompuertaCuentaMasAlertasQueUnaPagina] lo defiende sembrando mas
+	// criticas que el tamano de pagina.
+	ContarAlertasSinResolver(ctx context.Context, periodo string, tipos []string) (int, error)
 }
 
 type RepositorioAnticipos interface {

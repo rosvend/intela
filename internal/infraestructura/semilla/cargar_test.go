@@ -12,11 +12,11 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
-	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 func TestCargarSiembraElJuegoCompleto(t *testing.T) {
@@ -62,10 +62,11 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	}
 
 	// Las dos mitades de la consulta con la que un auditor separa lo aprobado
-	// de lo inventado. Lo publicado son las CUATRO ponderaciones de RD 9.1.1 y
-	// nada mas: las deducciones, la reserva y el umbral de matching son techos
-	// del reglamento o decisiones de ingenieria, y ninguna Asamblea las
-	// resolvio (ADR 0004).
+	// de lo inventado. Lo publicado son las cuatro ponderaciones de RD 9.1.1
+	// y los dos coeficientes de duracion (80% artistica, 48 min/hora). Las
+	// deducciones, la reserva y los dos umbrales de matching son techos del
+	// reglamento o decisiones de ingenieria, y ninguna Asamblea las resolvio
+	// (ADR 0004).
 	var nSinteticos, nPublicados int
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE reglamento =  $1),
@@ -74,19 +75,115 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	).Scan(&nSinteticos, &nPublicados); err != nil {
 		t.Fatalf("contar parametros por procedencia: %v", err)
 	}
-	if nSinteticos != 7 {
-		t.Fatalf("parametros con %s: %d, se esperaban 7", ReglamentoSintetico, nSinteticos)
+	if nSinteticos != 16 {
+		t.Fatalf("parametros con %s: %d, se esperaban 16", ReglamentoSintetico, nSinteticos)
 	}
-	if nPublicados != 4 {
-		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 4 (ponderacion.* de RD 9.1.1)", nPublicados)
+	if nPublicados != 6 {
+		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
 	}
+
+	// Contra el dataset y no contra un literal: los valores viven en
+	// dataset.go, que es la unica fuente de verdad (fixtures.md).
+	d := Construir()
 
 	var nBolsas int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM bolsas`).Scan(&nBolsas); err != nil {
 		t.Fatalf("contar bolsas: %v", err)
 	}
-	if nBolsas != 4 {
-		t.Fatalf("bolsas = %d, se esperaban 4", nBolsas)
+	if nBolsas != len(d.Bolsas) {
+		t.Fatalf("bolsas = %d, se esperaban %d", nBolsas, len(d.Bolsas))
+	}
+
+	var nCanales, nClasificaciones int
+	if err := pool.QueryRow(ctx,
+		`SELECT (SELECT COUNT(*) FROM canales), (SELECT COUNT(*) FROM canales_clasificacion)`,
+	).Scan(&nCanales, &nClasificaciones); err != nil {
+		t.Fatalf("contar canales: %v", err)
+	}
+	if nCanales != len(d.Canales) || nClasificaciones != len(d.Canales) {
+		t.Fatalf("canales = %d y clasificaciones = %d, se esperaban %d de cada",
+			nCanales, nClasificaciones, len(d.Canales))
+	}
+}
+
+// TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo es la fixture que exige
+// #119: sin dos canales en el mismo periodo, "el valor punto es por canal"
+// (`RD 9.1.1`) no se distingue de "el valor punto es por periodo".
+func TestElSembradorDejaDosCanalesDeTVEnElMismoPeriodo(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	filas, err := pool.Query(ctx, `
+		SELECT u.canal_id, COUNT(*)
+		  FROM usos u
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE u.modalidad = 'tv' AND r.periodo = $1
+		 GROUP BY u.canal_id
+		 ORDER BY u.canal_id`, Periodo)
+	if err != nil {
+		t.Fatalf("agrupar los usos de TV por canal: %v", err)
+	}
+	defer filas.Close()
+
+	porCanal := map[string]int{}
+	for filas.Next() {
+		var canal string
+		var n int
+		if err := filas.Scan(&canal, &n); err != nil {
+			t.Fatalf("escanear: %v", err)
+		}
+		porCanal[canal] = n
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("recorrer: %v", err)
+	}
+
+	if len(porCanal) != 2 {
+		t.Fatalf("canales de TV en %s = %v, se esperaban 2", Periodo, porCanal)
+	}
+	for _, canal := range []string{FuenteTV, FuenteTVSegundo} {
+		if porCanal[canal] == 0 {
+			t.Errorf("el canal %q no tiene usos de TV en %s", canal, Periodo)
+		}
+	}
+	// Y cada uno con su bolsa: una corrida por bolsa (ADR 0019).
+	var nBolsasTV int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bolsas WHERE periodo = $1 AND usuario_id = ANY($2)`,
+		Periodo, []string{FuenteTV, FuenteTVSegundo}).Scan(&nBolsasTV); err != nil {
+		t.Fatalf("contar bolsas de TV: %v", err)
+	}
+	if nBolsasTV != 2 {
+		t.Fatalf("bolsas de los dos canales = %d, se esperaban 2", nBolsasTV)
+	}
+}
+
+// Las dos medidas que anadio la migracion 00011 tienen que llegar sembradas, o
+// `RD 9.2` y `RD 9.4` no se pueden ejercitar contra datos.
+func TestElSembradorEscribeEspectadoresYExhibiciones(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var espectadores, exhibiciones int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM usos WHERE espectadores > 0),
+		       (SELECT COUNT(*) FROM usos WHERE exhibiciones > 0)`,
+	).Scan(&espectadores, &exhibiciones); err != nil {
+		t.Fatalf("contar medidas: %v", err)
+	}
+	if espectadores == 0 {
+		t.Error("ningun uso trae espectadores (RD 9.2)")
+	}
+	if exhibiciones == 0 {
+		t.Error("ningun uso trae exhibiciones (RD 9.4)")
 	}
 }
 
@@ -109,6 +206,48 @@ func TestCargarEsIdempotenteSinReset(t *testing.T) {
 	}
 	if n != 4 {
 		t.Fatalf("obras = %d despues de recargar, se esperaban 4 (no duplicar)", n)
+	}
+}
+
+// TestCargarAditivoEscribeConObrasAjenasPresentes es el caso que motivo
+// CargarAditivo (#155): Cargar (con o sin reset) rechaza una base con obras
+// ajenas; CargarAditivo escribe el dataset igual, sin tocarlas.
+func TestCargarAditivoEscribeConObrasAjenasPresentes(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO obras (id, titulo, genero, anio, tipo)
+		VALUES ('obra-demo-001', 'Ajena', 'Drama', 2020, 'unitario')`,
+	); err != nil {
+		t.Fatalf("insertar obra ajena: %v", err)
+	}
+
+	if err := CargarAditivo(ctx, store, disco(t), hasher(), clavesPrueba(), silencio()); err != nil {
+		t.Fatalf("CargarAditivo: %v", err)
+	}
+
+	var nObras, nTitulares, nAjena int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&nObras); err != nil {
+		t.Fatalf("contar obras: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM titulares`).Scan(&nTitulares); err != nil {
+		t.Fatalf("contar titulares: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM obras WHERE id = 'obra-demo-001'`).Scan(&nAjena); err != nil {
+		t.Fatalf("contar la obra ajena: %v", err)
+	}
+
+	d := Construir()
+	if nObras != len(d.Obras)+1 {
+		t.Fatalf("obras = %d, se esperaban %d del dataset + 1 ajena", nObras, len(d.Obras)+1)
+	}
+	if nTitulares != len(d.Titulares) {
+		t.Fatalf("titulares = %d, se esperaban %d", nTitulares, len(d.Titulares))
+	}
+	if nAjena != 1 {
+		t.Fatal("CargarAditivo toco la obra ajena")
 	}
 }
 
@@ -172,7 +311,11 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 		t.Fatalf("Cargar: %v", err)
 	}
 
-	catalogo := aplicacion.Catalogo{Obras: store}
+	// *Store no es CatalogoObras: PorID ya es el de la bitacora (Asiento).
+	// El adaptador catalogo tapa ese metodo con el de la obra. Declaraciones
+	// si va al store: el catalogo compone el estado de la declaracion de cada
+	// obra al leerla, y sin ese puerto la lectura revienta.
+	catalogo := aplicacion.Catalogo{Obras: store.CatalogoObras(), Declaraciones: store}
 
 	obras, err := catalogo.BuscarObras(ctx, aplicacion.FiltroObras{})
 	if err != nil {
@@ -216,7 +359,9 @@ func TestCargarDejaElCatalogoLegible(t *testing.T) {
 	}
 }
 
-func ids(obras []repertorio.Obra) []string {
+// Lo que devuelve el catalogo es la obra con su declaracion ya compuesta
+// (aplicacion.ObraDelCatalogo), no la entidad suelta.
+func ids(obras []aplicacion.ObraDelCatalogo) []string {
 	out := make([]string, len(obras))
 	for i, o := range obras {
 		out[i] = o.ID()
@@ -272,6 +417,88 @@ func TestResetRechazaTitularesAjenos(t *testing.T) {
 	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
 	if !errors.Is(err, ErrDatosNoSinteticos) {
 		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestResetRechazaCanalAjeno y TestResetRechazaClasificacionAjena cubren
+// canales y canales_clasificacion (00011) con la misma guarda que
+// TestResetRechazaObrasAjenas: sin ella, un canal importado o una
+// clasificacion anual real se borrarian con SEED_RESET=true igual que las
+// filas sinteticas.
+func TestResetRechazaCanalAjeno(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del catalogo real, que el dataset no conoce.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales (id, nombre, grupo_estructural)
+		VALUES ('telecaribe', 'Telecaribe', 'regional_publico')`,
+	); err != nil {
+		t.Fatalf("insertar canal real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+
+	var quedan int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM canales WHERE id = 'telecaribe'`).Scan(&quedan); err != nil {
+		t.Fatalf("contar el canal real: %v", err)
+	}
+	if quedan != 1 {
+		t.Fatal("el reset borro el canal que no era del dataset")
+	}
+}
+
+func TestResetRechazaClasificacionAjena(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("carga inicial: %v", err)
+	}
+	// Un canal del dataset (caracol) pero con una clasificacion de un ano que
+	// el dataset no siembra: la clave compuesta tiene que distinguirla de las
+	// suyas propias.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO canales_clasificacion (canal_id, anio_audiencia, grupo_efectivo)
+		VALUES ('caracol', 1999, 'privado_nacional')`,
+	); err != nil {
+		t.Fatalf("insertar clasificacion real: %v", err)
+	}
+
+	err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), true, silencio())
+	if !errors.Is(err, ErrDatosNoSinteticos) {
+		t.Fatalf("se esperaba ErrDatosNoSinteticos, se obtuvo %v", err)
+	}
+}
+
+// TestCadaBolsaNacionalTieneUsosAtribuidos comprueba que los cuatro
+// constructores de uso fijen CanalID y no solo usoTV: sin el, UsosDeCanal
+// devolveria vacio para las bolsas de cine, OTT y transporte aunque el
+// reporte trajera filas para ese pagador.
+func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	// dago-films es el circuito internacional (RD 7.4): no valoriza por
+	// puntos y por tanto no siembra usos atribuidos a canal.
+	for _, pagador := range []string{FuenteTV, FuenteTVSegundo, PagadorCine, FuenteOTT, FuenteTransporte} {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, pagador).Scan(&n); err != nil {
+			t.Fatalf("contar usos de %q: %v", pagador, err)
+		}
+		if n == 0 {
+			t.Errorf("el pagador %q no tiene ningun uso atribuido: su bolsa quedaria "+
+				"sin nada que ponderar (UsosDeCanal devolveria vacio)", pagador)
+		}
 	}
 }
 
@@ -357,6 +584,8 @@ func TestIdentificarEsAtomico(t *testing.T) {
 // ese camino -de la fila de uso a la fila de alias por (fuente, tipo=valor)- y
 // con la tabla vacia no casa ninguna.
 //
+// Una fila puede traer varias lineas (Netflix: show_id y netflix_id); basta con que una case.
+//
 // ids_fuente se compara contra "tipo_id=valor" y no contra el valor solo: es
 // el formato del contrato (ADR 0018), el que lee la cascada. Un seed que
 // volviera a escribir el valor sin clave dejaria todos los usos huerfanos.
@@ -375,7 +604,7 @@ func TestCargarSiembraElAliasDeCadaUso(t *testing.T) {
 		   AND NOT EXISTS (
 		         SELECT 1 FROM alias_obra a
 		          WHERE a.fuente  = u.fuente
-		            AND a.tipo_id || '=' || a.valor = u.ids_fuente
+		            AND a.tipo_id || '=' || a.valor = ANY (string_to_array(u.ids_fuente, E'\n'))
 		            AND a.obra_id = u.obra_id)`).Scan(&huerfanos); err != nil {
 		t.Fatalf("cruzar usos con alias_obra: %v", err)
 	}
@@ -407,6 +636,75 @@ func TestHashearRechazaClavesRepetidas(t *testing.T) {
 		t.Fatalf("claves distintas: %v", err)
 	}
 }
+
+// El detector de duplicados coteja el seed salvo rcn y expreso-bolivariano, que no tienen clave de
+// registro declarada (revision de #158, punto 8; ver preguntas-cliente.md P-21).
+func TestElSeedEsCotejablePorElDetectorDeDuplicados(t *testing.T) {
+	store, _ := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+	svc := aplicacion.Anomalias{
+		Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
+		Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+	}
+	resumen, err := svc.Evaluar(ctx, Periodo, "")
+	if err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+	if resumen.UsosSinCotejar != 4 {
+		t.Fatalf("usos_sin_cotejar = %d, se esperaban 4 (2 de rcn y 2 de expreso-bolivariano)", resumen.UsosSinCotejar)
+	}
+	if n := resumen.PorTipo["duplicado_registro"]; n != 0 {
+		t.Fatalf("el seed no tiene duplicados y salieron %d", n)
+	}
+}
+
+func TestCargarNoDejaTipoObraVacioEnCaracolIdentificado(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	// El detector tipo_obra_sin_mapear (#37) cuenta filas identificadas, de una
+	// modalidad que pondera por tipo, con tipo_obra vacio. Sobre el seed de
+	// Caracol tiene que dar 0: el archivo no lo trae y el catalogo si (#165).
+	var sinMapear int
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM usos u
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE r.fuente = 'caracol'
+		   AND u.obra_id IS NOT NULL
+		   AND btrim(u.tipo_obra) = ''
+		   AND u.modalidad IN ('tv', 'hotel', 'suscripcion')`).Scan(&sinMapear)
+	if err != nil {
+		t.Fatalf("contar tipo_obra vacio: %v", err)
+	}
+	if sinMapear != 0 {
+		t.Fatalf("tipo_obra_sin_mapear = %d, se esperaba 0", sinMapear)
+	}
+
+	var distintos int
+	err = pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM usos u
+		  JOIN obras o ON o.id = u.obra_id
+		  JOIN reportes r ON r.id = u.reporte_id
+		 WHERE r.fuente = 'caracol'
+		   AND u.modalidad = 'tv'
+		   AND u.tipo_obra <> o.tipo`).Scan(&distintos)
+	if err != nil {
+		t.Fatalf("comparar con obras.tipo: %v", err)
+	}
+	if distintos != 0 {
+		t.Fatalf("%d filas de Caracol no copiaron obras.tipo", distintos)
+	}
+}
+
 func abrir(t *testing.T) (*postgres.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := testhelp.Pool(t)
