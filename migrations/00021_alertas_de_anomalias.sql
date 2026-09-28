@@ -1,5 +1,9 @@
 -- La bandeja de anomalias de un periodo (#37, OE-5 / KR-4).
 -- Decision: ADR 0021. Razones de cada columna y restriccion: docs/planes/37/diseno.md (D8).
+--
+-- Numero: 00021, primero libre por encima de 00020. #173 ya ocupo el 00019
+-- (`00019_reportes_subido_por.sql`) y la bitacora el 00020. goose corre con
+-- allowMissing = false: un 00019 tardio no se aplica, tumba el despliegue.
 
 -- +goose Up
 
