@@ -79,6 +79,13 @@ module "api" {
   # /api/* to the Function URL rather than sending the browser somewhere else.
   cors_origins = ""
 
+  # RD 13.8.4.3. Published by REDES SGC on https://redescritores.com/contacto/
+  # (sede Torre REM, Bogota; correo general de la sociedad). Printed on the
+  # public ONI listing, so they are not secrets and do not belong in tfvars.
+  # No default in the module: compose's placeholders are for local only.
+  oni_direccion_fisica      = "Carrera 14 No. 99-33, Oficina 602, Torre REM, Bogota D.C."
+  oni_direccion_electronica = "redescritorescolombia@redescritores.com"
+
   # THE ORDERING GUARANTEE. docs/cd.md requires the schema to move before the
   # new code serves traffic, and ADR 0008 explains the cost of getting it wrong:
   # a reparto run in flight must not meet a schema its code does not know. If

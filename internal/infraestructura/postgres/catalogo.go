@@ -17,6 +17,14 @@ var (
 	_ aplicacion.LectorDeCoautores = (*Store)(nil)
 )
 
+// CatalogoObras es *Store visto por el puerto del catalogo maestro.
+//
+// La bitacora ya no comparte el nombre PorID (es AsientoPorID), asi que el
+// mismo *Store satisface los dos puertos.
+func (s *Store) CatalogoObras() aplicacion.CatalogoObras {
+	return s
+}
+
 // columnasCatalogo es la obra ENTERA, la que reconstruye la entidad.
 //
 // Distinta de columnasObra, que sirve a la proyeccion que consume el motor de
@@ -174,11 +182,11 @@ func (s *Store) Bloquear(ctx context.Context, id string) error {
 // PorID reconstruye una obra del catalogo en una sola sentencia: metadatos y
 // coautores salen de la misma instantanea (issue #90).
 //
-// Lee por [Store.ejecutorDe] y no por el pool porque esta lectura tambien
-// ocurre DENTRO de una unidad: [Catalogo.ActualizarMetadatosObra] la usa para
-// saber que habia antes y poder asentar que cambio. Por el pool leeria en otra
-// conexion, fuera de la transaccion que esta a punto de reescribir esa misma
-// fila.
+// Lee por el ejecutor de la unidad y no por el pool porque esta lectura
+// tambien ocurre DENTRO de una unidad: [Catalogo.ActualizarMetadatosObra] la
+// usa para saber que habia antes y poder asentar que cambio. Por el pool
+// leeria en otra conexion, fuera de la transaccion que esta a punto de
+// reescribir esa misma fila.
 func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
 		fl            fila
