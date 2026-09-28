@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -255,6 +256,61 @@ func TestAvanzarEtapaConCriticasAbiertasEs409(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestAvanzarEtapaBolsaSinUsosEs409ConMensajeExplicable es el criterio de
+// #194: una bolsa sin usos que la ponderen no es un 500 generico, es un 409
+// que nombra la bolsa y dice que hacer.
+func TestAvanzarEtapaBolsaSinUsosEs409ConMensajeExplicable(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: %w", "proc-1", &aplicacion.ErrorBolsaSinUsos{
+		BolsaID: "bolsa-procinal-2025-01-nacional", CanalID: "procinal", Periodo: "2025-01",
+	})
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var cuerpo struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("el cuerpo no es JSON: %v", err)
+	}
+	for _, fragmento := range []string{`"bolsa-procinal-2025-01-nacional"`, "no tiene usos", "2025-01", `"procinal"`} {
+		if !strings.Contains(cuerpo.Error, fragmento) {
+			t.Errorf("el mensaje %q no dice %s", cuerpo.Error, fragmento)
+		}
+	}
+}
+
+// Un parametro normativo que falta -al abrir, o en el snapshot ya congelado
+// al valorizar- o cuyo valor no se admite se arregla cargando una vigencia,
+// no reintentando: 409 con el mensaje que la nombra, no el 500 de #194.
+func TestProcesoParametroAusenteOInvalidoEs409(t *testing.T) {
+	casos := []struct {
+		nombre, metodo, ruta, cuerpo string
+		err                          error
+		fragmento                    string
+	}{
+		{"abrir sin la clausula", http.MethodPost, "/procesos", cuerpoAbrirProceso,
+			&aplicacion.ErrorParametroAusente{Claves: []string{"cine_teatro.base"}}, "cine_teatro.base"},
+		{"abrir con un valor invalido", http.MethodPost, "/procesos", cuerpoAbrirProceso,
+			fmt.Errorf("parametro %q: %w", "cine_teatro.base", aplicacion.ErrParametroInvalido), "cine_teatro.base"},
+		{"valorizar con un snapshot sin la base", http.MethodPost, "/procesos/proc-1/avanzar", "",
+			fmt.Errorf("motor de reparto: %w: base_cine_teatro", reparto.ErrParametroAusente), "base_cine_teatro"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
+			rec := pedir(t, h, c.metodo, c.ruta, c.cuerpo, "tok")
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), c.fragmento) {
+				t.Errorf("el cuerpo %s no nombra %s", rec.Body, c.fragmento)
+			}
+		})
 	}
 }
 

@@ -306,9 +306,15 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 
 	// ADR 0019: una corrida = una bolsa = un canal, y el usuario de recaudo de
 	// television ES el canal (ver [recaudo.Usuario]).
-	usos, filas, _, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
+	usos, filas, resumen, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
 	if err != nil {
 		return nil, fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
+	}
+	// El motor tambien rechaza una lista vacia, pero con "no hay usos" a
+	// secas: no nombra la bolsa ni dice si falta el reporte o la
+	// identificacion (#194).
+	if len(usos) == 0 {
+		return nil, &ErrorBolsaSinUsos{BolsaID: bp.ID, CanalID: bp.UsuarioID, Periodo: p.Periodo, Resumen: resumen}
 	}
 
 	obraIDs := make([]string, 0, len(usos))
@@ -340,6 +346,15 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 	}
 
 	resultado, err := reparto.Reparto(bolsa, usos, snap, decls, reparto.Opciones{SnapshotID: p.SnapshotID})
+	if errors.Is(err, reparto.ErrParametroAusente) {
+		// El snapshot se congelo al abrir y no se vuelve a resolver (ADR
+		// 0005): cargar ahora la fila que falta no arregla ESTA corrida. Una
+		// abierta antes de que existiera la clausula -la de Procinal de #194,
+		// congelada sin `cine_teatro.base`- solo sale con una corrida nueva.
+		return nil, fmt.Errorf("motor de reparto: %w: el snapshot %q de la corrida no lo trae con un valor valido "+
+			"y no se vuelve a resolver; con la vigencia correcta cargada, abra una corrida nueva de la bolsa %q",
+			err, p.SnapshotID, p.BolsaID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("motor de reparto: %w", err)
 	}

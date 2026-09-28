@@ -295,6 +295,15 @@ var (
 	// reglamento no reconoce. Ver UsosSinCanal para detectar ese hueco.
 	ErrCanalVacio = errors.New("el canal no puede quedar vacio")
 
+	// ErrBolsaSinUsos: la bolsa de la corrida no tiene ningun uso identificado
+	// de su canal en el periodo, asi que no hay nada que la pondere (#194).
+	//
+	// No es un fallo del sistema sino del estado de los datos: faltan los
+	// reportes del pagador, o sus filas no tienen `canal_id` igual al usuario
+	// de la bolsa, o ninguna esta identificada todavia. Por eso es un 409 que
+	// dice cual de las tres, via [ErrorBolsaSinUsos], y no un 500.
+	ErrBolsaSinUsos = errors.New("la bolsa no tiene usos que la ponderen")
+
 	// ErrFiltroInvalido: un filtro de listado trae un valor que no pertenece a
 	// su vocabulario cerrado.
 	//
@@ -460,6 +469,39 @@ func (e *ErrorParametroAusente) Error() string {
 // Unwrap deja que quien solo quiera saber "falta un parametro" siga usando
 // errors.Is(err, ErrParametroAusente) sin conocer este tipo.
 func (e *ErrorParametroAusente) Unwrap() error { return ErrParametroAusente }
+
+// ErrorBolsaSinUsos nombra la bolsa, el canal y el periodo que valorizar no
+// encontro, con lo que si hay de ese canal pero no llega al motor.
+//
+// Es un tipo por la misma razon que [ErrorParametroAusente]: quien lo recibe
+// es distribucion, y "no hay usos" a secas no dice si falta cargar el reporte
+// del pagador o identificar las filas que ya estan. El resumen lo distingue:
+// todo en cero es que no llego ninguna fila atribuida a ese canal.
+type ErrorBolsaSinUsos struct {
+	BolsaID string
+	// CanalID es el usuario de recaudo de la bolsa, que es el `canal_id` que
+	// tienen que traer sus usos (ADR 0019).
+	CanalID string
+	Periodo string
+	Resumen ResumenUsosDeCanal
+}
+
+func (e *ErrorBolsaSinUsos) Error() string {
+	r := e.Resumen
+	if r.Pendientes+r.ONI+r.Excluidos+r.Descartados == 0 {
+		return fmt.Sprintf("la bolsa %q no tiene usos en %s: ningun uso del periodo trae canal_id %q; "+
+			"cargue el reporte de ese usuario de recaudo antes de valorizar",
+			e.BolsaID, e.Periodo, e.CanalID)
+	}
+	return fmt.Sprintf("la bolsa %q no tiene usos identificados en %s: los usos con canal_id %q "+
+		"estan %d pendientes, %d ONI, %d excluidos y %d descartados; "+
+		"identifiquelos en la cola de identificacion antes de valorizar",
+		e.BolsaID, e.Periodo, e.CanalID, r.Pendientes, r.ONI, r.Excluidos, r.Descartados)
+}
+
+// Unwrap deja que quien solo quiera saber "no hay usos" use
+// errors.Is(err, ErrBolsaSinUsos) sin conocer este tipo.
+func (e *ErrorBolsaSinUsos) Unwrap() error { return ErrBolsaSinUsos }
 
 // ErrorTasaAmbigua nombra el codigo ISO y las dos claves de `parametros` que
 // compiten por el.

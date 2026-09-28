@@ -232,6 +232,18 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		// conflicto de negocio: otra transicion escribio primero. El mensaje
 		// del sentinel ya le dice al cliente que reintente.
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrBolsaSinUsos):
+		// 409: la bolsa no tiene usos identificados de su canal en el periodo
+		// (#194). El mensaje nombra bolsa, canal y periodo, y dice si falta
+		// el reporte o la identificacion.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrParametroAusente), errors.Is(err, aplicacion.ErrParametroInvalido),
+		errors.Is(err, reparto.ErrParametroAusente):
+		// 409: falta un parametro normativo o su valor no se admite -al
+		// abrir, en la fecha del periodo; al valorizar, en el snapshot ya
+		// congelado-. No es un fallo del servidor: se arregla cargando la
+		// vigencia que el mensaje nombra (ADR 0004), no reintentando (#194).
+		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, reparto.ErrRepartoInvalido):
 		// 409 y no 400: el cuerpo de la peticion es correcto, lo que no
 		// cuadra es el estado del proceso contra RD 13.5 -una compuerta sin

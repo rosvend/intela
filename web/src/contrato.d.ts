@@ -6811,6 +6811,12 @@ export interface operations {
              * @description El `id` ya existe con otro `periodo`/`circuito`/`bolsa_id`, o el
              *     `circuito`/`periodo` declarados no coinciden con los de la bolsa
              *     referenciada.
+             *
+             *     Tambien 409 si falta un parametro normativo en la fecha del
+             *     periodo, o si su valor no se admite (por ejemplo, una
+             *     `cine_teatro.base` que no es `taquilla` ni `espectadores`): el
+             *     mensaje nombra cada clave, y se arregla cargando su vigencia
+             *     (`ADR 0004`), no reintentando.
              */
             409: {
                 headers: {
@@ -6962,6 +6968,15 @@ export interface operations {
              *
              *     Y 409 si el periodo tiene anomalias criticas sin resolver al
              *     salir de `deducciones`: se resuelven en `/alertas`.
+             *
+             *     Al entrar a `importe_obra`, 409 si la bolsa no tiene usos
+             *     identificados de su canal en el periodo: el mensaje nombra la
+             *     bolsa, el canal y el periodo, y dice si falta cargar el reporte
+             *     del usuario de recaudo o identificar sus filas. Y 409 si el
+             *     snapshot congelado al abrir la corrida no trae un parametro que
+             *     el motor exige (una corrida abierta antes de que existiera
+             *     `cine_teatro.base`): el snapshot no se vuelve a resolver, hay
+             *     que abrir una corrida nueva de la bolsa.
              */
             409: {
                 headers: {
