@@ -25,8 +25,8 @@ const columnasOrden = `id, proceso_id, procesos, titular_id, periodo, circuito, 
 
 const claveSMMLV = "smmlv"
 
-// errFueraDeUnidad es lo que devuelven los dos metodos que toman cerrojos
-// cuando se los llama sin transaccion en curso.
+// errFueraDeUnidad es lo que devuelven los metodos que toman cerrojos (los de
+// liquidacion y el de alertas) cuando se los llama sin transaccion en curso.
 //
 // No es defensa decorativa. `pg_advisory_xact_lock` se suelta al terminar la
 // transaccion, y contra el pool cada sentencia es su propia transaccion: el
@@ -34,7 +34,7 @@ const claveSMMLV = "smmlv"
 // que viniera despues correria sin proteccion. `FOR UPDATE` igual. Fallar es lo
 // unico que distingue la serializacion real de una que nadie nota que no esta.
 var errFueraDeUnidad = errors.New(
-	"cerrojo de liquidacion pedido fuera de una unidad de trabajo: " +
+	"cerrojo pedido fuera de una unidad de trabajo: " +
 		"un cerrojo de transaccion se suelta antes de la escritura que protege")
 
 func (s *Store) DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error) {

@@ -12,19 +12,17 @@ import (
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
-// catalogo presenta *Store como [aplicacion.CatalogoObras].
-//
-// *Store no puede satisfacer CatalogoObras y BitacoraAuditoria a la vez:
-// ambos puertos declaran PorID y Go no admite dos metodos con el mismo
-// nombre y distinta firma. Registrar, Actualizar y Buscar se promocionan
-// del embed; PorID se define aqui y tapa el de la bitacora.
-type catalogo struct{ *Store }
-
-var _ aplicacion.CatalogoObras = catalogo{}
+var (
+	_ aplicacion.CatalogoObras     = (*Store)(nil)
+	_ aplicacion.LectorDeCoautores = (*Store)(nil)
+)
 
 // CatalogoObras es *Store visto por el puerto del catalogo maestro.
+//
+// La bitacora ya no comparte el nombre PorID (es AsientoPorID), asi que el
+// mismo *Store satisface los dos puertos.
 func (s *Store) CatalogoObras() aplicacion.CatalogoObras {
-	return catalogo{s}
+	return s
 }
 
 // columnasCatalogo es la obra ENTERA, la que reconstruye la entidad.
@@ -189,13 +187,13 @@ func (s *Store) Bloquear(ctx context.Context, id string) error {
 // usa para saber que habia antes y poder asentar que cambio. Por el pool
 // leeria en otra conexion, fuera de la transaccion que esta a punto de
 // reescribir esa misma fila.
-func (c catalogo) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
+func (s *Store) PorID(ctx context.Context, id string) (repertorio.Obra, error) {
 	var (
 		fl            fila
 		tipo          string
 		coautoresJSON []byte
 	)
-	err := c.ejecutorDe(ctx).QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasCatalogoDe+`, COALESCE(ca.coautores, '[]'::jsonb)
 		   FROM obras o`+lateralCoautores+`
 		  WHERE o.id = $1`, id).
@@ -321,6 +319,62 @@ func (s *Store) Buscar(ctx context.Context, f aplicacion.FiltroObras) ([]reperto
 		return nil, traducirError(err, "buscar obras")
 	}
 	return obras, nil
+}
+
+// CoautoresDeObras satisface [aplicacion.LectorDeCoautores]: los coautores de
+// un conjunto de obras, en UNA consulta.
+//
+// Existe aparte de [Store.PorID] -- que ya trae la obra entera con sus
+// coautores -- por la forma de la pregunta: la deteccion de anomalias (#37)
+// necesita los coautores de las N obras que un periodo pondera, y pedirlas una
+// por una son N viajes. Es la misma razon por la que
+// [Store.VigentesDeObras] existe aparte de [Store.VigenteEn].
+//
+// Una obra sin coautores registrados NO aparece en el mapa. La ausencia es el
+// dato, igual que en VigentesDeObras, y rellenar con una lista vacia por obra
+// pedida recorreria N entradas para decir lo mismo.
+//
+// ORDER BY obra_id, ipi, rol: reproducibilidad (ADR 0005). El detector de
+// titulares nombra un IPI concreto en el texto de la alerta, y sin orden
+// estable dos pasadas escribirian dos frases distintas del mismo hallazgo.
+func (s *Store) CoautoresDeObras(
+	ctx context.Context, obraIDs []string,
+) (map[string][]repertorio.Coautor, error) {
+	// Un slice vacio no consulta: ANY('{}') devuelve cero filas, pero no hay
+	// por que ir a la base a comprobarlo. Mismo criterio que VigentesDeObras.
+	if len(obraIDs) == 0 {
+		return map[string][]repertorio.Coautor{}, nil
+	}
+
+	filas, err := s.ejecutorDe(ctx).Query(ctx,
+		`SELECT obra_id, `+columnasCoautor+` FROM obra_coautores
+		  WHERE obra_id = ANY($1)
+		  ORDER BY obra_id, ipi, rol`, obraIDs)
+	if err != nil {
+		return nil, traducirError(err, "coautores de %d obras", len(obraIDs))
+	}
+	defer filas.Close()
+
+	out := map[string][]repertorio.Coautor{}
+	for filas.Next() {
+		var (
+			obraID string
+			c      repertorio.Coautor
+			rol    string
+		)
+		if err := filas.Scan(&obraID, &c.IPI, &c.Nombre, &rol); err != nil {
+			return nil, traducirError(err, "escanear coautor")
+		}
+		c.Rol = repertorio.RolAutoral(rol)
+		out[obraID] = append(out[obraID], c)
+	}
+	// Obligatorio: sin esto un mapa TRUNCADO por un fallo a mitad de stream
+	// pasa por completo, y aqui eso se lee como "a esta obra no le falta
+	// ningun coautor por declarar".
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "coautores de %d obras", len(obraIDs))
+	}
+	return out, nil
 }
 
 // decodificarCoautores traduce el jsonb_agg de lateralCoautores.
