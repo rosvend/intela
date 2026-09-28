@@ -871,6 +871,87 @@ table button {
   color: var(--acento);
 }
 
+/* ---------- recibo de "mas detalles" (PanelExplicacion) ---------- */
+
+.boton-detalles {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--acento);
+  background: white;
+  color: var(--acento);
+  cursor: pointer;
+  border-radius: var(--radio-boton);
+  margin-top: 0.6rem;
+}
+
+.recibo {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+}
+
+.recibo-lineas {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+}
+
+.recibo-linea {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px dashed var(--borde);
+}
+
+.recibo-deduccion {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+}
+
+.recibo-deduccion p:first-child {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+}
+
+.recibo-bruto,
+.recibo-neto {
+  font-weight: 600;
+}
+
+.recibo-cita {
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+  margin: 0.1rem 0 0.4rem;
+}
+
+.recibo-retencion {
+  margin: 0.8rem 0;
+  padding: 0.6rem 0.8rem;
+}
+
+.recibo-reglamento,
+.recibo-firmas {
+  margin-top: 0.8rem;
+}
+
+.recibo-reglamento h4,
+.recibo-firmas h4 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--texto-suave);
+  margin: 0 0 0.4rem;
+}
+
+.recibo-firmas ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
 /* ---------- alta de titular (afiliacion/Wizard.tsx) ---------- */
 
 .wizard {
