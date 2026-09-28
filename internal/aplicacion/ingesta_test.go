@@ -2200,6 +2200,9 @@ func TestIngerirReporteNumeraLosMotivosDeValidarUso(t *testing.T) {
 	}
 	if m := rec.Rechazados[1].RechazoMotivo; !strings.HasPrefix(m, `fila 13: modalidad "radio"`) {
 		t.Errorf("motivo[1] = %q", m)
+	}
+}
+
 // EntregarFilas es acuse y filas en un solo hecho: un fallo del lote no quema la huella, y un duplicado implica filas.
 func TestEntregarFilasEsUnSoloHecho(t *testing.T) {
 	ing, repo, _ := nuevaIngesta()
