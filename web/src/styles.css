@@ -242,6 +242,22 @@ a {
   line-height: 1.4;
 }
 
+/*
+ * Texto solo para lectores de pantalla: presente en el DOM, oculto a la
+ * vista. Mismo patron que `.ingesta-soltar-oculto`, generico para cualquier
+ * pantalla que necesite anadir contexto que no le hace falta a quien ve -el
+ * badge del sidebar dice "3" a la vista y "3 pendientes" al lector-.
+ */
+.solo-lector {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .sidebar-pie {
   position: relative;
   display: flex;
