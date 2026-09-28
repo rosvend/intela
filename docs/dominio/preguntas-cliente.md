@@ -1,5 +1,5 @@
 ---
-actualizado: 2026-09-26
+actualizado: 2026-09-28
 estado: respuestas provisionales del equipo, sin confirmar con REDES SGC
 ---
 
@@ -51,7 +51,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-15 | Padron de titulares con IPI poblado y al dia | @rosvend | **Abierta** |
 | P-16 | Alcance del 80% artistico de `RD 9.1.1` | @rosvend | **Abierta** |
 | P-17 | Proveedor y formato del feed de quintil de audiencia (`RD 9.5.4`) | @rosvend | **Abierta** |
-| P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta** |
+| P-18 | Base de ponderacion cine/teatro: taquilla vs espectadores (`RD 9.2`/`9.3`) | @rosvend | **Abierta**, con valor sintetico provisional (`taquilla`) |
 | P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
 | P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
 | P-21 | Clave de registro por fuente para el detector de duplicados (#37): `cine`, `rcn`, `expreso-bolivariano` | @rosvend | Provisional (`cine`) / **Abierta** (`rcn`, transporte) |
@@ -168,8 +168,9 @@ Consecuencia: **afecta a la PR #106.** Exigir IPI en la entrada es incorrecto: e
 fuente no lo tiene. Si conviene conservar una instantanea del IPI para reproducibilidad
 (ADR 0005) es una decision aparte.
 
-### P-12 a P-19
-Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado de #26 y del alcance de #120:
+### P-12 a P-20, salvo P-18
+Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado de #26 y del alcance de #120
+(P-18 si tiene decision provisional y va en su propia seccion, como P-04):
 - **P-12** `eidr` poblado por Netflix, o acceso a IDA. Sin uno de los dos, el escalon 2 de la
   cascada (#28) solo funciona sobre lo que ya tenga el catalogo.
 - **P-13** Campos de episodio en la parrilla de Caracol, para identificar capitulos de series.
@@ -187,12 +188,6 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   `canales_clasificacion` para poder reejecutar un periodo pasado (ADR 0005). Sin este feed
   no se puede poblar `9.5.4` de forma defendible; `9.5.5` (estandar) absorberia el resto
   solo por exclusion.
-- **P-18** Base de ponderacion de cine/teatro: `RD 9.2` dice "ingresos de taquilla" y el
-  ejemplo calcula sobre espectadores; `RD 9.3` remite a ese ejemplo. No es P-01 (base
-  tarifaria). Hasta confirmar, el motor lee `Snapshot.BaseCineTeatro`, que sale del parametro
-  textual `cine_teatro.base` congelado en el snapshot de cada corrida. Valor **provisional**:
-  `taquilla` (el cuerpo de `RD 9.2`), sembrado como sintetico (#194). La respuesta de REDES se
-  carga como una vigencia nueva de esa clave, sin tocar codigo.
 - **P-19** Destino del recaudo de un **grupo de suscripcion sin obras** (y de importes
   enteros excluidos por R-27). `RD 9.5` no contempla el caso; `RD 14.5.3` cierra la reserva
   a reclamaciones administrativas; ONI (`RD 13.8`) es autor desconocido. El chapeau de
@@ -205,6 +200,17 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   dejarla fuera de `UsosDeCanal` sin error. Sigue abierto que columna -- o que
   tabla de correspondencia -- identifica el canal que pago. El seed si lo trae,
   porque no pasa por esos mapas.
+
+### P-18 Base de ponderacion de cine/teatro
+Estado: **Abierta**. `RD 9.2` dice "ingresos de taquilla" en el cuerpo y su ejemplo calcula
+sobre espectadores; `RD 9.3` remite a ese ejemplo. No es P-01 (base tarifaria).
+Decision provisional mientras sigue abierta (#194): el sembrador carga el parametro textual
+`cine_teatro.base` con `taquilla` -lo que prescribe el cuerpo de `RD 9.2` y la unica medida de
+cine que `MapaCine` exige-, marcado `sintetico` como los coeficientes de P-04. El codigo no tiene
+valor por defecto: el motor lee `Snapshot.BaseCineTeatro`, que sale de esa clave congelada en el
+snapshot de cada corrida, y una instalacion sin la fila no abre corridas y nombra la clave que
+falta (ADR 0004). La migracion 00024 solo la agrega en una base sembrada con el dataset
+sintetico. La respuesta de REDES se carga como una vigencia nueva de la clave, sin tocar codigo.
 
 ### P-21 Clave de registro por fuente (detector `duplicado_registro`, #37)
 

@@ -106,7 +106,8 @@ La contradiccion taquilla vs espectadores es **P-18** (no P-01): `RD 9.2` dice
 "ingresos de taquilla" en el cuerpo y su ejemplo calcula sobre espectadores;
 `RD 9.3` la hereda por remision. El motor acepta cualquiera de las dos bases
 via `Snapshot.BaseCineTeatro` (`espectadores` | `taquilla`), nunca fijada en
-codigo: sale del parametro `cine_teatro.base`, provisional en `taquilla`. P-01 es otra pregunta: la base **tarifaria** (`RT 3.2` vs `RT 4`).
+codigo: sale del parametro `cine_teatro.base`, provisional en `taquilla`. P-01
+es otra pregunta: la base **tarifaria** (`RT 3.2` vs `RT 4`).
 
 ## 9.3 Teatros
 

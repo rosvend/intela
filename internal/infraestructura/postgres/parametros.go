@@ -203,17 +203,16 @@ var clausulasDelSnapshot = append(slices.Clip(clausulasDelSnapshotV1),
 // que ESTE BINARIO congela. Vive en el prefijo de todo id nuevo (ver
 // prefijoSnapshot) porque anadir o quitar una clausula es un cambio de
 // FORMATO del snapshot, no solo de contenido -- el bloqueante 3 de PR #134
-// (seis clausulas nuevas) es exactamente ese cambio, y paso "gratis" solo
-// porque hoy no hay ningun snapshot ya congelado. La proxima vez que pase, no
-// sera gratis sin esto. Ver ADR 0005, "La identidad del snapshot esta
-// versionada".
+// (seis clausulas nuevas) fue ese cambio, y paso sin version solo porque
+// entonces no habia ningun snapshot congelado. Ver ADR 0005, "La identidad
+// del snapshot esta versionada".
 //
-// 2 desde #194: `cine_teatro.base`. Los snapshots `snp1-` ya congelados se
-// siguen releyendo con [clausulasDelSnapshotV1].
+// Es 2 desde #194, que anadio `cine_teatro.base` con snapshots `snp1-` ya
+// congelados: esos se siguen releyendo con [clausulasDelSnapshotV1].
 const versionClausulasActual = 2
 
 // prefijoSnapshot marca el id como lo que es y con que version del conjunto
-// de clausulas se congelo: "snp1-", no "snp-". El resto son los 64 hex del
+// de clausulas se congelo: "snp2-" hoy, no "snp-". El resto son los 64 hex del
 // sha256; el CHECK de `snapshots_parametros` (migracion 00012) exige la forma
 // general `snp[0-9]+-[0-9a-f]{64}`, no una version fija, porque tiene que
 // seguir aceptando ids mas viejos que dejen de ser "la version actual".
@@ -222,16 +221,17 @@ var prefijoSnapshot = fmt.Sprintf("snp%d-", versionClausulasActual)
 // clausulasPorVersion es el registro de conjuntos de clausulas: uno por cada
 // version que un id de snapshot puede nombrar en su prefijo.
 //
-// Politica de mantenimiento (ADR 0005): el dia que una clausula se anada, se
-// quite o cambie de escala, [clausulasDelSnapshot] NO se edita in situ. Antes
+// Politica de mantenimiento (ADR 0005): cuando una clausula se anade, se
+// quita o cambia de escala, [clausulasDelSnapshot] NO se edita in situ. Antes
 // de tocarlo, el conjunto vigente HASTA ESE MOMENTO se copia a una constante
-// nueva nombrada por su version (p.ej. `clausulasDelSnapshotV1` el dia que
-// exista una V2) y esa copia se registra aqui bajo su numero. Solo entonces
-// `clausulasDelSnapshot` pasa a apuntar al conjunto NUEVO y
-// `versionClausulasActual` sube en uno. Asi entro la version 2 (#194). La
-// entrada vieja no se borra: se queda mientras dure la ventana de retencion
-// de RD 13.2/13.4 (diez anos) o hasta que un cambio explicito -citando esta
-// politica, no un descuido de refactor- decida retirarla.
+// nueva nombrada por su version y esa copia se registra aqui bajo su numero.
+// Solo entonces `clausulasDelSnapshot` pasa a apuntar al conjunto NUEVO y
+// `versionClausulasActual` sube en uno. Asi entro la version 2 (#194): la 1
+// vive en `clausulasDelSnapshotV1`; la proxima vez, la 2 pasa a
+// `clausulasDelSnapshotV2`. La entrada vieja no se borra: se queda mientras
+// dure la ventana de retencion de RD 13.2/13.4 (diez anos) o hasta que un
+// cambio explicito -citando esta politica, no un descuido de refactor-
+// decida retirarla.
 //
 // SnapshotEnFecha siempre congela bajo `versionClausulasActual`.
 // SnapshotPorID nunca reconstruye contra "la version actual": reconstruye
