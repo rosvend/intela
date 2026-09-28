@@ -1,7 +1,7 @@
 # 0021 Las anomalias de un periodo son un recurso propio, no la cola de revision
 
 Fecha: 2026-09-21
-Estado: Vigente
+Estado: Vigente (actualizado 2026-09-28 por #164: resolver una critica corrige el dato)
 
 ## Contexto
 
@@ -173,14 +173,58 @@ adaptadores para que no puedan separarse.
   detiene todas sus corridas. Es mas estricto de lo necesario para una bolsa de otro canal, y es
   lo que se puede afirmar hoy sin una relacion alerta -> bolsa.
 
-- **Que significa "resuelta" para el dinero.** Resolver exige una nota no vacia
-  (`ErrNotaObligatoria` -> 400, y el CHECK `alerta_resuelta_tiene_nota`), que viaja al asiento
-  `alerta.resuelta`: es la justificacion auditable de la decision. Pero **resolver no cambia los
-  datos que pondera el reparto**: la fila o la entrega duplicada sigue ponderando, y una obra sin
-  `tipo_obra` sigue sin poder ponderarse. "Resuelta" solo afirma que una persona, con nombre y
-  razon escrita, acepta que el periodo avance tal como esta. La accion correctiva (excluir la fila
-  o la entrega, asignar la obra o el tipo) es de #39; la issue de seguimiento esta redactada en
-  `docs/planes/37/issues-de-seguimiento.md`.
+- **Que significa "resuelta" para el dinero (actualizado por #164).** Resolver exige una nota no
+  vacia (`ErrNotaObligatoria` -> 400, y el CHECK `alerta_resuelta_tiene_nota`), que viaja al
+  asiento `alerta.resuelta`: es la justificacion auditable de la decision. En la version
+  original de este ADR eso era todo: **resolver no cambiaba los datos que pondera el reparto**,
+  asi que un duplicado resuelto abria la compuerta y la fila repetida seguia ponderando -el doble
+  conteo se pagaba igual-, y un `tipo_obra_sin_mapear` resuelto seguia abortando el motor. La
+  revision de la PR #158 (punto 4) lo senalo y #164 lo cierra:
+
+  **Cerrar una critica exige una accion correctiva** (`accion` en el cuerpo), que se aplica en
+  la MISMA unidad que el cierre, con el cerrojo de periodo tomado, y deja un segundo asiento
+  sobre el registro que cambio (no sobre la alerta: el historial de una fila tiene que contar
+  por que dejo de ponderar sin pasar por la bandeja):
+
+  | Tipo | Acciones | Efecto | Asiento |
+  | ---- | -------- | ------ | ------- |
+  | `duplicado_registro` | `excluir_uso` (la copia de la alerta o la otra, `uso_id`), `aceptar_tal_cual` | la fila pasa al escalon `duplicado`: sin obra, sin ONI, firmada y con nota | `correccion.uso_excluido` |
+  | `duplicado_archivo` | `excluir_entrega` (la de la alerta u otra con los mismos bytes del periodo, `reporte_id`), `aceptar_tal_cual` | `reportes.excluida_por/en` y todas sus filas en juego a `duplicado` | `correccion.entrega_excluida` |
+  | `tipo_obra_sin_mapear` | `asignar_tipo_obra` (`tipo_obra` de `RD 9.1.1`) | la fila recibe su categoria | `correccion.tipo_obra_asignado` |
+
+  Una critica sin accion responde 400 (`ErrAccionInvalida`); una accion que el dato ya no admite
+  -la fila ya no pondera, la entrega ya esta excluida, o excluir dejaria el hecho sin ninguna
+  copia que lo cuente- responde 409 (`ErrAccionNoAplica`) y la alerta sigue abierta. Las
+  escrituras son condicionales al estado que se valido: la cascada no toma el cerrojo de
+  periodo, y una fila que cambio entretanto ya no es la que se decidio excluir. Las no criticas
+  se siguen cerrando solo con la nota: su dato se corrige en otro sitio (la declaracion en el
+  catalogo, el ONI en la bandeja de #39).
+
+  **`aceptar_tal_cual` es la salida explicita del falso positivo** (P-21: la clave de duplicado
+  de cine es provisional y dos exhibiciones legitimas de la misma pelicula saldrian como
+  duplicado). No toca el dato y exige el rol de la sesion ademas del actor y la nota: el rol se
+  guarda en la alerta (`resuelta_rol`) tal como estaba al cerrar. **La compuerta lo distingue**:
+  `Anomalias.Bloqueantes` devuelve las abiertas (bloquean) y las aceptadas tal cual (no
+  bloquean), y el asiento `proceso.etapa_avanzada` de la transicion que la compuerta deja pasar
+  lleva `criticas_aceptadas_tal_cual`, con cero explicito si no habia ninguna. El resumen de
+  `POST /alertas/evaluacion` trae tambien `criticas_aceptadas`, para que "cero abiertas" no se
+  lea como "cero anomalias". `tipo_obra_sin_mapear` no admite aceptarla: sin tipo el motor
+  aborta la corrida igual, y la aceptacion abriria una compuerta que no lleva a ningun sitio.
+
+  **Por que un escalon `duplicado` y no `excluido`**, que es lo que el cuerpo de #164 sugeria:
+  `ResolverUsos` reprocesa las filas `excluido` en cada corrida, porque la exclusion R-27 es
+  configuracion. La fila duplicada volveria a la cascada, se identificaria otra vez y el doble
+  conteo reapareceria solo. `duplicado` es, como `descartado` (ADR 0022), una decision humana
+  firmada que la cascada no pisa, y comparte con `excluido` y `descartado` la forma "sin obra y
+  sin ONI" que deja la fila fuera de `UsosDeCanal` (`obra_id IS NOT NULL`) sin tocar esa
+  consulta. El detector de registro deja de comparar las filas fuera de juego (`descartado`,
+  `duplicado`) y el de huella deja de contar las entregas excluidas, asi que la siguiente pasada
+  autocierra lo que la correccion apago -incluidas las alertas de la otra pata del par-.
+
+  Las criticas que una persona cerro **antes** de la migracion 00024 quedan marcadas como
+  `aceptar_tal_cual`: eso es lo que significaba cerrarlas entonces. Excluir una entrega de OTRO
+  periodo desde esta alerta no se admite: el cerrojo que serializa la correccion es el del
+  periodo de la alerta, y tocar otro mes se colaria entre su compuerta y su calculo.
 
 - **Alertas rancias: autocierre y reapertura.** Cada pasada de `Evaluar`, en la misma unidad que
   guarda las alertas, cierra a nombre del sistema las abiertas del periodo que ya no detecta

@@ -284,6 +284,56 @@ la obra) e `identificacion.descartada` (referencia el uso). Migracion
 `TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte` (postgres);
 `TestElCheckDeUsosSostieneLaResolucionManual` (esquema).
 
+### R-37 Cerrar una anomalia critica corrige el dato
+Las tres anomalias que bloquean la distribucion del periodo (`duplicado_registro`,
+`duplicado_archivo`, `tipo_obra_sin_mapear`, ADR 0021) no se cierran con una nota: cerrarlas
+exige una **accion correctiva** que cambia lo que pondera el reparto, en la misma transaccion
+que el cierre y con su propio asiento sobre el registro que cambio.
+
+- `duplicado_registro` -> **excluir la copia que no manda** (`excluir_uso`): la de la alerta o
+  la otra, a eleccion de quien cierra. La fila queda en el escalon `duplicado`: sin obra,
+  `oni = false`, **sin ponderar**, firmada y con nota. No se puede excluir la ultima copia que
+  queda en juego: eso borraria el hecho en vez de contarlo una vez.
+- `duplicado_archivo` -> **excluir la entrega entera** (`excluir_entrega`) del periodo: la
+  entrega queda marcada (`reportes.excluida_por/en`) y todas sus filas pasan a `duplicado`,
+  salvo las descartadas (R-36), que ya estaban fuera por otra decision.
+- `tipo_obra_sin_mapear` -> **asignar el tipo** (`asignar_tipo_obra`) entre las categorias de
+  `RD 9.1.1`.
+- Solo en los dos duplicados, **aceptar tal cual** (`aceptar_tal_cual`): una persona firma que
+  el hallazgo es un falso positivo (P-21: la clave de duplicado de cine es provisional). No
+  toca el dato. La compuerta de `Procesos.AvanzarEtapa` la deja pasar, pero la **cuenta
+  aparte** y el asiento `proceso.etapa_avanzada` dice con cuantas criticas aceptadas se paso
+  (`criticas_aceptadas_tal_cual`). `tipo_obra_sin_mapear` no admite aceptarla: sin tipo el
+  motor aborta la corrida igual.
+
+En todas hacen falta nota, actor y rol de la sesion (ADR 0006). La nota de una accion que
+escribe sobre la fila tiene el tope de 300 caracteres de R-36. `duplicado` **no es**
+`excluido`: la exclusion R-27 es configuracion y la cascada la reevalua en cada corrida; la
+fila duplicada volveria a identificarse y el doble conteo reapareceria solo. Por eso
+`duplicado` queda, como `manual` y `descartado`, fuera de `ResolverUsos`. Las criticas que una
+persona cerro antes de esta regla quedan como `aceptar_tal_cual`: eso es lo que significaba
+cerrarlas entonces.
+
+Estado: **Decidido por el equipo** (revision de la PR #158, punto 4; issue #164); confirmar
+con el PO si `aceptar_tal_cual` basta como salida del falso positivo (P-21). Fuente:
+`RD 9.1.1` (el valor punto es un cociente: una emision contada dos veces desinfla a todas las
+demas del canal), ADR 0006, ADR 0021.
+Implementacion: `internal/dominio/anomalias/correccion.go`;
+`internal/aplicacion/anomalias.go` (`Resolver`) y `anomalias_correccion.go`;
+`internal/infraestructura/postgres/correcciones.go`; `POST /alertas/{id}/resolver`. Asientos
+`alerta.resuelta` (sobre la alerta), `correccion.uso_excluido` y `correccion.tipo_obra_asignado`
+(sobre el uso) y `correccion.entrega_excluida` (sobre la entrega). Migracion
+`00024_correccion_de_anomalias.sql`. Pruebas: `TestUnaCriticaSinAccionNoSeCierra`,
+`TestExcluirUnUsoQueYaNoAplica`, `TestExcluirUnaEntregaApagaElDuplicadoDeHuella` (dominio);
+`TestResolverUnaCriticaSinAccionNoLaCierra`,
+`TestResolverExcluyeLaCopiaDuplicadaYAsientaLosDosHechos`,
+`TestAceptarTalCualNoTocaElDatoYLaCompuertaLaCuentaAparte`,
+`TestElAsientoDeLaTransicionCuentaLasCriticasAceptadasTalCual` (aplicacion);
+`TestUnDuplicadoResueltoConExclusionPonderaLaFilaUnaVez`,
+`TestExcluirUnaEntregaDuplicadaMarcaLaEntregaYSacaSusFilas`,
+`TestLosCheckDeLaCorreccionSostienenElCierre` (postgres);
+`TestCorreccionDeAnomaliasMarcaLasCriticasYaCerradas` (migracion).
+
 ## Tarifas
 
 ### T-01 Television abierta y cerrada: 4%
