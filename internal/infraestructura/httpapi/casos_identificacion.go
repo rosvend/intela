@@ -39,6 +39,9 @@ type casoJSON struct {
 	ResueltoPor         *resolutorJSON  `json:"resuelto_por"`
 	ResueltoEn          *string         `json:"resuelto_en"`
 	UltimaActualizacion string          `json:"ultima_actualizacion"`
+	// Nota es null en un caso pendiente y el texto de la decision en uno
+	// resuelto: la justificacion es obligatoria al resolver (#175, D5).
+	Nota *string `json:"nota"`
 }
 
 type candidatoJSON struct {
@@ -113,6 +116,12 @@ func aCasoJSON(c aplicacion.CasoIdentificacion) casoJSON {
 	if c.ResueltoEn != nil {
 		s := c.ResueltoEn.UTC().Format(time.RFC3339)
 		out.ResueltoEn = &s
+	}
+	// null y no "": un caso pendiente no tiene nota, y la cadena vacia se lee
+	// como "la nota esta en blanco", que el servidor rechaza al resolver.
+	if c.Nota != "" {
+		nota := c.Nota
+		out.Nota = &nota
 	}
 	return out
 }

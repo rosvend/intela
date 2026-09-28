@@ -30,9 +30,10 @@ func TestListarCasosTraduceElEstadoAEscalones(t *testing.T) {
 		estado string
 		quiere []string
 	}{
-		{"", []string{identificacion.EscalonONI, identificacion.EscalonManual}},
+		{"", []string{identificacion.EscalonONI, identificacion.EscalonManual, identificacion.EscalonDescartado}},
 		{EstadoCasoPendiente, []string{identificacion.EscalonONI}},
 		{EstadoCasoAsignado, []string{identificacion.EscalonManual}},
+		{EstadoCasoDescartado, []string{identificacion.EscalonDescartado}},
 	}
 	for _, c := range casos {
 		t.Run(c.estado, func(t *testing.T) {
@@ -94,25 +95,48 @@ func TestListarCasosDaEstadoYUltimaActualizacion(t *testing.T) {
 				}},
 			{UsoID: "u2", Escalon: identificacion.EscalonManual, ReporteCreado: creado,
 				ResueltoEn: &resuelto, ObraAsignada: &ObraAsignada{ID: "o1"},
-				ResueltoPor: &Resolutor{ID: "usr-1", Nombre: "Admin"}},
+				ResueltoPor: &Resolutor{ID: "usr-1", Nombre: "Admin"},
+				Nota:        "coincide la ficha"},
+			// Un descartado no tiene obra y si tiene fecha: la actualizacion
+			// del caso es cuando una persona lo decidio.
+			{UsoID: "u3", Escalon: identificacion.EscalonDescartado, ReporteCreado: creado,
+				ResueltoEn: &resuelto, ResueltoPor: &Resolutor{ID: "usr-1", Nombre: "Admin"},
+				Nota: "no es del repertorio"},
 		},
 	}}
 	pag, err := CasosIdentificacion{Repo: repo}.Listar(context.Background(), FiltroCasos{})
 	if err != nil {
 		t.Fatalf("Listar: %v", err)
 	}
-	if pag.Pendientes != 1 || len(pag.Casos) != 2 {
+	if pag.Pendientes != 1 || len(pag.Casos) != 3 {
 		t.Fatalf("pagina = %+v", pag)
 	}
-	p, a := pag.Casos[0], pag.Casos[1]
+	p, a, d := pag.Casos[0], pag.Casos[1], pag.Casos[2]
 	if p.Estado != EstadoCasoPendiente || !p.UltimaActualizacion.Equal(creado) {
 		t.Fatalf("pendiente = %s %v", p.Estado, p.UltimaActualizacion)
 	}
 	if p.Candidatos[0].ObraID != "o2" {
 		t.Fatalf("reordeno los candidatos: %+v", p.Candidatos)
 	}
-	if a.Estado != EstadoCasoAsignado || !a.UltimaActualizacion.Equal(resuelto) {
-		t.Fatalf("asignado = %s %v", a.Estado, a.UltimaActualizacion)
+	if a.Estado != EstadoCasoAsignado || !a.UltimaActualizacion.Equal(resuelto) || a.Nota != "coincide la ficha" {
+		t.Fatalf("asignado = %s %v %q", a.Estado, a.UltimaActualizacion, a.Nota)
+	}
+	if d.Estado != EstadoCasoDescartado || !d.UltimaActualizacion.Equal(resuelto) || d.Nota != "no es del repertorio" {
+		t.Fatalf("descartado = %s %v %q", d.Estado, d.UltimaActualizacion, d.Nota)
+	}
+	if d.ObraAsignada != nil {
+		t.Fatalf("un descartado no tiene obra: %+v", d.ObraAsignada)
+	}
+}
+
+// Un descarte sin fecha no es un descarte: la fila quedo a medias y decir que
+// esta resuelta afirmaria algo falso.
+func TestListarCasosDescartadoSinResueltoEnFalla(t *testing.T) {
+	repo := &casosFalsos{pagina: PaginaCasos{Casos: []CasoIdentificacion{
+		{UsoID: "u1", Escalon: identificacion.EscalonDescartado},
+	}}}
+	if _, err := (CasosIdentificacion{Repo: repo}).Listar(context.Background(), FiltroCasos{}); err == nil {
+		t.Fatal("un descartado sin resuelto_en tenia que fallar")
 	}
 }
 

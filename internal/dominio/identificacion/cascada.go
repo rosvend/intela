@@ -20,15 +20,22 @@ import (
 //
 // EscalonManual es la decision de una persona en la cola de resolucion (#39):
 // la cascada no la escribe -el CHECK manual_tiene_autor de `usos` la reserva a
-// esa cola- pero tiene que conocerla para no pisarla.
+// esa cola, y la escribe la resolucion manual de #175- pero tiene que
+// conocerla para no pisarla.
+//
+// EscalonDescartado es la otra decision de esa misma cola (#175): una persona
+// dijo que el uso no es del repertorio de REDES SGC. La fila queda sin obra y
+// con oni=false, como una exclusion R-27 (RD 9.5), y por eso tampoco puede
+// volver a la cascada: reprocesable devuelve false para los dos.
 const (
-	EscalonPendiente = "pendiente"
-	EscalonAlias     = "alias"
-	EscalonIDGlobal  = "id_global"
-	EscalonExcluido  = "excluido"
-	EscalonDifuso    = "difuso"
-	EscalonONI       = "oni"
-	EscalonManual    = "manual"
+	EscalonPendiente  = "pendiente"
+	EscalonAlias      = "alias"
+	EscalonIDGlobal   = "id_global"
+	EscalonExcluido   = "excluido"
+	EscalonDifuso     = "difuso"
+	EscalonONI        = "oni"
+	EscalonManual     = "manual"
+	EscalonDescartado = "descartado"
 )
 
 // IDGlobal identifica cual de los tres identificadores globales caso en el

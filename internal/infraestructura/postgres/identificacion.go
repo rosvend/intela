@@ -79,34 +79,36 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // guarda un match con obra; se corrige aqui y se anota en la PR.
 //
 // resuelto_por y resuelto_en no se tocan: el CHECK manual_tiene_autor los
-// reserva a escalon='manual', que este puerto no escribe en este issue.
+// reserva a escalon='manual' y a 'descartado' (00022), que este puerto no
+// escribe.
 //
 // AND escalon = escalonPrevio: la escritura es condicional al estado que el
 // caso de uso leyo. Una fila que otro proceso cambio entre la lectura y este
 // UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
 // ErrNoEncontrado y la salta.
 //
-// # tipo_obra NO se rellena aqui, y es una decision medida
+// # tipo_obra: se rellena desde el catalogo, no desde la fuente
 //
-// `obras.tipo` tiene el dato -TEXT NOT NULL con CHECK sobre las cinco
-// categorias de `RD 9.1.1` (00001)- y `usos.tipo_obra` se queda vacio para toda
-// fuente cuyo mapa no traiga la columna, que hoy es la parrilla entera de
-// Caracol. Copiarlo aqui parece el arreglo obvio y NO lo es: medido contra
-// Postgres real, con el backfill puesto la corrida de TV de Caracol deja de
-// abortar y pasa a devolver `noDistribuido` = la bolsa ENTERA, con error nil.
-// `MapaCaracol` tampoco mapea `rating`, que queda en 0, y `puntosTV` multiplica
-// por el.
+// El UPDATE copia `obras.tipo` cuando la fila se resuelve con obra y
+// `usos.tipo_obra` venia vacio. Es lo que entro con #165/#169 y lo que hace que
+// la parrilla de Caracol -- cuyo mapa no trae la columna (P-05) -- no llegue al
+// motor con el tipo en blanco. Un tipo que la fuente SI trajo no se pisa.
 //
-// O sea que el backfill cambia un fallo RUIDOSO -ErrRepartoInvalido, que para
-// la corrida y se ve- por uno SILENCIOSO -cero puntos, cero pagos, sin una sola
-// senal-. Son tres huecos independientes (`tipo_obra`, `canal_id` y `rating`) y
-// cerrar uno solo empeora el conjunto; van juntos, en su propia issue, con el
-// mapa de ingesta y la pregunta P-05 delante. Ver el cuerpo de la PR de #37.
+// # Lo que este comentario decia antes, y por que estaba mal
 //
-// Hoy la cadena ni siquiera llega al aborto: `MapaCaracol` no mapea `canal_id`
-// -`CampoCanalID` existe en mapa.go y no lo usa ningun Mapa-, asi que
-// `UsosDeCanal` devuelve cero filas y el motor no corre. El hueco es real y
-// esta LATENTE.
+// Afirmaba que `tipo_obra` "NO se rellena aqui, y es una decision medida", con
+// el argumento de que el backfill convertia un fallo RUIDOSO
+// -ErrRepartoInvalido, que para la corrida y se ve- en uno SILENCIOSO -cero
+// puntos, cero pagos, sin una sola senal-. Ese razonamiento era correcto
+// MIENTRAS el backfill fuera lo unico que se cerraba: quedaban abiertos
+// `canal_id` (que `MapaCaracol` tampoco mapea) y `rating`, y cerrar uno solo
+// empeoraba el conjunto.
+//
+// Ya no describe lo que hace el SQL: #169 cerro los tres, y con los tres
+// cerrados el silencio que describia no ocurre. El texto sobrevivio al squash
+// de #171, que reintrodujo la version vieja del bloque. Se corrige aqui en vez
+// de dejarlo: un comentario que miente sobre el codigo que tiene debajo es peor
+// que no tenerlo.
 func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
 	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos
