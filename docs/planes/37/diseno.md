@@ -7,7 +7,7 @@ actualizado: 2026-09-25
 
 La decision de fondo (recurso propio, tabla, roles, compuerta, que significa "resuelta") esta en
 [ADR 0021](../../decisiones/0021-alertas-como-recurso-propio.md). Aqui va el porque de cada
-detector de `internal/dominio/anomalias` y de la migracion `00019_alertas_de_anomalias.sql`. El
+detector de `internal/dominio/anomalias` y de la migracion `00021_alertas_de_anomalias.sql`. El
 codigo remite aqui en vez de repetirlo.
 
 ## D0. Orden y determinismo
@@ -93,7 +93,7 @@ Critica = dejarla sin resolver hace que las cifras salgan mal:
 `TipoReservaDeclaracionIncompleta` se llama asi por el contrato de #104; lo que mide es la
 RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 
-## D8. La migracion 00019
+## D8. La migracion 00021
 
 - Tabla propia y no `usos_rechazados`: sus FK son de fila de reporte, no tiene estado ni periodo
   (ADR 0021, punto 2).
@@ -108,5 +108,7 @@ RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 - UUID de la base como `id`: un id derivado del hallazgo seria una segunda clave natural.
 - Indices: bandeja por periodo, abiertas por periodo y tipo (lo que cuenta la compuerta), y por
   registro ofensor (bandeja de #39).
-- Historia del numero: nacio 00015, paso a 00016 al mergear #144 y a 00017 al mergear #80
-  (renumera el que mergea segundo).
+- Historia del numero: nacio 00015, paso a 00016 al mergear #144 y a 00017 al mergear #80.
+  Al integrar `main` el 00019 ya era `00019_reportes_subido_por.sql` (#173) y el 00020
+  `00020_bitacora_refiere_a.sql`, asi que esta ficha quedo en 00021. Renumera el que
+  mergea segundo: goose corre con `allowMissing = false`.
