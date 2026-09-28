@@ -784,6 +784,12 @@ func (i Ingesta) aplicarNormalizacion(ctx context.Context, filas []UsoPersistido
 // esta: inventar una linea seria peor que no darla. Solo se llama sobre
 // motivos de validarUso y de normalizacion; los del adaptador ya la traen y
 // no pasan por aqui.
+//
+// La columna, que el adaptador si dice, aqui no se puede dar: esta capa ve
+// campos del uso, no columnas del archivo, y la correspondencia entre unos y
+// otras vive en el Mapa de cada fuente. Varios de estos motivos, ademas, no
+// salen de ninguna columna -la modalidad la pone el Mapa, y el escalon que
+// falta lo pone la ingesta-, y ponerles una seria inventarla.
 func motivoConLinea(linea int, motivo string) string {
 	if linea <= 0 || motivo == "" {
 		return motivo
