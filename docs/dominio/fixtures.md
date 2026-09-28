@@ -205,6 +205,20 @@ Pendiente de implementar: la tabla debe vivir como **dato con vigencia**, no com
 codigo, para que corregirla despues sea cambiar una fila. Corresponde a #26, que es donde una fila
 de parrilla adquiere su tipo de obra.
 
+## Cola de identificacion
+
+Fixture: `Dataset.casosIdentificacion()`. Un reporte de Caracol del periodo `2025-02`, con ids
+de fuente que no estan en `alias_obra`, para que ni el alias ni el id global lo resuelvan. A
+diferencia del resto del seed, no se identifica por SQL: pasa por la cascada real
+(`aplicacion.ResolverUsos`, ADR 0007), asi que la cola sale igual que de una entrega real.
+
+| Titulo | Resultado esperado |
+| ------ | ------------------ |
+| `Pelicula Equis` | ONI en la banda ambigua: candidato `Pelicula X` con puntaje ~0.53 (entre `matching.umbral_banda` 0.45 y `matching.umbral` 0.60) |
+| `Noticiero Regional` | ONI sin candidatos: nada supera el piso de la banda |
+
+`2025-02` no tiene bolsa, asi que la cola no toca ninguna cifra del reparto de `2025-01`.
+
 ## Registro de canales y atribucion del uso
 
 Fixture: `Dataset.canales()`. Tablas `canales` y `canales_clasificacion` (migracion 00011).

@@ -49,6 +49,13 @@ Respuesta esperada:
 
 Un reintento responde `{"estado":"ya sembrado"}`.
 
+El reintento tambien completa la cola de identificacion (#174) en una base sembrada
+antes de que existiera: carga el reporte sintetico de `2025-02` y corre la cascada
+real sobre el. Queda un caso pendiente con candidato ("Pelicula Equis" frente a
+"Pelicula X") y uno sin candidatos ("Noticiero Regional"), visibles en
+`GET /api/identificacion/casos`. `2025-02` no tiene bolsa: no cambia ninguna cifra de
+`2025-01`.
+
 El alias `sembrar-titulares-demo` hace lo mismo (compatibilidad con el nombre
 anterior).
 
