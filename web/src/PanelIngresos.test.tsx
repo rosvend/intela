@@ -41,6 +41,8 @@ const linaje: Explicacion = {
   ref: anaCasa.ref,
   neto: "3600.00",
   bruto: "4800.00",
+  retenida: false,
+  firmas: [],
   corrida: {
     proceso_id: "proc-2026-01",
     periodo: "2026-01",
@@ -72,6 +74,30 @@ const linaje: Explicacion = {
     },
     { concepto: "bienestar social", porcentaje: "5.00", monto: "240.00" },
     { concepto: "reserva", porcentaje: "10.00", monto: "480.00" },
+  ],
+};
+
+// Con los codigos de concepto y la cita compuesta reales (ver web/src/reglamento.ts),
+// para probar el recibo de "mas detalles" contra datos que de verdad puede
+// devolver GET /explicar/{ref}.
+const linajeReal: Explicacion = {
+  ...linaje,
+  regla: {
+    snapshot_id: "snap-2026-01",
+    reglamento: "RD 9.1.1+RD-IX-seed-sintetico",
+  },
+  deducciones: [
+    {
+      concepto: "gastos_administrativos",
+      porcentaje: "10.00",
+      monto: "480.00",
+    },
+    { concepto: "bienestar_social", porcentaje: "5.00", monto: "240.00" },
+    {
+      concepto: "reserva_errores_tecnicos",
+      porcentaje: "10.00",
+      monto: "480.00",
+    },
   ],
 };
 
@@ -113,6 +139,88 @@ describe("PanelExplicacion", () => {
       name: "Explicacion de la cifra",
     });
     expect(panel.textContent).not.toContain("declaracion v");
+  });
+
+  it("el recibo de 'mas detalles' empieza oculto", () => {
+    render(<PanelExplicacion cifra={linajeReal} />);
+    expect(screen.queryByLabelText("Recibo en lenguaje sencillo")).toBeNull();
+    expect(screen.getByRole("button", { name: "Mas detalles" })).toBeTruthy();
+  });
+
+  it("'mas detalles' pinta bruto, cada deduccion en lenguaje llano con su cita, y neto", () => {
+    render(<PanelExplicacion cifra={linajeReal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+
+    const recibo = screen.getByLabelText("Recibo en lenguaje sencillo");
+    // Orden bruto -> deducciones -> neto, en lenguaje llano.
+    expect(recibo.textContent).toContain("Gastos administrativos");
+    expect(recibo.textContent).toContain("gastos_administrativos");
+    expect(recibo.textContent).toContain("10.00% = $ 480.00");
+    expect(recibo.textContent).toContain("Bienestar social");
+    expect(recibo.textContent).toContain("Reserva para errores tecnicos");
+    // La cita R-06/R-07 verbatim, no solo el numeral.
+    expect(recibo.textContent).toContain("gastos administrativos");
+    expect(recibo.textContent).toContain("Ley 44 de 1993");
+    expect(recibo.textContent).toContain("5% del recaudo nacional");
+    // El split declarado del titular.
+    expect(recibo.textContent).toContain("60.0000%");
+    expect(recibo.textContent).toContain("IPI-00000001");
+    // La cita de la modalidad y del marcador sintetico, con nombre humano.
+    expect(recibo.textContent).toContain("Television abierta y radiodifundida");
+    expect(recibo.textContent).toContain("Total puntos por obra");
+    expect(recibo.textContent).toContain("Cifra provisional de siembra");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ocultar mas detalles" }),
+    );
+    expect(screen.queryByLabelText("Recibo en lenguaje sencillo")).toBeNull();
+  });
+
+  it("una obra retenida explica R-04 con la cita de RD 13.1.3", () => {
+    render(
+      <PanelExplicacion
+        cifra={{
+          ...linajeReal,
+          retenida: true,
+          motivo: "declaracion incompleta: falta un titular",
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+    const recibo = screen.getByLabelText("Recibo en lenguaje sencillo");
+    expect(recibo.textContent).toContain("retuvo por completo");
+    expect(recibo.textContent).toContain(
+      "declaracion incompleta: falta un titular",
+    );
+    expect(recibo.textContent).toContain(
+      "Retencion por declaracion incompleta",
+    );
+    expect(recibo.textContent).toContain("declaracion discriminada del 100%");
+  });
+
+  it("las firmas de la corrida salen en el recibo cuando llegan", () => {
+    render(
+      <PanelExplicacion
+        cifra={{
+          ...linajeReal,
+          firmas: [
+            {
+              rol: "distribucion",
+              actor_id: "user-distribucion-1",
+              sobre_revision: 0,
+              etapa: "verificacion",
+              cuando: "2026-02-01T10:00:00Z",
+            },
+          ],
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+    const recibo = screen.getByLabelText("Recibo en lenguaje sencillo");
+    expect(recibo.textContent).toContain("distribucion");
+    expect(recibo.textContent).toContain("user-distribucion-1");
+    expect(recibo.textContent).toContain("verificacion");
+    expect(recibo.textContent).toContain("2026-02-01");
   });
 });
 

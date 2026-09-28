@@ -25,10 +25,22 @@ export type Deduccion = {
   monto: string;
 };
 
+export type Firma = {
+  rol: string;
+  actor_id: string;
+  sobre_revision: number;
+  etapa: string;
+  cuando: string;
+};
+
 export type Explicacion = {
   ref: string;
   neto: string;
   bruto: string;
+  /** RD 13.1.3 / R-04: la obra entera se retuvo por declaracion incompleta. */
+  retenida: boolean;
+  /** Solo presente si retenida es true. */
+  motivo?: string;
   corrida: {
     proceso_id: string;
     periodo: string;
@@ -56,6 +68,8 @@ export type Explicacion = {
     version: number | null;
   };
   deducciones: Deduccion[];
+  /** Firmas de compuerta de la corrida (RD 13.5), incluidas revisiones rechazadas. */
+  firmas: Firma[];
 };
 
 export type ListaIngresos = {
