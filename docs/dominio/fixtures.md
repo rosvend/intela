@@ -44,6 +44,7 @@ es lo que permite decir "esta cifra es de demo" sin tener que leer el codigo.
 | Recaudo / bolsa | Si | n/a | El formato real del reporte (P-08) |
 | Usuarios de recaudo | Si | n/a | La categoria real de cada pagador |
 | Coeficientes OTT `Wa/Wb/Wc` | Si | Si | El valor real (P-04) |
+| Base de ponderacion de cine/teatro `cine_teatro.base` | Si | Si | La respuesta de REDES (P-18) |
 | Rating por franja | **Parcial** | **No** | La tabla y la marca |
 | Mapeo de generos | **No existe** | -- | Todo |
 | Registro de canales | Si | n/a | El quintil real de `RD 9.5.4` (P-17) |
@@ -266,6 +267,12 @@ sin error. `UsosSinCanal` cuenta las que igual llegaron a `usos`.
 `espectadores` acompana a `taquilla` en el uso de cine porque el ejemplo de `RD 9.2` reparte por
 espectadores mientras su prosa dice taquilla. La contradiccion es **P-18** y se resuelve con
 `Snapshot.BaseCineTeatro`, no reescribiendo el esquema: por eso el dato tiene que estar sembrado.
+
+La eleccion misma es el parametro `cine_teatro.base`, sembrado como sintetico con `taquilla`: es lo
+que prescribe el cuerpo de `RD 9.2` y la unica medida de cine que `MapaCine` exige. Es el primer
+parametro **textual** (`parametros.valor_texto`, migracion 00024): una eleccion entre dos medidas no
+es una cifra. Entra en el snapshot de la corrida como cualquier otra clausula (version 2 del
+conjunto, #194), asi que cambiarla es cargar una vigencia nueva, no desplegar.
 
 `exhibiciones` es la medida de `RD 9.4` (transporte publico) y es distinta de `emisiones`. El
 reporte de `expreso-bolivariano` la ejercita.

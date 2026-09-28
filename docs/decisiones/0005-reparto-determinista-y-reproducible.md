@@ -51,8 +51,10 @@ acceso al puerto de parametros.
 **La identidad del snapshot esta versionada.** El id es un hash direccionado por contenido sobre los
 pares (clave, valor) que el snapshot consume, pero EL CONJUNTO DE CLAVES QUE CUENTA no es un dato
 fijo para siempre: `#118` fijo trece, `#126` (posterior) obligo a anadir seis mas -- los porcentajes
-de grupo de canal y la asignacion a terceros --, diecinueve en total hoy (`clausulasDelSnapshot`, en
-`postgres/parametros.go`), y nada impide que un issue futuro anada otra. Si el id
+de grupo de canal y la asignacion a terceros --, diecinueve en la version 1, y `#194` anadio la
+vigesima -la base de ponderacion de cine y teatro, `cine_teatro.base`, la primera textual- en la
+version 2 (`clausulasDelSnapshot`, en `postgres/parametros.go`). Nada impide que un issue futuro
+anada otra. Si el id
 no dijera CONTRA QUE CONJUNTO se calculo, anadir una clave seria un cambio de FORMATO disfrazado de
 cambio de contenido: releer un snapshot viejo con el conjunto de hoy reportaria "le falta
 `grupo.privados_pct`" -que suena a corrupcion- cuando lo que pasa es que esa clave todavia no existia
@@ -67,8 +69,9 @@ falta una version 2:
 
 1. El conjunto de clausulas vigente NO se edita in situ. Antes de tocarlo se copia a una constante
    nueva, nombrada por su version (`clausulasDelSnapshotV1` el dia que exista una V2), y esa copia se
-   registra en `clausulasPorVersion` bajo su numero. La copia vieja no se toca nunca mas. Hoy solo
-   existe la version 1 y no hace falta el sufijo hasta que haya una segunda de la que distinguirse.
+   registra en `clausulasPorVersion` bajo su numero. La copia vieja no se toca nunca mas. Asi entro
+   la version 2 (`#194`): `clausulasDelSnapshotV1` quedo congelada y los snapshots `snp1-` ya
+   escritos -los de corridas abiertas antes- se siguen releyendo con ella.
 2. `clausulasDelSnapshot` (el conjunto que el binario CONGELA) pasa a apuntar al conjunto nuevo, y
    `versionClausulasActual` sube en uno. Toda resolucion fresca a partir de ahi congela bajo la
    version nueva.

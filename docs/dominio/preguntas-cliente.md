@@ -189,7 +189,10 @@ Abiertas, sin decision provisional, tomadas de `fuentes-datos.md`, del cableado 
   solo por exclusion.
 - **P-18** Base de ponderacion de cine/teatro: `RD 9.2` dice "ingresos de taquilla" y el
   ejemplo calcula sobre espectadores; `RD 9.3` remite a ese ejemplo. No es P-01 (base
-  tarifaria). Hasta confirmar, el motor lee `Snapshot.BaseCineTeatro`.
+  tarifaria). Hasta confirmar, el motor lee `Snapshot.BaseCineTeatro`, que sale del parametro
+  textual `cine_teatro.base` congelado en el snapshot de cada corrida. Valor **provisional**:
+  `taquilla` (el cuerpo de `RD 9.2`), sembrado como sintetico (#194). La respuesta de REDES se
+  carga como una vigencia nueva de esa clave, sin tocar codigo.
 - **P-19** Destino del recaudo de un **grupo de suscripcion sin obras** (y de importes
   enteros excluidos por R-27). `RD 9.5` no contempla el caso; `RD 14.5.3` cierra la reserva
   a reclamaciones administrativas; ONI (`RD 13.8`) es autor desconocido. El chapeau de
