@@ -471,6 +471,42 @@ describe("BandejaIdentificacion", () => {
     expect(tituloDeLaTarjeta()).not.toBeNull();
   });
 
+  it("un 409 sin causa reconocida: el panel dice el mensaje del servidor, ofrece recargar y el caso SI vuelve a la lista", async () => {
+    // El cuarto desenlace del 409 (plano seccion 5), el que no se puede
+    // confundir con "ya resuelto": el servidor no dijo que el caso este fuera
+    // de la cola, asi que sacarlo de la lista afirmaria algo que nadie dijo.
+    instalarServidor({
+      casos: [casoUno],
+      resolver: () =>
+        json({ error: "el uso tiene una marca de auditoria inesperada" }, 409),
+    });
+    montar();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Descartar registro" }),
+    );
+    const dialogo = await screen.findByRole("dialog");
+    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
+      target: { value: "x" },
+    });
+    fireEvent.click(
+      within(dialogo).getByRole("button", { name: "Descartar registro" }),
+    );
+
+    expect(
+      await within(dialogo).findByText("El caso cambió mientras lo revisabas"),
+    ).not.toBeNull();
+    expect(
+      within(dialogo).getByText(
+        "el uso tiene una marca de auditoria inesperada",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(dialogo).getByRole("button", { name: "Recargar caso" }),
+    ).not.toBeNull();
+    expect(tituloDeLaTarjeta()).not.toBeNull();
+  });
+
   it("empuja el conteo de pendientes al shell (useFijarPendientes) al cargar y al remover un caso", async () => {
     const fijarPendientes = vi.fn();
     instalarServidor({ casos: [casoUno], pendientes: 3 });
