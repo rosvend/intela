@@ -55,7 +55,6 @@ type resolucionFalsa struct {
 	errTitulo    error
 	errAlias     error
 	errGuardar   error
-	errAsiento   error // lo lee unidadConRollback para revertir
 	errRelectura error
 }
 
