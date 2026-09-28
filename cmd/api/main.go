@@ -68,6 +68,12 @@ func ejecutar(log *slog.Logger) error {
 	}
 	defer store.CerrarPool()
 
+	// S3 si hay OBJECT_BUCKET; si no, disco, que es lo de desarrollo y docker compose.
+	boveda, err := objetos.Boveda(ctx, config.Cadena("OBJECT_BUCKET", ""), config.Cadena("OBJECT_DIR", dirObjetosPorDefecto))
+	if err != nil {
+		return err
+	}
+
 	// Aqui es donde se juntan las dos orillas: el nucleo declara los puertos y
 	// este es el unico sitio del binario que sabe que adaptador satisface cada
 	// uno. El mismo *Store satisface RepositorioAfiliacion y Sesiones; que sean
@@ -83,13 +89,13 @@ func ejecutar(log *slog.Logger) error {
 
 	admision := aplicacion.Admision{
 		Solicitudes: store,
-		Objetos:     objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Objetos:     boveda,
 		IDs:         cripto.TokensAleatorios{},
 		Claves:      cripto.Bcrypt{},
 	}
 
 	// La ingesta de reportes de uso: la base para el acuse y las filas, la
-	// boveda de disco para la evidencia cruda, y el catalogo de adaptadores de
+	// boveda para la evidencia cruda, y el catalogo de adaptadores de
 	// formato para leer lo que llega.
 	//
 	// El catalogo se construye AL ARRANCAR y su error tumba el proceso. Un mapa
@@ -172,7 +178,7 @@ func ejecutar(log *slog.Logger) error {
 
 	recepcion := aplicacion.Ingesta{
 		Reportes:              store,
-		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
+		Almacen:               boveda,
 		Lectores:              lectores,
 		SnapshotNormalizacion: store.SnapshotNormalizacion,
 	}

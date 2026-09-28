@@ -63,6 +63,8 @@ module "migrations" {
   database_url       = module.database.database_url
   subnet_ids         = module.network.private_subnet_ids
   security_group_ids = [module.network.lambda_security_group_id]
+  vault_bucket_name  = module.storage.bucket_name
+  vault_policy_json  = module.storage.adapter_policy_json
 }
 
 module "api" {
@@ -74,6 +76,8 @@ module "api" {
   database_url       = module.database.database_url
   subnet_ids         = module.network.private_subnet_ids
   security_group_ids = [module.network.lambda_security_group_id]
+  vault_bucket_name  = module.storage.bucket_name
+  vault_policy_json  = module.storage.adapter_policy_json
 
   # CORS off: the SPA and the API share an origin, because the edge rewrites
   # /api/* to the Function URL rather than sending the browser somewhere else.

@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -31,7 +32,9 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
+	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
+	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -116,6 +119,19 @@ func construir() (http.Handler, error) {
 	if dsn == "" {
 		return nil, errors.New("falta DATABASE_URL")
 	}
+	// Sin bucket no hay boveda: /tmp se recicla con el contenedor y el ADR 0006 pide retencion.
+	bucket := config.Cadena("OBJECT_BUCKET", "")
+	if bucket == "" {
+		return nil, errors.New("falta OBJECT_BUCKET")
+	}
+	boveda, err := objetos.NuevoS3(ctx, bucket)
+	if err != nil {
+		return nil, err
+	}
+	lectores, err := ingesta.CatalogoDelCliente()
+	if err != nil {
+		return nil, fmt.Errorf("construir los adaptadores de ingesta: %w", err)
+	}
 
 	// El tamano del pool entra por el DSN (pool_max_conns), que pgxpool lee al
 	// parsearlo. Es lo que impide que N contenedores tibios se coman las
@@ -166,8 +182,7 @@ func construir() (http.Handler, error) {
 	}
 
 	// El padron de titulares del editor de splits (#30). Se cablea aqui igual
-	// que en cmd/api: es una lectura de la base, y este binario si tiene base,
-	// al contrario que la boveda de la ingesta de abajo.
+	// que en cmd/api: es una lectura de la base.
 	padron := aplicacion.Titulares{Padron: store}
 
 	// El guardia de R-01 apunta al STORE, no a `padron`, por lo mismo que en
@@ -219,9 +234,7 @@ func construir() (http.Handler, error) {
 		},
 	}
 
-	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
-	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
-	// cablear aqui abajo.
+	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api.
 	procesos := aplicacion.Procesos{
 		Repo:          store,
 		Parametros:    store,
@@ -236,19 +249,22 @@ func construir() (http.Handler, error) {
 		Origen:        store,
 	}
 
-	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
-	//
-	// La boveda (reportes crudos y documentos de afiliacion) es hoy
-	// `objetos.Disco`, y el ADR 0006 le exige inmutabilidad y retencion. El
-	// sistema de ficheros de Lambda es de solo lectura salvo /tmp, y /tmp se
-	// recicla con el contenedor: montar la boveda ahi daria un acuse (o una
-	// solicitud admitida) que certifica una evidencia que desaparece a la
-	// siguiente invocacion, que es exactamente la cifra sin comprobar que el
-	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
-	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
+	// Mismo cableado que cmd/api, con la boveda en S3 (ADR 0023).
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:      store,
-		Auth:       autenticacion,
+		Salud: store,
+		Auth:  autenticacion,
+		Admision: aplicacion.Admision{
+			Solicitudes: store,
+			Objetos:     boveda,
+			IDs:         cripto.TokensAleatorios{},
+			Claves:      cripto.Bcrypt{},
+		},
+		Ingesta: aplicacion.Ingesta{
+			Reportes:              store,
+			Almacen:               boveda,
+			Lectores:              lectores,
+			SnapshotNormalizacion: store.SnapshotNormalizacion,
+		},
 		Ordenes:    ordenes,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},

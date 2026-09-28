@@ -36,6 +36,16 @@ variable "database_url" {
   sensitive   = true
 }
 
+variable "vault_bucket_name" {
+  description = "Value for OBJECT_BUCKET, where sembrar-dataset writes the seed's raw reports."
+  type        = string
+}
+
+variable "vault_policy_json" {
+  description = "IAM policy the function needs over the vault bucket. Opaque here: modules/storage writes it."
+  type        = string
+}
+
 variable "subnet_ids" {
   description = "Private subnets the function attaches to."
   type        = list(string)

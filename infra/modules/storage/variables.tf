@@ -6,11 +6,7 @@
 #
 # OBJECT LOCK IS ON, WITH NO DEFAULT RETENTION. Object Lock can only be enabled
 # when a bucket is created, so deferring it would mean recreating the bucket
-# later. Enabling it without a default retention rule means nothing is actually
-# locked yet -- so terraform destroy still works during the MVP -- while the
-# capability is there for the S3 adapter to set per-object retention when it
-# lands. Today the only object store adapter is objetos/disco.go, which writes
-# to a local filesystem and is not wired into any binary.
+# later. Retention is set per object by objetos/s3.go (GOVERNANCE, 10 years, ADR 0023).
 
 variable "name_prefix" {
   description = "Prefix for every resource name."

@@ -85,10 +85,7 @@ const ordenSembrarTitularesDemo = "sembrar-titulares-demo" // alias de sembrar-d
 // cargadas).
 const ordenEstadoDatos = "estado-datos"
 
-// dirObjetosLambda es donde caen los bytes de los reportes del seed. /tmp es lo
-// unico escribible en provided.al2023; la API no los relee desde aqui (solo el
-// metadato en Postgres). Cuando exista el adaptador S3, se cablea igual que en
-// cmd/lambda.
+// dirObjetosLambda: boveda de respaldo sin OBJECT_BUCKET; en produccion Terraform fija el bucket.
 const dirObjetosLambda = "/tmp/objetos"
 
 // peticion es lo que manda Terraform: {"orden":"up"}.
@@ -250,7 +247,10 @@ func sembrarDataset(ctx context.Context, p peticion, log *slog.Logger) (respuest
 	}
 	defer store.CerrarPool()
 
-	almacen := objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosLambda)}
+	almacen, err := objetos.Boveda(ctx, config.Cadena("OBJECT_BUCKET", ""), config.Cadena("OBJECT_DIR", dirObjetosLambda))
+	if err != nil {
+		return respuesta{}, err
+	}
 	claves := semilla.Claves{
 		Admin:        config.Cadena("SEED_CLAVE_ADMIN", "admin-local"),
 		Distribucion: config.Cadena("SEED_CLAVE_DISTRIBUCION", "distribucion-local"),
