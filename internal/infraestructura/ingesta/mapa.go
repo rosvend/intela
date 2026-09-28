@@ -851,7 +851,7 @@ func letraColumna(n int) string {
 // rechazos que lee una persona: con el principio basta para reconocerlo.
 const maxCrudoEnMotivo = 80
 
-// recortar deja los primeros n runas de v y marca el corte. Por runas y no por
+// recortar deja las primeras n runas de v y marca el corte. Por runas y no por
 // bytes para no partir un caracter UTF-8 por la mitad.
 func recortar(v string, n int) string {
 	r := []rune(v)

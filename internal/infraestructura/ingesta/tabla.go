@@ -678,9 +678,9 @@ const umbralMayoriaAncho = 0.9
 //   - Todas las filas en un solo ancho legitimo: ese es el ancho, y se aceptan.
 //     Cubre las tres formas coherentes de exportar un archivo.
 //   - Anchos legitimos mezclados y uno con al menos umbralMayoriaAncho de las
-//     filas de ancho legitimo: ese es el ancho, y se rechaza la minoria -- tambien la
-//     que se pasa, porque una celda en blanco al final bajo la columna sin
-//     nombre es indistinguible de una coma de mas --.
+//     filas de ancho legitimo: ese es el ancho, y se rechaza la minoria --
+//     tambien la que se pasa, porque una celda en blanco al final bajo la
+//     columna sin nombre es indistinguible de una coma de mas --.
 //   - Ninguno llega al umbral: se devuelven los anchos en disputa y se rechazan
 //     TODAS sus filas. No hay forma de saber cual es la buena, y aceptar la
 //     mayoria es como entraban corridas las filas que perdieron la coma.
@@ -691,10 +691,11 @@ const umbralMayoriaAncho = 0.9
 //   - Un archivo en un solo ancho con la misma coma perdida en todas sus filas
 //     se lee como coherente y entra corrido. El caso extremo es un archivo de
 //     una sola fila.
-//   - La mayoria que pierde la misma coma, a escala: si al menos umbralMayoriaAncho de las filas perdieron la
-//     misma coma, esas filas SON la mayoria. Entran corridas, y la fila buena
-//     cae como minoria con un motivo que dice "campo de mas". Es el precio del
-//     umbral; antes de #113 entraban todas, tambien la buena, sin motivo.
+//   - La mayoria que pierde la misma coma, a escala: si al menos
+//     umbralMayoriaAncho de las filas perdieron la misma coma, esas filas SON
+//     la mayoria. Entran corridas, y la fila buena cae como minoria con un
+//     motivo que dice "campo de mas". Es el precio del umbral; antes de #113
+//     entraban todas, tambien la buena, sin motivo.
 //   - Una fila que pierde un campo y gana otro (`Rapido, furioso,2` bajo
 //     `titulo,id,taquilla`) tiene el ancho de las buenas.
 //

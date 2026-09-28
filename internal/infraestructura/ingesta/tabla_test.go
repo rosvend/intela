@@ -393,10 +393,10 @@ func parcheFilaXML(t *testing.T, datos []byte, viejo, nuevo string) []byte {
 	return salida.Bytes()
 }
 
-// El caso literal de la revision de #108 (issue #113, punto 1). `ReadAll`
-// descarta las lineas FISICAMENTE en blanco antes de que `desdeFilas` pueda
-// numerarlas, asi que la fila mala de la linea 5 salia como "fila 3". La
-// prueba vieja usaba `,\n`, que es un registro no vacio y no cubria esto.
+// El caso literal de la revision de #108 (issue #113, punto 1).
+// encoding/csv descarta las lineas FISICAMENTE en blanco antes de devolver el
+// registro, asi que numerar por posicion saca la fila mala de la linea 5 como
+// "fila 3". Un `,\n` no cubre esto: es un registro no vacio.
 func TestTablaCSVNumeraLaLineaFisicaTrasLineasEnBlanco(t *testing.T) {
 	t.Parallel()
 

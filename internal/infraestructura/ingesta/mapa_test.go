@@ -726,10 +726,10 @@ func TestLetraColumnaComoLaEscribeExcel(t *testing.T) {
 	}
 }
 
-// La simetrica de TestAplicarRechazaLaFilaConCamposDeMas (issue #113, punto 5). Una coma PERDIDA corre
-// los valores a la izquierda igual que una de mas los corre a la derecha, y
-// rellenar la fila corta en silencio escondia el primer caso: "Corrida,100"
-// entraba con id=100 y la taquilla vacia.
+// La simetrica de TestAplicarRechazaLaFilaConCamposDeMas (issue #113, punto
+// 5). Una coma PERDIDA corre los valores a la izquierda igual que una de mas
+// los corre a la derecha, y rellenar la fila corta en silencio escondia el
+// primer caso: "Corrida,100" entraba con id=100 y la taquilla vacia.
 //
 // El motivo tiene que ser el del ancho, no el de la celda: con el corrimiento
 // la taquilla viene vacia, y un "taquilla requerida vacia" mandaria al cliente
