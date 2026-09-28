@@ -2144,7 +2144,7 @@ func TestIngerirReporteNumeraLosMotivosCanonicosConLaLineaDelArchivo(t *testing.
 		}, nil
 	}
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-lineas"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx-lineas"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
@@ -2188,7 +2188,7 @@ func TestIngerirReporteNumeraLosMotivosDeValidarUso(t *testing.T) {
 	lec := &lectorFalso{filas: []UsoPersistido{sinTitulo, radio}}
 	ingesta, _, _ := ingestaConLector(lec)
 
-	rec, err := ingesta.IngerirReporte(t.Context(), "caracol", FormatoXLSX, "2026-01", []byte("xlsx-validar"))
+	rec, err := ingesta.IngerirReporte(t.Context(), usuarioQueSube, "caracol", FormatoXLSX, "2026-01", []byte("xlsx-validar"))
 	if err != nil {
 		t.Fatalf("IngerirReporte: %v", err)
 	}
