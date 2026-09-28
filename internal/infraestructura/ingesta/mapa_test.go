@@ -628,6 +628,12 @@ func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 			"99e30":                                "pasa de 10^30",
 			"10000000000000000000000000000000":     "pasa de 10^30",
 			"1.0000000000000000000000000000001e30": "pasa de 10^30",
+			// Un coeficiente de 10^15 tiene 16 cifras, y la cifra mas alta
+			// se cuenta sobre como esta escrito: Log10 sobre float64 da
+			// 14.999... y la dejaria una posicion por debajo.
+			"1000000000000000e16":  "pasa de 10^30",
+			"-1000000000000000e16": "pasa de 10^30",
+			"1000000000000001e15":  "pasa de 10^30",
 			// Una sola cifra decimal escrita, pero el valor es 10^-401.
 			"0.1e-400": "mas de 400 cifras decimales",
 		} {

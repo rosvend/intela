@@ -697,15 +697,18 @@ func escalaAcotada(bruto string, d decimal.Decimal) error {
 // maxExponente pasa seguro, por debajo no llega, y justo en maxExponente
 // solo 10^maxExponente exacto (un 1 seguido de ceros) no pasa.
 //
-// NumDigits no reescala, y el coeficiente solo se escribe en ese borde.
+// Las cifras son el largo del coeficiente escrito en base 10, que es lo que
+// el cliente escribio en la celda: cuesta lo que mide la celda, no lo que
+// mide el exponente. NumDigits no sirve: por debajo de 2^53 usa Log10 sobre
+// float64, que para 10^15 da 14.999... y cuenta una cifra de menos.
 func pasaDeLaCota(d decimal.Decimal) bool {
-	switch alta := int64(d.Exponent()) + int64(d.NumDigits()) - 1; {
+	c := new(big.Int).Abs(d.Coefficient()).String()
+	switch alta := int64(d.Exponent()) + int64(len(c)) - 1; {
 	case alta > maxExponente:
 		return true
 	case alta < maxExponente:
 		return false
 	}
-	c := new(big.Int).Abs(d.Coefficient()).String()
 	return strings.TrimRight(c, "0") != "1"
 }
 
