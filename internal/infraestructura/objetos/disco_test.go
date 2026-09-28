@@ -12,35 +12,17 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
-// Las claves que un atacante controla. El periodo sale de un formulario y el
-// nombre de multipart.FileHeader.Filename: los dos entran sin sanear en la
-// clave que se le pasa al almacen.
+func TestDiscoCumpleElContrato(t *testing.T) {
+	probarContrato(t, func(t *testing.T) aplicacion.AlmacenObjetos { return Disco{Dir: t.TempDir()} })
+}
+
+// Una clave invalida no deja nada escrito, ni fuera de la raiz ni dentro.
 func TestPonerRechazaEscapeDelDirectorio(t *testing.T) {
 	raiz := t.TempDir()
 	d := Disco{Dir: raiz}
-
-	claves := []string{
-		"reportes/../../../etc/passwd",
-		"../fuera.txt",
-		"reportes/2026/../../../../tmp/x",
-		"/etc/passwd",
-		`reportes\..\..\fuera.txt`,
-		"reportes/./../../fuera",
-		"",
-		"reportes//doble",
-		"reportes/2026-01/sub dir/x.csv",
+	for _, clave := range clavesInvalidas {
+		_ = d.Poner(context.Background(), clave, []byte("x"))
 	}
-
-	for _, clave := range claves {
-		t.Run(clave, func(t *testing.T) {
-			err := d.Poner(context.Background(), clave, []byte("x"))
-			if !errors.Is(err, ErrClaveInvalida) {
-				t.Fatalf("clave %q: se esperaba ErrClaveInvalida, se obtuvo %v", clave, err)
-			}
-		})
-	}
-
-	// Nada escrito fuera de la raiz, y nada dentro tampoco.
 	var vistos []string
 	_ = filepath.Walk(raiz, func(p string, info os.FileInfo, err error) error {
 		if err == nil && info != nil && !info.IsDir() {
@@ -53,81 +35,13 @@ func TestPonerRechazaEscapeDelDirectorio(t *testing.T) {
 	}
 }
 
-func TestPonerYObtener(t *testing.T) {
+func TestPonerDejaElFicheroBajoLaClave(t *testing.T) {
 	raiz := t.TempDir()
-	d := Disco{Dir: raiz}
-	clave := "reportes/2026-01/abc123/parrilla.csv"
-	datos := []byte("titulo,emisiones\nX,3\n")
-
-	if err := d.Poner(context.Background(), clave, datos); err != nil {
+	if err := (Disco{Dir: raiz}).Poner(context.Background(), "reportes/2026-01/abc123/parrilla.csv", []byte("x")); err != nil {
 		t.Fatalf("Poner: %v", err)
-	}
-	leido, err := d.Obtener(context.Background(), clave)
-	if err != nil {
-		t.Fatalf("Obtener: %v", err)
-	}
-	if string(leido) != string(datos) {
-		t.Fatalf("leido %q, esperado %q", leido, datos)
 	}
 	if _, err := os.Stat(filepath.Join(raiz, "reportes", "2026-01", "abc123", "parrilla.csv")); err != nil {
 		t.Fatalf("el fichero no quedo donde toca: %v", err)
-	}
-}
-
-// ADR 0006: la copia cruda es inmutable. Reescribir una clave ya usada es un
-// error, no una actualizacion.
-//
-// Y el error es ErrObjetoYaExiste, no el os.ErrExist de debajo: quien llama
-// tiene que poder distinguir "ya estaba" de "no se pudo escribir" sin conocer
-// los errores del sistema de ficheros. La ingesta deriva la clave de la huella
-// del contenido y depende de esa distincion para completar una subida que se
-// quedo a medias.
-func TestPonerNoSobrescribe(t *testing.T) {
-	d := Disco{Dir: t.TempDir()}
-	clave := "reportes/2026-01/sha/x.csv"
-
-	if err := d.Poner(context.Background(), clave, []byte("original")); err != nil {
-		t.Fatalf("primer Poner: %v", err)
-	}
-	err := d.Poner(context.Background(), clave, []byte("suplantado"))
-	if err == nil {
-		t.Fatal("se esperaba error al reescribir una clave existente")
-	}
-	if !errors.Is(err, aplicacion.ErrObjetoYaExiste) {
-		t.Fatalf("se esperaba ErrObjetoYaExiste, se obtuvo %v", err)
-	}
-
-	leido, err := d.Obtener(context.Background(), clave)
-	if err != nil {
-		t.Fatalf("Obtener: %v", err)
-	}
-	if string(leido) != "original" {
-		t.Fatalf("el contenido cambio: %q", leido)
-	}
-}
-
-func TestBorrarQuitaElObjetoYEsIdempotente(t *testing.T) {
-	d := Disco{Dir: t.TempDir()}
-	clave := "afiliaciones/afil-1/rut"
-	if err := d.Poner(context.Background(), clave, []byte("%PDF")); err != nil {
-		t.Fatalf("Poner: %v", err)
-	}
-	if err := d.Borrar(context.Background(), clave); err != nil {
-		t.Fatalf("Borrar: %v", err)
-	}
-	if _, err := d.Obtener(context.Background(), clave); !errors.Is(err, aplicacion.ErrNoEncontrado) {
-		t.Fatalf("tras borrar se esperaba ErrNoEncontrado, se obtuvo %v", err)
-	}
-	if err := d.Borrar(context.Background(), clave); err != nil {
-		t.Fatalf("borrar de nuevo: %v", err)
-	}
-}
-
-func TestObtenerInexistente(t *testing.T) {
-	d := Disco{Dir: t.TempDir()}
-	_, err := d.Obtener(context.Background(), "no/existe.csv")
-	if err == nil || !strings.Contains(err.Error(), "no encontrado") {
-		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
 }
 
