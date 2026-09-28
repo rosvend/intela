@@ -1,24 +1,38 @@
 package main
 
 import (
-	"os/exec"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
 
-// cmd/lambda deja Ingesta y Admision sin cablear: la boveda de hoy es
-// objetos.Disco, y el sistema de ficheros de Lambda no la puede hospedar.
-// Restaurar ese cableado sigue compilando y los tests de httpapi siguen
-// verdes, porque ellos solo comprueban el 503 cuando Admision es nil.
-func TestLambdaNoDependeDeLaBovedaEnDisco(t *testing.T) {
-	salida, err := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".").CombinedOutput()
+// Sin bucket la Lambda no arranca: una boveda en /tmp desapareceria con el contenedor (ADR 0006, 0023).
+func TestConstruirSinBucketFallaAntesDeConectar(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://nadie@127.0.0.1:1/nada")
+	t.Setenv("OBJECT_BUCKET", "")
+	_, err := construir()
+	if err == nil || !strings.Contains(err.Error(), "OBJECT_BUCKET") {
+		t.Fatalf("se esperaba un error que nombre OBJECT_BUCKET, se obtuvo %v", err)
+	}
+}
+
+// La Lambda nunca monta objetos.Disco: su sistema de ficheros solo deja escribir en /tmp.
+func TestLambdaNoUsaLaBovedaEnDisco(t *testing.T) {
+	fichero, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {
-		t.Fatalf("go list -deps: %v\n%s", err, salida)
+		t.Fatalf("parsear main.go: %v", err)
 	}
-	const boveda = "github.com/rosvend/intela/internal/infraestructura/objetos"
-	for _, pkg := range strings.Split(string(salida), "\n") {
-		if pkg == boveda {
-			t.Fatalf("cmd/lambda importa %s; Admision e Ingesta tienen que quedar sin cablear hasta el adaptador de S3", boveda)
+	ast.Inspect(fichero, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
 		}
-	}
+		paq, ok := sel.X.(*ast.Ident)
+		if ok && paq.Name == "objetos" && (sel.Sel.Name == "Disco" || sel.Sel.Name == "Boveda") {
+			t.Errorf("cmd/lambda usa objetos.%s; la boveda de produccion es objetos.NuevoS3", sel.Sel.Name)
+		}
+		return true
+	})
 }
