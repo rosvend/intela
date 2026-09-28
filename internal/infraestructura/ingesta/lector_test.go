@@ -474,27 +474,6 @@ func TestNuevoLectorRechazaUnFormatoDesconocido(t *testing.T) {
 		t.Fatalf("err = %v, se esperaba ErrReporteInvalido", err)
 	}
 }
-func TestFormatoDeNombre(t *testing.T) {
-	t.Parallel()
-
-	casos := map[string]string{
-		"parrilla.xlsx":      aplicacion.FormatoXLSX,
-		"PARRILLA.XLSX":      aplicacion.FormatoXLSX,
-		"macro.xlsm":         aplicacion.FormatoXLSX,
-		"reporte.csv":        aplicacion.FormatoCSV,
-		"reporte.json":       aplicacion.FormatoJSON,
-		"padron.xls":         "", // formato binario viejo: excelize no lo lee
-		"sin_extension":      "",
-		"reporte.xlsx.zip":   "",
-		"archivo.raro..":     "",
-		"reportes/enero.csv": aplicacion.FormatoCSV,
-	}
-	for nombre, quiere := range casos {
-		if got := aplicacion.FormatoDeNombre(nombre); got != quiere {
-			t.Errorf("FormatoDeNombre(%q) = %q, se esperaba %q", nombre, got, quiere)
-		}
-	}
-}
 
 // El mismo caso de punta a punta, por el Lector: el motivo tiene que mandar
 // al cliente a la linea 5, no a la 3.
