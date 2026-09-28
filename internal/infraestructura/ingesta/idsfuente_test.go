@@ -241,6 +241,24 @@ func TestAplicarRechazaLaFilaConCamposDeMas(t *testing.T) {
 	if usos[1].Titulo != "corrida" {
 		t.Errorf("la fila rechazada perdio el titulo: %+v", usos[1])
 	}
+
+	// Con la coma de mas en el titulo, lo corrido a `duracion` no es un
+	// numero. Esa celda es el sintoma: el motivo tiene que ser el del campo
+	// de mas, igual que el de la fila corta pisa al de su celda, o manda al
+	// cliente a corregir una duracion que esta bien escrita una columna mas
+	// alla.
+	tabla, err = TablaCSV([]byte("titulo,duracion\nRapido, furioso,10\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	usos, err = mapaMinimo().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if m := usos[0].RechazoMotivo; !strings.Contains(m, "fila 2: trae 3 campos") ||
+		!strings.Contains(m, "campo de mas") || strings.Contains(m, "no es un numero") {
+		t.Errorf("el motivo de la celda corrida pisa al del campo de mas: %q", m)
+	}
 }
 
 type usosDelPeriodo struct {

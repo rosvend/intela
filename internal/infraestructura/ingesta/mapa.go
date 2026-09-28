@@ -337,6 +337,21 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 			}
 			motivo = fmt.Sprintf("fila %d: trae %d campos y %d de %d filas de este archivo traen %d; %s",
 				linea, ancho, t.conEsperado, len(t.anchos), t.anchoEsperado, porque)
+		} else if len(fila) > len(t.Columnas) && t.formato != aplicacion.FormatoXLSX {
+			// Un campo de mas no se recorta: en CSV suele ser una coma sin
+			// entrecomillar que recorre todos los valores de la fila, y si los
+			// corridos siguen siendo validos para su tipo, la fila entraria
+			// con identificadores o medidas de otra columna. El rechazo
+			// conserva lo que se pudo leer de las columnas de la cabecera
+			// para poder pedirle al cliente la linea exacta.
+			//
+			// Pisa el motivo de celda por lo mismo que la fila corta: si lo
+			// corrido no es valido para su tipo, esa celda es el sintoma, y
+			// su motivo mandaria al cliente a corregir un valor que esta bien
+			// escrito una columna mas alla.
+			motivo = fmt.Sprintf(
+				"fila %d: trae %d campos y la cabecera tiene %d; un campo de mas no se recorta porque suele ser una coma sin entrecomillar que recorre los valores",
+				linea, len(fila), len(t.Columnas))
 		} else if col, v, hay := datoSinNombre(t.Columnas, fila); hay {
 			// Estructural, igual que el ancho: pisa el motivo de celda. No hay
 			// nombre al que mandar el valor, y descartarlo en silencio es como
@@ -345,21 +360,12 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 		}
 		if motivo == "" && len(fila) > len(t.Columnas) && t.formato == aplicacion.FormatoXLSX {
 			// En .xlsx no hay comas que se corran: es una celda escrita fuera
-			// del rango de la cabecera, y se nombra por su referencia.
+			// del rango de la cabecera, y se nombra por su referencia. Por eso
+			// va DESPUES del motivo de celda y no lo pisa: sin corrimiento, una
+			// celda mala dentro de la cabecera es un error de verdad.
 			motivo = fmt.Sprintf(
 				"fila %d: la celda %s%d esta fuera de la cabecera (ultima columna %s); sin encabezado no se sabe a que campo va",
 				linea, letraColumna(fueraDeCabecera(fila, len(t.Columnas))+1), linea, letraColumna(len(t.Columnas)))
-		}
-		if motivo == "" && len(fila) > len(t.Columnas) {
-			// Un campo de mas no se recorta: en CSV suele ser una coma sin
-			// entrecomillar que recorre todos los valores de la fila, y si los
-			// corridos siguen siendo validos para su tipo, la fila entraria
-			// con identificadores o medidas de otra columna. El rechazo
-			// conserva lo que se pudo leer de las columnas de la cabecera
-			// para poder pedirle al cliente la linea exacta.
-			motivo = fmt.Sprintf(
-				"fila %d: trae %d campos y la cabecera tiene %d; un campo de mas no se recorta porque suele ser una coma sin entrecomillar que recorre los valores",
-				linea, len(fila), len(t.Columnas))
 		}
 		if motivo == "" && len(clave) > 0 {
 			k := claveDe(fila, clave)
