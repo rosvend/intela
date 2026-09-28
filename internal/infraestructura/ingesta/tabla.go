@@ -465,11 +465,12 @@ func longitudFinDeLinea(line []byte) int {
 // json.Number conserva el literal tal como venia: 80197856 no se convierte a
 // float64 y vuelve como 8.0197856e+07, que es exactamente como se estropea un
 // identificador al pasar por un JSON. Un valor compuesto -- objeto o array --
-// se conserva como su JSON y se MARCA como compuesto: si la columna no esta
-// mapeada da igual, y si lo esta, [Mapa.Aplicar] rechaza la fila NOMBRANDO el
-// campo, que es mejor que convertirla en cadena vacia sin decirlo. La marca
-// hace falta porque, como texto, `{"x":1}` pasa por un titulo y `[1,2]` por un
-// identificador: sin ella entraban los dos sin motivo (issue #113).
+// se conserva como su JSON compacto y se MARCA como compuesto: si la columna
+// no esta mapeada da igual, y si lo esta, [Mapa.Aplicar] rechaza la fila
+// NOMBRANDO el campo, que es mejor que convertirla en cadena vacia sin
+// decirlo. La marca hace falta porque, como texto, `{"x":1}` pasa por un
+// titulo y `[1,2]` por un identificador: sin ella entraban los dos sin motivo
+// (issue #113).
 func TablaJSON(datos []byte) (Tabla, error) {
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(datos, []byte(bom))))
 	dec.UseNumber()
@@ -552,7 +553,17 @@ func textoJSON(crudo json.RawMessage) (string, bool) {
 		// Objeto o array. Se conserva su texto para el log de rechazos y se
 		// marca, para que el mapa lo rechace nombrando el campo. Ver el doc de
 		// TablaJSON.
-		return string(crudo), true
+		//
+		// Compacto: un export con sangria trae el compuesto en varias lineas,
+		// y el motivo que lo cita es UNA linea del log. Copiado tal cual, el
+		// motivo salia partido y el recorte se gastaba en espacios. Compact
+		// no falla aqui -- el valor acaba de decodificarse --, pero si fallara
+		// queda el crudo, que sigue siendo el dato.
+		var compacto bytes.Buffer
+		if err := json.Compact(&compacto, crudo); err != nil {
+			return string(crudo), true
+		}
+		return compacto.String(), true
 	}
 }
 

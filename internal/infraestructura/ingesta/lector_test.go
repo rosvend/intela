@@ -566,6 +566,28 @@ func TestJSONIgnoraLosCompuestosDeColumnasNoMapeadas(t *testing.T) {
 	}
 }
 
+// Un JSON exportado con sangria trae el compuesto en varias lineas. Copiado
+// tal cual, el motivo -- una linea del log de rechazos -- salia partido en
+// varias, y el recorte a maxCrudoEnMotivo se gastaba en espacios. El
+// compuesto se compacta antes de guardarlo.
+func TestJSONCompactaElCompuestoDelMotivo(t *testing.T) {
+	t.Parallel()
+
+	datos := "[\n  {\n    \"titulo\": {\n      \"es\": \"Hola\",\n      \"en\": \"Hello\"\n    },\n" +
+		"    \"id\": \"PX-1\",\n    \"taquilla\": 1\n  }\n]\n"
+	usos, err := lector(t, MapaCine(), aplicacion.FormatoJSON).Leer([]byte(datos))
+	if err != nil {
+		t.Fatalf("Leer: %v", err)
+	}
+	m := usos[0].RechazoMotivo
+	if strings.ContainsAny(m, "\n\r\t") {
+		t.Errorf("el motivo trae saltos de linea del archivo: %q", m)
+	}
+	if !strings.Contains(m, `{"es":"Hola","en":"Hello"}`) {
+		t.Errorf("el motivo no trae el compuesto compacto: %q", m)
+	}
+}
+
 // La parte cruda del compuesto va en el motivo para poder pedirlo, pero
 // recortada: un objeto de un export puede traer kilobytes, y el motivo es
 // una linea del log de rechazos que alguien lee.
