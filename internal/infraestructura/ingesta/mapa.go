@@ -336,8 +336,12 @@ func (m Mapa) Aplicar(t Tabla) ([]aplicacion.UsoPersistido, error) {
 			if ancho > t.anchoEsperado {
 				porque = "un campo de mas no se acepta porque suele ser una coma sin entrecomillar que corre los valores"
 			}
-			motivo = fmt.Sprintf("fila %d: trae %d campos y %d de %d filas de este archivo traen %d; %s",
-				linea, ancho, t.conEsperado, len(t.anchos), t.anchoEsperado, porque)
+			filas, traen := "filas", "traen"
+			if len(t.anchos) == 1 {
+				filas, traen = "fila", "trae"
+			}
+			motivo = fmt.Sprintf("fila %d: trae %d campos y %d de %d %s de este archivo %s %d; %s",
+				linea, ancho, t.conEsperado, len(t.anchos), filas, traen, t.anchoEsperado, porque)
 		} else if len(fila) > len(t.Columnas) && t.formato != aplicacion.FormatoXLSX {
 			// Un campo de mas no se recorta: en CSV suele ser una coma sin
 			// entrecomillar que recorre todos los valores de la fila, y si los

@@ -908,6 +908,22 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"", "trae 2 campos y 2 de 3 filas de este archivo traen 4", ""},
 		},
 		{
+			// Sin ninguna fila en el rango legitimo no hay mayoria que
+			// contar, y el ancho del motivo es el de la cabecera.
+			nombre: "ninguna fila en el rango legitimo",
+			datos:  "titulo,id,taquilla,\nA,PX-1\nB,PX-2\n",
+			quiere: []string{
+				"trae 2 campos y 0 de 2 filas de este archivo traen 4",
+				"trae 2 campos y 0 de 2 filas de este archivo traen 4",
+			},
+		},
+		{
+			// Con una sola fila de datos el motivo va en singular.
+			nombre: "una sola fila de datos, corta",
+			datos:  "titulo,id,taquilla\nA,PX-1\n",
+			quiere: []string{"fila 2: trae 2 campos y 0 de 1 fila de este archivo trae 3;"},
+		},
+		{
 			nombre: "comas parciales en empate",
 			datos:  "titulo,id,taquilla,, \nA,PX-1,1,\nB,PX-2,2\n",
 			quiere: []string{"mezcla filas de 3 y 4 campos", "mezcla"},

@@ -716,15 +716,19 @@ func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa 
 			legitimas++
 		}
 	}
-	// De menor a mayor con >=: en empate se queda el mayor. Sin ninguna fila
-	// en el rango legitimo, el ancho original.
-	esperado = len(columnas)
+	// Sin ninguna fila en el rango legitimo no hay mayoria que contar: el
+	// ancho es el de la cabecera, y ninguna fila lo trae.
+	if legitimas == 0 {
+		return len(columnas), 0, nil
+	}
+	// El ancho con mas filas. Solo cuenta si llega al umbral, que pasa de la
+	// mitad: si no llega, el archivo queda en disputa y da igual cual se tomo.
 	for a := nombradas; a <= len(columnas); a++ {
-		if cuenta[a] > 0 && cuenta[a] >= con {
+		if cuenta[a] > con {
 			esperado, con = a, cuenta[a]
 		}
 	}
-	if len(cuenta) <= 1 || float64(con)/float64(legitimas) >= umbralMayoriaAncho {
+	if float64(con)/float64(legitimas) >= umbralMayoriaAncho {
 		return esperado, con, nil
 	}
 	for a := nombradas; a <= len(columnas); a++ {
