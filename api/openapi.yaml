@@ -89,6 +89,11 @@ tags:
     description: |
       Liquidacion del titular autenticado: panel y export PDF/Excel (OE-6).
       Solo `titular`. El identificador sale de la sesion, no de la URL.
+  - name: titular
+    description: |
+      Panel de consulta del titular (OE-6). Solo `titular`. El recorte es
+      el `titular_id` de la sesion: no hay parametro para pedir los de
+      otro. Cada monto es neto; el bruto vive en `/explicar/{ref}`.
   - name: repertorio
     description: |
       Catalogo maestro de obras: el cubo contra el que resuelve todo el
@@ -1458,6 +1463,79 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: formato tiene que ser pdf o xlsx
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+
+  /mis-ingresos:
+    get:
+      tags: [titular]
+      summary: Ingresos netos del titular de la sesion
+      description: |
+        Lista las cifras netas del titular autenticado, recortadas a las
+        obras donde tiene participacion registrada (OE-6).
+
+        El titular se toma de la sesion. Un `titular_id` en la query no
+        cambia a quien se consulta.
+
+        El unico monto de cada fila es `neto`. El bruto, las deducciones
+        y el linaje (fuente, reporte, regla, split) estan en
+        `/explicar/{ref}`.
+      operationId: misIngresos
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      parameters:
+        - name: obra
+          in: query
+          required: false
+          description: Identificador de obra. Vacio, todas las del titular.
+          schema:
+            type: string
+          example: obra-completa
+        - name: fuente
+          in: query
+          required: false
+          description: Fuente del reporte que pondero la bolsa (caracol, netflix, ...).
+          schema:
+            type: string
+          example: caracol
+        - name: periodo
+          in: query
+          required: false
+          description: Periodo de la corrida, `YYYY` o `YYYY-MM`.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-[0-9]{2})?$'
+          example: "2026-01"
+      responses:
+        "200":
+          description: Lista de ingresos netos. Vacia si no hay cifras con esos filtros.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListaIngresos"
+              example:
+                ingresos:
+                  - ref: proc-2026-01:obra-completa:tit-ana
+                    obra_id: obra-completa
+                    obra: La Casa de las Dos Palmas
+                    fuente: caracol
+                    periodo: "2026-01"
+                    neto: "3600.00"
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -5505,6 +5583,48 @@ components:
           format: date-time
           description: Instante del hecho.
           example: "2026-04-02T10:30:00Z"
+
+    ListaIngresos:
+      type: object
+      required: [ingresos]
+      properties:
+        ingresos:
+          type: array
+          description: |
+            Cifras netas del titular de la sesion. El bruto no forma parte
+            de este objeto (OE-6).
+          items:
+            $ref: "#/components/schemas/Ingreso"
+
+    Ingreso:
+      type: object
+      required: [ref, obra_id, obra, fuente, periodo, neto]
+      properties:
+        ref:
+          type: string
+          description: |
+            Identificador de la linea, para `GET /explicar/{ref}`.
+          example: proc-2026-01:obra-completa:tit-ana
+        obra_id:
+          type: string
+          description: Identificador interno de la obra.
+        obra:
+          type: string
+          description: Titulo para mostrar.
+        fuente:
+          type: string
+          description: |
+            Fuentes de los reportes que ponderaron esta cifra en el periodo,
+            separadas por coma si hay mas de una. El detalle del archivo
+            crudo esta en la explicacion.
+        periodo:
+          type: string
+          description: Periodo de la corrida.
+          example: "2026-01"
+        neto:
+          type: string
+          description: Monto neto despues de deducciones. Nunca el bruto.
+          example: "3600.00"
 
     Explicacion:
       type: object

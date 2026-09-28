@@ -189,7 +189,7 @@ func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) 
 		return Explicacion{}, ErrNoAutorizado
 	}
 
-	if x.Bruto, x.Deducciones, err = brutoYDeducciones(cifra, corrida); err != nil {
+	if x.Bruto, x.Deducciones, err = brutoYDeducciones(cifra, corrida, obraID, titularID); err != nil {
 		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
 	}
 	x.Neto = cifra
@@ -243,11 +243,19 @@ func splitDe(t TitularAsentado, decl *DeclaracionAsentada) (*SplitLinaje, decima
 	return s, importe, nil
 }
 
-// brutoYDeducciones prorratea las deducciones de la corrida sobre la cifra, con la regla de la liquidacion.
-func brutoYDeducciones(cifra decimal.Decimal, c AsientoValorizacion) (decimal.Decimal, []DeduccionLinaje, error) {
+// brutoYDeducciones prorratea las deducciones de la corrida sobre la cifra.
+//
+// Con el vector de netos del asiento usa el mismo mayor-resto que el export
+// ([prorratearFila]). Sin vector —asientos anteriores a ese campo— cae en
+// [liquidacion.ProrratearLinea]. Una cifra en cero o un neto de proceso que
+// no es positivo no inventa porcentajes de deduccion.
+func brutoYDeducciones(cifra decimal.Decimal, c AsientoValorizacion, obraID, titularID string) (decimal.Decimal, []DeduccionLinaje, error) {
 	neto, err := decimal.NewFromString(c.Neto)
 	if err != nil {
 		return decimal.Zero, nil, fmt.Errorf("neto de la corrida: %w", ErrLinajeIncompleto)
+	}
+	if !neto.IsPositive() || cifra.IsZero() {
+		return cifra, []DeduccionLinaje{}, nil
 	}
 	montos := make(map[string]decimal.Decimal, len(c.Deducciones))
 	tasas := make(map[string]decimal.Decimal, len(c.Deducciones))
@@ -259,17 +267,46 @@ func brutoYDeducciones(cifra decimal.Decimal, c AsientoValorizacion) (decimal.De
 		}
 		montos[d.Concepto], tasas[d.Concepto] = m, p
 	}
-	partes, _ := liquidacion.Prorratear(map[string]decimal.Decimal{"cifra": cifra},
-		montos[liquidacion.ConceptoAdministracion], montos[liquidacion.ConceptoSocial],
-		montos[liquidacion.ConceptoReserva], neto)
+	admin := montos[liquidacion.ConceptoAdministracion]
+	social := montos[liquidacion.ConceptoSocial]
+	reserva := montos[liquidacion.ConceptoReserva]
 
-	bruto := cifra
-	deducciones := make([]DeduccionLinaje, 0, len(partes["cifra"]))
-	for _, p := range partes["cifra"] {
-		deducciones = append(deducciones, DeduccionLinaje{Concepto: p.Concepto, Porcentaje: tasas[p.Concepto], Monto: p.Monto})
-		bruto = bruto.Add(p.Monto)
+	var linea liquidacion.Linea
+	if titularID != "" && len(c.Netos) > 0 {
+		netos := make([]decimal.Decimal, len(c.Netos))
+		indice := -1
+		for i, n := range c.Netos {
+			v, err := decimal.NewFromString(n.Importe)
+			if err != nil {
+				return decimal.Zero, nil, fmt.Errorf("neto de %s/%s: %w", n.ObraID, n.TitularID, ErrLinajeIncompleto)
+			}
+			netos[i] = v
+			if n.ObraID == obraID && n.TitularID == titularID {
+				indice = i
+			}
+		}
+		if indice < 0 {
+			return decimal.Zero, nil, fmt.Errorf("la cifra no esta en el vector de netos: %w", ErrLinajeIncompleto)
+		}
+		linea, err = prorratearFila(FilaLiquidacion{
+			ObraID: obraID, Neto: cifra, ProcesoID: c.ProcesoID,
+			ProcesoAdmin: admin, ProcesoSocial: social, ProcesoReserva: reserva, ProcesoNeto: neto,
+			NetosProceso: netos, Indice: indice,
+		}, map[string][]liquidacion.Linea{})
+		if err != nil {
+			return decimal.Zero, nil, err
+		}
+	} else {
+		linea = liquidacion.ProrratearLinea(cifra, admin, social, reserva, neto)
 	}
-	return bruto, deducciones, nil
+	if linea.Bruto.IsZero() && linea.Admin.IsZero() && linea.Social.IsZero() && linea.Reserva.IsZero() {
+		return cifra, []DeduccionLinaje{}, nil
+	}
+	return linea.Bruto, []DeduccionLinaje{
+		{Concepto: liquidacion.ConceptoAdministracion, Porcentaje: tasas[liquidacion.ConceptoAdministracion], Monto: linea.Admin},
+		{Concepto: liquidacion.ConceptoSocial, Porcentaje: tasas[liquidacion.ConceptoSocial], Monto: linea.Social},
+		{Concepto: liquidacion.ConceptoReserva, Porcentaje: tasas[liquidacion.ConceptoReserva], Monto: linea.Reserva},
+	}, nil
 }
 
 // rangoDeCerteza ordena del eslabon mas debil al mas exacto (ADR 0007).

@@ -51,31 +51,6 @@ type Opciones struct {
 	Log                *slog.Logger
 }
 
-// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
-// entren sus PRs.
-type API struct {
-	salud          Salud
-	auth           Autenticacion
-	ordenes        ConsultaLiquidaciones
-	admision       Admision
-	catalogo       Catalogo
-	listadoONI     LecturaONI
-	publicarONI    EscrituraONI
-	padron         Padron
-	ingesta        Ingesta
-	declaraciones  Declaraciones
-	recaudo        Recaudo
-	reporte        ReporteLiquidaciones
-	procesos       Procesos
-	cola           ColaRevision
-	anomalias      Anomalias
-	auditoria      Auditoria
-	identificacion CasosIdentificacion
-	explicar       Explicador
-	opts           Opciones
-	log            *slog.Logger
-}
-
 // Casos agrupa los casos de uso que sirve el adaptador.
 //
 // Dependencias y no configuracion: Opciones se rellena desde el entorno, esto
@@ -102,11 +77,38 @@ type Casos struct {
 	Auditoria      Auditoria
 	Identificacion CasosIdentificacion
 	Explicar       Explicador
+	Ingresos       ConsultaIngresos
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
+}
+
+// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
+// entren sus PRs.
+type API struct {
+	salud          Salud
+	auth           Autenticacion
+	ordenes        ConsultaLiquidaciones
+	admision       Admision
+	catalogo       Catalogo
+	listadoONI     LecturaONI
+	publicarONI    EscrituraONI
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	reporte        ReporteLiquidaciones
+	procesos       Procesos
+	cola           ColaRevision
+	anomalias      Anomalias
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	explicar       Explicador
+	ingresos       ConsultaIngresos
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Nueva construye el adaptador.
@@ -139,6 +141,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		auditoria:      casos.Auditoria,
 		identificacion: casos.Identificacion,
 		explicar:       casos.Explicar,
+		ingresos:       casos.Ingresos,
 		opts:           opts,
 		log:            log,
 	}
@@ -212,11 +215,15 @@ func (a *API) Router() http.Handler {
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
-		if a.explicar != nil {
-			protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
-				Get("/explicar/{ref}", a.explicarCifra)
-		}
+		protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+			Get("/explicar/{ref}", a.explicarCifra)
 
+		// Panel del titular (OE-6). El middleware cierra el prefijo al
+		// rol; el caso de uso recorta por TitularID de la sesion.
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-ingresos", a.misIngresos)
+		})
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
 		// todo el matching, y quien lo lee entero ve el repertorio completo

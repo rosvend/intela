@@ -35,6 +35,7 @@ en ninguna prueba.
 | `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` | — |
 | `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo | — |
 | `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` | — |
+| `/mis-ingresos` | `titular` | — |
 | `/alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador`, `distribucion` |
 | `/reportes/*` | `administrador` | `administrador` |
 | `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
@@ -86,7 +87,9 @@ el menu del cliente.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
-`TitularID`, no el id de usuario.
+`TitularID`, no el id de usuario. En `/mis-ingresos` el recorte es el
+`TitularID` de la sesion (nunca un parametro). En `/explicar/{ref}` una
+cifra de otro titular responde 403.
 
 `/procesos/*` es el flujo de aprobaciones de `RD 13.5` (#34), y se parte en
 tres grupos por la misma razon que `/recaudo` y `/bolsas`: `administrador`

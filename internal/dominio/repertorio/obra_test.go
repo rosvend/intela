@@ -33,6 +33,7 @@ func TestNuevaObraRechazaLoQueFalta(t *testing.T) {
 	}{
 		{"sin identificador", "", nil},
 		{"identificador en blanco", "   ", nil},
+		{"identificador con dos puntos", "obra:17", nil},
 		{"sin titulo", "obra-1", func(m *Metadatos) { m.Titulo = "" }},
 		{"titulo en blanco", "obra-1", func(m *Metadatos) { m.Titulo = "  \t " }},
 		{"sin genero", "obra-1", func(m *Metadatos) { m.Genero = "" }},

@@ -236,6 +236,7 @@ func ejecutar(log *slog.Logger) error {
 		Auditoria:      aplicacion.Auditoria{Bitacora: store},
 		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
 		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
+		Ingresos:       aplicacion.ConsultaIngresos{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

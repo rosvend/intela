@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -213,5 +216,49 @@ func TestExplicarConCorreccionSinAltaNombraElAlta(t *testing.T) {
 	}
 	if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
 		t.Fatalf("faltantes = %v, sin alta asentada tiene que nombrar %q", x.Faltantes, HechoObraRegistrada)
+	}
+}
+
+func TestBrutoYDeduccionesUsaElMismoVectorQueElExport(t *testing.T) {
+	t.Parallel()
+	// Tres titulares de 100 y admin 1.00: el mayor-resto le da 0.34 al primero.
+	// Prorratear cada linea sola le daria 0.33 a las tres.
+	c := AsientoValorizacion{
+		ProcesoID: "proc-1",
+		Neto:      "300.00",
+		Deducciones: []DeduccionAsentada{
+			{Concepto: liquidacion.ConceptoAdministracion, Porcentaje: "0", Monto: "1.00"},
+			{Concepto: liquidacion.ConceptoSocial, Porcentaje: "0", Monto: "0.00"},
+			{Concepto: liquidacion.ConceptoReserva, Porcentaje: "0", Monto: "0.00"},
+		},
+		Netos: []NetoTitularAsentado{
+			{ObraID: "obra-a", TitularID: "t1", Importe: "100.00"},
+			{ObraID: "obra-b", TitularID: "t2", Importe: "100.00"},
+			{ObraID: "obra-c", TitularID: "t3", Importe: "100.00"},
+		},
+	}
+	_, ded, err := brutoYDeducciones(decimal.RequireFromString("100.00"), c, "obra-a", "t1")
+	if err != nil {
+		t.Fatalf("prorratear: %v", err)
+	}
+	if len(ded) != 3 || !ded[0].Monto.Equal(decimal.RequireFromString("0.34")) {
+		t.Fatalf("admin del primero = %+v, se esperaba 0.34 (el mismo centavo que el export)", ded)
+	}
+}
+
+func TestBrutoYDeduccionesCifraCeroNoInventaPorcentajes(t *testing.T) {
+	t.Parallel()
+	c := AsientoValorizacion{
+		Neto: "300.00",
+		Deducciones: []DeduccionAsentada{
+			{Concepto: liquidacion.ConceptoAdministracion, Porcentaje: "20", Monto: "1.00"},
+		},
+	}
+	bruto, ded, err := brutoYDeducciones(decimal.Zero, c, "obra-a", "t1")
+	if err != nil {
+		t.Fatalf("prorratear: %v", err)
+	}
+	if !bruto.IsZero() || len(ded) != 0 {
+		t.Fatalf("bruto=%s deducciones=%v, una cifra en cero no lleva porcentajes", bruto, ded)
 	}
 }
