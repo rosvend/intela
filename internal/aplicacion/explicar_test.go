@@ -1,114 +1,217 @@
 package aplicacion
 
 import (
-	"context"
 	"errors"
 	"testing"
 
-	"github.com/shopspring/decimal"
+	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
-type repoExplicacion struct {
-	valor              Explicacion
-	err                error
-	proceso, obra, tit string
-	llamadas           int
-}
-
-func (r *repoExplicacion) PorLinea(_ context.Context, procesoID, obraID, titularID string) (Explicacion, error) {
-	r.llamadas++
-	r.proceso, r.obra, r.tit = procesoID, obraID, titularID
-	return r.valor, r.err
-}
-
-func cifraAna() Explicacion {
-	version := 1
-	return Explicacion{
-		Ref:       FormarRef("proc-2026-01", "obra-completa", "tit-ana"),
-		TitularID: "tit-ana",
-		Neto:      decimal.RequireFromString("4500.00"),
-		Bruto:     decimal.RequireFromString("6000.00"),
-		Corrida:   CorridaLinaje{ProcesoID: "proc-2026-01", Periodo: "2026-01", Circuito: "nacional"},
-		Reporte:   ReporteLinaje{ID: "rpt-caracol-2026-01", Fuente: "caracol", SHA256: "aa"},
-		Obra:      ObraLinaje{ID: "obra-completa", Titulo: "La Casa de las Dos Palmas", Escalon: "alias", Puntaje: decimal.RequireFromString("1.00000")},
-		Regla:     ReglaLinaje{SnapshotID: "snap-2026-01", Reglamento: "RD-IX"},
-		Split:     SplitLinaje{TitularID: "tit-ana", IPI: "IPI-00000001", Porcentaje: decimal.RequireFromString("60.0000"), Version: &version},
-		Deducciones: []Deduccion{
-			{Concepto: "gastos administrativos", Porcentaje: decimal.RequireFromString("10.00"), Monto: decimal.RequireFromString("600.00")},
-		},
+// corridaAsentada es corridaSinAltas mas el alta asentada de cada obra: la cadena completa.
+func corridaAsentada(t *testing.T) *bitacoraFalsa {
+	t.Helper()
+	b := corridaSinAltas(t)
+	for _, o := range []struct{ id, titulo string }{{"obra-1", "La Primera"}, {"obra-2", "La Segunda"}} {
+		b.asientos = append(b.asientos, Asiento{
+			ID: "as-alta-" + o.id, Hecho: HechoObraRegistrada, RefTipo: RefObra, RefID: o.id,
+			Payload: []byte(`{"despues":{"titulo":"` + o.titulo + `","genero":"drama","anio":2020}}`),
+		})
 	}
+	return b
 }
 
-func TestExplicarCifraTitularVeLaSuya(t *testing.T) {
-	x := cifraAna()
-	repo := &repoExplicacion{valor: x}
-	e := ExplicarCifra{Repo: repo}
-	actor := Usuario{ID: "usr-ana", Rol: RolTitular, TitularID: "tit-ana"}
+// corridaSinAltas corre proc-1 de verdad hasta firmar Verificacion; las obras no tienen alta asentada.
+func corridaSinAltas(t *testing.T) *bitacoraFalsa {
+	t.Helper()
+	e, _ := entornoValorizacion(t)
+	for range 4 {
+		if _, err := e.uc.AvanzarEtapa(t.Context(), "proc-1", "usr-admin"); err != nil {
+			t.Fatalf("avanzar: %v", err)
+		}
+	}
+	if _, err := e.uc.Firmar(t.Context(), "proc-1", reparto.RolDistribucion, "usr-dist"); err != nil {
+		t.Fatalf("firmar distribucion: %v", err)
+	}
+	if _, err := e.uc.Firmar(t.Context(), "proc-1", reparto.RolContabilidad, "usr-conta"); err != nil {
+		t.Fatalf("firmar contabilidad: %v", err)
+	}
+	e.bitacora.asientos = append(e.bitacora.asientos, Asiento{
+		ID: "as-recaudo", Hecho: HechoRecaudoRegistrado, RefTipo: RefBolsa, RefID: "bolsa-1",
+		Payload: []byte(`{"usuario_id":"z","periodo":"2026-01","circuito":"nacional","bruto":"1000000.00","convenio":"conv-9","tarifa":"T-01","factura":"F-77"}`),
+	})
+	return e.bitacora
+}
 
-	got, err := e.Explicar(context.Background(), actor, x.Ref)
+var (
+	auditor    = Usuario{ID: "usr-aud", Rol: RolAuditor}
+	titularUno = Usuario{ID: "usr-t1", Rol: RolTitular, TitularID: "titular-1"}
+	otroTitu   = Usuario{ID: "usr-t9", Rol: RolTitular, TitularID: "titular-9"}
+)
+
+func TestExplicarUnaLineaDeTitularRespondeLasSietePreguntas(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	x, err := uc.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
 	if err != nil {
-		t.Fatalf("Explicar: %v", err)
+		t.Fatalf("error inesperado: %v", err)
 	}
-	if repo.proceso != "proc-2026-01" || repo.obra != "obra-completa" || repo.tit != "tit-ana" {
-		t.Fatalf("PorLinea recibia %s %s %s", repo.proceso, repo.obra, repo.tit)
+	if x.Ref != "proc-1:obra-1:titular-1" || x.TitularID != "titular-1" || x.Retenida {
+		t.Fatalf("cabecera = %+v", x)
 	}
-	if got.Neto.StringFixed(2) != "4500.00" {
-		t.Fatalf("neto = %s", got.Neto)
+	if x.Bolsa.ID != "bolsa-1" || x.Bolsa.UsuarioID != "z" || x.Bolsa.Recaudo == nil || x.Bolsa.Recaudo.Factura != "F-77" {
+		t.Fatalf("1. bolsa = %+v", x.Bolsa)
 	}
-	if got.Bruto.StringFixed(2) != "6000.00" {
-		t.Fatal("el bruto vive en la explicacion, no se puede perder")
+	if len(x.Reportes) != 1 || x.Reportes[0].SHA256 != "abc" || x.Reportes[0].ClaveObjeto != "crudos/abc" || x.Reporte.ID != "rep-1" {
+		t.Fatalf("2. reportes = %+v / %+v", x.Reportes, x.Reporte)
 	}
-	if got.Regla.SnapshotID != "snap-2026-01" || got.Obra.Escalon != "alias" {
-		t.Fatalf("linaje incompleto: %+v", got)
+	if x.Obra.ID != "obra-1" || x.Obra.Escalon != "difuso" || x.Obra.Puntaje != "0.91" || len(x.Identificacion) != 1 {
+		t.Fatalf("3. obra = %+v, identificacion = %+v", x.Obra, x.Identificacion)
+	}
+	if x.Regla.SnapshotID != "snap-1" || x.Regla.Reglamento != "RD-IX" {
+		t.Fatalf("4. regla = %+v", x.Regla)
+	}
+	if x.Split == nil || x.Split.IPI != "IPI-1" || !x.Split.Porcentaje.Equal(d("100")) || x.Split.Version == nil || *x.Split.Version != 3 {
+		t.Fatalf("5. split = %+v", x.Split)
+	}
+	if len(x.Deducciones) != 3 || x.Deducciones[0].Concepto != "gastos_administrativos" || !x.Deducciones[0].Porcentaje.Equal(d("20")) {
+		t.Fatalf("6. deducciones = %+v", x.Deducciones)
+	}
+	suma := x.Neto
+	for _, ded := range x.Deducciones {
+		suma = suma.Add(ded.Monto)
+	}
+	if x.Neto.IsZero() || !suma.Equal(x.Bruto) {
+		t.Fatalf("6. bruto %s != neto %s + deducciones", x.Bruto, x.Neto)
+	}
+	if len(x.Firmas) != 2 || x.Firmas[0].Rol != "distribucion" || x.Firmas[1].ActorID != "usr-conta" {
+		t.Fatalf("7. firmas = %+v", x.Firmas)
+	}
+	if x.Corrida.ProcesoID != "proc-1" || x.Corrida.Periodo != "2026-01" || x.Corrida.Circuito != "nacional" {
+		t.Fatalf("corrida = %+v", x.Corrida)
+	}
+	if x.Obra.Titulo != "La Primera" {
+		t.Fatalf("obra.titulo = %q, sale del alta asentada", x.Obra.Titulo)
+	}
+	if len(x.Faltantes) != 0 {
+		t.Fatalf("faltantes = %v, la cadena esta completa", x.Faltantes)
 	}
 }
 
-func TestExplicarCifraTitularNoVeLaAjena(t *testing.T) {
-	repo := &repoExplicacion{valor: Explicacion{TitularID: "tit-beto"}}
-	e := ExplicarCifra{Repo: repo}
-	actor := Usuario{ID: "usr-ana", Rol: RolTitular, TitularID: "tit-ana"}
+func TestExplicarNombraElAltaDeObraQueFalta(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaSinAltas(t)}
 
-	_, err := e.Explicar(context.Background(), actor, FormarRef("proc-1", "obra-beto", "tit-beto"))
-	if !errors.Is(err, ErrNoAutorizado) {
-		t.Fatalf("err = %v, se esperaba ErrNoAutorizado (403, no 404)", err)
+	for _, ref := range []string{"proc-1:obra-1:titular-1", "proc-1:obra-2"} {
+		x, err := uc.Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if x.Obra.Titulo != "" {
+			t.Fatalf("%s: obra.titulo = %q sin alta asentada", ref, x.Obra.Titulo)
+		}
+		if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+			t.Fatalf("%s: faltantes = %v, tiene que nombrar %q", ref, x.Faltantes, HechoObraRegistrada)
+		}
 	}
 }
 
-func TestExplicarCifraAuditorVeCifraAjena(t *testing.T) {
-	x := cifraAna()
-	x.TitularID = "tit-beto"
-	repo := &repoExplicacion{valor: x}
-	e := ExplicarCifra{Repo: repo}
+func TestExplicarUnaObraRetenidaDiceElMotivo(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
 
-	got, err := e.Explicar(context.Background(), Usuario{ID: "usr-rf", Rol: RolAuditor}, x.Ref)
+	x, err := uc.Explicar(t.Context(), auditor, "proc-1:obra-2")
 	if err != nil {
-		t.Fatalf("el auditor tiene que ver cualquier cifra: %v", err)
+		t.Fatalf("error inesperado: %v", err)
 	}
-	if got.TitularID != "tit-beto" {
-		t.Fatalf("TitularID = %q", got.TitularID)
+	if !x.Retenida || x.Motivo == "" || x.Split != nil || x.TitularID != "" {
+		t.Fatalf("retenida = %+v, se esperaba el motivo de RD 13.1.3", x)
 	}
-}
-
-func TestExplicarCifraNoEncontrada(t *testing.T) {
-	e := ExplicarCifra{Repo: &repoExplicacion{err: ErrNoEncontrado}}
-	actor := Usuario{ID: "usr-ana", Rol: RolTitular, TitularID: "tit-ana"}
-
-	_, err := e.Explicar(context.Background(), actor, FormarRef("proc-x", "obra-x", "tit-ana"))
-	if !errors.Is(err, ErrNoEncontrado) {
-		t.Fatalf("err = %v", err)
+	if x.Identificacion[0].ResueltoPor != "usr-admin" {
+		t.Fatalf("identificacion = %+v", x.Identificacion)
 	}
 }
 
-func TestExplicarCifraRefInvalidaNoConsulta(t *testing.T) {
-	repo := &repoExplicacion{}
-	e := ExplicarCifra{Repo: repo}
-	actor := Usuario{ID: "usr-ana", Rol: RolTitular, TitularID: "tit-ana"}
+func TestExplicarAlcanceDelTitular(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
 
-	_, err := e.Explicar(context.Background(), actor, "no-es-una-ref")
-	if !errors.Is(err, ErrNoEncontrado) {
-		t.Fatalf("err = %v", err)
+	if _, err := uc.Explicar(t.Context(), titularUno, "proc-1:obra-1:titular-1"); err != nil {
+		t.Fatalf("el titular no pudo ver su propia cifra: %v", err)
 	}
-	if repo.llamadas != 0 {
-		t.Fatal("una ref mal formada no tiene que ir a la base")
+	if _, err := uc.Explicar(t.Context(), otroTitu, "proc-1:obra-1:titular-1"); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("error = %v, la cifra de otro titular es 403", err)
+	}
+	if _, err := uc.Explicar(t.Context(), titularUno, "proc-1:obra-2"); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("error = %v, un titular no ve la obra donde no participa", err)
+	}
+}
+
+func TestExplicarSinLinajeEsNoEncontrado(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	for _, ref := range []string{
+		"proc-x:obra-1:titular-1", // corrida sin asientos
+		"proc-1:obra-x",           // obra que no valorizo en esa corrida
+		"proc-1:obra-1:titular-x", // titular ajeno a la obra
+		"sin-separador",
+		"a:b:c:d",
+		"proc-1::titular-1",
+	} {
+		if _, err := uc.Explicar(t.Context(), auditor, ref); !errors.Is(err, ErrNoEncontrado) {
+			t.Errorf("%q: error = %v, se esperaba ErrNoEncontrado", ref, err)
+		}
+	}
+}
+
+func TestExplicarNombraElEslabonQueFalta(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+	var sinRecaudo []Asiento
+	for _, a := range b.asientos {
+		if a.Hecho != HechoRecaudoRegistrado {
+			sinRecaudo = append(sinRecaudo, a)
+		}
+	}
+	b.asientos = sinRecaudo
+
+	x, err := ExplicarCifra{Bitacora: b}.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Bolsa.Recaudo != nil || len(x.Faltantes) != 1 || x.Faltantes[0] != HechoRecaudoRegistrado {
+		t.Fatalf("faltantes = %v, se esperaba nombrar el recaudo ausente", x.Faltantes)
+	}
+}
+
+func TestRefDeLineaYDeObra(t *testing.T) {
+	t.Parallel()
+	if got := FormarRef("proc-1", "obra-1", "titular-1"); got != "proc-1:obra-1:titular-1" {
+		t.Fatalf("FormarRef = %q", got)
+	}
+	if got := FormarRef("proc-1", "obra-1", ""); got != "proc-1:obra-1" {
+		t.Fatalf("FormarRef sin titular = %q", got)
+	}
+}
+
+// Una correccion da el titulo pero no es el alta: faltantes sigue nombrando obra.registrada (B3).
+func TestExplicarConCorreccionSinAltaNombraElAlta(t *testing.T) {
+	t.Parallel()
+	b := corridaSinAltas(t)
+	b.asientos = append(b.asientos, Asiento{
+		ID: "as-correccion-obra-1", Hecho: HechoObraCorregida, RefTipo: RefObra, RefID: "obra-1",
+		Payload: []byte(`{"despues":{"titulo":"La Primera Corregida","genero":"drama","anio":2020}}`),
+	})
+
+	x, err := ExplicarCifra{Bitacora: b}.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("explicar: %v", err)
+	}
+	if x.Obra.Titulo != "La Primera Corregida" {
+		t.Fatalf("obra.titulo = %q, sale de la ultima correccion", x.Obra.Titulo)
+	}
+	if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+		t.Fatalf("faltantes = %v, sin alta asentada tiene que nombrar %q", x.Faltantes, HechoObraRegistrada)
 	}
 }

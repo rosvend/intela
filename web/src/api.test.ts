@@ -4,6 +4,7 @@ import {
   ErrorDeCuerpoIlegible,
   ErrorDeRed,
   api,
+  nombreDeContentDisposition,
   setToken,
   setUnauthorizedHandler,
 } from "./api";
@@ -384,6 +385,14 @@ describe("api", () => {
     await expect(
       api("/api/auth/session", { method: "DELETE" }),
     ).resolves.not.toThrow();
+  });
+
+  it("extrae el filename de Content-Disposition", () => {
+    expect(
+      nombreDeContentDisposition(
+        'attachment; filename="liquidacion-2026-01.pdf"',
+      ),
+    ).toBe("liquidacion-2026-01.pdf");
   });
 
   it("extrae el campo error de un cuerpo JSON", async () => {

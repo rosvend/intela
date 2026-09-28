@@ -108,25 +108,3 @@ func TestMisIngresosNilSeVuelveListaVacia(t *testing.T) {
 		t.Fatalf("len = %d", len(filas))
 	}
 }
-
-func TestParsearRef(t *testing.T) {
-	p, o, tit, err := ParsearRef("proc-1:obra-completa:tit-ana")
-	if err != nil {
-		t.Fatalf("ParsearRef: %v", err)
-	}
-	if p != "proc-1" || o != "obra-completa" || tit != "tit-ana" {
-		t.Fatalf("%s %s %s", p, o, tit)
-	}
-	if FormarRef(p, o, tit) != "proc-1:obra-completa:tit-ana" {
-		t.Fatal("FormarRef no es el inverso")
-	}
-}
-
-func TestParsearRefInvalidoEsNoEncontrado(t *testing.T) {
-	for _, ref := range []string{"", "solo-uno", "a:b", "a:b:c:d", "::tit-ana", "p::t"} {
-		_, _, _, err := ParsearRef(ref)
-		if !errors.Is(err, ErrNoEncontrado) {
-			t.Fatalf("ref %q: err = %v", ref, err)
-		}
-	}
-}

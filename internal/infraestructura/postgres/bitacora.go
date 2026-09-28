@@ -11,7 +11,7 @@ var _ aplicacion.BitacoraAuditoria = (*Store)(nil)
 // id::text: la columna es UUID nativo, y el cast a texto es lo que deja
 // escanear el resultado directo a un string de Go sin arrastrar un tipo de
 // pgx hasta aplicacion, que no sabe que existe un UUID.
-const columnasAsiento = `id::text, hecho, ref_tipo, ref_id, COALESCE(actor_id, ''), payload, cuando`
+const columnasAsiento = `id::text, hecho, ref_tipo, ref_id, COALESCE(actor_id, ''), COALESCE(refiere_a::text, ''), payload, cuando`
 
 // Asentar escribe en `asientos`. La tabla es append-only por trigger
 // (`asientos_inmutables`, migracion 00001): este adaptador no tiene -ni
@@ -40,9 +40,9 @@ func (s *Store) Asentar(ctx context.Context, a aplicacion.Asiento) error {
 // necesita; cual de los dos llega lo decide quien llama.
 func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
 	_, err := ex.Exec(ctx,
-		`INSERT INTO asientos (hecho, ref_tipo, ref_id, actor_id, payload, cuando)
-		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)`,
-		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.Payload, a.Cuando)
+		`INSERT INTO asientos (hecho, ref_tipo, ref_id, actor_id, refiere_a, payload, cuando)
+		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::uuid, $6, $7)`,
+		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.RefiereA, a.Payload, a.Cuando)
 	if err != nil {
 		return traducirError(err, "asentar %q sobre %s %q", a.Hecho, a.RefTipo, a.RefID)
 	}
@@ -70,7 +70,7 @@ func (s *Store) De(ctx context.Context, refTipo, refID string) ([]aplicacion.Asi
 	var asientos []aplicacion.Asiento
 	for filas.Next() {
 		var a aplicacion.Asiento
-		if err := filas.Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.Payload, &a.Cuando); err != nil {
+		if err := filas.Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.RefiereA, &a.Payload, &a.Cuando); err != nil {
 			return nil, traducirError(err, "escanear asiento de %s %q", refTipo, refID)
 		}
 		asientos = append(asientos, a)
@@ -85,7 +85,7 @@ func (s *Store) AsientoPorID(ctx context.Context, id string) (aplicacion.Asiento
 	var a aplicacion.Asiento
 	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT `+columnasAsiento+` FROM asientos WHERE id = $1`, id).
-		Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.Payload, &a.Cuando)
+		Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.RefiereA, &a.Payload, &a.Cuando)
 	if err != nil {
 		return aplicacion.Asiento{}, traducirError(err, "asiento %q", id)
 	}
@@ -119,7 +119,7 @@ func (s *Store) ListarAsientos(ctx context.Context, pag aplicacion.Paginacion) (
 	asientos := make([]aplicacion.Asiento, 0)
 	for filas.Next() {
 		var a aplicacion.Asiento
-		if err := filas.Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.Payload, &a.Cuando); err != nil {
+		if err := filas.Scan(&a.ID, &a.Hecho, &a.RefTipo, &a.RefID, &a.ActorID, &a.RefiereA, &a.Payload, &a.Cuando); err != nil {
 			return nil, traducirError(err, "escanear asientos")
 		}
 		asientos = append(asientos, a)

@@ -46,8 +46,8 @@
 //
 // # Que falta aqui
 //
-// Autenticacion, ConsultaIngresos (OE-6) y ExplicarCifra (ADR 0006). Cada
-// uno declara solo los puertos que necesita. El asiento en bitacora es
-// parte de la definicion de hecho de los que mueven dinero; consultar e
-// explicar leen, no asientan.
+// Autenticacion, ConsultaIngresos (OE-6), ExplicarCifra (ADR 0006) y la
+// liquidacion exportable. Cada uno declara solo los puertos que necesita.
+// El asiento en bitacora es parte de la definicion de hecho de los que
+// mueven dinero; consultar e explicar leen, no asientan.
 package aplicacion

@@ -784,7 +784,9 @@ type ResiduoProrrateoAsentado struct {
 // DeduccionAsentada es un renglon del desglose en el libro.
 type DeduccionAsentada struct {
 	Concepto string `json:"concepto"`
-	Monto    string `json:"monto"`
+	// Porcentaje es la tasa del snapshot de la corrida (0-100); vacio donde se agregan corridas.
+	Porcentaje string `json:"porcentaje,omitempty"`
+	Monto      string `json:"monto"`
 }
 
 func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) ResiduoProrrateoAsentado {

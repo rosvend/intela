@@ -2,7 +2,6 @@ package aplicacion
 
 import (
 	"context"
-	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -53,22 +52,4 @@ func (c ConsultaIngresos) MisIngresos(ctx context.Context, actor Usuario, f Filt
 		filas = []Ingreso{}
 	}
 	return filas, nil
-}
-
-// FormarRef identifica una linea de titular de una corrida. Tres segmentos
-// separados por ':' porque chi toma {ref} como un solo tramo de ruta, y
-// una barra lo partiria.
-func FormarRef(procesoID, obraID, titularID string) string {
-	return procesoID + ":" + obraID + ":" + titularID
-}
-
-// ParsearRef deshace FormarRef. Cualquier otra forma es ErrNoEncontrado,
-// no un 400: quien adivina refs no merece un diagnostico distinto al de
-// una cifra que no existe.
-func ParsearRef(ref string) (procesoID, obraID, titularID string, err error) {
-	partes := strings.Split(ref, ":")
-	if len(partes) != 3 || partes[0] == "" || partes[1] == "" || partes[2] == "" {
-		return "", "", "", ErrNoEncontrado
-	}
-	return partes[0], partes[1], partes[2], nil
 }

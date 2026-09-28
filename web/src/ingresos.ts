@@ -54,7 +54,7 @@ export type Explicacion = {
     ipi: string;
     porcentaje: string;
     version: number | null;
-  };
+  } | null;
   deducciones: Deduccion[];
 };
 

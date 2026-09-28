@@ -300,6 +300,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/identificacion/casos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Casos de identificacion
+         * @description Lista los usos que la cascada no pudo identificar (`pendiente`,
+         *     escalon `oni`) y los que una persona ya resolvio (`asignado`,
+         *     escalon `manual`), con la evidencia y los candidatos de la banda
+         *     ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
+         *
+         *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
+         *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
+         *
+         *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
+         *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
+         *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
+         *     caso resuelto y el alta del reporte para uno pendiente.
+         *
+         *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un
+         *     filtro mal formado responde 400.
+         */
+        get: operations["listarCasosIdentificacion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auditoria/asientos": {
         parameters: {
             query?: never;
@@ -358,6 +392,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mis-liquidaciones/obras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Panel de liquidacion del titular
+         * @description Devuelve bruto, cada deduccion (admin, bienestar social, reserva) y
+         *     neto por obra del titular autenticado. El filtro `periodo` es el
+         *     mismo que usa el export: panel y archivo no pueden divergir.
+         *
+         *     El titular sale de la sesion, no de un parametro. Sin sesion es 401.
+         *     Con otro rol es 403.
+         */
+        get: operations["consultarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-liquidaciones/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Exportar la liquidacion a PDF o Excel
+         * @description Renderiza la misma liquidacion que `GET /mis-liquidaciones/obras` como
+         *     archivo. Las cifras van embebidas: el fichero se puede abrir sin
+         *     conexion al panel (OE-6).
+         *
+         *     `formato=pdf` usa maroto; `formato=xlsx` usa excelize. Cualquier
+         *     otro valor es 400. El filtro `periodo` es el mismo del panel.
+         */
+        get: operations["exportarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mis-ingresos": {
         parameters: {
             query?: never;
@@ -395,16 +479,26 @@ export interface paths {
         };
         /**
          * Linaje de una cifra
-         * @description Devuelve el linaje que produce `ExplicarCifra` (ADR 0006): corrida,
-         *     reporte de origen, obra con escalon y puntaje del match, snapshot
-         *     normativo, split de la declaracion, y el paso de bruto a neto con
-         *     cada deduccion.
+         * @description Devuelve el linaje de una cifra distribuida, reconstruido solo desde
+         *     los asientos de la corrida (`reparto.valorizado`, `firma.registrada`),
+         *     de la obra (`reparto.obra_valorizada`) y de la bolsa
+         *     (`recaudo.registrado`). No recalcula nada contra las tablas actuales:
+         *     el snapshot, la declaracion y el archivo que valen son los que la
+         *     corrida uso.
          *
-         *     Es la unica fuente de la explicacion. El frontend no recomputa el
-         *     linaje a partir de datos crudos.
+         *     `ref` es `proceso_id:obra_id:titular_id` para la linea de un titular,
+         *     o `proceso_id:obra_id` para la cifra de la obra, incluida una obra
+         *     retenida porque su declaracion no suma 100% (RD 13.1.3).
          *
-         *     Un titular solo ve cifras suyas: la de otro titular responde 403,
-         *     no 404. `auditor` y `administrador` ven cualquiera.
+         *     Si falta la valorizacion de la corrida o de la obra, la respuesta es
+         *     404: una explicacion a medias es peor que ninguna. Un eslabon
+         *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
+         *     no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
+         *     de la bolsa (`recaudo.registrado`) y el alta de la obra
+         *     (`obra.registrada`, que se nombra aunque haya correcciones asentadas).
+         *
+         *     Un titular solo ve lineas suyas; la de otro titular responde 403, no
+         *     404. `auditor` y `administrador` ven cualquiera.
          */
         get: operations["explicarCifra"];
         put?: never;
@@ -918,6 +1012,12 @@ export interface paths {
          *     de la que salio (`sha256`, `clave_objeto`), que es lo que permite
          *     volver al archivo EXACTO que pondero una corrida y no "al archivo de
          *     esa fuente" (ADR 0006).
+         *
+         *     Cada carga dice tambien QUIEN la subio (`subido_por`): es la parte de la
+         *     trazabilidad que faltaba, porque la escritura que decide como se pondera
+         *     la bolsa de un periodo entero era la unica del sistema sin actor. Las
+         *     entregas anteriores a esa columna lo traen vacio, que es "anterior a la
+         *     atribucion" y no un actor desconocido.
          */
         get: operations["listarCargas"];
         put?: never;
@@ -941,6 +1041,11 @@ export interface paths {
          *     `formato` explicito. `multipart.FileHeader.Filename` no es de fiar, asi
          *     que de el sale UNICAMENTE esa decision: la clave del objeto de la
          *     boveda se deriva de la huella del contenido, no del nombre.
+         *
+         *     La entrega queda atribuida al usuario de la SESION, y el actor no viaja
+         *     en el formulario: un campo `subido_por` en el multipart se ignora. Quien
+         *     sube el archivo no elige a nombre de quien queda registrada una entrega
+         *     que pondera la bolsa de un periodo entero.
          */
         post: operations["subirReporte"];
         delete?: never;
@@ -1073,6 +1178,26 @@ export interface components {
              */
             clave_objeto: string;
             nbytes: number;
+            /**
+             * @description Id del usuario autenticado que hizo la entrega (#116). Es la
+             *     respuesta a "quien entrego este archivo", que era lo que faltaba
+             *     para cerrar la cadena: de una entrega se sabia la fuente, el periodo
+             *     y la huella, pero no quien la subio, mientras que `usos.resuelto_por`
+             *     ya registraba el actor de una resolucion manual, que es una accion
+             *     menos consecuente.
+             *
+             *     Sale de la SESION, nunca del formulario: un campo `subido_por` en el
+             *     multipart se ignora. Si valiera, quien sube el archivo elegiria a
+             *     nombre de quien queda registrada la entrega que pondera la bolsa de
+             *     un periodo entero.
+             *
+             *     Cadena vacia cuando no hay actor: las entregas anteriores a la
+             *     columna, que son "anteriores a la atribucion", y las que escribe el
+             *     sembrador. Se persiste como NULL y no se rellena con un usuario
+             *     inventado, porque una atribucion falsa es peor que su ausencia
+             *     declarada.
+             */
+            subido_por: string;
             /**
              * Format: date-time
              * @description Cuando llego. Sale del reloj de la base: es la marca de un hecho de
@@ -1645,121 +1770,45 @@ export interface components {
              */
             error: string;
         };
-        ListaIngresos: {
-            /**
-             * @description Cifras netas del titular de la sesion. El bruto no forma parte
-             *     de este objeto (OE-6).
-             */
-            ingresos: components["schemas"]["Ingreso"][];
+        /**
+         * @description Importe en COP con dos decimales, sin separador de miles. Es una
+         *     cadena para no perder centavos en JSON number.
+         * @example 3900.00
+         */
+        Monto: string;
+        TotalesLiquidacion: {
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
         };
-        Ingreso: {
-            /**
-             * @description Identificador de la linea, para `GET /explicar/{ref}`.
-             * @example proc-2026-01:obra-completa:tit-ana
-             */
-            ref: string;
-            /** @description Identificador interno de la obra. */
+        LineaLiquidacion: {
+            /** @example 2026-01 */
+            periodo: string;
+            /** @example obra-completa */
             obra_id: string;
-            /** @description Titulo para mostrar. */
-            obra: string;
+            /** @example La Casa de las Dos Palmas */
+            titulo: string;
+            bruto: components["schemas"]["Monto"];
+            admin: components["schemas"]["Monto"];
+            social: components["schemas"]["Monto"];
+            reserva: components["schemas"]["Monto"];
+            neto: components["schemas"]["Monto"];
+        };
+        Liquidacion: {
             /**
-             * @description Fuentes de los reportes que ponderaron esta cifra en el periodo,
-             *     separadas por coma si hay mas de una. El detalle del archivo
-             *     crudo esta en la explicacion.
+             * @description Titular de la sesion, no un parametro de la URL.
+             * @example tit-ana
              */
-            fuente: string;
+            titular_id: string;
             /**
-             * @description Periodo de la corrida.
+             * @description Filtro aplicado. Cadena vacia si no se filtro.
              * @example 2026-01
              */
             periodo: string;
-            /**
-             * @description Monto neto despues de deducciones. Nunca el bruto.
-             * @example 3600.00
-             */
-            neto: string;
-        };
-        Explicacion: {
-            /** @description La misma ref que se pidio. */
-            ref: string;
-            /**
-             * @description Monto neto de la linea. Coincide con el del panel.
-             * @example 3600.00
-             */
-            neto: string;
-            /**
-             * @description Bruto proporcional del titular. Solo aparece aqui, nunca como
-             *     cifra de cabecera del panel (OE-6).
-             * @example 4800.00
-             */
-            bruto: string;
-            corrida: components["schemas"]["CorridaLinaje"];
-            reporte: components["schemas"]["ReporteLinaje"];
-            obra: components["schemas"]["ObraLinaje"];
-            regla: components["schemas"]["ReglaLinaje"];
-            split: components["schemas"]["SplitLinaje"];
-            /** @description Recortes legales del bruto al neto, en orden. */
-            deducciones: components["schemas"]["DeduccionLinea"][];
-        };
-        CorridaLinaje: {
-            proceso_id: string;
-            periodo: string;
-            /** @enum {string} */
-            circuito: "nacional" | "internacional";
-        };
-        ReporteLinaje: {
-            id: string;
-            fuente: string;
-            /** @description Huella del archivo crudo en el almacen de objetos. */
-            sha256: string;
-        };
-        ObraLinaje: {
-            id: string;
-            titulo: string;
-            /**
-             * @description Escalon de la cascada de identificacion.
-             * @enum {string}
-             */
-            escalon: "pendiente" | "alias" | "id_global" | "difuso" | "manual" | "oni" | "";
-            /** @description Puntaje del match, de 0 a 1. Cero si no hubo match difuso. */
-            puntaje: string;
-        };
-        ReglaLinaje: {
-            /** @description Snapshot normativo congelado al abrir el proceso. */
-            snapshot_id: string;
-            /** @description Version del reglamento de esa corrida. */
-            reglamento: string;
-        };
-        SplitLinaje: {
-            titular_id: string;
-            ipi: string;
-            /** @description Porcentaje de la declaracion de obra, cuatro decimales. */
-            porcentaje: string;
-            /**
-             * @description Version de la declaracion con la que se repartio la corrida.
-             *     Null mientras esa version no este persistida en la corrida:
-             *     la vigente de hoy no es la que se uso, y no se inventa un 1
-             *     (ADR 0006).
-             */
-            version?: number | null;
-        };
-        /**
-         * @description Deduccion de una linea del panel de ingresos. A diferencia de
-         *     `Deduccion` (orden de pago), incluye el porcentaje de la bolsa.
-         */
-        DeduccionLinea: {
-            /**
-             * @description Recorte legal mostrado en la explicacion de la cifra:
-             *     gastos administrativos, bienestar social o reserva.
-             */
-            concepto: string;
-            /** @description Porcentaje sobre el bruto de la bolsa. */
-            porcentaje: string;
-            /**
-             * @description Importe proporcional descontado al titular.
-             * @example 480.00
-             */
-            monto: string;
+            lineas: components["schemas"]["LineaLiquidacion"][];
+            totales: components["schemas"]["TotalesLiquidacion"];
         };
         SolicitudAfiliacion: {
             /** @description Nombre del aspirante. */
@@ -1933,8 +1982,14 @@ export interface components {
          *     viaja tal cual lo guardo el modulo que asento -es su evidencia, no
          *     una proyeccion-: `declaracion.guardada` trae version, estado y
          *     partes; `recaudo.registrado` trae periodo, circuito, bruto, convenio,
-         *     tarifa y factura. Append-only: no hay escritura ni borrado que
-         *     documentar.
+         *     tarifa y factura; `proceso.abierto`, `proceso.etapa_avanzada`,
+         *     `firma.registrada` y `proceso.gate_rechazado` traen la etapa, la
+         *     revision y, segun el caso, la firma o el motivo;
+         *     `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
+         *     su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
+         *     el importe de la obra, la version de su declaracion, las partes y la
+         *     identificacion de cada uso. Append-only: un asiento nunca se modifica
+         *     ni se borra.
          */
         Asiento: {
             /**
@@ -1965,6 +2020,13 @@ export interface components {
              */
             actor: string;
             /**
+             * @description Columna reservada para enlazar una correccion con el asiento que
+             *     corrige (ADR 0006). Ningun caso de uso escribe correcciones todavia,
+             *     asi que hoy siempre esta ausente.
+             * @example 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+             */
+            refiere_a?: string;
+            /**
              * @description Detalle del hecho, tal cual lo guardo el modulo que asento:
              *     cualquier JSON. `declaracion.guardada` trae version, estado y
              *     partes; `recaudo.registrado` trae periodo, circuito, bruto,
@@ -1979,6 +2041,214 @@ export interface components {
              * @example 2026-04-02T10:30:00Z
              */
             cuando: string;
+        };
+        ListaIngresos: {
+            /**
+             * @description Cifras netas del titular de la sesion. El bruto no forma parte
+             *     de este objeto (OE-6).
+             */
+            ingresos: components["schemas"]["Ingreso"][];
+        };
+        Ingreso: {
+            /**
+             * @description Identificador de la linea, para `GET /explicar/{ref}`.
+             * @example proc-2026-01:obra-completa:tit-ana
+             */
+            ref: string;
+            /** @description Identificador interno de la obra. */
+            obra_id: string;
+            /** @description Titulo para mostrar. */
+            obra: string;
+            /**
+             * @description Fuentes de los reportes que ponderaron esta cifra en el periodo,
+             *     separadas por coma si hay mas de una. El detalle del archivo
+             *     crudo esta en la explicacion.
+             */
+            fuente: string;
+            /**
+             * @description Periodo de la corrida.
+             * @example 2026-01
+             */
+            periodo: string;
+            /**
+             * @description Monto neto despues de deducciones. Nunca el bruto.
+             * @example 3600.00
+             */
+            neto: string;
+        };
+        /**
+         * @description Linaje de una cifra (ADR 0006). Montos como cadena con dos decimales
+         *     (ADR 0010); porcentajes como cadena en escala 0-100.
+         */
+        Explicacion: {
+            /** @description La ref pedida. */
+            ref: string;
+            /** @description Titular de la linea. Ausente en la cifra de una obra. */
+            titular_id?: string;
+            /**
+             * @description La cifra explicada, despues de deducciones.
+             * @example 650000.00
+             */
+            neto: string;
+            /**
+             * @description Neto mas las deducciones que le corresponden.
+             * @example 1000000.00
+             */
+            bruto: string;
+            /** @description La obra se retuvo entera (RD 13.1.3, R-04). */
+            retenida: boolean;
+            /** @description Por que se retuvo. Ausente si no se retuvo. */
+            motivo?: string;
+            corrida: {
+                proceso_id: string;
+                /** @example 2026-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /** @description De donde salio el dinero. */
+            bolsa: {
+                id: string;
+                /** @description Usuario de recaudo que pago la bolsa. */
+                usuario_id: string;
+                /** @example 1000000.00 */
+                bruto: string;
+                /** @description Como se cobro. Null si el recaudo no tiene asiento; ver `faltantes`. */
+                recaudo: {
+                    convenio: string;
+                    tarifa: string;
+                    factura: string;
+                } | null;
+            };
+            reporte: components["schemas"]["ReporteDeLinaje"];
+            /** @description Los archivos exactos que ponderaron esta obra en la corrida. */
+            reportes: components["schemas"]["ReporteDeLinaje"][];
+            /** @description La obra, resumida por su identificacion menos cierta. */
+            obra: {
+                id: string;
+                /** @description De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos. */
+                titulo: string;
+                /** @enum {string} */
+                escalon: "alias" | "id_global" | "difuso" | "manual";
+                /** @description Vacio para alias e id global, que son exactos. */
+                puntaje: string;
+            };
+            /** @description Como se reconocio la obra en cada uso que peso (ADR 0007). */
+            identificacion: {
+                uso_id: string;
+                reporte_id: string;
+                escalon: string;
+                puntaje?: string;
+                evidencia?: string;
+                /** @description Quien decidio, si fue manual. */
+                resuelto_por?: string;
+                /** Format: date-time */
+                resuelto_en?: string;
+            }[];
+            regla: {
+                snapshot_id: string;
+                reglamento: string;
+            };
+            /** @description La parte declarada del titular. Null en la cifra de una obra. */
+            split: {
+                titular_id: string;
+                ipi: string;
+                /** @example 60 */
+                porcentaje: string;
+                /** @description Version de la declaracion que uso la corrida. */
+                version: number | null;
+            } | null;
+            deducciones: {
+                /** @enum {string} */
+                concepto: "gastos_administrativos" | "bienestar_social" | "reserva_errores_tecnicos";
+                /** @example 20 */
+                porcentaje: string;
+                /** @example 200000.00 */
+                monto: string;
+            }[];
+            /** @description Firmas de compuerta de la corrida, incluidas las de revisiones rechazadas. */
+            firmas: {
+                /** @enum {string} */
+                rol: "distribucion" | "contabilidad";
+                actor_id: string;
+                sobre_revision: number;
+                etapa: string;
+                /** Format: date-time */
+                cuando: string;
+            }[];
+            /**
+             * @description Eslabones accesorios sin asiento, por el nombre del hecho que falta:
+             *     `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
+             *     de la obra; una correccion asentada no la sustituye). Vacio solo si
+             *     los dos estan asentados; la cadena del dinero nunca falta, sin ella
+             *     la respuesta es 404.
+             */
+            faltantes: string[];
+        };
+        /** @description La version exacta de un archivo crudo en la boveda. */
+        ReporteDeLinaje: {
+            id: string;
+            fuente: string;
+            sha256: string;
+            clave_objeto: string;
+        };
+        /** @description Una pagina de la cola manual y el total de pendientes bajo los mismos filtros. */
+        PaginaCasosIdentificacion: {
+            casos: components["schemas"]["CasoIdentificacion"][];
+            /** @description Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion. */
+            pendientes: number;
+        };
+        /**
+         * @description Un uso que la cascada no resolvio, tal como llego, con la evidencia
+         *     para que una persona decida. Sin importes ni medidas (ADR 0007).
+         */
+        CasoIdentificacion: {
+            /** @description Id del uso. */
+            id: string;
+            titulo: string;
+            titulo_original: string;
+            fuente: string;
+            modalidad: string;
+            reporte_id: string;
+            /** @description Periodo del reporte del que salio el uso. */
+            periodo: string;
+            /** @description Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018). */
+            ids_fuente: string;
+            /** @description Por que la cascada no lo resolvio. */
+            evidencia: string;
+            /** @enum {string} */
+            estado: "pendiente" | "asignado";
+            /** @description Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda. */
+            candidatos: components["schemas"]["CandidatoIdentificacion"][];
+            /** @description La obra que una persona le dio al caso. `null` si esta pendiente. */
+            obra_asignada: {
+                id: string;
+                titulo: string;
+            } | null;
+            /** @description Quien resolvio el caso. `null` si esta pendiente. */
+            resuelto_por: {
+                id: string;
+                /** @description Nombre para mostrar del usuario. */
+                nombre: string;
+            } | null;
+            /** Format: date-time */
+            resuelto_en: string | null;
+            /**
+             * Format: date-time
+             * @description `resuelto_en` si esta resuelto; si no, el alta del reporte.
+             */
+            ultima_actualizacion: string;
+        };
+        CandidatoIdentificacion: {
+            obra_id: string;
+            /** @description Titulo de la obra en el catalogo. */
+            titulo: string;
+            anio: number;
+            genero: string;
+            /** @description Similitud del escalon difuso. */
+            puntaje: number;
+            /** @description El titulo del uso con el que se obtuvo el puntaje. */
+            titulo_consultado: string;
         };
         /**
          * @description Una fila de la cola de revision. El mismo schema sirve a la
@@ -2013,7 +2283,13 @@ export interface components {
         };
     };
     responses: never;
-    parameters: never;
+    parameters: {
+        /**
+         * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+         * @example 2026-01
+         */
+        Periodo: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -2998,6 +3274,142 @@ export interface operations {
             };
         };
     };
+    listarCasosIdentificacion: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filtra por estado del caso. Si se omite, lista los dos.
+                 * @example pendiente
+                 */
+                estado?: "pendiente" | "asignado";
+                /**
+                 * @description Fuente del uso, exacta.
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo del reporte, `AAAA` o `AAAA-MM` con mes entre 01 y 12.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos casos saltarse. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pagina de casos, en orden de llegada del reporte. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "pendientes": 1,
+                     *       "casos": [
+                     *         {
+                     *           "id": "uso-1",
+                     *           "titulo": "La Casa",
+                     *           "titulo_original": "The House",
+                     *           "fuente": "caracol",
+                     *           "modalidad": "tv",
+                     *           "reporte_id": "rep-1",
+                     *           "periodo": "2025-01",
+                     *           "ids_fuente": "id_ficha=871732",
+                     *           "evidencia": "banda ambigua: 1 candidatos, mejor obra-12 (0.61000) para \"la casa\" bajo umbral 0.85000",
+                     *           "estado": "pendiente",
+                     *           "candidatos": [
+                     *             {
+                     *               "obra_id": "obra-12",
+                     *               "titulo": "La Casa de las Dos Palmas",
+                     *               "anio": 1990,
+                     *               "genero": "Drama",
+                     *               "puntaje": 0.61,
+                     *               "titulo_consultado": "la casa"
+                     *             }
+                     *           ],
+                     *           "obra_asignada": null,
+                     *           "resuelto_por": null,
+                     *           "resuelto_en": null,
+                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PaginaCasosIdentificacion"];
+                };
+            };
+            /** @description Un filtro o la paginacion vienen mal formados. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "filtro de casos invalido: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo la cola de identificacion. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la cola de identificacion no esta disponible"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     auditoriaAsientos: {
         parameters: {
             query?: {
@@ -3179,6 +3591,175 @@ export interface operations {
             };
         };
     };
+    consultarLiquidaciones: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Liquidacion del titular. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "titular_id": "tit-ana",
+                     *       "periodo": "2026-01",
+                     *       "lineas": [
+                     *         {
+                     *           "periodo": "2026-01",
+                     *           "obra_id": "obra-completa",
+                     *           "titulo": "La Casa de las Dos Palmas",
+                     *           "bruto": "6000.00",
+                     *           "admin": "1200.00",
+                     *           "social": "600.00",
+                     *           "reserva": "300.00",
+                     *           "neto": "3900.00"
+                     *         }
+                     *       ],
+                     *       "totales": {
+                     *         "bruto": "6000.00",
+                     *         "admin": "1200.00",
+                     *         "social": "600.00",
+                     *         "reserva": "300.00",
+                     *         "neto": "3900.00"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Liquidacion"];
+                };
+            };
+            /** @description El periodo no es YYYY ni YYYY-MM. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "periodo tiene que ser YYYY o YYYY-MM"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportarLiquidaciones: {
+        parameters: {
+            query: {
+                /**
+                 * @description Periodo de recaudo, `YYYY` o `YYYY-MM`. Vacio significa todos.
+                 * @example 2026-01
+                 */
+                periodo?: components["parameters"]["Periodo"];
+                /**
+                 * @description pdf o xlsx.
+                 * @example pdf
+                 */
+                formato: "pdf" | "xlsx";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archivo con la liquidacion embebida. */
+            200: {
+                headers: {
+                    /** @description Nombre del fichero, p. ej. liquidacion-2026-01.pdf */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            /** @description Formato o periodo invalidos. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "formato tiene que ser pdf o xlsx"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     misIngresos: {
         parameters: {
             query?: {
@@ -3263,10 +3844,9 @@ export interface operations {
             header?: never;
             path: {
                 /**
-                 * @description Identificador de la linea: `proceso_id:obra_id:titular_id`.
-                 *     Tres segmentos separados por `:` porque la ruta toma `{ref}`
-                 *     como un solo tramo.
-                 * @example proc-2026-01:obra-completa:tit-ana
+                 * @description `proceso_id:obra_id:titular_id` o `proceso_id:obra_id`. Cualquier
+                 *     otra forma responde 404.
+                 * @example proc-bolsa-1-1:obra-1:titular-1
                  */
                 ref: string;
             };
@@ -3282,52 +3862,99 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "ref": "proc-2026-01:obra-completa:tit-ana",
-                     *       "neto": "3600.00",
-                     *       "bruto": "4800.00",
+                     *       "ref": "proc-bolsa-1-1:obra-1:titular-1",
+                     *       "titular_id": "titular-1",
+                     *       "neto": "650000.00",
+                     *       "bruto": "1000000.00",
+                     *       "retenida": false,
                      *       "corrida": {
-                     *         "proceso_id": "proc-2026-01",
+                     *         "proceso_id": "proc-bolsa-1-1",
                      *         "periodo": "2026-01",
                      *         "circuito": "nacional"
                      *       },
+                     *       "bolsa": {
+                     *         "id": "bolsa-1",
+                     *         "usuario_id": "caracol",
+                     *         "bruto": "1000000.00",
+                     *         "recaudo": {
+                     *           "convenio": "conv-2026",
+                     *           "tarifa": "T-01",
+                     *           "factura": "F-0001"
+                     *         }
+                     *       },
                      *       "reporte": {
-                     *         "id": "rpt-caracol-2026-01",
+                     *         "id": "rep-caracol-2026-01",
                      *         "fuente": "caracol",
-                     *         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                     *         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                     *         "clave_objeto": "reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                      *       },
+                     *       "reportes": [
+                     *         {
+                     *           "id": "rep-caracol-2026-01",
+                     *           "fuente": "caracol",
+                     *           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                     *           "clave_objeto": "reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                     *         }
+                     *       ],
                      *       "obra": {
-                     *         "id": "obra-completa",
+                     *         "id": "obra-1",
                      *         "titulo": "La Casa de las Dos Palmas",
-                     *         "escalon": "alias",
-                     *         "puntaje": "1.00000"
+                     *         "escalon": "difuso",
+                     *         "puntaje": "0.91"
                      *       },
+                     *       "identificacion": [
+                     *         {
+                     *           "uso_id": "uso-1",
+                     *           "reporte_id": "rep-caracol-2026-01",
+                     *           "escalon": "difuso",
+                     *           "puntaje": "0.91",
+                     *           "evidencia": "trgm sobre titulo normalizado"
+                     *         }
+                     *       ],
                      *       "regla": {
                      *         "snapshot_id": "snap-2026-01",
                      *         "reglamento": "RD-IX"
                      *       },
                      *       "split": {
-                     *         "titular_id": "tit-ana",
+                     *         "titular_id": "titular-1",
                      *         "ipi": "IPI-00000001",
-                     *         "porcentaje": "60.0000",
-                     *         "version": null
+                     *         "porcentaje": "100",
+                     *         "version": 3
                      *       },
                      *       "deducciones": [
                      *         {
-                     *           "concepto": "gastos administrativos",
-                     *           "porcentaje": "10.00",
-                     *           "monto": "480.00"
+                     *           "concepto": "gastos_administrativos",
+                     *           "porcentaje": "20",
+                     *           "monto": "200000.00"
                      *         },
                      *         {
-                     *           "concepto": "bienestar social",
-                     *           "porcentaje": "5.00",
-                     *           "monto": "240.00"
+                     *           "concepto": "bienestar_social",
+                     *           "porcentaje": "10",
+                     *           "monto": "100000.00"
                      *         },
                      *         {
-                     *           "concepto": "reserva",
-                     *           "porcentaje": "10.00",
-                     *           "monto": "480.00"
+                     *           "concepto": "reserva_errores_tecnicos",
+                     *           "porcentaje": "5",
+                     *           "monto": "50000.00"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "firmas": [
+                     *         {
+                     *           "rol": "distribucion",
+                     *           "actor_id": "usr-dist",
+                     *           "sobre_revision": 1,
+                     *           "etapa": "verificacion",
+                     *           "cuando": "2026-02-01T10:00:00Z"
+                     *         },
+                     *         {
+                     *           "rol": "contabilidad",
+                     *           "actor_id": "usr-conta",
+                     *           "sobre_revision": 1,
+                     *           "etapa": "verificacion",
+                     *           "cuando": "2026-02-01T11:00:00Z"
+                     *         }
+                     *       ],
+                     *       "faltantes": []
                      *     }
                      */
                     "application/json": components["schemas"]["Explicacion"];
@@ -3364,7 +3991,10 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description No hay una linea con esa ref. */
+            /**
+             * @description La ref no tiene forma valida, o la corrida o la obra no tienen
+             *     valorizacion asentada, o el titular no tiene linea en esa obra.
+             */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3372,7 +4002,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "error": "no encontrado"
+                     *       "error": "no hay linaje asentado para esa cifra"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

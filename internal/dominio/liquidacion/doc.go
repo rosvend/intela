@@ -51,10 +51,12 @@
 //
 // R-12 (RUT y certificacion bancaria) no impide liquidar: impide pagar.
 //
-// # El panel de ingresos
+// # El reporte por obra
 //
-// [ProrratearLinea] es el mismo prorrateo para UNA linea de titular, el que
-// muestra el panel (#42): bruto, cada deduccion y neto con identidad al
-// centavo (RD 16). No sustituye a [Prorratear], que reparte una corrida
-// entera y deja el residuo explicito.
+// El panel y el export del titular (#43) reconstruyen bruto y cada
+// deduccion POR OBRA a partir del neto de la linea y de los totales del
+// proceso. [ProrratearLinea] y [ProrratearProceso] cierran esa cuenta con
+// mayor resto, de modo que la suma de cada concepto cuadra con el total
+// del proceso. Es distinto de [Prorratear]: ahi el residuo queda explicito
+// ([ResiduoProrrateo]) y no se absorbe en ninguna orden.
 package liquidacion
