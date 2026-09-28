@@ -16,19 +16,30 @@ describe("itemsDeNav", () => {
     expect(itemsDeNav("titular").map((r) => r.to)).toEqual(["/"]);
   });
 
-  it("el administrador ve las nueve rutas de PRINCIPAL y CONFIGURACION (Inicio incluido)", () => {
+  it("el administrador ve las once rutas de PRINCIPAL y CONFIGURACION (Inicio incluido)", () => {
     expect(itemsDeNav("administrador").map((r) => r.to)).toEqual(
       TODAS_LAS_RUTAS,
     );
   });
 
-  it("el auditor ve todo lo del administrador salvo /ingesta, /catalogo y /titulares (solo lectura no es subir, ni administrar el catalogo, ni llevarse el padron entero)", () => {
+  it("el auditor ve todo lo del administrador salvo /ingesta, /catalogo, /titulares, /identificacion y /lista-oni (solo lectura no es subir, administrar el catalogo, llevarse el padron entero, ni resolver la cascada de identificacion)", () => {
     const delAdministrador = itemsDeNav("administrador").map((r) => r.to);
+    const SOLO_ADMINISTRADOR = [
+      "/ingesta",
+      "/catalogo",
+      "/titulares",
+      "/identificacion",
+      "/lista-oni",
+    ];
     expect(itemsDeNav("auditor").map((r) => r.to)).toEqual(
-      delAdministrador.filter(
-        (to) => to !== "/ingesta" && to !== "/catalogo" && to !== "/titulares",
-      ),
+      delAdministrador.filter((to) => !SOLO_ADMINISTRADOR.includes(to)),
     );
+  });
+
+  it("el auditor tampoco ve /identificacion ni /lista-oni: el contrato las protege con x-required-roles: [administrador]", () => {
+    const suyas = itemsDeNav("auditor").map((r) => r.to);
+    expect(suyas).not.toContain("/identificacion");
+    expect(suyas).not.toContain("/lista-oni");
   });
 
   it("contabilidad y auditor no ven /titulares, y el administrador si: es lo que el servidor sirve (X2, D-014)", () => {
@@ -95,6 +106,8 @@ describe("itemsDeNav", () => {
       "/ingesta",
       "/catalogo",
       "/titulares",
+      "/identificacion",
+      "/lista-oni",
       "/distribucion",
       "/anomalias",
       "/reportes",
