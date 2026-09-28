@@ -912,4 +912,3 @@ func TestIngresosDeElMontoEsNeto(t *testing.T) {
 		t.Fatalf("neto = %s, se esperaba 3600.00 (importe de resultados_titular, no el bruto)", filas[0].Neto)
 	}
 }
-
