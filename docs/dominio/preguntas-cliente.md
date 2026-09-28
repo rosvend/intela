@@ -55,6 +55,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-19 | Destino del recaudo de un grupo de suscripcion sin obras (`RD 9.5` / chapeau `RD 15`) | @rosvend | **Abierta** |
 | P-20 | Quien puebla `usos.canal_id` en produccion (`MapaCaracol`/`MapaNetflix`/`MapaCine` no lo mapean) | @rosvend | **Abierta** |
 | P-21 | Clave de registro por fuente para el detector de duplicados (#37): `cine`, `rcn`, `expreso-bolivariano` | @rosvend | Provisional (`cine`) / **Abierta** (`rcn`, transporte) |
+| P-22 | Que significa descartar un caso ONI y quien puede hacerlo | @rosvend, @sanmemu09 | Respondida provisionalmente |
 
 ## Respuestas
 
@@ -218,8 +219,26 @@ corrida del periodo (ADR 0021). Su clave por fuente vive en `aplicacion.clavesDe
   `usos_sin_cotejar` (en el seed, 4 de 10), que es el tamano del punto ciego y viaja en la
   respuesta de `POST /alertas/evaluacion` y en su asiento.
 
-## Agenda para la reunion con REDES
+### P-22 Que significa descartar un caso ONI y quien puede hacerlo
 
+Estado: **Respondida provisionalmente** (equipo, 2026-09-27; falta la confirmacion del PO).
+Pregunta: la bandeja de casos ONI permite dos cosas: darle una obra al uso, o decir que no
+es del repertorio. Falta que REDES confirme (a) que "no es del repertorio" es una decision
+legitima y no un simple "no lo se todavia", (b) que efecto tiene sobre el dinero -- hoy la
+reserva ONI de `RD 13.8` no esta implementada, asi que descartar y dejar en ONI pesan lo
+mismo, cero --, y (c) quien puede tomarla.
+Respuesta del equipo, provisional: **descartar existe y es distinto de ONI**. El uso queda
+sin obra, `oni = false`, no pondera y no sale en el listado publico de ONI; el mismo efecto
+monetario que una exclusion R-27. Solo el rol `administrador`, y firmado, con nota de hasta
+300 caracteres. La razon de fondo es `RD 7.1`: REDES SGC solo representa autores de guion o
+libreto, asi que hay material que se emitio y no es de su repertorio.
+Consecuencia: R-36 en `reglas-negocio.md`, y el escalon `descartado` de `usos`
+(migracion 00022).
+Lo que falta confirmar: si el PO quiere el descarte como concepto propio o prefiere una
+marca de "revisado, no es repertorio" en otra forma; y si el efecto monetario debe ser el de
+R-27 (la parte no existe) o el de `RD 13.8` (la parte queda en reserva hasta que prescriba).
+
+## Agenda para la reunion con REDES
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
 cifra defendible.
 

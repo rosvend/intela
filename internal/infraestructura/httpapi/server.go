@@ -74,6 +74,7 @@ type Casos struct {
 	Anomalias      Anomalias
 	Auditoria      Auditoria
 	Identificacion CasosIdentificacion
+	Resolucion     ResolucionIdentificacion
 	Explicar       Explicador
 	Ingresos       ConsultaIngresos
 }
@@ -101,6 +102,7 @@ type API struct {
 	anomalias      Anomalias
 	auditoria      Auditoria
 	identificacion CasosIdentificacion
+	resolucion     ResolucionIdentificacion
 	explicar       Explicador
 	ingresos       ConsultaIngresos
 	opts           Opciones
@@ -134,6 +136,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		anomalias:      casos.Anomalias,
 		auditoria:      casos.Auditoria,
 		identificacion: casos.Identificacion,
+		resolucion:     casos.Resolucion,
 		explicar:       casos.Explicar,
 		ingresos:       casos.Ingresos,
 		opts:           opts,
@@ -192,6 +195,7 @@ func (a *API) Router() http.Handler {
 		protegido.Route("/identificacion", func(ident chi.Router) {
 			ident.Use(requiereRol(aplicacion.RolAdministrador))
 			ident.Get("/casos", a.listarCasosIdentificacion)
+			ident.Post("/casos/{id}/resolucion", a.resolverCasoIdentificacion)
 		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))

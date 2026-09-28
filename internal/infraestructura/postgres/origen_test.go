@@ -17,7 +17,8 @@ func TestOrigenDeUsosDaElArchivoExactoYLaIdentificacion(t *testing.T) {
 	resuelto := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
 	if _, err := pool.Exec(ctx,
 		`UPDATE usos SET escalon = 'manual', obra_id = 'obra-y', oni = FALSE, puntaje = 0.72,
-		        resuelto_por = 'actor-dist', resuelto_en = $1 WHERE id = 'uso-m'`, resuelto); err != nil {
+		        resuelto_por = 'actor-dist', resuelto_en = $1,
+		        nota_resolucion = 'coincide la ficha' WHERE id = 'uso-m'`, resuelto); err != nil {
 		t.Fatalf("resolver uso manual: %v", err)
 	}
 
