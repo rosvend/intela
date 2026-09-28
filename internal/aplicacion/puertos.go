@@ -436,7 +436,15 @@ type RepositorioUsosDeReparto interface {
 
 // RepositorioIngesta cubre los reportes recibidos y sus filas.
 type RepositorioIngesta interface {
-	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int) error
+	// GuardarReporte escribe SOLO el acuse, sin filas. Antes de usarlo, leer la
+	// advertencia de [Ingesta.GuardarReporte]: la pareja acuse + filas es
+	// [RepositorioIngesta.GuardarEntrega], y este metodo se queda para el seed.
+	//
+	// subidoPor es el id del usuario autenticado que hizo la entrega, o "" si no
+	// hay actor -el seed, o una entrega anterior a la atribucion (#116)-. Vacio
+	// se persiste como NULL y NUNCA como cadena vacia: no hay usuario con id ""
+	// y la clave foranea lo rechazaria.
+	GuardarReporte(ctx context.Context, id, fuente, periodo, sha, claveObjeto string, nbytes int, subidoPor string) error
 	GuardarUsos(ctx context.Context, usos []UsoPersistido) error
 
 	// GuardarEntrega escribe el acuse de una entrega Y sus filas como UN SOLO
@@ -611,10 +619,14 @@ type LectorReporte interface {
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
-// RepositorioONI es la cola manual. Separado de identificacion porque son dos
-// modulos distintos del ADR 0003.
-type RepositorioONI interface {
-	Listar(ctx context.Context) ([]UsoPersistido, error)
+// RepositorioOrigenDeUsos devuelve, por id de uso, su reporte exacto y como se identifico su obra.
+type RepositorioOrigenDeUsos interface {
+	OrigenDeUsos(ctx context.Context, usoIDs []string) (map[string]OrigenDeUso, error)
+}
+
+// RepositorioCasosIdentificacion es la lectura de la cola manual (ADR 0007): pagina y conteo de pendientes en una sola lectura.
+type RepositorioCasosIdentificacion interface {
+	ListarCasosIdentificacion(ctx context.Context, q ConsultaCasos) (PaginaCasos, error)
 }
 
 // RepositorioPublicacionONI persiste el listado publico (R-18) y el ancla
@@ -743,13 +755,15 @@ type RepositorioProcesos interface {
 	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
 	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
 	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
-	// la escritura; no aplica a un alta nueva, que nunca tiene fila previa
-	// que comparar.
+	// la escritura. Un alta pasa RevisionAlta: si la fila ya existe, es conflicto.
 	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
 	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
 	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
+
+// RevisionAlta como revisionAnterior de GuardarProceso solo inserta: el CHECK revision >= 1 impide que una fila existente la cumpla.
+const RevisionAlta = 0
 
 // ProcesoVista es el proceso tal como se persiste.
 //
@@ -783,6 +797,30 @@ type ProcesoVista struct {
 type RepositorioResultados interface {
 	GuardarResultado(ctx context.Context, procesoID string, r reparto.Resultado) error
 	ResultadoPorProceso(ctx context.Context, procesoID string) (reparto.Resultado, error)
+}
+
+// RepositorioReporteLiquidacion lee las lineas de corrida del titular para
+// el panel y el export por obra (#43): bruto, deducciones y neto. Es
+// lectura de resultados_titular + resultados_proceso; el prorrateo vive
+// en dominio.
+//
+// No es [RepositorioLiquidacion]. Ese puerto es el de las ordenes de pago
+// (ADR 0019) y su DeTitular no filtra por periodo ni devuelve el desglose
+// por obra. El mismo *Store satisface los dos, con nombres distintos, por
+// la misma razon por la que AsientoPorID no se llama PorID.
+//
+// periodo vacio significa todos. Un conjunto vacio no es ErrNoEncontrado:
+// un titular sin corridas tiene una liquidacion de cero lineas.
+type RepositorioReporteLiquidacion interface {
+	FilasDeTitular(ctx context.Context, titularID, periodo string) ([]FilaLiquidacion, error)
+}
+
+// Exportador renderiza una liquidacion a un archivo. excelize y maroto
+// viven detras de este puerto: depguard deniega ambos paquetes dentro de
+// aplicacion (ADR 0002, ADR 0010).
+type Exportador interface {
+	Excel(liq Liquidacion) (Archivo, error)
+	PDF(liq Liquidacion) (Archivo, error)
 }
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la

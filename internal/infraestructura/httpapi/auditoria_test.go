@@ -54,6 +54,22 @@ func servidorConAuditoria(t *testing.T, a Auditoria) http.Handler {
 	return Nueva(Casos{Auth: auth, Auditoria: a}, Opciones{}).Router()
 }
 
+// Solo el serializador: refiere_a sale si el asiento lo trae y se omite si no. No hay ruta de correccion (ADR 0006).
+func TestElSerializadorPasaRefiereAYLoOmiteVacio(t *testing.T) {
+	original := asientoFalso("as-1", "declaracion.guardada", "obra", "obra-1", "usr-admin")
+	correccion := asientoFalso("as-2", "declaracion.guardada", "obra", "obra-1", "usr-admin")
+	correccion.RefiereA = "as-1"
+	h := servidorConAuditoria(t, &auditoriaFalsa{asientos: []aplicacion.Asiento{original, correccion}})
+
+	cuerpo := decodificarAsientos(t, pedir(t, h, http.MethodGet, "/auditoria/obra/obra-1", "", "tok"))
+	if _, hay := cuerpo[0]["refiere_a"]; hay {
+		t.Fatalf("el original no corrige nada: %v", cuerpo[0])
+	}
+	if cuerpo[1]["refiere_a"] != "as-1" {
+		t.Fatalf("refiere_a = %v, se esperaba as-1", cuerpo[1]["refiere_a"])
+	}
+}
+
 func decodificarAsientos(t *testing.T, rec *httptest.ResponseRecorder) []map[string]any {
 	t.Helper()
 	var cuerpo []map[string]any

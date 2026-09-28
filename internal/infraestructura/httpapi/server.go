@@ -54,22 +54,25 @@ type Opciones struct {
 // API es el adaptador. Los casos de uso se inyectan de uno en uno segun
 // entren sus PRs.
 type API struct {
-	salud         Salud
-	auth          Autenticacion
-	admision      Admision
-	liq           ConsultaLiquidaciones
-	catalogo      Catalogo
-	listadoONI    LecturaONI
-	publicarONI   EscrituraONI
-	padron        Padron
-	ingesta       Ingesta
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	procesos      Procesos
-	cola          ColaRevision
-	auditoria     Auditoria
-	opts          Opciones
-	log           *slog.Logger
+	salud          Salud
+	auth           Autenticacion
+	ordenes        ConsultaLiquidaciones
+	admision       Admision
+	catalogo       Catalogo
+	listadoONI     LecturaONI
+	publicarONI    EscrituraONI
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	reporte        ReporteLiquidaciones
+	procesos       Procesos
+	cola           ColaRevision
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	explicar       Explicador
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Casos agrupa los casos de uso que sirve el adaptador.
@@ -80,20 +83,23 @@ type API struct {
 // interfaces seguidas se pueden cruzar sin que el compilador diga nada si dos
 // comparten forma -- y pasan a campos con nombre.
 type Casos struct {
-	Salud         Salud
-	Auth          Autenticacion
-	Admision      Admision
-	Liq           ConsultaLiquidaciones
-	Catalogo      Catalogo
-	ListadoONI    LecturaONI
-	PublicarONI   EscrituraONI
-	Padron        Padron
-	Ingesta       Ingesta
-	Declaraciones Declaraciones
-	Recaudo       Recaudo
-	Procesos      Procesos
-	Cola          ColaRevision
-	Auditoria     Auditoria
+	Salud          Salud
+	Auth           Autenticacion
+	Ordenes        ConsultaLiquidaciones
+	Admision       Admision
+	Catalogo       Catalogo
+	ListadoONI     LecturaONI
+	PublicarONI    EscrituraONI
+	Padron         Padron
+	Ingesta        Ingesta
+	Declaraciones  Declaraciones
+	Recaudo        Recaudo
+	Reporte        ReporteLiquidaciones
+	Procesos       Procesos
+	Cola           ColaRevision
+	Auditoria      Auditoria
+	Identificacion CasosIdentificacion
+	Explicar       Explicador
 }
 
 // ColaRevision lista lo que espera ojo humano: filas que no se pudieron
@@ -115,22 +121,25 @@ func Nueva(casos Casos, opts Opciones) *API {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         casos.Salud,
-		auth:          casos.Auth,
-		admision:      casos.Admision,
-		liq:           casos.Liq,
-		catalogo:      casos.Catalogo,
-		listadoONI:    casos.ListadoONI,
-		publicarONI:   casos.PublicarONI,
-		padron:        casos.Padron,
-		ingesta:       casos.Ingesta,
-		declaraciones: casos.Declaraciones,
-		recaudo:       casos.Recaudo,
-		procesos:      casos.Procesos,
-		cola:          casos.Cola,
-		auditoria:     casos.Auditoria,
-		opts:          opts,
-		log:           log,
+		salud:          casos.Salud,
+		auth:           casos.Auth,
+		ordenes:        casos.Ordenes,
+		admision:       casos.Admision,
+		catalogo:       casos.Catalogo,
+		listadoONI:     casos.ListadoONI,
+		publicarONI:    casos.PublicarONI,
+		padron:         casos.Padron,
+		ingesta:        casos.Ingesta,
+		declaraciones:  casos.Declaraciones,
+		recaudo:        casos.Recaudo,
+		reporte:        casos.Reporte,
+		procesos:       casos.Procesos,
+		cola:           casos.Cola,
+		auditoria:      casos.Auditoria,
+		identificacion: casos.Identificacion,
+		explicar:       casos.Explicar,
+		opts:           opts,
+		log:            log,
 	}
 }
 
@@ -171,12 +180,12 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		// Ordenes de pago (ADR 0019). El rol lo decide el caso de uso:
+		// /liquidaciones es staff y /mis-liquidaciones es el titular.
+		protegido.Get("/liquidaciones", a.listarLiquidaciones)
+		protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
 		protegido.Post("/afiliaciones/{id}/aprobar", a.conAdmision(a.aprobarAfiliacion))
 		protegido.Post("/afiliaciones/{id}/rechazar", a.conAdmision(a.rechazarAfiliacion))
-		if a.liq != nil {
-			protegido.Get("/liquidaciones", a.listarLiquidaciones)
-			protegido.Get("/mis-liquidaciones", a.misLiquidaciones)
-		}
 
 		// Los grupos de rol van DENTRO de conSesion: sin sesion la
 		// respuesta es 401, no 403. La matriz Rol -> capacidad esta en
@@ -193,12 +202,19 @@ func (a *API) Router() http.Handler {
 			admin.Get("/pipeline", superficieOK)
 			admin.Get("/cola-revision", a.listarColaRevision)
 		})
-
+		protegido.Route("/identificacion", func(ident chi.Router) {
+			ident.Use(requiereRol(aplicacion.RolAdministrador))
+			ident.Get("/casos", a.listarCasosIdentificacion)
+		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
+		if a.explicar != nil {
+			protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+				Get("/explicar/{ref}", a.explicarCifra)
+		}
 
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
@@ -258,6 +274,13 @@ func (a *API) Router() http.Handler {
 			))
 			bol.Get("/", a.listarBolsas)
 			bol.Get("/{id}", a.bolsaPorID)
+		})
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			// El desglose por obra y su export (#43). No pisa
+			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
+			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
+			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
 		})
 
 		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,
@@ -381,6 +404,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origen)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 			h.Set("Access-Control-Max-Age", "600")
 			// El origen entra en la respuesta, asi que las caches
 			// intermedias tienen que variar por el.

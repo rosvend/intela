@@ -5,6 +5,7 @@ import {
   ErrorDeRed,
   api,
   apiPublica,
+  nombreDeContentDisposition,
   setToken,
   setUnauthorizedHandler,
 } from "./api";
@@ -398,6 +399,14 @@ describe("api", () => {
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect(init?.headers).toBeUndefined();
     expect(localStorage.getItem("intela.token")).toBe("token-de-prueba");
+  });
+
+  it("extrae el filename de Content-Disposition", () => {
+    expect(
+      nombreDeContentDisposition(
+        'attachment; filename="liquidacion-2026-01.pdf"',
+      ),
+    ).toBe("liquidacion-2026-01.pdf");
   });
 
   it("extrae el campo error de un cuerpo JSON", async () => {

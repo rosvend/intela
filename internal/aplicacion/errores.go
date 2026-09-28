@@ -17,6 +17,12 @@ var (
 	// ErrNoEncontrado: la consulta fue bien y no hay fila.
 	ErrNoEncontrado = errors.New("no encontrado")
 
+	// ErrBitacoraInmutable: se intento UPDATE, DELETE o TRUNCATE sobre la bitacora (ADR 0006).
+	ErrBitacoraInmutable = errors.New("la bitacora es append-only")
+
+	// ErrLinajeIncompleto: falta un eslabon del origen de una cifra; asentar a medias es peor que no asentar (ADR 0006).
+	ErrLinajeIncompleto = errors.New("linaje incompleto")
+
 	// ErrSinTrabajo: la cola esta vacia. No es un fallo.
 	ErrSinTrabajo = errors.New("sin trabajo pendiente")
 
@@ -33,6 +39,9 @@ var (
 	// Quien resuelve un snapshot entero lo devuelve dentro de
 	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
+
+	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
+	ErrFormatoInvalido = errors.New("formato invalido")
 
 	// ErrPeriodoInvalido: el periodo no tiene la forma YYYY o YYYY-MM.
 	ErrPeriodoInvalido = errors.New("periodo invalido")
@@ -144,6 +153,9 @@ var (
 	// es explicita: el mensaje tiene que decir QUE falta o esta mal formateado,
 	// porque es lo que permite volver a pedirle al cliente exactamente eso.
 	ErrReporteInvalido = errors.New("reporte invalido")
+
+	// ErrFiltroCasosInvalido: un filtro de la cola de identificacion no se puede leer (estado o periodo).
+	ErrFiltroCasosInvalido = errors.New("filtro de casos invalido")
 
 	// ErrObjetoYaExiste: esa clave del almacen ya tiene contenido.
 	//

@@ -20,6 +20,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
@@ -106,7 +107,7 @@ func ejecutar(log *slog.Logger) error {
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
-	liquidaciones := aplicacion.Liquidaciones{
+	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: notificaciones.Bitacora{Log: log},
@@ -161,6 +162,14 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:   reloj.Sistema{},
 	}
 
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	recepcion := aplicacion.Ingesta{
 		Reportes:              store,
 		Almacen:               objetos.Disco{Dir: config.Cadena("OBJECT_DIR", dirObjetosPorDefecto)},
@@ -179,13 +188,16 @@ func ejecutar(log *slog.Logger) error {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
 	}
 
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
+		Ordenes:    ordenes,
 		Admision:   admision,
-		Liq:        liquidaciones,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{
@@ -196,13 +208,16 @@ func ejecutar(log *slog.Logger) error {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
-		Padron:        padron,
-		Ingesta:       recepcion,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Padron:         padron,
+		Ingesta:        recepcion,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

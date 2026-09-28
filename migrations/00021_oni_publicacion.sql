@@ -18,13 +18,12 @@
 --
 -- y el despliegue condiciona el rollout a que goose termine bien.
 --
--- Se toma el 00019: primer libre por encima de 00018. #171
--- (`00019_alertas_de_anomalias.sql`) y #173 (`00019_reportes_subido_por.sql`)
--- reclaman el mismo numero y todavia no estan en `main`. Quien entre primero
--- se queda con el 00019; los otros dos pasan al primer libre por encima.
--- Saltar al 00020 quemaria el 00019 en cuanto este se aplique, y goose
--- rechazaria despues un fichero numerado 00019. Un ADR admite huecos; una
--- migracion no.
+-- Se toma el 00021: primer libre por encima de lo ya aplicado en `main`
+-- (`00019_reportes_subido_por.sql`, `00020_bitacora_refiere_a.sql`).
+-- Este fichero se llamo 00019 mientras esos numeros estaban libres; ya no lo
+-- estan. Saltar un numero quemaria el hueco: goose corre con
+-- allowMissing = false y rechazaria despues un fichero numerado en el hueco.
+-- Un ADR admite huecos; una migracion no.
 
 -- +goose Up
 

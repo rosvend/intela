@@ -42,17 +42,22 @@ func sembrarReportes(t *testing.T) (*Store, *pgxpool.Pool) {
 // Existe para la sonda de la unidad de trabajo, que no puede usar
 // [testhelp.Pool]: ese deja MaxConns=1 y la lectura desde fuera de la
 // transaccion abierta se interbloquea.
+//
+// Los dos acuses van SIN actor, que es el caso "anterior a la atribucion"
+// (#116): este sembrador no crea ningun usuario, y pasarle un id inventado
+// haria fallar la clave foranea. De paso, las pruebas de listado ejercitan el
+// COALESCE de subido_por sobre filas que lo tienen NULL.
 func sembrarReportesEn(t *testing.T, pool *pgxpool.Pool) *Store {
 	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 
 	if err := s.GuardarReporte(ctx, reporteEnero, "caracol", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("sembrar reporte de enero: %v", err)
 	}
 	if err := s.GuardarReporte(ctx, reporteFebrero, "caracol", "2026-02",
-		shaOtro, "reportes/"+shaOtro, 256); err != nil {
+		shaOtro, "reportes/"+shaOtro, 256, ""); err != nil {
 		t.Fatalf("sembrar reporte de febrero: %v", err)
 	}
 	return s
@@ -110,7 +115,7 @@ func TestGuardarReporteTraduceElDuplicadoDeHuella(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	err := s.GuardarReporte(t.Context(), "rep-otro-id", "caracol", "2026-03",
-		shaParrilla, "reportes/"+shaParrilla, 128)
+		shaParrilla, "reportes/"+shaParrilla, 128, "")
 	if !errors.Is(err, aplicacion.ErrReporteDuplicado) {
 		t.Fatalf("se esperaba ErrReporteDuplicado, se obtuvo %v", err)
 	}
@@ -127,8 +132,116 @@ func TestGuardarReporteAdmiteLaMismaHuellaDeOtraFuente(t *testing.T) {
 	s, _ := sembrarReportes(t)
 
 	if err := s.GuardarReporte(t.Context(), "rep-netflix", "netflix", "2026-01",
-		shaParrilla, "reportes/"+shaParrilla, 128); err != nil {
+		shaParrilla, "reportes/"+shaParrilla, 128, ""); err != nil {
 		t.Fatalf("otra fuente con los mismos bytes es una entrega valida: %v", err)
+	}
+}
+
+// reporteDeEntrega arma un acuse valido para las pruebas de GuardarEntrega:
+// huella de 64 hexadecimales, periodo con forma y nbytes > 0, que es lo que
+// exigen los CHECK de `reportes`.
+func reporteDeEntrega(id, sha, subidoPor string) aplicacion.Reporte {
+	return aplicacion.Reporte{
+		ID: id, Fuente: "caracol", Periodo: "2026-01",
+		SHA256: sha, ClaveObjeto: "reportes/" + sha, NBytes: 128, SubidoPor: subidoPor,
+	}
+}
+
+// La atribucion de la entrega (#116): quien sube queda en la fila de `reportes`,
+// y la ausencia de actor es NULL -- no la cadena vacia, que no referencia a
+// ningun usuario y la clave foranea rechazaria.
+//
+// Va contra Postgres de verdad porque lo que se comprueba es el NULLIF del
+// INSERT y la forma de la columna, y ninguna de las dos cosas existe en un
+// doble.
+func TestGuardarEntregaPersisteQuienSubioYDejaNuloSinActor(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	conActor := reporteDeEntrega("rep-con-actor", shaParrilla, usuarioAdmin)
+	if err := s.GuardarEntrega(ctx, conActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	sinActor := reporteDeEntrega("rep-sin-actor", shaOtro, "")
+	if err := s.GuardarEntrega(ctx, sinActor, nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	var subidoPor *string
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por FROM reportes WHERE id = $1`, conActor.ID).Scan(&subidoPor); err != nil {
+		t.Fatalf("leer subido_por: %v", err)
+	}
+	if subidoPor == nil || *subidoPor != usuarioAdmin {
+		t.Fatalf("subido_por = %v, se esperaba %q", subidoPor, usuarioAdmin)
+	}
+
+	// NULL y no "": si aqui llegara "" seria que el NULLIF no hace su trabajo,
+	// y la FK solo lo estaria tapando en el camino del actor.
+	var esNulo bool
+	if err := pool.QueryRow(ctx,
+		`SELECT subido_por IS NULL FROM reportes WHERE id = $1`, sinActor.ID).Scan(&esNulo); err != nil {
+		t.Fatalf("leer subido_por sin actor: %v", err)
+	}
+	if !esNulo {
+		t.Fatal("una entrega sin actor tiene que quedar con subido_por NULL")
+	}
+}
+
+// Un id que no existe lo rechaza la clave foranea: la columna no es texto
+// libre, es una referencia al padron. Y la entrega NO queda escrita, que es lo
+// que impide confundir "sin actor" (NULL, legitimo) con "actor inventado".
+func TestGuardarEntregaConActorInexistenteNoEscribeNada(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	const fantasma = "rep-actor-fantasma"
+	err := s.GuardarEntrega(ctx, reporteDeEntrega(fantasma, shaParrilla, "usr-que-no-existe"), nil)
+	if !esClaveForanea(err) {
+		t.Fatalf("se esperaba una violacion de clave foranea, se obtuvo %v", err)
+	}
+
+	var hay bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM reportes WHERE id = $1)`, fantasma).Scan(&hay); err != nil {
+		t.Fatalf("comprobar la fila: %v", err)
+	}
+	if hay {
+		t.Fatal("la entrega quedo escrita con un actor que no existe")
+	}
+}
+
+// La atribucion vuelve por la PROYECCION del listado, que es de donde la lee
+// `GET /reportes`. El COALESCE tiene que devolver "" para las filas sin actor
+// -- las anteriores a la migracion y las del sembrador -- sin que el escaneo
+// falle: sin el, media tabla de `reportes` seria ilegible.
+func TestListarCargasDevuelveQuienSubioCadaEntrega(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-atribuido", shaParrilla, usuarioAdmin), nil); err != nil {
+		t.Fatalf("GuardarEntrega con actor: %v", err)
+	}
+	if err := s.GuardarEntrega(ctx, reporteDeEntrega("rep-anterior", shaOtro, ""), nil); err != nil {
+		t.Fatalf("GuardarEntrega sin actor: %v", err)
+	}
+
+	cargas, err := s.ListarCargas(ctx, "2026-01", aplicacion.Paginacion{})
+	if err != nil {
+		t.Fatalf("ListarCargas: %v", err)
+	}
+	porID := map[string]aplicacion.CargaReporte{}
+	for _, c := range cargas {
+		porID[c.ID] = c
+	}
+	if got := porID["rep-atribuido"].SubidoPor; got != usuarioAdmin {
+		t.Errorf("subido_por de la entrega atribuida = %q, se esperaba %q", got, usuarioAdmin)
+	}
+	if _, hay := porID["rep-anterior"]; !hay {
+		t.Fatal("la entrega sin actor no volvio en el listado")
+	}
+	if got := porID["rep-anterior"].SubidoPor; got != "" {
+		t.Errorf("subido_por de la entrega sin actor = %q, se esperaba vacio", got)
 	}
 }
 
@@ -394,7 +507,7 @@ func TestGuardarUsosSinFilasNoEsError(t *testing.T) {
 }
 
 // "Sin resolver" es escalon pendiente, no ONI: la cola manual es otro puerto
-// (RepositorioONI) y otra pregunta. Una fila ya resuelta por alias no vuelve a
+// (RepositorioCasosIdentificacion) y otra pregunta. Una fila ya resuelta por alias no vuelve a
 // la cascada.
 func TestUsosSinResolverSoloDevuelveLasPendientes(t *testing.T) {
 	s, _ := sembrarReportes(t)
@@ -1507,7 +1620,7 @@ func TestListarCargasFiltradaPagina(t *testing.T) {
 		shaEnero2     = "3333333333333333333333333333333333333333333333333333333333333333"
 	)
 	if err := s.GuardarReporte(ctx, reporteEnero2, "caracol", "2026-01",
-		shaEnero2, "reportes/"+shaEnero2, 64); err != nil {
+		shaEnero2, "reportes/"+shaEnero2, 64, ""); err != nil {
 		t.Fatalf("sembrar segunda carga de enero: %v", err)
 	}
 
@@ -1565,7 +1678,7 @@ func TestListarCargasParticipaEnLaUnidad(t *testing.T) {
 
 	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
 		if err := s.GuardarReporte(ctx, idSonda, "caracol", periodo,
-			shaSonda, "reportes/"+shaSonda, 32); err != nil {
+			shaSonda, "reportes/"+shaSonda, 32, ""); err != nil {
 			return err
 		}
 		cargas, err := s.ListarCargas(ctx, periodo, aplicacion.Paginacion{})

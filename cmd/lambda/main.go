@@ -29,6 +29,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -141,7 +142,7 @@ func construir() (http.Handler, error) {
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
-	liquidaciones := aplicacion.Liquidaciones{
+	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: notificaciones.Bitacora{Log: registro},
@@ -189,6 +190,14 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
 	// no toca disco, asi que no comparte el motivo por el que Ingesta va sin
 	// cablear aqui abajo.
@@ -200,6 +209,9 @@ func construir() (http.Handler, error) {
 		Usos:          store,
 		Resultados:    store,
 		Unidad:        store,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
 	}
 
 	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
@@ -215,7 +227,7 @@ func construir() (http.Handler, error) {
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
-		Liq:        liquidaciones,
+		Ordenes:    ordenes,
 		Catalogo:   catalogo,
 		ListadoONI: aplicacion.ConsultarListadoONI{ONI: store},
 		PublicarONI: aplicacion.PublicarListadoONI{
@@ -226,12 +238,15 @@ func construir() (http.Handler, error) {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
-		Padron:        padron,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Padron:         padron,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,
