@@ -231,8 +231,33 @@ func TestAplicarRechazaLaFilaConCamposDeMas(t *testing.T) {
 	if !strings.Contains(usos[1].RechazoMotivo, "campos") || !strings.Contains(usos[1].RechazoMotivo, "fila 3") {
 		t.Errorf("el motivo no nombra el desajuste ni la linea: %s", usos[1].RechazoMotivo)
 	}
+	// Y dice que SOBRA, no que falta: con la fila corta ya rechazada, un
+	// motivo de "coma perdida" en una fila ancha mandaria al cliente a buscar
+	// una coma que no falta.
+	if !strings.Contains(usos[1].RechazoMotivo, "campo de mas") ||
+		strings.Contains(usos[1].RechazoMotivo, "fila corta") {
+		t.Errorf("el motivo de la fila ancha no dice que sobra un campo: %s", usos[1].RechazoMotivo)
+	}
 	if usos[1].Titulo != "corrida" {
 		t.Errorf("la fila rechazada perdio el titulo: %+v", usos[1])
+	}
+
+	// Con la coma de mas en el titulo, lo corrido a `duracion` no es un
+	// numero. Esa celda es el sintoma: el motivo tiene que ser el del campo
+	// de mas, igual que el de la fila corta pisa al de su celda, o manda al
+	// cliente a corregir una duracion que esta bien escrita una columna mas
+	// alla.
+	tabla, err = TablaCSV([]byte("titulo,duracion\nRapido, furioso,10\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	usos, err = mapaMinimo().Aplicar(tabla)
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if m := usos[0].RechazoMotivo; !strings.Contains(m, "fila 2: trae 3 campos") ||
+		!strings.Contains(m, "campo de mas") || strings.Contains(m, "no es un numero") {
+		t.Errorf("el motivo de la celda corrida pisa al del campo de mas: %q", m)
 	}
 }
 

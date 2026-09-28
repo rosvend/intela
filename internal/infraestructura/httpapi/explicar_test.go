@@ -116,3 +116,14 @@ func TestExplicarExigeSesionYRol(t *testing.T) {
 		t.Fatal("el caso de uso no debio llamarse sin sesion o con otro rol")
 	}
 }
+
+// El frontend codifica la ref con encodeURIComponent (":" -> "%3A"); el caso de uso la recibe decodificada.
+func TestExplicarDecodificaLaRefCodificadaPorElFrontend(t *testing.T) {
+	falso := &explicadorFalso{x: explicacionDeEjemplo()}
+	titular := aplicacion.Usuario{ID: "usr-t1", Rol: aplicacion.RolTitular, TitularID: "titular-1"}
+
+	rec := pedir(t, servidorConExplicador(t, titular, falso), http.MethodGet, "/explicar/proc-1%3Aobra-1%3Atitular-1", "", "tok")
+	if rec.Code != http.StatusOK || falso.refPedida != "proc-1:obra-1:titular-1" {
+		t.Fatalf("codigo = %d, ref pedida = %q; se esperaba 200 con la ref decodificada", rec.Code, falso.refPedida)
+	}
+}
