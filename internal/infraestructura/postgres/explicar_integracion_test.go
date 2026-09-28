@@ -33,6 +33,7 @@ func TestExplicarCifraDeUnaCorridaReal(t *testing.T) {
 	uc := aplicacion.Procesos{
 		Repo: s, Parametros: s, Bolsas: s, Declaraciones: s, Usos: s,
 		Resultados: s, Unidad: s, Bitacora: s, Reloj: reloj.Sistema{}, Origen: s,
+		Anomalias: servicioDeAnomalias(s, time.Now()),
 	}
 	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
 		t.Fatalf("iniciar: %v", err)
