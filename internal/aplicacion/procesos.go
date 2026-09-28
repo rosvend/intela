@@ -206,7 +206,6 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-
 	if v.Etapa == reparto.EtapaDeducciones && p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
 		return uc.valorizarBajoCompuerta(ctx, actorID, procesoID, v, p)
 	}

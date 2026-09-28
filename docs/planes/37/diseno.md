@@ -1,6 +1,6 @@
 ---
 issue: 37
-actualizado: 2026-09-25
+actualizado: 2026-09-27
 ---
 
 # Deteccion de anomalias: razones de diseno
@@ -68,10 +68,13 @@ Colapsarlas perderia el nombre.
 
 `RD 9.1.1` pondera por cuatro categorias y `usos.tipo_obra` admite vacio (el mapa de Caracol no
 la trae hasta P-05). Desde #120 el motor aborta la corrida (`ErrRepartoInvalido`, `case ""`): la
-alerta es el preaviso. Hoy la parada esta latente porque `MapaCaracol` tampoco mapea `canal_id` y
-`UsosDeCanal` no devuelve esas filas. Rellenar `tipo_obra` desde `obras.tipo` se midio y empeora:
-sin `rating` la corrida reparte cero con error nil. Los tres huecos (`tipo_obra`, `canal_id`,
-`rating`) van en su propia issue (texto en `issues-de-seguimiento.md`, B).
+alerta es el preaviso. Los tres huecos que esto destapo (`tipo_obra`, `canal_id`, `rating`) los
+cerro #165 (PR #169) juntos, que era la condicion: identificar copia `obras.tipo` cuando la fuente
+no trae el tipo, y la ingesta rechaza la fila sin `canal_id` y, en TV, suscripcion y hotel, la de
+`rating` cero. El detector
+queda para lo que eso no cubre: filas identificadas antes de #169, que no reescribio las
+existentes, y cualquier camino de identificacion que no copie el tipo (la asignacion manual de
+#175).
 
 Solo filas con obra identificada (las demas no llegan al motor) y solo modalidades cuyo motor lee
 el campo: `ponderacionTipo` solo la llama `puntosTV`, alcanzado por TV, suscripcion y hotel. Sin
@@ -108,7 +111,6 @@ RETENCION de `R-04`, no la reserva por errores tecnicos de `R-07`.
 - UUID de la base como `id`: un id derivado del hallazgo seria una segunda clave natural.
 - Indices: bandeja por periodo, abiertas por periodo y tipo (lo que cuenta la compuerta), y por
   registro ofensor (bandeja de #39).
-- Historia del numero: nacio 00015, paso a 00016 al mergear #144 y a 00017 al mergear #80.
-  Al integrar `main` el 00019 ya era `00019_reportes_subido_por.sql` (#173) y el 00020
-  `00020_bitacora_refiere_a.sql`, asi que esta ficha quedo en 00021. Renumera el que
-  mergea segundo: goose corre con `allowMissing = false`.
+- Historia del numero: nacio 00015, paso a 00016 al mergear #144, a 00017 al mergear #80 y a
+  00021 al mergear #88, #168, #173 y #178, que ocuparon 00017-00020 (renumera el que mergea
+  segundo).

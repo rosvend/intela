@@ -3,6 +3,7 @@ package aplicacion
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -738,7 +739,10 @@ func TestAvanzarEtapaConCriticasAbiertasNoSaleDeDeducciones(t *testing.T) {
 		resultados := &repositorioResultadosFalso{}
 		compuerta := &compuertaFalsa{criticas: 2}
 		unidad := &unidadFalsa{}
-		uc := conBitacora(Procesos{Repo: repo, Resultados: resultados, Unidad: unidad, Anomalias: compuerta})
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{
+			Repo: repo, Resultados: resultados, Unidad: unidad, Bitacora: bitacora, Anomalias: compuerta,
+		})
 
 		_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
 		if !errors.Is(err, ErrAnomaliasCriticasAbiertas) {
@@ -762,6 +766,9 @@ func TestAvanzarEtapaConCriticasAbiertasNoSaleDeDeducciones(t *testing.T) {
 		} else if unidad.entradas != 0 {
 			t.Fatalf("internacional: entradas=%d, la compuerta no abre unidad", unidad.entradas)
 		}
+		if len(bitacora.asientos) != 0 {
+			t.Fatalf("%s: se asentaron %d hechos con la compuerta cerrada", circuito, len(bitacora.asientos))
+		}
 	}
 }
 
@@ -769,10 +776,13 @@ func TestAvanzarEtapaSinCompuertaFallaCerrada(t *testing.T) {
 	t.Parallel()
 
 	repo := procesoEnDeducciones(t, reparto.Internacional)
-	uc := Procesos{Repo: repo, Resultados: &repositorioResultadosFalso{}}
+	// El resto del cableado completo: sin bitacora la transicion fallaria igual y esto no probaria la compuerta.
+	uc := conBitacora(Procesos{Repo: repo, Resultados: &repositorioResultadosFalso{}})
+	uc.Anomalias = nil
 
-	if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err == nil {
-		t.Fatal("sin compuerta cableada la corrida no puede salir de deducciones")
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+	if err == nil || !strings.Contains(err.Error(), "compuerta de anomalias") {
+		t.Fatalf("err = %v: sin compuerta cableada la corrida no puede salir de deducciones", err)
 	}
 	if got := repo.procesos["proc-1"].Etapa; got != reparto.EtapaDeducciones {
 		t.Fatalf("etapa = %q, el proceso no debio moverse", got)
@@ -784,7 +794,7 @@ func TestAvanzarEtapaPropagaElFalloDeLaCompuerta(t *testing.T) {
 
 	repo := procesoEnDeducciones(t, reparto.Internacional)
 	falla := errors.New("base caida")
-	uc := Procesos{Repo: repo, Anomalias: &compuertaFalsa{err: falla}}
+	uc := conBitacora(Procesos{Repo: repo, Anomalias: &compuertaFalsa{err: falla}})
 
 	if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); !errors.Is(err, falla) {
 		t.Fatalf("err = %v, se esperaba el fallo de la compuerta", err)

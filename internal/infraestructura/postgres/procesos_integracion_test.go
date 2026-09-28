@@ -610,11 +610,13 @@ func actividad(t *testing.T, conn *pgx.Conn) string {
 	return dump
 }
 
+var errBitacoraCaida = errors.New("bitacora caida")
+
 // bitacoraQueFalla es un *Store real cuya bitacora rechaza todo asiento.
 type bitacoraQueFalla struct{ *Store }
 
 func (bitacoraQueFalla) Asentar(context.Context, aplicacion.Asiento) error {
-	return errors.New("bitacora caida")
+	return errBitacoraCaida
 }
 
 // Sin asiento no hay valorizacion: el rollback alcanza a resultados_* y a la etapa (ADR 0006).
@@ -634,9 +636,10 @@ func TestValorizarSinAsientoNoDejaResultado(t *testing.T) {
 		t.Fatalf("avanzar a deducciones: %v", err)
 	}
 
+	// Con la compuerta cableada el error tiene que ser el del asiento: si fuera el de la compuerta, esto no probaria el rollback.
 	uc.Bitacora = bitacoraQueFalla{s}
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err == nil {
-		t.Fatal("se esperaba el fallo de la bitacora")
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); !errors.Is(err, errBitacoraCaida) {
+		t.Fatalf("err = %v, se esperaba el fallo de la bitacora", err)
 	}
 	if _, err := s.ResultadoPorProceso(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("quedo un resultado sin asiento: %v", err)

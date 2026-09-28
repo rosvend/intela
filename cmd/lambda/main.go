@@ -193,14 +193,6 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
-	reporte := aplicacion.ServicioLiquidacion{
-		Repo: store,
-		Exportador: exportacion.Combinado{
-			XLSX: exportacion.GeneradorExcel{},
-			Docs: exportacion.GeneradorPDF{},
-		},
-	}
-
 	// La deteccion de anomalias de un periodo (#37). Mismo cableado que
 	// cmd/api: los seis puertos los satisface este mismo *Store, que este
 	// binario ya construyo, y ninguno necesita boveda ni sistema de ficheros.
@@ -220,6 +212,14 @@ func construir() (http.Handler, error) {
 		Bitacora:      store,
 		Unidad:        store,
 		Reloj:         reloj.Sistema{},
+	}
+
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
 	}
 
 	// El flujo de aprobaciones de RD 13.5 (#34). Mismo cableado que cmd/api:
