@@ -3322,3 +3322,127 @@ table button {
   padding: 1rem 1.5rem;
   border-top: 1px solid var(--borde);
 }
+
+/* ---------- ListaOni.tsx (#39) ---------- */
+
+.lista-oni {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1120px;
+}
+
+.lista-oni-cabecera {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.lista-oni-cabecera h1 {
+  margin: 0;
+}
+
+/* Misma tarjeta blanca que `.catalogo-caja`, con nombre propio: la lista ONI
+   no depende de que el catalogo no renombre la suya. */
+.lista-oni-caja {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  overflow: hidden;
+}
+
+.tabla-lista-oni td {
+  vertical-align: top;
+}
+
+.lista-oni-titulo-texto {
+  margin: 0;
+  font-weight: 600;
+}
+
+.lista-oni-id {
+  margin: 0.15rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.lista-oni-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lista-oni-estado {
+  font-weight: 600;
+}
+
+.lista-oni-estado-pendiente {
+  color: var(--alerta);
+}
+
+.lista-oni-estado-asignado {
+  color: var(--ok);
+}
+
+.lista-oni-estado-descartado {
+  color: var(--texto-suave);
+}
+
+.lista-oni-pie {
+  padding: 1rem 1.25rem;
+}
+
+/* ---------- HistorialDelRegistro, dentro de ListaOni.tsx (#39) ---------- */
+
+.historial-registro {
+  display: flex;
+  flex-direction: column;
+}
+
+.historial-registro-cabecera {
+  padding: 1.25rem 1.5rem 0;
+}
+
+.historial-registro-cabecera p {
+  margin: 0 0 0.25rem;
+}
+
+.historial-registro-cabecera h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.historial-registro-cuerpo {
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.historial-registro-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0;
+}
+
+.historial-registro-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.historial-registro-datos dd {
+  margin: 0.15rem 0 0;
+}
+
+.historial-registro-pie {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--borde);
+}
