@@ -434,3 +434,32 @@ func TestTablaCSVNumeraBienConCamposMultilineaYBlancosAntesDeLaCabecera(t *testi
 		t.Fatalf("Lineas = %v, se esperaban %v", tabla.Lineas, want)
 	}
 }
+
+// H3: la columna sin nombre en medio conserva las posiciones de las de detras.
+// Borrar todas las cabeceras vacias correria `id` y `taquilla` una posicion.
+func TestTablaCSVConservaLaColumnaSinNombreEnMedio(t *testing.T) {
+	t.Parallel()
+
+	tabla, err := TablaCSV([]byte("a,,b\n1,,2\n"))
+	if err != nil {
+		t.Fatalf("TablaCSV: %v", err)
+	}
+	if want := []string{"a", "", "b"}; !slices.Equal(tabla.Columnas, want) {
+		t.Fatalf("columnas = %q, se esperaban %q", tabla.Columnas, want)
+	}
+	if tabla.Filas[0][2] != "2" {
+		t.Errorf("la celda de `b` se corrio: %q", tabla.Filas[0])
+	}
+
+	usos, err := MapaCine().Aplicar(Tabla{
+		Columnas: []string{"titulo", "", "id", "taquilla"},
+		Filas:    [][]string{{"A", "", "PX-1", "7"}},
+	})
+	if err != nil {
+		t.Fatalf("Aplicar: %v", err)
+	}
+	if usos[0].RechazoMotivo != "" || usos[0].Taquilla.String() != "7" ||
+		aplicacion.LeerIDsFuente(usos[0].IDsFuente)[aplicacion.ClaveIDPelicula] != "PX-1" {
+		t.Errorf("las columnas de detras se corrieron: %+v", usos[0])
+	}
+}
