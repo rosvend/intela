@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import Cargando from "../Cargando";
+import Paginador from "../catalogo/Paginador";
 import { useLista } from "../catalogo/useLista";
 import LineaTiempo from "./LineaTiempo";
 import {
@@ -13,7 +14,16 @@ import {
   type Filtros,
 } from "./tipos";
 
-const LIMITE_TIMELINE = 100;
+/**
+ * Cuantos asientos se piden por pagina de la bitacora. `GET /auditoria/asientos`
+ * acepta `limite` y `desplazamiento` (api/openapi.yaml) y por eso esta pantalla
+ * pagina de verdad contra el servidor, en vez de traer una tanda grande y
+ * pintarla entera -que era exactamente la "linea interminable" que el PO vio
+ * al demoar /auditoria-. Mismo numero que usa /catalogo
+ * (`catalogo/Catalogo.tsx`) y mismo componente de paginado, para que las dos
+ * pantallas de listas largas se comporten igual.
+ */
+const LIMITE_TIMELINE = 10;
 
 const FAMILIAS: readonly (FamiliaHecho | "todas")[] = [
   "todas",
@@ -35,12 +45,16 @@ const FAMILIAS: readonly (FamiliaHecho | "todas")[] = [
  * lo dice en vez de prometerlo con codigo.
  *
  * Los filtros se aplican en el cliente sobre la pagina que trajo el
- * servidor: la API no filtra (alcance minimo de este PR). La pagina son los
- * 100 asientos mas recientes.
+ * servidor: la API no filtra (alcance minimo de este PR). Cada pagina trae
+ * los `LIMITE_TIMELINE` asientos siguientes, lo mas reciente primero.
  */
 export default function Auditoria() {
   const [filtros, setFiltros] = useState<Filtros>(FILTROS_VACIOS);
   const [obraParaHistoria, setObraParaHistoria] = useState("");
+  // Paginacion contra el servidor (`desplazamiento`, api/openapi.yaml), no un
+  // estado en la URL: a diferencia del catalogo, esta pantalla no promete
+  // enlaces compartibles a una pagina concreta (issue original: OE-7).
+  const [desplazamiento, setDesplazamiento] = useState(0);
 
   const idFamilia = useId();
   const idDesde = useId();
@@ -49,8 +63,15 @@ export default function Auditoria() {
   const idObra = useId();
   const idHistoria = useId();
 
+  // `desplazamiento=0` se omite, no se manda: es el mismo valor por defecto
+  // que documenta el contrato, y mandarlo igual solo ensucia la consulta
+  // (mismo criterio que `catalogo/Catalogo.tsx`).
+  const consulta = new URLSearchParams({ limite: String(LIMITE_TIMELINE) });
+  if (desplazamiento > 0) {
+    consulta.set("desplazamiento", String(desplazamiento));
+  }
   const lista = useLista(
-    `${RUTAS_AUDITORIA.asientos}?limite=${LIMITE_TIMELINE}`,
+    `${RUTAS_AUDITORIA.asientos}?${consulta.toString()}`,
     esAsiento,
   );
 
@@ -69,8 +90,9 @@ export default function Auditoria() {
           <h1>Auditoría</h1>
           <p className="muted">
             Historia de cambios del catálogo, los repartos entre autores y las
-            distribuciones, con la evidencia de origen de cada cifra. Los{" "}
-            {LIMITE_TIMELINE} asientos más recientes.
+            distribuciones, con la evidencia de origen de cada cifra. De{" "}
+            {LIMITE_TIMELINE} en {LIMITE_TIMELINE} asientos, lo más reciente
+            primero.
           </p>
         </div>
       </header>
@@ -189,6 +211,8 @@ export default function Auditoria() {
         <Contenido
           asientos={filtrarAsientos(lista.elementos, filtros)}
           total={lista.elementos.length}
+          desplazamiento={desplazamiento}
+          onIrA={setDesplazamiento}
         />
       )}
     </section>
@@ -198,27 +222,51 @@ export default function Auditoria() {
 function Contenido({
   asientos,
   total,
+  desplazamiento,
+  onIrA,
 }: {
   asientos: ReturnType<typeof filtrarAsientos>;
+  /** Cuantos asientos trajo ESTA pagina del servidor, antes de los filtros del cliente. */
   total: number;
+  desplazamiento: number;
+  onIrA: (nuevoDesplazamiento: number) => void;
 }) {
   if (total === 0) {
     return (
       <p className="muted">
-        Sin asientos todavía. La bitácora se llena a medida que el sistema
-        registra recaudo, declaraciones y repartos.
+        {desplazamiento === 0
+          ? "Sin asientos todavía. La bitácora se llena a medida que el sistema registra recaudo, declaraciones y repartos."
+          : "Esta página de la bitácora no trae asientos."}
       </p>
     );
   }
   if (asientos.length === 0) {
-    return <p className="muted">Ningún asiento cuadra con esos filtros.</p>;
+    return (
+      <>
+        <p className="muted">Ningún asiento cuadra con esos filtros.</p>
+        <Paginador
+          etiqueta="Asientos"
+          desplazamiento={desplazamiento}
+          cuantas={total}
+          limite={LIMITE_TIMELINE}
+          onIrA={onIrA}
+        />
+      </>
+    );
   }
   return (
     <>
       <p className="catalogo-resumen" role="status">
-        {asientos.length} de {total} asientos.
+        {asientos.length} de {total} asientos en esta página.
       </p>
       <LineaTiempo asientos={asientos} />
+      <Paginador
+        etiqueta="Asientos"
+        desplazamiento={desplazamiento}
+        cuantas={total}
+        limite={LIMITE_TIMELINE}
+        onIrA={onIrA}
+      />
     </>
   );
 }

@@ -295,7 +295,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     expect(
       screen.getByRole("heading", { name: "Catálogo de obras" }),
     ).toBeTruthy();
-    expect(consultas()).toEqual(["/api/obras?limite=20"]);
+    expect(consultas()).toEqual(["/api/obras?limite=10"]);
 
     const encabezados = within(tabla())
       .getAllByRole("columnheader")
@@ -511,24 +511,24 @@ describe("pantalla de catalogo (integracion con App)", () => {
     // ida y vuelta normal del administrador: si la vuelta cayera en el catalogo
     // entero, la busqueda que acaba de escribir -y la pagina en la que estaba-
     // se perderian y tendria que rehacerla para seguir donde iba.
-    const veinte = Array.from({ length: 20 }, (_, i) => ({
+    const diez = Array.from({ length: 10 }, (_, i) => ({
       ...obraCompleta,
       id: `obra-${i}`,
       titulo: `Obra ${i}`,
     })) satisfies Obra[];
     simularServidor({
       rol: "administrador",
-      obras: () => veinte,
-      detalle: detalleDe(veinte),
+      obras: () => diez,
+      detalle: detalleDe(diez),
     });
 
     // Una busqueda de verdad: un filtro puesto y la segunda pagina.
-    montarApp("/catalogo?titulo=Obra&desplazamiento=20");
+    montarApp("/catalogo?titulo=Obra&desplazamiento=10");
     await screen.findByRole("table", { name: "Catálogo de obras" });
     expect(consultas()).toEqual([
-      "/api/obras?titulo=Obra&limite=20&desplazamiento=20",
+      "/api/obras?titulo=Obra&limite=10&desplazamiento=10",
     ]);
-    await screen.findByText("Obras 21 a 40");
+    await screen.findByText("Obras 11 a 20");
 
     fireEvent.click(within(filaCon("Obra 3")).getByRole("link"));
 
@@ -541,14 +541,14 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     // La vuelta cae en LA MISMA direccion de la que se salio, y la pantalla
     // vuelve a pedir lo mismo: filtro y pagina, no solo el filtro.
-    expect(ubicacion()).toBe("/catalogo?titulo=Obra&desplazamiento=20");
+    expect(ubicacion()).toBe("/catalogo?titulo=Obra&desplazamiento=10");
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe(
-        "/api/obras?titulo=Obra&limite=20&desplazamiento=20",
+        "/api/obras?titulo=Obra&limite=10&desplazamiento=10",
       ),
     );
     expect(campoDeBusqueda()).toHaveProperty("value", "Obra");
-    await screen.findByText("Obras 21 a 40");
+    await screen.findByText("Obras 11 a 20");
   });
 
   it("el identificador viaja codificado y vuelve entero a la consulta de la obra", async () => {
@@ -595,7 +595,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       target: { value: "Casa & Dos" },
     });
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+%26+Dos&limite=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+%26+Dos&limite=10"),
     );
 
     aplicarExacto("Género", "Drama");
@@ -604,7 +604,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe(
-        "/api/obras?titulo=Casa+%26+Dos&genero=Drama&anio=1991&ipi=IPI-00000001&limite=20",
+        "/api/obras?titulo=Casa+%26+Dos&genero=Drama&anio=1991&ipi=IPI-00000001&limite=10",
       ),
     );
     // Los filtros viven en la URL: recargar, volver atras o compartir el enlace
@@ -639,7 +639,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     expect(campoDeBusqueda().getAttribute("aria-describedby")).toBe(aviso.id);
     expect(campoDeBusqueda()).toHaveProperty("value", "1991a");
     expect(ubicacion()).toBe("/catalogo");
-    expect(consultas()).toEqual(["/api/obras?limite=20"]);
+    expect(consultas()).toEqual(["/api/obras?limite=10"]);
 
     // Al volver a escribir, el aviso se va con el valor que lo motivo.
     fireEvent.change(campoDeBusqueda(), { target: { value: "1991" } });
@@ -650,7 +650,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     fireEvent.keyDown(campoDeBusqueda(), { key: "Enter" });
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?anio=1991&limite=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?anio=1991&limite=10"),
     );
     expect(ubicacion()).toBe("/catalogo?anio=1991");
     expect(screen.getByText("Año: 1991")).toBeTruthy();
@@ -670,7 +670,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     expect(ubicacion()).toBe("/catalogo?genero=Drama&anio=2024");
     await vi.waitFor(() =>
       expect(ultimaConsulta()).toBe(
-        "/api/obras?genero=Drama&anio=2024&limite=20",
+        "/api/obras?genero=Drama&anio=2024&limite=10",
       ),
     );
     const chips = screen.getByRole("list", { name: "Filtros aplicados" });
@@ -693,13 +693,13 @@ describe("pantalla de catalogo (integracion con App)", () => {
     expect(
       screen.getByRole("combobox", { name: "Buscar por" }).textContent,
     ).toBe("Título");
-    expect(consultas()).toEqual(["/api/obras?genero=Drama&limite=20"]);
+    expect(consultas()).toEqual(["/api/obras?genero=Drama&limite=10"]);
   });
 
   it("quitar un chip lo saca de la URL y de la consulta, y vuelve a la primera página", async () => {
     simularServidor({ rol: "administrador", obras: () => [obraCompleta] });
 
-    montarApp("/catalogo?genero=Drama&anio=2024&desplazamiento=20");
+    montarApp("/catalogo?genero=Drama&anio=2024&desplazamiento=10");
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
     fireEvent.click(
@@ -708,22 +708,22 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
     expect(ubicacion()).toBe("/catalogo?anio=2024");
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?anio=2024&limite=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?anio=2024&limite=10"),
     );
     expect(screen.queryByText("Género: Drama")).toBeNull();
   });
 
   it("cambiar de filtro vuelve a la primera pagina", async () => {
-    const veinte = Array.from({ length: 20 }, (_, i) => ({
+    const diez = Array.from({ length: 10 }, (_, i) => ({
       ...obraCompleta,
       id: `obra-${i}`,
       titulo: `Obra ${i}`,
     })) satisfies Obra[];
-    simularServidor({ rol: "administrador", obras: () => veinte });
+    simularServidor({ rol: "administrador", obras: () => diez });
 
-    montarApp("/catalogo?desplazamiento=20");
+    montarApp("/catalogo?desplazamiento=10");
     await screen.findByRole("table", { name: "Catálogo de obras" });
-    expect(consultas()).toEqual(["/api/obras?limite=20&desplazamiento=20"]);
+    expect(consultas()).toEqual(["/api/obras?limite=10&desplazamiento=10"]);
 
     fireEvent.change(campoDeBusqueda(), {
       target: { value: "Obra 3" },
@@ -732,7 +732,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
     // Seguir en el desplazamiento 20 de un resultado que ya es otro dejaria la
     // pantalla vacia por una razon que nada explicaria.
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?titulo=Obra+3&limite=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Obra+3&limite=10"),
     );
     expect(ubicacion()).toBe("/catalogo?titulo=Obra+3");
   });
@@ -740,14 +740,14 @@ describe("pantalla de catalogo (integracion con App)", () => {
   it("limpiar los filtros los quita todos y vuelve a la primera pagina", async () => {
     simularServidor({ rol: "administrador", obras: () => LAS_TRES });
 
-    montarApp("/catalogo?titulo=Casa&anio=1991&desplazamiento=20");
+    montarApp("/catalogo?titulo=Casa&anio=1991&desplazamiento=10");
     await screen.findByRole("table", { name: "Catálogo de obras" });
     expect(screen.getByText("Año: 1991")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
 
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?limite=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?limite=10"),
     );
     expect(ubicacion()).toBe("/catalogo");
     // Los chips y el campo siguen a la URL cuando cambia por fuera de ellos.
@@ -759,19 +759,19 @@ describe("pantalla de catalogo (integracion con App)", () => {
   });
 
   it("la paginacion avanza con desplazamiento y ofrece volver a la anterior", async () => {
-    const veinte = Array.from({ length: 20 }, (_, i) => ({
+    const diez = Array.from({ length: 10 }, (_, i) => ({
       ...obraCompleta,
       id: `obra-${i}`,
       titulo: `Obra ${i}`,
     })) satisfies Obra[];
-    simularServidor({ rol: "administrador", obras: () => veinte });
+    simularServidor({ rol: "administrador", obras: () => diez });
 
     montarApp("/catalogo");
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
     // No hay un total en la respuesta, asi que no se dice "pagina 2 de 7": el
     // boton se ofrece porque la pagina vino entera.
-    expect(screen.getByText("Obras 1 a 20")).toBeTruthy();
+    expect(screen.getByText("Obras 1 a 10")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Página anterior" }),
     ).toHaveProperty("disabled", true);
@@ -781,21 +781,21 @@ describe("pantalla de catalogo (integracion con App)", () => {
     fireEvent.click(siguiente);
 
     await vi.waitFor(() =>
-      expect(ultimaConsulta()).toBe("/api/obras?limite=20&desplazamiento=20"),
+      expect(ultimaConsulta()).toBe("/api/obras?limite=10&desplazamiento=10"),
     );
-    await screen.findByText("Obras 21 a 40");
+    await screen.findByText("Obras 11 a 20");
     expect(
       screen.getByRole("button", { name: "Página anterior" }),
     ).toHaveProperty("disabled", false);
   });
 
   it("un clic de paginacion pide de inmediato, sin esperar al debounce del tecleo", async () => {
-    const veinte = Array.from({ length: 20 }, (_, i) => ({
+    const diez = Array.from({ length: 10 }, (_, i) => ({
       ...obraCompleta,
       id: `obra-${i}`,
       titulo: `Obra ${i}`,
     })) satisfies Obra[];
-    simularServidor({ rol: "administrador", obras: () => veinte });
+    simularServidor({ rol: "administrador", obras: () => diez });
     montarApp("/catalogo");
     await screen.findByRole("table", { name: "Catálogo de obras" });
 
@@ -807,7 +807,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       fireEvent.click(screen.getByRole("button", { name: "Página siguiente" }));
 
       expect(consultas().length).toBe(antes + 1);
-      expect(ultimaConsulta()).toBe("/api/obras?limite=20&desplazamiento=20");
+      expect(ultimaConsulta()).toBe("/api/obras?limite=10&desplazamiento=10");
     } finally {
       vi.useRealTimers();
     }
@@ -1017,7 +1017,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
 
       // ...y cuando para, sale UNA: la palabra entera, no las nueve anteriores.
       expect(consultas().length).toBe(antes + 1);
-      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=20");
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=10");
 
       // Control negativo: dos tecleos SEPARADOS mas que la espera son dos
       // peticiones. Sin el, un contador que no sube nunca -o un debounce que no
@@ -1036,10 +1036,10 @@ describe("pantalla de catalogo (integracion con App)", () => {
       });
 
       expect(consultas()).toEqual([
-        "/api/obras?limite=20",
-        "/api/obras?titulo=Casa+de+la&limite=20",
-        "/api/obras?titulo=Casa+de+la+P&limite=20",
-        "/api/obras?titulo=Casa+de+la+Pa&limite=20",
+        "/api/obras?limite=10",
+        "/api/obras?titulo=Casa+de+la&limite=10",
+        "/api/obras?titulo=Casa+de+la+P&limite=10",
+        "/api/obras?titulo=Casa+de+la+Pa&limite=10",
       ]);
     });
 
@@ -1072,7 +1072,7 @@ describe("pantalla de catalogo (integracion con App)", () => {
       });
 
       await screen.findByRole("table", { name: "Catálogo de obras" });
-      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=20");
+      expect(ultimaConsulta()).toBe("/api/obras?titulo=Casa+de+la&limite=10");
       expect(screen.queryByRole("alert")).toBeNull();
     });
   });
