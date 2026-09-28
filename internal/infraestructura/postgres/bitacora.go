@@ -32,17 +32,22 @@ func (s *Store) Asentar(ctx context.Context, a aplicacion.Asiento) error {
 	return asentar(ctx, s.ejecutorDe(ctx), a)
 }
 
-// asentar es el INSERT que comparten [Store.Asentar] -suelto, contra el
-// pool- y cualquier otro puerto que necesite el mismo asiento DENTRO de su
-// propia transaccion -ver [Store.Guardar] en declaraciones.go, que lo corre
-// contra una pgx.Tx para que la version y el asiento sean una sola operacion
-// (ADR 0006)-. ejecutor es la parte de *pgxpool.Pool y pgx.Tx que este INSERT
-// necesita; cual de los dos llega lo decide quien llama.
+// asentar es el INSERT que comparten [Store.Asentar] -contra q(ctx), para
+// que participe en UnidadDeTrabajo- y cualquier otro puerto que necesite el
+// mismo asiento DENTRO de su propia transaccion -ver [Store.Guardar] en
+// declaraciones.go, que lo corre contra una pgx.Tx para que la version y el
+// asiento sean una sola operacion (ADR 0006)-. ejecutor es la parte de
+// *pgxpool.Pool y pgx.Tx que este INSERT necesita; cual de los dos llega lo
+// decide quien llama.
 func asentar(ctx context.Context, ex ejecutor, a aplicacion.Asiento) error {
+	payload := a.Payload
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO asientos (hecho, ref_tipo, ref_id, actor_id, refiere_a, payload, cuando)
 		 VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::uuid, $6, $7)`,
-		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.RefiereA, a.Payload, a.Cuando)
+		a.Hecho, a.RefTipo, a.RefID, a.ActorID, a.RefiereA, payload, a.Cuando)
 	if err != nil {
 		return traducirError(err, "asentar %q sobre %s %q", a.Hecho, a.RefTipo, a.RefID)
 	}
