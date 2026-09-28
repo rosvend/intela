@@ -172,6 +172,82 @@ func TestLaBitacoraRechazaUpdateYDelete(t *testing.T) {
 	}
 }
 
+// El rechazo del trigger llega tipado, no como un error generico de pgx.
+func TestElRechazoAppendOnlyEsErrBitacoraInmutable(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+
+	if err := s.Asentar(ctx, aplicacion.Asiento{
+		Hecho: "declaracion.guardada", RefTipo: "obra", RefID: obraSinDeclaracion,
+		Cuando: time.Now().UTC(), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("Asentar: %v", err)
+	}
+
+	for _, sentencia := range []string{
+		`UPDATE asientos SET hecho = 'otro' WHERE ref_id = $1`,
+		`DELETE FROM asientos WHERE ref_id = $1`,
+	} {
+		_, err := pool.Exec(ctx, sentencia, obraSinDeclaracion)
+		if err := traducirError(err, "prueba"); !errors.Is(err, aplicacion.ErrBitacoraInmutable) {
+			t.Fatalf("%s: error = %v, se esperaba ErrBitacoraInmutable", sentencia, err)
+		}
+	}
+}
+
+// Corregir es escribir otro asiento que referencia al anterior; el original queda intacto.
+func TestUnaCorreccionReferenciaAlAsientoOriginal(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	cuando := time.Now().UTC().Truncate(time.Microsecond)
+
+	if err := s.Asentar(ctx, aplicacion.Asiento{
+		Hecho: "test.original", RefTipo: "obra", RefID: obraSinDeclaracion,
+		Cuando: cuando, Payload: []byte(`{"valor":1}`),
+	}); err != nil {
+		t.Fatalf("Asentar original: %v", err)
+	}
+	previos, err := s.De(ctx, "obra", obraSinDeclaracion)
+	if err != nil || len(previos) != 1 {
+		t.Fatalf("De: %v, %d asientos", err, len(previos))
+	}
+	original := previos[0]
+
+	if err := s.Asentar(ctx, aplicacion.Asiento{
+		Hecho: "test.correccion", RefTipo: "obra", RefID: obraSinDeclaracion,
+		RefiereA: original.ID, Cuando: cuando.Add(time.Second), Payload: []byte(`{"valor":2}`),
+	}); err != nil {
+		t.Fatalf("Asentar correccion: %v", err)
+	}
+
+	asientos, err := s.De(ctx, "obra", obraSinDeclaracion)
+	if err != nil || len(asientos) != 2 {
+		t.Fatalf("De: %v, %d asientos", err, len(asientos))
+	}
+	if asientos[0].ID != original.ID || asientos[0].RefiereA != "" || asientos[0].Hecho != "test.original" {
+		t.Fatalf("el original cambio: %+v", asientos[0])
+	}
+	if asientos[1].RefiereA != original.ID {
+		t.Fatalf("RefiereA = %q, se esperaba %q", asientos[1].RefiereA, original.ID)
+	}
+	porID, err := s.AsientoPorID(ctx, asientos[1].ID)
+	if err != nil || porID.RefiereA != original.ID {
+		t.Fatalf("AsientoPorID: %v, RefiereA = %q", err, porID.RefiereA)
+	}
+}
+
+// Una correccion que apunta a un asiento inexistente no entra.
+func TestUnaCorreccionHaciaUnAsientoInexistenteSeRechaza(t *testing.T) {
+	s, _ := sembrar(t)
+	err := s.Asentar(t.Context(), aplicacion.Asiento{
+		Hecho: "test.correccion", RefTipo: "obra", RefID: obraSinDeclaracion,
+		RefiereA: "00000000-0000-0000-0000-000000000000", Cuando: time.Now().UTC(), Payload: []byte(`{}`),
+	})
+	if err == nil {
+		t.Fatal("se esperaba rechazo por refiere_a inexistente")
+	}
+}
+
 // Listar devuelve lo mas reciente primero: es el orden de timeline que lee
 // el Portal de Auditoria, no el orden de cadena de ExplicarCifra.
 func TestListarOrdenaLoRecientePrimero(t *testing.T) {

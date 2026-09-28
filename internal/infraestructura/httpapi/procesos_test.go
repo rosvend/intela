@@ -25,20 +25,20 @@ type procesosFalso struct {
 	motivoRecibido   string
 }
 
-func (p *procesosFalso) IniciarProceso(_ context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (aplicacion.ProcesoVista, error) {
-	p.idRecibido, p.periodoRecibido, p.circuitoRecibido, p.bolsaIDRecibida = id, periodo, circuito, bolsaID
+func (p *procesosFalso) IniciarProceso(_ context.Context, id, periodo string, circuito reparto.Circuito, bolsaID, actorID string) (aplicacion.ProcesoVista, error) {
+	p.idRecibido, p.periodoRecibido, p.circuitoRecibido, p.bolsaIDRecibida, p.actorRecibido = id, periodo, circuito, bolsaID, actorID
 	return p.vista, p.err
 }
-func (p *procesosFalso) AvanzarEtapa(_ context.Context, id string) (aplicacion.ProcesoVista, error) {
-	p.idRecibido = id
+func (p *procesosFalso) AvanzarEtapa(_ context.Context, id, actorID string) (aplicacion.ProcesoVista, error) {
+	p.idRecibido, p.actorRecibido = id, actorID
 	return p.vista, p.err
 }
 func (p *procesosFalso) Firmar(_ context.Context, id string, rol reparto.RolAcompuerta, actorID string) (aplicacion.ProcesoVista, error) {
 	p.idRecibido, p.rolRecibido, p.actorRecibido = id, rol, actorID
 	return p.vista, p.err
 }
-func (p *procesosFalso) RechazarGate(_ context.Context, id, motivo string) (aplicacion.ProcesoVista, error) {
-	p.idRecibido, p.motivoRecibido = id, motivo
+func (p *procesosFalso) RechazarGate(_ context.Context, id, motivo, actorID string) (aplicacion.ProcesoVista, error) {
+	p.idRecibido, p.motivoRecibido, p.actorRecibido = id, motivo, actorID
 	return p.vista, p.err
 }
 func (p *procesosFalso) ConsultarEstadoProceso(_ context.Context, id string) (aplicacion.ProcesoVista, error) {
@@ -266,5 +266,29 @@ func TestListarProcesosSinFilasDevuelveListaVaciaNoNull(t *testing.T) {
 	}
 	if body := rec.Body.String(); body != "[]\n" && body != "[]" {
 		t.Fatalf("cuerpo = %q, se esperaba una lista vacia []", body)
+	}
+}
+
+// El actor de cada transicion sale de la sesion, nunca del cuerpo (ADR 0006).
+func TestProcesosPasanElActorDeLaSesion(t *testing.T) {
+	casos := []struct {
+		rol                  aplicacion.Rol
+		metodo, ruta, cuerpo string
+	}{
+		{aplicacion.RolAdministrador, http.MethodPost, "/procesos", cuerpoAbrirProceso},
+		{aplicacion.RolAdministrador, http.MethodPost, "/procesos/proc-1/avanzar", ""},
+		{aplicacion.RolContabilidad, http.MethodPost, "/procesos/proc-1/rechazar", `{"motivo":"faltan soportes"}`},
+	}
+	for _, c := range casos {
+		t.Run(c.ruta, func(t *testing.T) {
+			falso := &procesosFalso{vista: procesoVistaDeEjemplo()}
+			rec := pedir(t, servidorConProcesos(t, c.rol, falso), c.metodo, c.ruta, c.cuerpo, "tok")
+			if rec.Code >= 300 {
+				t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if falso.actorRecibido != "usr-"+string(c.rol) {
+				t.Fatalf("actor = %q, se esperaba el de la sesion", falso.actorRecibido)
+			}
+		})
 	}
 }

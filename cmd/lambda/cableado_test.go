@@ -16,6 +16,8 @@ import (
 // omision que no aparezca en esta lista es un descuido, no una decision, y
 // [TestLambdaCableaLosMismosCasosQueLaAPI] la convierte en un fallo de CI.
 var casosExentosEnLambda = map[string]string{
+	"Admision": "los documentos de afiliacion van a objetos.Disco y el FS de Lambda " +
+		"es de solo lectura salvo /tmp, que se recicla con el contenedor (ADR 0006/0014)",
 	"Ingesta": "la boveda de reportes crudos es objetos.Disco y el FS de Lambda " +
 		"es de solo lectura salvo /tmp, que se recicla con el contenedor (ADR 0006/0014)",
 }

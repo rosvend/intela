@@ -1,0 +1,217 @@
+package aplicacion
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/rosvend/intela/internal/dominio/reparto"
+)
+
+// corridaAsentada es corridaSinAltas mas el alta asentada de cada obra: la cadena completa.
+func corridaAsentada(t *testing.T) *bitacoraFalsa {
+	t.Helper()
+	b := corridaSinAltas(t)
+	for _, o := range []struct{ id, titulo string }{{"obra-1", "La Primera"}, {"obra-2", "La Segunda"}} {
+		b.asientos = append(b.asientos, Asiento{
+			ID: "as-alta-" + o.id, Hecho: HechoObraRegistrada, RefTipo: RefObra, RefID: o.id,
+			Payload: []byte(`{"despues":{"titulo":"` + o.titulo + `","genero":"drama","anio":2020}}`),
+		})
+	}
+	return b
+}
+
+// corridaSinAltas corre proc-1 de verdad hasta firmar Verificacion; las obras no tienen alta asentada.
+func corridaSinAltas(t *testing.T) *bitacoraFalsa {
+	t.Helper()
+	e, _ := entornoValorizacion(t)
+	for range 4 {
+		if _, err := e.uc.AvanzarEtapa(t.Context(), "proc-1", "usr-admin"); err != nil {
+			t.Fatalf("avanzar: %v", err)
+		}
+	}
+	if _, err := e.uc.Firmar(t.Context(), "proc-1", reparto.RolDistribucion, "usr-dist"); err != nil {
+		t.Fatalf("firmar distribucion: %v", err)
+	}
+	if _, err := e.uc.Firmar(t.Context(), "proc-1", reparto.RolContabilidad, "usr-conta"); err != nil {
+		t.Fatalf("firmar contabilidad: %v", err)
+	}
+	e.bitacora.asientos = append(e.bitacora.asientos, Asiento{
+		ID: "as-recaudo", Hecho: HechoRecaudoRegistrado, RefTipo: RefBolsa, RefID: "bolsa-1",
+		Payload: []byte(`{"usuario_id":"z","periodo":"2026-01","circuito":"nacional","bruto":"1000000.00","convenio":"conv-9","tarifa":"T-01","factura":"F-77"}`),
+	})
+	return e.bitacora
+}
+
+var (
+	auditor    = Usuario{ID: "usr-aud", Rol: RolAuditor}
+	titularUno = Usuario{ID: "usr-t1", Rol: RolTitular, TitularID: "titular-1"}
+	otroTitu   = Usuario{ID: "usr-t9", Rol: RolTitular, TitularID: "titular-9"}
+)
+
+func TestExplicarUnaLineaDeTitularRespondeLasSietePreguntas(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	x, err := uc.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Ref != "proc-1:obra-1:titular-1" || x.TitularID != "titular-1" || x.Retenida {
+		t.Fatalf("cabecera = %+v", x)
+	}
+	if x.Bolsa.ID != "bolsa-1" || x.Bolsa.UsuarioID != "z" || x.Bolsa.Recaudo == nil || x.Bolsa.Recaudo.Factura != "F-77" {
+		t.Fatalf("1. bolsa = %+v", x.Bolsa)
+	}
+	if len(x.Reportes) != 1 || x.Reportes[0].SHA256 != "abc" || x.Reportes[0].ClaveObjeto != "crudos/abc" || x.Reporte.ID != "rep-1" {
+		t.Fatalf("2. reportes = %+v / %+v", x.Reportes, x.Reporte)
+	}
+	if x.Obra.ID != "obra-1" || x.Obra.Escalon != "difuso" || x.Obra.Puntaje != "0.91" || len(x.Identificacion) != 1 {
+		t.Fatalf("3. obra = %+v, identificacion = %+v", x.Obra, x.Identificacion)
+	}
+	if x.Regla.SnapshotID != "snap-1" || x.Regla.Reglamento != "RD-IX" {
+		t.Fatalf("4. regla = %+v", x.Regla)
+	}
+	if x.Split == nil || x.Split.IPI != "IPI-1" || !x.Split.Porcentaje.Equal(d("100")) || x.Split.Version == nil || *x.Split.Version != 3 {
+		t.Fatalf("5. split = %+v", x.Split)
+	}
+	if len(x.Deducciones) != 3 || x.Deducciones[0].Concepto != "gastos_administrativos" || !x.Deducciones[0].Porcentaje.Equal(d("20")) {
+		t.Fatalf("6. deducciones = %+v", x.Deducciones)
+	}
+	suma := x.Neto
+	for _, ded := range x.Deducciones {
+		suma = suma.Add(ded.Monto)
+	}
+	if x.Neto.IsZero() || !suma.Equal(x.Bruto) {
+		t.Fatalf("6. bruto %s != neto %s + deducciones", x.Bruto, x.Neto)
+	}
+	if len(x.Firmas) != 2 || x.Firmas[0].Rol != "distribucion" || x.Firmas[1].ActorID != "usr-conta" {
+		t.Fatalf("7. firmas = %+v", x.Firmas)
+	}
+	if x.Corrida.ProcesoID != "proc-1" || x.Corrida.Periodo != "2026-01" || x.Corrida.Circuito != "nacional" {
+		t.Fatalf("corrida = %+v", x.Corrida)
+	}
+	if x.Obra.Titulo != "La Primera" {
+		t.Fatalf("obra.titulo = %q, sale del alta asentada", x.Obra.Titulo)
+	}
+	if len(x.Faltantes) != 0 {
+		t.Fatalf("faltantes = %v, la cadena esta completa", x.Faltantes)
+	}
+}
+
+func TestExplicarNombraElAltaDeObraQueFalta(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaSinAltas(t)}
+
+	for _, ref := range []string{"proc-1:obra-1:titular-1", "proc-1:obra-2"} {
+		x, err := uc.Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if x.Obra.Titulo != "" {
+			t.Fatalf("%s: obra.titulo = %q sin alta asentada", ref, x.Obra.Titulo)
+		}
+		if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+			t.Fatalf("%s: faltantes = %v, tiene que nombrar %q", ref, x.Faltantes, HechoObraRegistrada)
+		}
+	}
+}
+
+func TestExplicarUnaObraRetenidaDiceElMotivo(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	x, err := uc.Explicar(t.Context(), auditor, "proc-1:obra-2")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if !x.Retenida || x.Motivo == "" || x.Split != nil || x.TitularID != "" {
+		t.Fatalf("retenida = %+v, se esperaba el motivo de RD 13.1.3", x)
+	}
+	if x.Identificacion[0].ResueltoPor != "usr-admin" {
+		t.Fatalf("identificacion = %+v", x.Identificacion)
+	}
+}
+
+func TestExplicarAlcanceDelTitular(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	if _, err := uc.Explicar(t.Context(), titularUno, "proc-1:obra-1:titular-1"); err != nil {
+		t.Fatalf("el titular no pudo ver su propia cifra: %v", err)
+	}
+	if _, err := uc.Explicar(t.Context(), otroTitu, "proc-1:obra-1:titular-1"); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("error = %v, la cifra de otro titular es 403", err)
+	}
+	if _, err := uc.Explicar(t.Context(), titularUno, "proc-1:obra-2"); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("error = %v, un titular no ve la obra donde no participa", err)
+	}
+}
+
+func TestExplicarSinLinajeEsNoEncontrado(t *testing.T) {
+	t.Parallel()
+	uc := ExplicarCifra{Bitacora: corridaAsentada(t)}
+
+	for _, ref := range []string{
+		"proc-x:obra-1:titular-1", // corrida sin asientos
+		"proc-1:obra-x",           // obra que no valorizo en esa corrida
+		"proc-1:obra-1:titular-x", // titular ajeno a la obra
+		"sin-separador",
+		"a:b:c:d",
+		"proc-1::titular-1",
+	} {
+		if _, err := uc.Explicar(t.Context(), auditor, ref); !errors.Is(err, ErrNoEncontrado) {
+			t.Errorf("%q: error = %v, se esperaba ErrNoEncontrado", ref, err)
+		}
+	}
+}
+
+func TestExplicarNombraElEslabonQueFalta(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+	var sinRecaudo []Asiento
+	for _, a := range b.asientos {
+		if a.Hecho != HechoRecaudoRegistrado {
+			sinRecaudo = append(sinRecaudo, a)
+		}
+	}
+	b.asientos = sinRecaudo
+
+	x, err := ExplicarCifra{Bitacora: b}.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Bolsa.Recaudo != nil || len(x.Faltantes) != 1 || x.Faltantes[0] != HechoRecaudoRegistrado {
+		t.Fatalf("faltantes = %v, se esperaba nombrar el recaudo ausente", x.Faltantes)
+	}
+}
+
+func TestRefDeLineaYDeObra(t *testing.T) {
+	t.Parallel()
+	if got := FormarRef("proc-1", "obra-1", "titular-1"); got != "proc-1:obra-1:titular-1" {
+		t.Fatalf("FormarRef = %q", got)
+	}
+	if got := FormarRef("proc-1", "obra-1", ""); got != "proc-1:obra-1" {
+		t.Fatalf("FormarRef sin titular = %q", got)
+	}
+}
+
+// Una correccion da el titulo pero no es el alta: faltantes sigue nombrando obra.registrada (B3).
+func TestExplicarConCorreccionSinAltaNombraElAlta(t *testing.T) {
+	t.Parallel()
+	b := corridaSinAltas(t)
+	b.asientos = append(b.asientos, Asiento{
+		ID: "as-correccion-obra-1", Hecho: HechoObraCorregida, RefTipo: RefObra, RefID: "obra-1",
+		Payload: []byte(`{"despues":{"titulo":"La Primera Corregida","genero":"drama","anio":2020}}`),
+	})
+
+	x, err := ExplicarCifra{Bitacora: b}.Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("explicar: %v", err)
+	}
+	if x.Obra.Titulo != "La Primera Corregida" {
+		t.Fatalf("obra.titulo = %q, sale de la ultima correccion", x.Obra.Titulo)
+	}
+	if len(x.Faltantes) != 1 || x.Faltantes[0] != HechoObraRegistrada {
+		t.Fatalf("faltantes = %v, sin alta asentada tiene que nombrar %q", x.Faltantes, HechoObraRegistrada)
+	}
+}

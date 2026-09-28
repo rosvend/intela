@@ -29,6 +29,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
+	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
@@ -141,7 +142,7 @@ func construir() (http.Handler, error) {
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
-	liquidaciones := aplicacion.Liquidaciones{
+	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: notificaciones.Bitacora{Log: registro},
@@ -192,6 +193,14 @@ func construir() (http.Handler, error) {
 		Reloj:   reloj.Sistema{},
 	}
 
+	reporte := aplicacion.ServicioLiquidacion{
+		Repo: store,
+		Exportador: exportacion.Combinado{
+			XLSX: exportacion.GeneradorExcel{},
+			Docs: exportacion.GeneradorPDF{},
+		},
+	}
+
 	// La deteccion de anomalias de un periodo (#37). Mismo cableado que
 	// cmd/api: los seis puertos los satisface este mismo *Store, que este
 	// binario ya construyo, y ninguno necesita boveda ni sistema de ficheros.
@@ -225,6 +234,9 @@ func construir() (http.Handler, error) {
 		Resultados:    store,
 		Unidad:        store,
 		Anomalias:     anomalias,
+		Bitacora:      store,
+		Reloj:         reloj.Sistema{},
+		Origen:        store,
 	}
 
 	// Ingesta y Admision van SIN cablear a proposito; sus rutas responden 503.
@@ -238,17 +250,20 @@ func construir() (http.Handler, error) {
 	// ADR existe para impedir. Cuando entre el adaptador de S3 -- que es donde
 	// el ADR 0014 pone los objetos -- se cablean aqui igual que en cmd/api.
 	api := httpapi.Nueva(httpapi.Casos{
-		Salud:         store,
-		Auth:          autenticacion,
-		Liq:           liquidaciones,
-		Catalogo:      catalogo,
-		Padron:        padron,
-		Declaraciones: declaraciones,
-		Recaudo:       recaudo,
-		Procesos:      procesos,
-		Cola:          aplicacion.Normalizacion{Reportes: store},
-		Anomalias:     anomalias,
-		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Salud:          store,
+		Auth:           autenticacion,
+		Ordenes:        ordenes,
+		Catalogo:       catalogo,
+		Padron:         padron,
+		Declaraciones:  declaraciones,
+		Recaudo:        recaudo,
+		Reporte:        reporte,
+		Procesos:       procesos,
+		Cola:           aplicacion.Normalizacion{Reportes: store},
+		Anomalias:      anomalias,
+		Auditoria:      aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Explicar:       aplicacion.ExplicarCifra{Bitacora: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

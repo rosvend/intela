@@ -18,23 +18,23 @@ en el handler. Ese chequeo de grupo es grueso: `requiereRol` no sustituye
 a la autorizacion dentro del caso de uso. El middleware solo cierra la
 puerta del prefijo; la autorizacion fina vive con el caso de uso.
 
-La tabla lleva **dos columnas de roles** porque `/alertas/*` y `/procesos/*` son
-prefijos donde leer y escribir no piden lo mismo. Donde las dos
-columnas coinciden, el prefijo tiene un solo grupo de `requiereRol`; donde
-difieren, el `Route` se parte en un `Group` por cada conjunto de roles y **la diferencia es la que hay que
-justificar**, porque una columna de escritura mas ancha de lo necesario no falla
-en ninguna prueba.
-
-| Prefijo | Lectura | Escritura |
-| ------- | ------- | --------- |
-| `/admin/*` | `administrador` | `administrador` |
-| `/auditoria/*` | `auditor`, `administrador` | — |
-| `/obras/*` | `administrador` | `administrador` |
-| `/recaudo/*` | `contabilidad`, `administrador` | `contabilidad`, `administrador` |
-| `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` | — |
-| `/alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador`, `distribucion` |
-| `/reportes/*` | `administrador` | `administrador` |
-| `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
+| Prefijo | Roles |
+| ------- | ----- |
+| `/admin/*` | `administrador` |
+| `/auditoria/*` | `auditor`, `administrador` |
+| `/obras/*` | `administrador` |
+| `/identificacion/*` | `administrador` |
+| `/recaudo/*` | `contabilidad`, `administrador` |
+| `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
+| `GET /alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
+| escritura de `/alertas/*` | `administrador`, `distribucion` |
+| `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo |
+| `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` |
+| `/reportes/*` | `administrador` |
+| `GET /procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
+| `POST /procesos`, `POST /procesos/{id}/avanzar` | `administrador` |
+| `POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar` | `distribucion`, `contabilidad` |
+| `GET /explicar/{ref}` | `titular` (solo lineas suyas, `OE-6`), `auditor`, `administrador` |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -47,7 +47,10 @@ compuertas del `RD 13.5`, y una sola persona no puede ostentar las dos: quien
 co-firma la salida del dinero no debe poder declarar cuanto entro.
 
 `titular` queda fuera de los dos, lectura incluida: solo ve las obras donde
-participa (`OE-6`), no el ingreso de la sociedad.
+participa (`OE-6`), no el ingreso de la sociedad. El panel por obra y el
+export (`/mis-liquidaciones/obras`, `/mis-liquidaciones/export`) son la
+excepcion: ahi ve su propio neto, no el bruto de la sociedad. Las ordenes
+de pago van por `/mis-liquidaciones`.
 
 `/alertas/*` es la bandeja de anomalias de un periodo (#37, ADR 0021) y, con
 `/procesos/*`, uno de los dos prefijos con las columnas distintas. **Lee** quien tiene que ver que
