@@ -135,6 +135,8 @@ func TestParametrosSinteticosVanEtiquetados(t *testing.T) {
 		"grupo.lideres_pct":       true,
 		"grupo.estandar_pct":      true,
 		"asignacion.terceros_pct": true,
+		// Valor de demo abierto hacia adelante, no el decreto del ano (#193).
+		"smmlv": true,
 	}
 
 	sinteticos := map[string]bool{}

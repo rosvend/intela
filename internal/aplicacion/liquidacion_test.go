@@ -158,21 +158,20 @@ func (r *repoLiqMemoria) MetaDeProceso(_ context.Context, procesoID string) (Met
 	return meta, nil
 }
 
-func (r *repoLiqMemoria) ProcesosListos(
+// CorridasDePeriodo devuelve TODAS las corridas del periodo y circuito, sin
+// filtrar por etapa ni firmas, igual que el adaptador real: la regla de cuales
+// estan listas es del caso de uso, y es lo que estas pruebas comprueban.
+func (r *repoLiqMemoria) CorridasDePeriodo(
 	_ context.Context, periodo string, circuito reparto.Circuito,
-) ([]string, error) {
-	ids := []string{}
-	for id, meta := range r.procesos {
-		if meta.Periodo != periodo || meta.Circuito != circuito {
-			continue
+) ([]MetaProceso, error) {
+	out := []MetaProceso{}
+	for _, meta := range r.procesos {
+		if meta.Periodo == periodo && meta.Circuito == circuito {
+			out = append(out, meta)
 		}
-		if meta.ExigirListoParaLiquidar() != nil {
-			continue
-		}
-		ids = append(ids, id)
 	}
-	slices.Sort(ids)
-	return ids, nil
+	slices.SortFunc(out, func(a, b MetaProceso) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
 }
 
 func (r *repoLiqMemoria) InsumoDeProceso(_ context.Context, procesoID string) (InsumoLiquidacion, error) {
@@ -196,16 +195,19 @@ type notificadorFalso struct {
 }
 
 type avisoEnviado struct {
-	Dest   string
-	Asunto string
-	Cuerpo string
+	Dest    string
+	Proceso string
+	Asunto  string
+	Cuerpo  string
 }
 
-func (n *notificadorFalso) Notificar(_ context.Context, dest, asunto, cuerpo string) (string, error) {
+func (n *notificadorFalso) Notificar(_ context.Context, aviso Aviso) (string, error) {
 	if n.err != nil {
 		return "", n.err
 	}
-	n.enviados = append(n.enviados, avisoEnviado{Dest: dest, Asunto: asunto, Cuerpo: cuerpo})
+	n.enviados = append(n.enviados, avisoEnviado{
+		Dest: aviso.TitularID, Proceso: aviso.ProcesoID, Asunto: aviso.Asunto, Cuerpo: aviso.Cuerpo,
+	})
 	return fmt.Sprintf("acuse-%d", len(n.enviados)), nil
 }
 
@@ -252,15 +254,22 @@ func servicio(repo *repoLiqMemoria, instante time.Time) Liquidaciones {
 	return montar(repo, instante).svc
 }
 
-// metaLista es una corrida que YA paso la compuerta del RD 13.5: etapa
-// liquidacion_final y las dos firmas sobre la revision vigente.
+// metaLista es una corrida que YA paso la compuerta del RD 13.5, tal como la
+// deja [reparto.ProcesoDeReparto.AvanzarEtapa]: etapa liquidacion_final,
+// revision 2, y las dos firmas de verificacion sobre la revision 1. Salir de
+// una compuerta sube la revision, asi que las firmas NUNCA estan en la
+// vigente; el fixture anterior las ponia ahi y describia una corrida que la
+// maquina de estados no puede producir (#193).
+//
+// Cada corrida reparte su propia bolsa (ADR 0019).
 func metaLista(id, periodo string, circuito reparto.Circuito) MetaProceso {
 	return MetaProceso{
 		ID:       id,
 		Periodo:  periodo,
 		Circuito: circuito,
+		BolsaID:  "bolsa-" + id,
 		Etapa:    reparto.EtapaLiquidacionFinal,
-		Revision: 1,
+		Revision: 2,
 		Firmas: []reparto.Firma{
 			{Rol: string(RolDistribucion), ActorID: "usr-dist", SobreRev: 1},
 			{Rol: string(RolContabilidad), ActorID: "usr-cont", SobreRev: 1},
@@ -615,30 +624,41 @@ func TestGenerarLiquidacionExigeEtapaLiquidacionFinal(t *testing.T) {
 	}
 }
 
-func TestGenerarLiquidacionExigeLasDosFirmasDeLaRevisionVigente(t *testing.T) {
+// TestGenerarLiquidacionExigeLaVerificacionCerradaConLasDosFirmas es la
+// compuerta: los dos roles tienen que haber firmado UNA MISMA revision
+// anterior a la vigente, que es lo que [reparto.ProcesoDeReparto.AvanzarEtapa]
+// exige para dejar salir de verificacion.
+func TestGenerarLiquidacionExigeLaVerificacionCerradaConLasDosFirmas(t *testing.T) {
+	dist := func(rev int) reparto.Firma {
+		return reparto.Firma{Rol: string(RolDistribucion), ActorID: "usr-dist", SobreRev: rev}
+	}
+	cont := func(rev int) reparto.Firma {
+		return reparto.Firma{Rol: string(RolContabilidad), ActorID: "usr-cont", SobreRev: rev}
+	}
 	casos := []struct {
 		nombre string
 		firmas []reparto.Firma
 	}{
 		{nombre: "sin firmas", firmas: nil},
+		{nombre: "solo distribucion", firmas: []reparto.Firma{dist(2)}},
 		{
-			nombre: "solo distribucion",
-			firmas: []reparto.Firma{{Rol: string(RolDistribucion), ActorID: "usr-dist", SobreRev: 2}},
+			// Cada rol firmo, pero revisiones distintas: ninguna compuerta se
+			// cerro con las dos.
+			nombre: "las dos partidas entre revisiones",
+			firmas: []reparto.Firma{dist(1), cont(2)},
 		},
 		{
-			// Las dos firmas, pero de la revision que el rechazo invalido.
-			nombre: "las dos sobre una revision anterior",
-			firmas: []reparto.Firma{
-				{Rol: string(RolDistribucion), ActorID: "usr-dist", SobreRev: 1},
-				{Rol: string(RolContabilidad), ActorID: "usr-cont", SobreRev: 1},
-			},
+			// Las dos sobre la vigente describen una compuerta ABIERTA, no una
+			// que la corrida ya dejo atras.
+			nombre: "las dos sobre la revision vigente",
+			firmas: []reparto.Firma{dist(3), cont(3)},
 		},
 	}
 	for _, tt := range casos {
 		t.Run(tt.nombre, func(t *testing.T) {
 			repo := repoDosTitulares()
 			meta := repo.procesos["prc-1"]
-			meta.Revision = 2
+			meta.Revision = 3
 			meta.Firmas = tt.firmas
 			repo.procesos["prc-1"] = meta
 
@@ -662,6 +682,13 @@ func TestGenerarLiquidacionNotificaYAsientaLaEmision(t *testing.T) {
 
 	if len(e.avisos.enviados) != 2 {
 		t.Fatalf("%d avisos; R-10 cuenta desde el envio, asi que hay uno por orden", len(e.avisos.enviados))
+	}
+	for _, a := range e.avisos.enviados {
+		// `notificaciones` guarda el acuse por (titular, corrida): un aviso
+		// sin corrida no sirve para contar ningun plazo.
+		if a.Proceso != "prc-1" {
+			t.Fatalf("aviso a %s sin la corrida de la orden: %+v", a.Dest, a)
+		}
 	}
 	emisiones, residuos := 0, 0
 	for _, a := range e.libro.asientos {
@@ -1113,5 +1140,219 @@ func TestResiduoProrrateoSeAsientaUnaVezPorLote(t *testing.T) {
 		!strings.Contains(cuerpo, `"social":"-0.02"`) ||
 		!strings.Contains(cuerpo, `"reserva":"0.02"`) {
 		t.Fatalf("payload del residuo = %s; se esperaban admin 0.01, social -0.02, reserva 0.02", cuerpo)
+	}
+}
+
+// TestGenerarLiquidacionAceptaLaVerificacionCerradaAntesDeUnRechazoDePago es
+// la otra cara de la compuerta: una corrida que volvio a liquidacion_final
+// porque pago_registro se rechazo tiene la revision dos veces por encima de
+// sus firmas de verificacion, y sigue habiendo cerrado esa compuerta.
+func TestGenerarLiquidacionAceptaLaVerificacionCerradaAntesDeUnRechazoDePago(t *testing.T) {
+	repo := repoDosTitulares()
+	meta := repo.procesos["prc-1"]
+	meta.Revision = 3
+	repo.procesos["prc-1"] = meta
+
+	if _, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "prc-1"); err != nil {
+		t.Fatalf("GenerarLiquidacion: %v", err)
+	}
+	if len(repo.ordenes) != 2 {
+		t.Fatalf("%d ordenes, se esperaban 2", len(repo.ordenes))
+	}
+}
+
+// unaLineaDeAna es una corrida pequena con una sola linea, para las pruebas
+// del alcance del periodo (ADR 0024), donde lo que importa es QUE corridas
+// entran y no los importes.
+func unaLineaDeAna(importe string) InsumoLiquidacion {
+	return InsumoLiquidacion{
+		Bruto: liqDec(importe),
+		Titulares: []reparto.LineaTitular{
+			{ObraID: "obra-a", TitularID: "tit-ana", IPI: "1", Porcentaje: liqDec("100"), Importe: liqDec(importe)},
+		},
+	}
+}
+
+// TestGenerarLiquidacionEsperaALasCorridasPendientesDelPeriodo es el ADR 0024.
+//
+// Con el disparador en AvanzarEtapa, la primera corrida del periodo en llegar
+// a liquidacion_final no puede emitir sola: las demas se quedarian sin orden.
+// Espera sin escribir nada, y la ultima en llegar emite por todas, incluida la
+// que mientras tanto ya siguio hacia pago_registro.
+func TestGenerarLiquidacionEsperaALasCorridasPendientesDelPeriodo(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	repo.sembrar(metaLista("prc-a", "2026-01", reparto.Nacional), unaLineaDeAna("100000"))
+	b := metaLista("prc-b", "2026-01", reparto.Nacional)
+	b.Etapa = reparto.EtapaVerificacion
+	b.Revision = 1
+	b.Firmas = nil
+	repo.sembrar(b, unaLineaDeAna("50000"))
+	// Otro periodo y el internacional del mismo periodo no cuentan.
+	repo.sembrar(metaLista("prc-feb", "2026-02", reparto.Nacional), unaLineaDeAna("1"))
+	intl := metaLista("prc-int", "2026-01", reparto.Internacional)
+	intl.Etapa = reparto.EtapaRecaudo
+	repo.sembrar(intl, unaLineaDeAna("1"))
+
+	e := montar(repo, envio())
+	_, err := e.svc.GenerarLiquidacion(context.Background(), "prc-a")
+	if !errors.Is(err, ErrLiquidacionEnEspera) {
+		t.Fatalf("se esperaba ErrLiquidacionEnEspera, se obtuvo %v", err)
+	}
+	if !strings.Contains(err.Error(), "prc-b (verificacion)") {
+		t.Fatalf("el error tiene que nombrar la corrida que falta y su etapa: %v", err)
+	}
+	if len(repo.ordenes) != 0 || repo.emisiones != 0 || len(e.avisos.enviados) != 0 || len(e.libro.asientos) != 0 {
+		t.Fatalf("esperar no escribe nada: ordenes=%d emisiones=%d avisos=%d asientos=%d",
+			len(repo.ordenes), repo.emisiones, len(e.avisos.enviados), len(e.libro.asientos))
+	}
+	if repo.bloqueos != 1 {
+		t.Fatalf("bloqueos = %d; la espera se decide con el cerrojo del periodo tomado", repo.bloqueos)
+	}
+
+	// prc-a sigue hacia pago_registro (sin cambiar de revision: liquidacion
+	// final no es compuerta) y prc-b cierra su verificacion.
+	a := repo.procesos["prc-a"]
+	a.Etapa = reparto.EtapaPagoRegistro
+	repo.procesos["prc-a"] = a
+	repo.procesos["prc-b"] = metaLista("prc-b", "2026-01", reparto.Nacional)
+
+	vistas, err := e.svc.GenerarLiquidacion(context.Background(), "prc-b")
+	if err != nil {
+		t.Fatalf("la ultima corrida en llegar emite: %v", err)
+	}
+	if len(vistas) != 1 {
+		t.Fatalf("%d ordenes; Ana cobra UNA por el periodo", len(vistas))
+	}
+	o := vistas[0].Orden
+	if !o.Neto.Equal(liqDec("150000")) {
+		t.Fatalf("neto = %s, se esperaba 150000 (las dos corridas)", o.Neto)
+	}
+	if !slices.Equal(o.Procesos, []string{"prc-a", "prc-b"}) {
+		t.Fatalf("Procesos = %v", o.Procesos)
+	}
+	if o.ProcesoID != "prc-a" {
+		t.Fatalf("ProcesoID de referencia = %q, se esperaba el primero lexicografico", o.ProcesoID)
+	}
+	if len(e.avisos.enviados) != 1 || e.avisos.enviados[0].Proceso != "prc-a" {
+		t.Fatalf("avisos = %+v; el aviso se ata a la corrida de referencia de la orden", e.avisos.enviados)
+	}
+}
+
+// TestGenerarLiquidacionRechazaLaCorridaQueLlegaTarde: la corrida que llega
+// cuando su periodo ya se liquido sin ella no se incorpora ni se ignora.
+func TestGenerarLiquidacionRechazaLaCorridaQueLlegaTarde(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	repo.sembrar(metaLista("prc-a", "2026-01", reparto.Nacional), unaLineaDeAna("100000"))
+	e := montar(repo, envio())
+	if _, err := e.svc.GenerarLiquidacion(context.Background(), "prc-a"); err != nil {
+		t.Fatalf("primera emision: %v", err)
+	}
+	antes := len(repo.ordenes)
+
+	// Una bolsa registrada despues abre otra corrida del mismo periodo.
+	repo.sembrar(metaLista("prc-tarde", "2026-01", reparto.Nacional), unaLineaDeAna("70000"))
+	_, err := e.svc.GenerarLiquidacion(context.Background(), "prc-tarde")
+	if !errors.Is(err, ErrPeriodoYaLiquidado) {
+		t.Fatalf("se esperaba ErrPeriodoYaLiquidado, se obtuvo %v", err)
+	}
+	if !strings.Contains(err.Error(), "prc-a") || !strings.Contains(err.Error(), "prc-tarde") {
+		t.Fatalf("el error tiene que nombrar con que corridas se liquido y cual llego tarde: %v", err)
+	}
+	if len(repo.ordenes) != antes || repo.emisiones != 1 {
+		t.Fatalf("la corrida tarde no puede tocar lo emitido: ordenes %d -> %d, emisiones %d",
+			antes, len(repo.ordenes), repo.emisiones)
+	}
+
+	// La que si aporto sigue siendo un reintento idempotente.
+	if _, err := e.svc.GenerarLiquidacion(context.Background(), "prc-a"); err != nil {
+		t.Fatalf("reintento de la corrida liquidada: %v", err)
+	}
+}
+
+// TestGenerarLiquidacionNoSumaDosCorridasDeLaMismaBolsa: un reproceso abre otra
+// corrida sobre la misma bolsa. Si las dos llegan listas, sumarlas pagaria dos
+// veces el mismo recaudo.
+func TestGenerarLiquidacionNoSumaDosCorridasDeLaMismaBolsa(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	uno := metaLista("proc-bolsa-x-1", "2026-01", reparto.Nacional)
+	uno.BolsaID = "bolsa-x"
+	dos := metaLista("proc-bolsa-x-2", "2026-01", reparto.Nacional)
+	dos.BolsaID = "bolsa-x"
+	repo.sembrar(uno, unaLineaDeAna("100000"))
+	repo.sembrar(dos, unaLineaDeAna("100000"))
+
+	_, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "proc-bolsa-x-2")
+	if !errors.Is(err, ErrCorridaNoCuadra) {
+		t.Fatalf("se esperaba ErrCorridaNoCuadra, se obtuvo %v", err)
+	}
+	if !strings.Contains(err.Error(), "bolsa-x") {
+		t.Fatalf("el error tiene que nombrar la bolsa repetida: %v", err)
+	}
+	if len(repo.ordenes) != 0 {
+		t.Fatalf("%d ordenes emitidas sumando dos veces la misma bolsa", len(repo.ordenes))
+	}
+}
+
+// TestGenerarLiquidacionRechazaUnaHermanaSinFirmas: una corrida del periodo en
+// una etapa posterior a liquidacion_final sin las firmas de verificacion es
+// una base inconsistente. No se liquida con ella ni sin ella.
+func TestGenerarLiquidacionRechazaUnaHermanaSinFirmas(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	repo.sembrar(metaLista("prc-a", "2026-01", reparto.Nacional), unaLineaDeAna("100000"))
+	rara := metaLista("prc-rara", "2026-01", reparto.Nacional)
+	rara.Etapa = reparto.EtapaAuditoria
+	rara.Firmas = nil
+	repo.sembrar(rara, unaLineaDeAna("100000"))
+
+	_, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "prc-a")
+	if !errors.Is(err, ErrProcesoNoListo) || !strings.Contains(err.Error(), "prc-rara") {
+		t.Fatalf("se esperaba ErrProcesoNoListo nombrando prc-rara, se obtuvo %v", err)
+	}
+	if len(repo.ordenes) != 0 {
+		t.Fatalf("%d ordenes emitidas con una corrida inconsistente en el periodo", len(repo.ordenes))
+	}
+}
+
+// TestGenerarLiquidacionSinOrdenesTambienEsIdempotente: si todo el neto del
+// periodo quedo retenido no hay ninguna orden, y la guarda no puede apoyarse
+// solo en ellas. Sin el asiento del lote, cada reintento -- y la guarda de
+// salida de liquidacion_final es uno -- volveria a asentar el residuo.
+func TestGenerarLiquidacionSinOrdenesTambienEsIdempotente(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	repo.sembrar(metaLista("prc-1", "2026-01", reparto.Nacional), InsumoLiquidacion{
+		Bruto: liqDec("1000"), Admin: liqDec("100"), Reserva: liqDec("900"),
+	})
+	e := montar(repo, envio())
+
+	for i := range 2 {
+		vistas, err := e.svc.GenerarLiquidacion(context.Background(), "prc-1")
+		if err != nil {
+			t.Fatalf("intento %d: %v", i+1, err)
+		}
+		if len(vistas) != 0 {
+			t.Fatalf("intento %d: %d ordenes de un periodo retenido entero", i+1, len(vistas))
+		}
+	}
+	residuos := 0
+	for _, a := range e.libro.asientos {
+		if a.Hecho == HechoLiquidacionResiduoProrrateo {
+			residuos++
+			if !strings.Contains(string(a.Payload), `"procesos":["prc-1"]`) {
+				t.Fatalf("el asiento del lote tiene que llevar las corridas que aportaron: %s", a.Payload)
+			}
+		}
+	}
+	if residuos != 1 {
+		t.Fatalf("%d asientos de residuo; el lote se asienta UNA vez", residuos)
+	}
+	if repo.emisiones != 1 {
+		t.Fatalf("emisiones = %d; el reintento no emite", repo.emisiones)
+	}
+
+	// Y una corrida que llega tarde a ESE periodo tambien se reconoce, aunque
+	// no haya ninguna orden de la que leer las corridas.
+	repo.sembrar(metaLista("prc-tarde", "2026-01", reparto.Nacional), unaLineaDeAna("100"))
+	if _, err := e.svc.GenerarLiquidacion(context.Background(), "prc-tarde"); !errors.Is(err, ErrPeriodoYaLiquidado) {
+		t.Fatalf("se esperaba ErrPeriodoYaLiquidado, se obtuvo %v", err)
 	}
 }

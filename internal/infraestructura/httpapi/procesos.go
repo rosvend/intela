@@ -227,6 +227,22 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 	case errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas):
 		// 409: el periodo tiene criticas abiertas; se resuelven en /alertas (#37, ADR 0021).
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrLiquidacionEnEspera),
+		errors.Is(err, aplicacion.ErrPeriodoYaLiquidado),
+		errors.Is(err, aplicacion.ErrProcesoNoListo),
+		errors.Is(err, aplicacion.ErrCorridaNoCuadra):
+		// 409: la liquidacion del periodo no deja mover la corrida (#193,
+		// ADR 0024) -- faltan corridas hermanas por verificar, el periodo ya se
+		// liquido sin esta, o sus datos no cuadran --. El mensaje nombra las
+		// corridas implicadas, que es lo que el operador tiene que ir a mirar;
+		// un 500 generico lo mandaria a buscar un fallo del servidor.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrParametroAusente):
+		// Sin SMMLV vigente la liquidacion no puede evaluar R-11 (ADR 0004:
+		// se falla, no se inventa). Es configuracion del servidor, no del
+		// proceso: 500, igual que en /liquidaciones, pero nombrandolo.
+		log.ErrorContext(r.Context(), "parametro normativo ausente al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "parametro normativo ausente")
 	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
 		// 409 tambien, pero es control de concurrencia optimista, no un
 		// conflicto de negocio: otra transicion escribio primero. El mensaje

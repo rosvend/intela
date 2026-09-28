@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -255,6 +256,45 @@ func TestAvanzarEtapaConCriticasAbiertasEs409(t *testing.T) {
 	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestAvanzarEtapaBloqueadoPorLaLiquidacionEs409 es #193: la liquidacion del
+// periodo no deja mover la corrida. Es un conflicto con el estado del periodo,
+// no un fallo del servidor, y el mensaje tiene que llegar entero: nombra las
+// corridas que el operador tiene que ir a mirar.
+func TestAvanzarEtapaBloqueadoPorLaLiquidacionEs409(t *testing.T) {
+	casos := []error{
+		aplicacion.ErrLiquidacionEnEspera,
+		aplicacion.ErrPeriodoYaLiquidado,
+		aplicacion.ErrProcesoNoListo,
+		aplicacion.ErrCorridaNoCuadra,
+	}
+	for _, causa := range casos {
+		err := fmt.Errorf("avanzar etapa de %q: liquidar %q: %w: faltan proc-b (verificacion)", "proc-1", "proc-1", causa)
+		h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+		rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%v: codigo = %d, se esperaba 409. Cuerpo: %s", causa, rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), "proc-b (verificacion)") {
+			t.Fatalf("%v: el cuerpo tiene que nombrar la corrida que falta: %s", causa, rec.Body)
+		}
+	}
+}
+
+// TestAvanzarEtapaSinSMMLVDiceQueFaltaUnParametro: sin SMMLV vigente la
+// liquidacion no puede emitir. Sigue siendo 500 -- es configuracion del
+// servidor --, pero no el generico "no se pudo avanzar".
+func TestAvanzarEtapaSinSMMLVDiceQueFaltaUnParametro(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: smmlv: %w", "proc-1", aplicacion.ErrParametroAusente)
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "parametro normativo ausente") {
+		t.Fatalf("cuerpo = %s, se esperaba que nombrara el parametro ausente", rec.Body)
 	}
 }
 

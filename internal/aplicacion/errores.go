@@ -313,10 +313,12 @@ var (
 	//
 	// Son las dos condiciones del RD 13.5, y se comprueban juntas porque
 	// juntas son la compuerta: la corrida tiene que estar en
-	// `liquidacion_final` Y llevar las firmas de distribucion y contabilidad
-	// SOBRE SU REVISION ACTUAL. Un rechazo sube la revision y las firmas de la
-	// anterior dejan de contar, asi que "tiene dos firmas" sin mirar la
-	// revision no es la regla.
+	// `liquidacion_final` Y haber cerrado la compuerta de verificacion con las
+	// firmas de distribucion y contabilidad sobre UNA MISMA revision. Esa
+	// revision es anterior a la vigente, porque salir de una compuerta sube la
+	// revision ([reparto.ProcesoDeReparto.AvanzarEtapa]); exigir las firmas
+	// sobre la vigente era una compuerta que ninguna corrida real podia
+	// cumplir (#193).
 	//
 	// No es ErrNoEncontrado -- el proceso existe -- ni ErrNoAutorizado -- no
 	// es quien pregunta lo que falla, es el estado del proceso --. Se
@@ -344,7 +346,35 @@ var (
 	// aqui significa que se esta agregando lo que no se puede agregar. Se
 	// falla en vez de recortar: recortar reparte de menos a alguien sin
 	// decirlo, y eso no se ve mirando la orden.
+	//
+	// La tercera forma es de alcance y no de totales: dos corridas listas del
+	// mismo periodo que reparten la MISMA bolsa. Sumarlas pagaria dos veces el
+	// mismo recaudo (ADR 0019: una corrida es una bolsa), y elegir una de las
+	// dos en silencio decidiria por el operador cual de los dos resultados
+	// vale.
 	ErrCorridaNoCuadra = errors.New("la corrida no cuadra")
+
+	// ErrLiquidacionEnEspera: la liquidacion final de un periodo y circuito
+	// todavia no se puede emitir porque alguna de sus corridas no ha dejado
+	// atras la compuerta de verificacion (ADR 0024).
+	//
+	// No es un fallo de la corrida que pregunta: es el periodo el que no esta
+	// completo. Por eso entrar a `liquidacion_final` lo tolera -- la corrida
+	// queda esperando a sus hermanas -- y salir de ahi hacia `pago_registro`
+	// no: no se paga lo que todavia no se liquido. Se envuelve nombrando las
+	// corridas que faltan, que es lo que el operador tiene que ir a mover.
+	ErrLiquidacionEnEspera = errors.New("la liquidacion del periodo espera a otras corridas")
+
+	// ErrPeriodoYaLiquidado: la corrida llega a la liquidacion cuando su
+	// periodo y circuito ya se liquidaron sin ella.
+	//
+	// Incorporarla a las ordenes ya enviadas reabriria un plazo de R-10 que
+	// puede estar corriendo o vencido, y emitir una segunda orden del mismo
+	// periodo choca con el UNIQUE (titular_id, periodo, circuito). Como se paga
+	// ese dinero lo decide el Consejo Directivo (ver
+	// [Liquidaciones.GenerarLiquidacion]); lo que el sistema no puede hacer es
+	// dejar pasar la corrida como si estuviera liquidada.
+	ErrPeriodoYaLiquidado = errors.New("el periodo ya se liquido sin esta corrida")
 
 	// ErrUsoSinObra: un uso sin obra identificada (`obra_id` NULL: pendiente,
 	// ONI o excluido) nunca puede llegar a [reparto.Reparto]. Sin este

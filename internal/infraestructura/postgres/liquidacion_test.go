@@ -16,17 +16,6 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
-// notificadorDePruebas satisface [aplicacion.Notificador] con un acuse
-// determinista. Se declara aqui y no se reutiliza el adaptador de
-// `infraestructura/notificaciones` para que estas pruebas no aten el adaptador
-// de persistencia a otro adaptador: lo que se comprueba es que el caso de uso
-// NOTIFICA antes de dejar la orden en `enviada`, no como se notifica.
-type notificadorDePruebas struct{}
-
-func (notificadorDePruebas) Notificar(_ context.Context, dest, asunto, _ string) (string, error) {
-	return "acuse-" + dest + "-" + asunto, nil
-}
-
 const (
 	procesoNac = "prc-nac-2026"
 	bolsaNac   = "bolsa-nac-2026"
@@ -47,13 +36,13 @@ func pgDec(s string) decimal.Decimal {
 }
 
 // liquidacionesDe cablea el caso de uso como lo hace cmd/api: el mismo *Store
-// satisface el repositorio, la bitacora y la unidad de trabajo, y el
-// notificador de desarrollo devuelve un acuse determinista.
+// satisface el repositorio, la bitacora, la unidad de trabajo y el aviso de
+// portal, que escribe en `notificaciones` dentro de la misma transaccion.
 func liquidacionesDe(s *Store, instante time.Time) *aplicacion.Liquidaciones {
 	return &aplicacion.Liquidaciones{
 		Ordenes:     s,
 		Reloj:       reloj.Fijo{Instante: instante},
-		Notificador: notificadorDePruebas{},
+		Notificador: s.AvisoPortal(),
 		Bitacora:    s,
 		Unidad:      s,
 	}
@@ -130,8 +119,11 @@ func sembrarBolsa(t *testing.T, pool *pgxpool.Pool, bolsaID, periodo, circuito s
 	          VALUES ($1, $2, $3, $4, 1000000)`, bolsaID, pagador, periodo, circuito)
 }
 
-// sembrarProcesoListo deja una corrida que YA paso la compuerta del RD 13.5:
-// etapa liquidacion_final y las dos firmas sobre la revision vigente.
+// sembrarProcesoListo deja una corrida que YA paso la compuerta del RD 13.5,
+// tal como la deja AvanzarEtapa: etapa liquidacion_final, revision 2, y las dos
+// firmas de verificacion sobre la revision 1. Salir de una compuerta sube la
+// revision; el fixture anterior dejaba las firmas en la vigente, un estado que
+// la maquina de estados no produce y que ocultaba #193.
 //
 // Las firmas no son decoracion del fixture: desde el gate de
 // GenerarLiquidacion, una corrida sin ellas no liquida, y sembrarlas es lo que
@@ -139,8 +131,8 @@ func sembrarBolsa(t *testing.T, pool *pgxpool.Pool, bolsaID, periodo, circuito s
 func sembrarProcesoListo(t *testing.T, pool *pgxpool.Pool, procesoID, bolsaID, periodo, circuito string) {
 	t.Helper()
 	ejecutar := ejecutorDePruebas(t, pool)
-	ejecutar(`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
-	          VALUES ($1, $4, 'liquidacion_final', $2, $3, 'snap-1', 'RD-IX')`,
+	ejecutar(`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento, revision)
+	          VALUES ($1, $4, 'liquidacion_final', $2, $3, 'snap-1', 'RD-IX', 2)`,
 		procesoID, periodo, bolsaID, circuito)
 	ejecutar(`INSERT INTO firmas (proceso_id, rol, revision, actor_id)
 	          VALUES ($1, 'distribucion', 1, $2),
@@ -265,8 +257,9 @@ func TestGenerarLiquidacionExigeLaCompuertaDelRD135(t *testing.T) {
 		t.Fatalf("%d ordenes emitidas de una corrida sin compuerta", len(ordenes))
 	}
 
-	// Avanzar la etapa NO basta: faltan las dos firmas de la revision.
-	ejecutorDePruebas(t, pool)(`UPDATE procesos SET etapa = 'liquidacion_final' WHERE id = $1`, procesoNac)
+	// Avanzar la etapa NO basta: faltan las dos firmas de la verificacion, que
+	// quedan en la revision que la salida de la compuerta dejo atras.
+	ejecutorDePruebas(t, pool)(`UPDATE procesos SET etapa = 'liquidacion_final', revision = 2 WHERE id = $1`, procesoNac)
 	if _, err := liq.GenerarLiquidacion(ctx, procesoNac); !errors.Is(err, aplicacion.ErrProcesoNoListo) {
 		t.Fatalf("sin firmas: se esperaba ErrProcesoNoListo, se obtuvo %v", err)
 	}
