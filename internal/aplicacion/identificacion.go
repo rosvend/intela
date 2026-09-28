@@ -61,6 +61,8 @@ type ResolverUsos struct {
 	// produccion hasta que exista el dato de politica (D4 del diseno de #28):
 	// nada se excluye por defecto.
 	FueraDeRepertorio identificacion.FuentesExcluidas
+	// Reportes, si no esta vacio, limita la corrida a los usos de esas entregas; el resto del periodo no se toca.
+	Reportes []string
 }
 
 // errFilaCambiada revierte la unidad de una fila que otro proceso cambio entre
@@ -103,6 +105,9 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 
 	resueltas := 0
 	for _, u := range usos {
+		if len(r.Reportes) > 0 && !slices.Contains(r.Reportes, u.ReporteID) {
+			continue
+		}
 		reprocesar, err := reprocesable(u.Escalon)
 		if err != nil {
 			return resueltas, fmt.Errorf("uso %q: %w", u.ID, err)
