@@ -257,6 +257,10 @@ export interface paths {
          * Listar liquidaciones (admin)
          * @description Devuelve las ordenes de pago de todos los titulares.
          *
+         *     Las ordenes se emiten al avanzar la ultima corrida nacional de un
+         *     periodo a `liquidacion_final` (`POST /procesos/{id}/avanzar`,
+         *     ADR 0024); no hay una ruta aparte para emitirlas.
+         *
          *     Cada orden muestra bruto, cada deduccion y neto por separado
          *     (`RD 13.2`). `pagable` es falso si faltan RUT o certificacion
          *     bancaria (`R-12`), aunque la liquidacion ya se haya aceptado por
@@ -1151,6 +1155,17 @@ export interface paths {
          *     Al salir de `deducciones` (hacia `importe_obra` o
          *     `liquidacion_parcial`) evalua las anomalias del periodo y no deja
          *     pasar si queda alguna critica sin resolver (ADR 0021).
+         *
+         *     Al entrar a `liquidacion_final` del circuito nacional emite, en la
+         *     misma transaccion, las ordenes de pago del periodo y circuito
+         *     (`RD 13.5`, ADR 0024) y deja el aviso de cada titular en el portal
+         *     (`RD 13.8.8`): desde ese commit se ven en `/liquidaciones` y en
+         *     `/mis-liquidaciones`. La liquidacion agrega todas las corridas del
+         *     periodo (ADR 0019), asi que mientras alguna siga antes de
+         *     `liquidacion_final` la corrida entra pero no emite; la ultima en
+         *     llegar emite por todas. Salir de `liquidacion_final` hacia
+         *     `pago_registro` exige que el periodo ya se haya liquidado. Reintentar
+         *     no emite dos veces.
          */
         post: operations["avanzarEtapaProceso"];
         delete?: never;
@@ -6962,12 +6977,41 @@ export interface operations {
              *
              *     Y 409 si el periodo tiene anomalias criticas sin resolver al
              *     salir de `deducciones`: se resuelven en `/alertas`.
+             *
+             *     Y 409 si la liquidacion del periodo no deja mover la corrida
+             *     (ADR 0024): al salir de `liquidacion_final` alguna corrida hermana
+             *     todavia no llega a esa etapa; al entrar, el periodo ya se liquido
+             *     sin esta corrida, o dos corridas reparten la misma bolsa. El
+             *     mensaje nombra las corridas implicadas.
              */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "error": "avanzar etapa de \"proc-rcn-2026-01-1\": liquidar \"proc-rcn-2026-01-1\": la liquidacion del periodo espera a otras corridas: 2026-01/nacional no se liquida hasta que lleguen a \"liquidacion_final\": proc-caracol-2026-01-1 (verificacion)"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Fallo del servidor. Incluye la falta de un `smmlv` vigente en
+             *     `parametros` al entrar a `liquidacion_final`: sin el no se evalua
+             *     `R-11` y la corrida no avanza (ADR 0004).
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Error"];
                 };
             };
