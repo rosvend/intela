@@ -2,8 +2,6 @@
 // de identificacion no reconocio con certeza suficiente y espera resolucion
 // manual.
 //
-// Vacio a proposito: es andamiaje.
-//
 // # Que es y que no es
 //
 // ONI no es un fallo del sistema, es una etapa del diseno (ADR 0007). Un uso
@@ -17,4 +15,13 @@
 //
 // Quien resuelve un ONI y con que evidencia queda en la bitacora: es una
 // decision humana sobre a quien se le paga.
+//
+// # Listado publico (R-18)
+//
+// La proyeccion publica lleva titulo e informacion identificatoria y NUNCA
+// montos: RD 13.8.2 lo prohibe y el ADR 0006 lo convierte en invariante de
+// tipo. La informacion economica vive en el asiento interno; la vista publica
+// no puede empezar a exponerla por descuido. La fecha de publicacion se
+// registra una sola vez: es el ancla de los tres anos de R-19, y reescribirla
+// resetearia el reloj.
 package oni
