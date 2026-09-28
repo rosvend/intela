@@ -232,8 +232,11 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
 	}
 	t, err := desdeFilasNumeradas(crudas, fisicas, false)
+	if err != nil {
+		return Tabla{}, err
+	}
 	t.formato = aplicacion.FormatoXLSX
-	return t, err
+	return t, nil
 }
 
 // maxFilasExcel es el tope de filas de una hoja .xlsx (2^20). Es el mismo
@@ -312,8 +315,11 @@ func TablaCSV(datos []byte) (Tabla, error) {
 		fisicas = append(fisicas, linea)
 	}
 	t, err := desdeFilasNumeradas(filas, fisicas, true)
+	if err != nil {
+		return Tabla{}, err
+	}
 	t.formato = aplicacion.FormatoCSV
-	return t, err
+	return t, nil
 }
 
 // lineaDeComillaSinCerrar devuelve la linea fisica (la 1 es la primera del
