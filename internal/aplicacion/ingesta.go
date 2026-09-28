@@ -529,6 +529,24 @@ func (i Ingesta) GuardarUsos(ctx context.Context, rep Reporte, usos []UsoPersist
 	return rechazados, nil
 }
 
+// EntregarFilas es GuardarReporte y GuardarUsos en un solo hecho ([RepositorioIngesta.GuardarEntrega]), sin actor.
+// Con ErrReporteDuplicado devuelve el acuse que ya estaba: su id es el mismo, y sus filas entraron con el.
+func (i Ingesta) EntregarFilas(ctx context.Context, fuente, periodo string, datos []byte, usos []UsoPersistido) (Recepcion, error) {
+	rep, err := prepararReporte(Usuario{}, fuente, periodo, datos)
+	if err != nil {
+		return Recepcion{}, err
+	}
+	if err := i.congelarEvidencia(ctx, rep, datos); err != nil {
+		return Recepcion{}, err
+	}
+	lote, rechazados := prepararLote(rep, usos)
+	if err := i.Reportes.GuardarEntrega(ctx, rep, lote); err != nil {
+		return Recepcion{Reporte: rep}, fmt.Errorf(
+			"registrar la entrega de %q para %q: %w", rep.Fuente, rep.Periodo, err)
+	}
+	return Recepcion{Reporte: rep, Aceptados: len(lote) - len(rechazados), Rechazados: rechazados}, nil
+}
+
 // normalizarAcuse recorta el acuse y comprueba que dice las dos cosas que cada
 // fila hereda de el.
 //
