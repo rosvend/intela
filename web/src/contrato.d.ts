@@ -2592,11 +2592,25 @@ export interface components {
              *     cortando el texto del motivo.
              */
             codigo: string;
-            /** @description Texto que nombra el campo y explica que falta o esta mal. */
+            /**
+             * @description Texto que nombra el campo y explica que falta o esta mal. Sale de
+             *     los mismos rechazos que `Rechazo.motivo` y tiene su misma forma:
+             *     toda fila que salio de un archivo empieza por `fila N`, decida el
+             *     rechazo el adaptador de formato, la validacion o la normalizacion.
+             *     N es la linea del archivo en la que EMPIEZA el registro (un campo
+             *     entrecomillado de un CSV puede abarcar varias lineas); en .xlsx, la
+             *     fila de la hoja; en JSON, la posicion del registro en el array
+             *     contando desde 2. Es texto para una persona, no un formato que
+             *     analizar: el codigo tipado es `codigo`.
+             * @example fila 4: fecha_inparseable: fecha "ayer": no es YYYYMMDD, ISO ni serial de Excel
+             */
             motivo: string;
             /** @description Fuente del reporte (Caracol, Netflix, ...). */
             fuente: string;
-            /** @description Titulo tal como vino. Pista para pedirle al cliente la linea. */
+            /**
+             * @description Titulo tal como vino. Junto con la linea que trae `motivo`, es lo
+             *     que permite pedirle al cliente la fila exacta.
+             */
             titulo: string;
             /** @description Entrega de la que salio la fila. */
             reporte_id: string;
@@ -3554,7 +3568,7 @@ export interface operations {
                      *         "id": "tv-fecha",
                      *         "tipo": "normalizacion",
                      *         "codigo": "fecha_inparseable",
-                     *         "motivo": "fecha_inparseable: fecha \"ayer\": no es YYYYMMDD, ISO ni serial de Excel",
+                     *         "motivo": "fila 4: fecha_inparseable: fecha \"ayer\": no es YYYYMMDD, ISO ni serial de Excel",
                      *         "fuente": "caracol",
                      *         "titulo": "Fecha rota",
                      *         "reporte_id": "rep-1"
