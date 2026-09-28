@@ -441,7 +441,7 @@ func (s *Store) InsumoDeProceso(ctx context.Context, procesoID string) (aplicaci
 }
 
 func (s *Store) SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error) {
-	var valor decimal.Decimal
+	var valor decimal.NullDecimal
 	err := s.ejecutorDe(ctx).QueryRow(ctx, `
 		SELECT valor FROM parametros
 		WHERE clave = $1
@@ -455,7 +455,11 @@ func (s *Store) SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal
 		}
 		return decimal.Zero, traducido
 	}
-	return valor, nil
+	// NULL es una fila textual (migracion 00024): el SMMLV es una cifra.
+	if !valor.Valid {
+		return decimal.Zero, fmt.Errorf("%w: %s es textual, se esperaba una cifra", aplicacion.ErrParametroInvalido, claveSMMLV)
+	}
+	return valor.Decimal, nil
 }
 
 // sinNil convierte un slice nil en uno vacio: `TEXT[] NOT NULL` rechaza el NULL

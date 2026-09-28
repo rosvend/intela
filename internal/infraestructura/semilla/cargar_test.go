@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
@@ -66,7 +67,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	// y los dos coeficientes de duracion (80% artistica, 48 min/hora). Las
 	// deducciones, la reserva y los dos umbrales de matching son techos del
 	// reglamento o decisiones de ingenieria, y ninguna Asamblea las resolvio
-	// (ADR 0004).
+	// (ADR 0004). La base de cine (P-18) tambien es sintetica: el reglamento
+	// se contradice y REDES no ha respondido.
 	var nSinteticos, nPublicados int
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE reglamento =  $1),
@@ -75,8 +77,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	).Scan(&nSinteticos, &nPublicados); err != nil {
 		t.Fatalf("contar parametros por procedencia: %v", err)
 	}
-	if nSinteticos != 16 {
-		t.Fatalf("parametros con %s: %d, se esperaban 16", ReglamentoSintetico, nSinteticos)
+	if nSinteticos != 17 {
+		t.Fatalf("parametros con %s: %d, se esperaban 17", ReglamentoSintetico, nSinteticos)
 	}
 	if nPublicados != 6 {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
@@ -499,6 +501,87 @@ func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
 			t.Errorf("el pagador %q no tiene ningun uso atribuido: su bolsa quedaria "+
 				"sin nada que ponderar (UsosDeCanal devolveria vacio)", pagador)
 		}
+	}
+}
+
+// TestCadaBolsaNacionalDelSeedValoriza es la regresion de #194 contra Postgres
+// real: la corrida de Procinal 2025-01 no salia de deducciones con un 500.
+//
+// Abre una corrida por cada bolsa nacional del dataset y la lleva de recaudo a
+// importe_obra con [aplicacion.Procesos] cableado como en cmd/api. Antes del
+// arreglo la de Procinal fallaba con "parametro normativo ausente:
+// base_cine_teatro": ninguna clausula del snapshot llenaba la base de cine.
+//
+// De paso fija el mapeo usuario <-> fuente de cine, que era la hipotesis de
+// la issue: el reporte lo entrega la fuente "cine", pero sus usos ponderan la
+// bolsa del PAGADOR "procinal" porque su canal_id es el usuario de recaudo
+// (ADR 0018, ADR 0019), no porque la fuente coincida.
+func TestCadaBolsaNacionalDelSeedValoriza(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var fuentes []string
+	filas, err := pool.Query(ctx, `SELECT DISTINCT fuente FROM usos WHERE canal_id = $1 ORDER BY fuente`, PagadorCine)
+	if err != nil {
+		t.Fatalf("fuentes de los usos de %q: %v", PagadorCine, err)
+	}
+	for filas.Next() {
+		var f string
+		if err := filas.Scan(&f); err != nil {
+			t.Fatalf("escanear fuente: %v", err)
+		}
+		fuentes = append(fuentes, f)
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("fuentes de los usos de %q: %v", PagadorCine, err)
+	}
+	if len(fuentes) != 1 || fuentes[0] != FuenteCine {
+		t.Fatalf("los usos con canal_id %q vienen de %v, se esperaba solo la fuente %q",
+			PagadorCine, fuentes, FuenteCine)
+	}
+
+	uc := aplicacion.Procesos{
+		Repo: store, Parametros: store, Bolsas: store, Declaraciones: store, Usos: store,
+		Resultados: store, Unidad: store, Bitacora: store, Reloj: reloj.Sistema{}, Origen: store,
+		Anomalias: aplicacion.Anomalias{
+			Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
+			Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+		},
+	}
+	d := Construir()
+	for _, b := range d.Bolsas {
+		if b.Circuito != recaudo.Nacional {
+			continue
+		}
+		t.Run(b.UsuarioID, func(t *testing.T) {
+			id := "proc-" + b.ID
+			if _, err := uc.IniciarProceso(ctx, id, b.Periodo, b.Circuito, b.ID, UsuarioDistribucion); err != nil {
+				t.Fatalf("abrir la corrida de %q: %v", b.ID, err)
+			}
+			for _, etapa := range []reparto.Etapa{reparto.EtapaDeducciones, reparto.EtapaImporteObra} {
+				v, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion)
+				if err != nil {
+					t.Fatalf("avanzar %q a %s: %v", id, etapa, err)
+				}
+				if v.Etapa != etapa {
+					t.Fatalf("etapa = %q, se esperaba %q", v.Etapa, etapa)
+				}
+			}
+			res, err := store.ResultadoPorProceso(ctx, id)
+			if err != nil {
+				t.Fatalf("leer el resultado de %q: %v", id, err)
+			}
+			if len(res.Obras) == 0 {
+				t.Fatalf("la corrida de %q valorizo sin ninguna linea de obra", b.ID)
+			}
+			if b.UsuarioID == PagadorCine && res.Obras[0].ObraID != ObraCine {
+				t.Errorf("la bolsa de %q pondero %q, se esperaba la obra del reporte de cine %q",
+					PagadorCine, res.Obras[0].ObraID, ObraCine)
+			}
+		})
 	}
 }
 

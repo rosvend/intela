@@ -40,6 +40,14 @@ var (
 	// [ErrorParametroAusente], que ademas NOMBRA las clausulas que faltan.
 	ErrParametroAusente = errors.New("parametro normativo ausente")
 
+	// ErrParametroInvalido: la fila del parametro existe pero su valor no es
+	// uno que la clausula admita -- una base de cine que no es `taquilla` ni
+	// `espectadores`, un valor textual donde se espera una cifra o al reves--.
+	//
+	// Se distingue de ErrParametroAusente porque la accion es otra: no hay
+	// una fila que cargar, hay una que corregir con una nueva vigencia.
+	ErrParametroInvalido = errors.New("parametro normativo invalido")
+
 	// ErrFormatoInvalido: el export pide un formato que no es pdf ni xlsx.
 	ErrFormatoInvalido = errors.New("formato invalido")
 

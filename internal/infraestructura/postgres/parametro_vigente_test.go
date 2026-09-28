@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 )
 
@@ -165,5 +166,32 @@ func TestParametroVigenteParticipaEnLaUnidad(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("EnUnidad: %v", err)
+	}
+}
+
+// Una clave textual (migracion 00024) no es una cifra: quien pide un valor
+// numerico recibe un error que lo dice, no un cero ni un fallo de Scan (#194).
+// Y SnapshotNormalizacion, que recorre TODAS las filas vigentes, la salta en
+// vez de romper la ingesta entera.
+func TestUnaClaveTextualNoSeLeeComoCifra(t *testing.T) {
+	store, pool := sembrarUmbrales(t)
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO parametros (clave, valor_texto, vigente_desde, organo, reglamento)
+		 VALUES ('cine_teatro.base', 'taquilla', DATE '2024-01-01', $1, $2)`,
+		organoSintetic, reglamentoSintetico); err != nil {
+		t.Fatalf("sembrar la base de cine: %v", err)
+	}
+
+	_, err := store.ParametroVigente(t.Context(), "cine_teatro.base", fecha(t, "2025-01-01"))
+	if !errors.Is(err, aplicacion.ErrParametroInvalido) || !strings.Contains(err.Error(), "cine_teatro.base") {
+		t.Fatalf("se esperaba ErrParametroInvalido nombrando la clave, dio: %v", err)
+	}
+
+	snap, err := store.SnapshotNormalizacion(t.Context())
+	if err != nil {
+		t.Fatalf("SnapshotNormalizacion con una fila textual: %v", err)
+	}
+	if snap.MonedaBase != "COP" {
+		t.Errorf("MonedaBase = %q, se esperaba COP", snap.MonedaBase)
 	}
 }
