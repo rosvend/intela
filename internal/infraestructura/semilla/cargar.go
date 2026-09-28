@@ -2,8 +2,6 @@ package semilla
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -161,7 +159,7 @@ func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.Alm
 	return nil
 }
 
-// sembrarCasos carga los reportes de CasosIdentificacion y corre la cascada real sobre su periodo.
+// sembrarCasos carga los reportes de CasosIdentificacion y corre la cascada real solo sobre esas entregas.
 // Idempotente: un reporte ya entregado se salta y la cascada no reescribe filas ya resueltas (D9).
 func sembrarCasos(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, d Dataset, log *slog.Logger) error {
 	ingesta := aplicacion.Ingesta{Reportes: store, Almacen: almacen}
@@ -178,7 +176,10 @@ func sembrarCasos(ctx context.Context, store *postgres.Store, almacen aplicacion
 		}
 		reportes = append(reportes, rec.Reporte.ID)
 	}
-	// Solo sus propias entregas: el resto del periodo puede ser ajeno y no se toca.
+	// Solo sus propias entregas: el resto del periodo puede ser ajeno y no se toca. Sin entregas no hay nada que correr.
+	if len(reportes) == 0 {
+		return nil
+	}
 	cascada := aplicacion.ResolverUsos{
 		Usos: store, Identificacion: store, Similitud: store, Parametros: store, Unidad: store,
 		Reportes: reportes,
@@ -187,7 +188,9 @@ func sembrarCasos(ctx context.Context, store *postgres.Store, almacen aplicacion
 	if err != nil {
 		return fmt.Errorf("cascada sobre %s: %w", PeriodoCasos, err)
 	}
-	log.Info("casos de identificacion sembrados", slog.String("periodo", PeriodoCasos), slog.Int("resueltos", resueltos))
+	// resueltos cuenta usos asignados a una obra; las ONI de la cola no suman ahi.
+	log.Info("casos de identificacion sembrados", slog.String("periodo", PeriodoCasos),
+		slog.Int("entregas", len(reportes)), slog.Int("asignados_por_la_cascada", resueltos))
 	return nil
 }
 
@@ -213,16 +216,19 @@ func (e estado) completo(d Dataset) bool {
 
 func (e estado) vacio() bool { return e.totalObras == 0 && e.totalReportes == 0 }
 
-// recuento mide la base. Los reportes de CasosIdentificacion no cuentan: son la cola, que sembrarCasos completa aparte.
+// recuento mide la base. El dataset se reconoce por contenido, como en vaciar: obras por id y reportes por
+// (fuente, periodo), no por la huella de sus bytes, que cambia entre revisiones del sembrador.
+// Los reportes de CasosIdentificacion no cuentan: son la cola, que sembrarCasos completa aparte.
 func recuento(ctx context.Context, pool *pgxpool.Pool, d Dataset) (estado, error) {
 	obraIDs := make([]string, 0, len(d.Obras))
 	for _, o := range d.Obras {
 		obraIDs = append(obraIDs, o.ID)
 	}
-	huellas := make([]string, 0, len(d.Reportes))
+	fuentes := make([]string, 0, len(d.Reportes))
+	periodos := make([]string, 0, len(d.Reportes))
 	for _, r := range d.Reportes {
-		suma := sha256.Sum256(r.Bytes)
-		huellas = append(huellas, hex.EncodeToString(suma[:]))
+		fuentes = append(fuentes, r.Fuente)
+		periodos = append(periodos, r.Periodo)
 	}
 	var e estado
 	if err := pool.QueryRow(ctx,
@@ -230,15 +236,17 @@ func recuento(ctx context.Context, pool *pgxpool.Pool, d Dataset) (estado, error
 	).Scan(&e.totalObras, &e.obras); err != nil {
 		return estado{}, fmt.Errorf("contar obras: %w", err)
 	}
+	const delDataset = `(r.fuente, r.periodo) IN (SELECT * FROM unnest($1::text[], $2::text[]))`
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*), COUNT(*) FILTER (WHERE sha256 = ANY($1)) FROM reportes`, huellas,
+		`SELECT (SELECT COUNT(*) FROM reportes),
+		        COUNT(DISTINCT (r.fuente, r.periodo)) FROM reportes r WHERE `+delDataset, fuentes, periodos,
 	).Scan(&e.totalReportes, &e.reportes); err != nil {
 		return estado{}, fmt.Errorf("contar reportes: %w", err)
 	}
 	// 'pendiente' es lo que la cascada no proceso; una ONI ya es un resultado.
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM usos u JOIN reportes r ON r.id = u.reporte_id
-		  WHERE u.escalon = 'pendiente' AND r.sha256 = ANY($1)`, huellas,
+		  WHERE u.escalon = 'pendiente' AND `+delDataset, fuentes, periodos,
 	).Scan(&e.usosSinIdentificar); err != nil {
 		return estado{}, fmt.Errorf("contar usos sin identificar: %w", err)
 	}

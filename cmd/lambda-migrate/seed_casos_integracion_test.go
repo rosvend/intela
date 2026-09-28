@@ -192,3 +192,30 @@ func TestSembrarDatasetNoTocaUsosAjenosDelPeriodoDeLaCola(t *testing.T) {
 		t.Fatalf("el uso ajeno paso a %q; la cascada de la cola no puede tocarlo", escalon)
 	}
 }
+
+// B1 (ronda 2): produccion se sembro con una revision anterior del dataset (bytes y huellas distintas, antes de #158)
+// y tiene obras ajenas. Por contenido el dataset esta, asi que la orden del runbook completa la cola.
+func TestSembrarDatasetCompletaLaColaSobreUnDatasetDeUnaRevisionAnterior(t *testing.T) {
+	pool := baseDeCasos(t)
+	for i := range 100 {
+		exec(t, pool, `INSERT INTO obras (id, titulo, genero, anio, tipo) VALUES ($1, 'Demo ajena', 'Drama', 2020, 'unitario')`,
+			"obra-demo-"+string(rune('a'+i/26))+string(rune('a'+i%26)))
+	}
+	if _, err := invocar(t, peticion{Orden: ordenSembrarDataset, Aditivo: true}); err != nil {
+		t.Fatalf("siembra inicial: %v", err)
+	}
+	sinCola(t, pool)
+	// Otra revision del sembrador escribio otros bytes: sus huellas no son las de este binario.
+	exec(t, pool, `UPDATE reportes SET sha256 = encode(sha256(convert_to('revision-anterior:' || id, 'UTF8')), 'hex')`)
+	var casan int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM reportes r JOIN usos u ON u.reporte_id = r.id WHERE u.escalon = 'alias'`).Scan(&casan); err != nil || casan == 0 {
+		t.Fatalf("precondicion: el dataset base tiene usos identificados (%d, %v)", casan, err)
+	}
+
+	for i := range 2 {
+		if _, err := invocar(t, peticion{Orden: ordenSembrarDataset}); err != nil {
+			t.Fatalf("invocacion %d: %v", i, err)
+		}
+		exigirCola(t, pool, "invocacion "+string(rune('0'+i)))
+	}
+}
