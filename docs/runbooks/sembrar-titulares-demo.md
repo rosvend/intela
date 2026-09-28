@@ -19,10 +19,13 @@ deja en local.
 - El codigo con la orden `sembrar-dataset` ya desplegado en `intela-migrate`
   (merge a `main` + Deploy, o `make aplicar`).
 - Credenciales AWS y permiso `lambda:InvokeFunction` sobre `intela-migrate`.
-- La base **sin obras ajenas al dataset**. Si ya hay obras creadas por la API
-  con otros ids, el seed responde error (`semilla a medias` o
-  `ErrDatosNoSinteticos` con `reset:true`). En ese caso hace falta una base
-  limpia (nuevo entorno / recrear RDS), no un reset a medias.
+- Para la **primera** siembra, la base **sin obras ajenas al dataset**. Si ya
+  hay obras creadas por la API con otros ids y el dataset no esta, el seed
+  responde error (`semilla a medias` o `ErrDatosNoSinteticos` con `reset:true`);
+  para esa base existe `{"orden":"sembrar-dataset","aditivo":true}` (#155).
+- Una base donde el dataset **ya esta**, con o sin obras ajenas (produccion,
+  sembrada con `aditivo:true`), acepta el `sembrar-dataset` normal: la
+  completitud se mide sobre las filas del dataset, no sobre toda la base.
 
 El admin provisionado (`primer-administrador`) **se conserva**: el seed no
 pisa su hash. Las otras cuentas demo se crean con las claves por defecto de
@@ -50,8 +53,10 @@ Respuesta esperada:
 Un reintento responde `{"estado":"ya sembrado"}`.
 
 El reintento tambien completa la cola de identificacion (#174) en una base sembrada
-antes de que existiera: carga el reporte sintetico de `2025-02` y corre la cascada
-real sobre el. Queda un caso pendiente con candidato ("Pelicula Equis" frente a
+antes de que existiera, aunque tenga obras ajenas: carga el reporte sintetico de
+`2025-02` (acuse y filas en una sola transaccion) y corre la cascada real **solo
+sobre esa entrega**; cualquier otro uso de `2025-02` queda como estaba. Si la
+invocacion se corta a medias, repetirla la termina. Queda un caso pendiente con candidato ("Pelicula Equis" frente a
 "Pelicula X") y uno sin candidatos ("Noticiero Regional"), visibles en
 `GET /api/identificacion/casos`. `2025-02` no tiene bolsa: no cambia ninguna cifra de
 `2025-01`.
@@ -77,7 +82,7 @@ curl -s https://<url>/api/obras -H "Authorization: Bearer $TOKEN" | jq .
 | Respuesta | Que significa | Que hacer |
 | --- | --- | --- |
 | `{"estado":"cargado"}` | Dataset escrito. | Entrar al tablero. |
-| `{"estado":"ya sembrado"}` | Ya estaba completo. | Nada. |
+| `{"estado":"ya sembrado"}` | El dataset ya estaba; si faltaba la cola de identificacion, esta invocacion la completo. | Comprobar `GET /api/identificacion/casos?periodo=2025-02`. |
 | `semilla a medias (...): pase SEED_RESET=true` | Hay obras/reportes a medias o ajenos. | Base limpia, o `{"orden":"sembrar-dataset","reset":true}` solo si **todo** lo que hay es del dataset. |
 | `SEED_RESET rechazado: hay datos que no son del dataset sintetico` | Hay obras/titulares reales. | No uses reset; recrea el entorno. |
 | `orden "…" no permitida` | Lambda vieja. | Desplegar `main` y reintentar. |

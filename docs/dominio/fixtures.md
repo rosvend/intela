@@ -210,7 +210,9 @@ de parrilla adquiere su tipo de obra.
 Fixture: `Dataset.casosIdentificacion()`. Un reporte de Caracol del periodo `2025-02`, con ids
 de fuente que no estan en `alias_obra`, para que ni el alias ni el id global lo resuelvan. A
 diferencia del resto del seed, no se identifica por SQL: pasa por la cascada real
-(`aplicacion.ResolverUsos`, ADR 0007), asi que la cola sale igual que de una entrega real.
+(`aplicacion.ResolverUsos`, ADR 0007): la cola sale del mismo mecanismo que usaria una entrega real,
+limitado a la entrega de la semilla. Hoy ninguna entrega real llega a la cascada en produccion
+(la ingesta no esta cableada en la Lambda, #182).
 
 | Titulo | Resultado esperado |
 | ------ | ------------------ |
