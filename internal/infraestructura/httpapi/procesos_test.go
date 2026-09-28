@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -242,6 +243,15 @@ func TestAbrirProcesoIDReutilizadoEs409(t *testing.T) {
 // el mensaje lo dice.
 func TestAvanzarEtapaConflictoDeConcurrenciaEs409(t *testing.T) {
 	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: aplicacion.ErrProcesoConflictoDeConcurrencia})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAvanzarEtapaConCriticasAbiertasEs409(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: %w: 2 en %q", "proc-1", aplicacion.ErrAnomaliasCriticasAbiertas, "2026-01")
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
 	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
