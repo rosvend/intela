@@ -85,6 +85,28 @@ func (s *Store) ObraPorIDGlobal(ctx context.Context, ida, eidr, imdb string) (st
 // caso de uso leyo. Una fila que otro proceso cambio entre la lectura y este
 // UPDATE -una resolucion manual, otra corrida- no se pisa; el caso de uso ve
 // ErrNoEncontrado y la salta.
+//
+// # tipo_obra NO se rellena aqui, y es una decision medida
+//
+// `obras.tipo` tiene el dato -TEXT NOT NULL con CHECK sobre las cinco
+// categorias de `RD 9.1.1` (00001)- y `usos.tipo_obra` se queda vacio para toda
+// fuente cuyo mapa no traiga la columna, que hoy es la parrilla entera de
+// Caracol. Copiarlo aqui parece el arreglo obvio y NO lo es: medido contra
+// Postgres real, con el backfill puesto la corrida de TV de Caracol deja de
+// abortar y pasa a devolver `noDistribuido` = la bolsa ENTERA, con error nil.
+// `MapaCaracol` tampoco mapea `rating`, que queda en 0, y `puntosTV` multiplica
+// por el.
+//
+// O sea que el backfill cambia un fallo RUIDOSO -ErrRepartoInvalido, que para
+// la corrida y se ve- por uno SILENCIOSO -cero puntos, cero pagos, sin una sola
+// senal-. Son tres huecos independientes (`tipo_obra`, `canal_id` y `rating`) y
+// cerrar uno solo empeora el conjunto; van juntos, en su propia issue, con el
+// mapa de ingesta y la pregunta P-05 delante. Ver el cuerpo de la PR de #37.
+//
+// Hoy la cadena ni siquiera llega al aborto: `MapaCaracol` no mapea `canal_id`
+// -`CampoCanalID` existe en mapa.go y no lo usa ningun Mapa-, asi que
+// `UsosDeCanal` devuelve cero filas y el motor no corre. El hueco es real y
+// esta LATENTE.
 func (s *Store) GuardarMatch(ctx context.Context, usoID, escalonPrevio string, r identificacion.Resultado) error {
 	etiqueta, err := s.ejecutorDe(ctx).Exec(ctx,
 		`UPDATE usos

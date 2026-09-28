@@ -181,6 +181,22 @@ func (uc Procesos) AbrirCorridaDelPeriodo(ctx context.Context, periodo string, c
 // AvanzarEtapa mueve el proceso a la siguiente etapa y la persiste. Al
 // entrar a EtapaImporteObra del circuito nacional invoca el motor puro de
 // #33 -- el internacional nunca la alcanza (RD 7.4), asi que nunca valoriza.
+//
+// Al salir de deducciones hacia importe_obra la compuerta y la valorizacion
+// comparten la misma unidad. La compuerta toma el cerrojo de periodo
+// (`BloquearAlertasDePeriodo`) y, como la unidad es reentrante, ese cerrojo
+// sigue tomado mientras se ponderan los usos. La ingesta pide el mismo
+// cerrojo antes de escribir: una entrega que llegue en el intervalo no puede
+// confirmarse, asi que no pondera sin haber pasado por la compuerta (#166).
+//
+// Si la compuerta encuentra criticas, la unidad CONFIRMA igual. Revertirla
+// borraria las alertas recien evaluadas y el 409 mandaria a revisar una
+// bandeja vacia. Valorizar solo entra cuando la cuenta es cero; un fallo
+// ahi si revierte la unidad, y el reintento vuelve a evaluar.
+//
+// El internacional no valoriza y no abre esa unidad. La mitigacion es
+// repetir la compuerta al entrar a verificacion, en los dos circuitos: una
+// entrega que entro despues de la primera pasada se ve antes de la firma.
 func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) (ProcesoVista, error) {
 	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
@@ -190,7 +206,10 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-	if v.Etapa == reparto.EtapaDeducciones {
+	if v.Etapa == reparto.EtapaDeducciones && p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
+		return uc.valorizarBajoCompuerta(ctx, actorID, procesoID, v, p)
+	}
+	if v.Etapa == reparto.EtapaDeducciones || p.Etapa == reparto.EtapaVerificacion {
 		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
@@ -217,7 +236,46 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	return aProcesoVista(p), nil
 }
 
-// compuertaAnomalias bloquea la salida de deducciones (hacia importe_obra o liquidacion_parcial) si el periodo tiene criticas abiertas.
+// valorizarBajoCompuerta evalua el periodo y, si no hay criticas abiertas,
+// pondera y avanza a importe_obra en la misma unidad. El cerrojo que toma
+// Evaluar queda tomado hasta el commit, y la ingesta espera ese commit.
+func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoID string, v ProcesoVista, p reparto.ProcesoDeReparto) (ProcesoVista, error) {
+	if uc.Anomalias == nil {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta la compuerta de anomalias", procesoID)
+	}
+
+	criticas := 0
+	err := uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
+		n, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			// Confirmar la unidad sin avanzar: las alertas recien evaluadas
+			// tienen que quedar, y el 409 no puede apuntar a una bandeja vacia.
+			criticas = n
+			return nil, nil
+		}
+		asientos, err := uc.valorizar(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
+			return nil, err
+		}
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+	})
+	if err != nil {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
+	}
+	if criticas > 0 {
+		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w: %d en %q, resuelvalas en /alertas", procesoID, ErrAnomaliasCriticasAbiertas, criticas, p.Periodo)
+	}
+	return aProcesoVista(p), nil
+}
+
+// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas.
+// Se consulta al salir de deducciones (internacional) y al entrar a verificacion.
 func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
 	if uc.Anomalias == nil {
 		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
