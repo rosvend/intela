@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -573,6 +574,11 @@ func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
 		if !strings.Contains(err.Error(), v) {
 			t.Errorf("aEntero(%q): el error no nombra el valor: %v", v, err)
 		}
+		// El rango entero, no solo el maximo: para un negativo que se pasa
+		// por abajo, "maximo 9223372036854775807" no explica nada.
+		if rango := "entre -9223372036854775808 y 9223372036854775807"; !strings.Contains(err.Error(), rango) {
+			t.Errorf("aEntero(%q): el error no dice el rango %q: %v", v, rango, err)
+		}
 	}
 	// Los bordes si caben.
 	for v, quiere := range map[string]int64{
@@ -586,6 +592,45 @@ func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
 		if err != nil || n != quiere {
 			t.Errorf("aEntero(%q) = %d, %v; se esperaba %d", v, n, err, quiere)
 		}
+	}
+}
+
+// Un exponente enorme en notacion cientifica cuesta en proporcion a el, no
+// al largo de la celda: `1e9999999` son 9 bytes y reescalarlo para Truncate,
+// GreaterThan o IntPart tardaba segundos, y mas con cada cifra. Se rechaza
+// antes de tocarlo, nombrando el valor, en las dos coerciones numericas.
+func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
+	t.Parallel()
+
+	coerciones := map[string]func(string) error{
+		"aEntero":  func(v string) error { _, err := aEntero(v); return err },
+		"aDecimal": func(v string) error { _, err := aDecimal(v); return err },
+	}
+	for nombre, coercion := range coerciones {
+		for _, v := range []string{"1e9999999", "1e-9999999", "-1e9999999", "1e31", "1e-31"} {
+			inicio := time.Now()
+			err := coercion(v)
+			if dur := time.Since(inicio); dur > 100*time.Millisecond {
+				t.Errorf("%s(%q) tardo %v; el exponente tiene que cortarse antes de reescalar", nombre, v, dur)
+			}
+			if err == nil {
+				t.Errorf("%s(%q) sin error; el exponente no cabe en ninguna columna de medida", nombre, v)
+				continue
+			}
+			if !strings.Contains(err.Error(), v) || !strings.Contains(err.Error(), "exponente") {
+				t.Errorf("%s(%q): el error no nombra el valor ni el exponente: %v", nombre, v, err)
+			}
+		}
+	}
+	// El borde si entra, y un decimal escrito a mano nunca llega cerca: su
+	// exponente es a lo sumo el numero de decimales.
+	for _, v := range []string{"1e30", "1e-30", "0.30000000000000004", "2172.0"} {
+		if _, err := aDecimal(v); err != nil {
+			t.Errorf("aDecimal(%q): %v; esta dentro del rango", v, err)
+		}
+	}
+	if n, err := aEntero("2e3"); err != nil || n != 2000 {
+		t.Errorf("aEntero(%q) = %d, %v; se esperaba 2000", "2e3", n, err)
 	}
 }
 

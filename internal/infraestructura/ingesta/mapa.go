@@ -620,11 +620,34 @@ func aDecimal(bruto string) (decimal.Decimal, error) {
 	if esPlaceholder(bruto) {
 		return decimal.Zero, nil
 	}
-	v, err := decimal.NewFromString(strings.TrimSpace(bruto))
+	bruto = strings.TrimSpace(bruto)
+	v, err := decimal.NewFromString(bruto)
 	if err != nil {
-		return decimal.Zero, fmt.Errorf("%q no es un numero", strings.TrimSpace(bruto))
+		return decimal.Zero, fmt.Errorf("%q no es un numero", bruto)
+	}
+	if err := escalaAcotada(bruto, v); err != nil {
+		return decimal.Zero, err
 	}
 	return v, nil
+}
+
+// maxExponente acota el exponente decimal de una celda numerica. Las columnas
+// de medida de `usos` son NUMERIC(18,x) --a lo sumo 16 cifras enteras y 6
+// decimales--, asi que un exponente de 30 ya es un valor que ninguna guarda, y
+// un decimal escrito sin notacion cientifica no llega nunca: su exponente es,
+// como mucho, su numero de decimales.
+const maxExponente = 30
+
+// escalaAcotada rechaza un exponente fuera de +-maxExponente ANTES de que nada
+// reescale el decimal. Reescalar cuesta en proporcion al exponente, no al largo
+// de la celda: `1e9999999` son 9 bytes, y Truncate, GreaterThan o IntPart
+// tardan segundos en el, mas con cada cifra; String() al serializarlo, igual.
+func escalaAcotada(bruto string, d decimal.Decimal) error {
+	if e := d.Exponent(); e > maxExponente || e < -maxExponente {
+		return fmt.Errorf("%q esta fuera de escala (exponente %d; el limite es de %d a %d)",
+			bruto, e, -maxExponente, maxExponente)
+	}
+	return nil
 }
 
 // aEntero convierte una celda a un recuento.
@@ -648,6 +671,9 @@ func aEntero(bruto string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%q no es un numero entero", bruto)
 	}
+	if err := escalaAcotada(bruto, d); err != nil {
+		return 0, err
+	}
 	if !d.Equal(d.Truncate(0)) {
 		return 0, fmt.Errorf("%q no es entero y un recuento no se puede partir", bruto)
 	}
@@ -655,7 +681,8 @@ func aEntero(bruto string) (int64, error) {
 	// (`9223372036854775808` sale como MinInt64). Es la unica salida por la que
 	// un recuento podria entrar como OTRO numero sin motivo (issue #113).
 	if d.GreaterThan(maxInt64) || d.LessThan(minInt64) {
-		return 0, fmt.Errorf("%q no cabe en un recuento (maximo %d)", bruto, int64(math.MaxInt64))
+		return 0, fmt.Errorf("%q no cabe en un recuento (entre %d y %d)",
+			bruto, int64(math.MinInt64), int64(math.MaxInt64))
 	}
 	return d.IntPart(), nil
 }
