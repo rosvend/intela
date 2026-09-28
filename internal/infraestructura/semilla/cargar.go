@@ -59,7 +59,7 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 	pool := store.Pool()
 	d := Construir()
 
-	hay, err := recuento(ctx, pool)
+	hay, err := recuento(ctx, pool, d)
 	if err != nil {
 		return err
 	}
@@ -78,6 +78,10 @@ func Cargar(ctx context.Context, store *postgres.Store, almacen aplicacion.Almac
 			return err
 		}
 	case hay.completo(d):
+		// Una base sembrada antes de la cola de identificacion la recibe aqui; sembrarCasos es idempotente.
+		if err := sembrarCasos(ctx, store, almacen, d, log); err != nil {
+			return err
+		}
 		log.Info("dataset ya sembrado; pase SEED_RESET=true para recargar")
 		return nil
 	case !hay.vacio():
@@ -143,11 +147,50 @@ func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.Alm
 			slog.Int("usos", len(r.Usos)))
 	}
 
+	if err := sembrarCasos(ctx, store, almacen, d, log); err != nil {
+		return err
+	}
+
 	log.Info("dataset sintetico cargado",
 		slog.Int("titulares", len(d.Titulares)),
 		slog.Int("obras", len(d.Obras)),
 		slog.Int("bolsas", len(d.Bolsas)),
 		slog.Int("parametros", len(d.Parametros)))
+	return nil
+}
+
+// sembrarCasos carga los reportes de CasosIdentificacion y corre la cascada real solo sobre esas entregas.
+// Idempotente: un reporte ya entregado se salta y la cascada no reescribe filas ya resueltas (D9).
+func sembrarCasos(ctx context.Context, store *postgres.Store, almacen aplicacion.AlmacenObjetos, d Dataset, log *slog.Logger) error {
+	ingesta := aplicacion.Ingesta{Reportes: store, Almacen: almacen}
+	reportes := make([]string, 0, len(d.CasosIdentificacion))
+	for _, r := range d.CasosIdentificacion {
+		// Acuse y filas en un solo hecho: un duplicado implica que las filas ya estan.
+		rec, err := ingesta.EntregarFilas(ctx, r.Fuente, r.Periodo, r.Bytes, usosCrudos(r.Usos))
+		if err != nil && !errors.Is(err, aplicacion.ErrReporteDuplicado) {
+			return fmt.Errorf("entregar reporte de casos %q: %w", r.Fuente, err)
+		}
+		if len(rec.Rechazados) > 0 {
+			return fmt.Errorf("entregar reporte de casos %q: %d filas rechazadas (%s)",
+				r.Fuente, len(rec.Rechazados), rec.Rechazados[0].RechazoMotivo)
+		}
+		reportes = append(reportes, rec.Reporte.ID)
+	}
+	// Solo sus propias entregas: el resto del periodo puede ser ajeno y no se toca. Sin entregas no hay nada que correr.
+	if len(reportes) == 0 {
+		return nil
+	}
+	cascada := aplicacion.ResolverUsos{
+		Usos: store, Identificacion: store, Similitud: store, Parametros: store, Unidad: store,
+		Reportes: reportes,
+	}
+	resueltos, err := cascada.ResolverUsos(ctx, PeriodoCasos)
+	if err != nil {
+		return fmt.Errorf("cascada sobre %s: %w", PeriodoCasos, err)
+	}
+	// resueltos cuenta usos asignados a una obra; las ONI de la cola no suman ahi.
+	log.Info("casos de identificacion sembrados", slog.String("periodo", PeriodoCasos),
+		slog.Int("entregas", len(reportes)), slog.Int("asignados_por_la_cascada", resueltos))
 	return nil
 }
 
@@ -158,27 +201,53 @@ func escribir(ctx context.Context, store *postgres.Store, almacen aplicacion.Alm
 // las otras dos: la ingesta y la identificacion son dos pasos, y entre ellos
 // cabe una caida que deja el numero de obras y de reportes correcto.
 type estado struct {
+	// obras, reportes y usosSinIdentificar miden solo filas del dataset: una base con datos ajenos (#155) no esta a medias por ellos.
 	obras              int
 	reportes           int
 	usosSinIdentificar int
+	// totalObras y totalReportes cuentan todo: vacio sigue exigiendo la base limpia.
+	totalObras    int
+	totalReportes int
 }
 
 func (e estado) completo(d Dataset) bool {
 	return e.obras == len(d.Obras) && e.reportes == len(d.Reportes) && e.usosSinIdentificar == 0
 }
 
-func (e estado) vacio() bool { return e.obras == 0 && e.reportes == 0 }
+func (e estado) vacio() bool { return e.totalObras == 0 && e.totalReportes == 0 }
 
-func recuento(ctx context.Context, pool *pgxpool.Pool) (estado, error) {
+// recuento mide la base. El dataset se reconoce por contenido, como en vaciar: obras por id y reportes por
+// (fuente, periodo), no por la huella de sus bytes, que cambia entre revisiones del sembrador.
+// Los reportes de CasosIdentificacion no cuentan: son la cola, que sembrarCasos completa aparte.
+func recuento(ctx context.Context, pool *pgxpool.Pool, d Dataset) (estado, error) {
+	obraIDs := make([]string, 0, len(d.Obras))
+	for _, o := range d.Obras {
+		obraIDs = append(obraIDs, o.ID)
+	}
+	fuentes := make([]string, 0, len(d.Reportes))
+	periodos := make([]string, 0, len(d.Reportes))
+	for _, r := range d.Reportes {
+		fuentes = append(fuentes, r.Fuente)
+		periodos = append(periodos, r.Periodo)
+	}
 	var e estado
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM obras`).Scan(&e.obras); err != nil {
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE id = ANY($1)) FROM obras`, obraIDs,
+	).Scan(&e.totalObras, &e.obras); err != nil {
 		return estado{}, fmt.Errorf("contar obras: %w", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM reportes`).Scan(&e.reportes); err != nil {
+	const delDataset = `(r.fuente, r.periodo) IN (SELECT * FROM unnest($1::text[], $2::text[]))`
+	if err := pool.QueryRow(ctx,
+		`SELECT (SELECT COUNT(*) FROM reportes),
+		        COUNT(DISTINCT (r.fuente, r.periodo)) FROM reportes r WHERE `+delDataset, fuentes, periodos,
+	).Scan(&e.totalReportes, &e.reportes); err != nil {
 		return estado{}, fmt.Errorf("contar reportes: %w", err)
 	}
+	// 'pendiente' es lo que la cascada no proceso; una ONI ya es un resultado.
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM usos WHERE obra_id IS NULL`).Scan(&e.usosSinIdentificar); err != nil {
+		`SELECT COUNT(*) FROM usos u JOIN reportes r ON r.id = u.reporte_id
+		  WHERE u.escalon = 'pendiente' AND `+delDataset, fuentes, periodos,
+	).Scan(&e.usosSinIdentificar); err != nil {
 		return estado{}, fmt.Errorf("contar usos sin identificar: %w", err)
 	}
 	return e, nil

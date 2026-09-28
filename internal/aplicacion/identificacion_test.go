@@ -1515,3 +1515,28 @@ func TestResolverUsosConsultaElMotorConElPisoVigente(t *testing.T) {
 		t.Fatalf("el motor se consulto con piso %s, se esperaba 0.33", sim.pisos[0])
 	}
 }
+
+// Con Reportes, la cascada solo toca los usos de esas entregas: el resto del periodo queda como estaba.
+func TestResolverUsosConReportesSoloTocaEsasEntregas(t *testing.T) {
+	ing := &ingestaFalsa{}
+	idf := &identificacionFalsa{alias: map[string]string{
+		"caracol|id_ficha|1": "obra-1",
+		"caracol|id_ficha|2": "obra-2",
+	}}
+	propio := usoPendiente("u-propio", "caracol", "id_ficha=1")
+	ajeno := usoPendiente("u-ajeno", "caracol", "id_ficha=2")
+	ajeno.ReporteID = "rep-ajeno"
+	ing.usos = []UsoPersistido{propio, ajeno}
+
+	r := ResolverUsos{
+		Usos: ing, Identificacion: idf, Similitud: &similitudFalsa{}, Parametros: umbralesPorDefecto(),
+		Unidad: &unidadPorFilaFalsa{}, Reportes: []string{propio.ReporteID},
+	}
+	n, err := r.ResolverUsos(t.Context(), "2024")
+	if err != nil {
+		t.Fatalf("ResolverUsos: %v", err)
+	}
+	if n != 1 || len(idf.guardadosMatch) != 1 || idf.guardadosMatch[0].UsoID != "u-propio" {
+		t.Fatalf("n = %d, matches = %+v; solo se esperaba u-propio", n, idf.guardadosMatch)
+	}
+}
