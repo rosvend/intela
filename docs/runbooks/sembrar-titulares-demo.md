@@ -24,8 +24,11 @@ deja en local.
   responde error (`semilla a medias` o `ErrDatosNoSinteticos` con `reset:true`);
   para esa base existe `{"orden":"sembrar-dataset","aditivo":true}` (#155).
 - Una base donde el dataset **ya esta**, con o sin obras ajenas (produccion,
-  sembrada con `aditivo:true`), acepta el `sembrar-dataset` normal: la
-  completitud se mide sobre las filas del dataset, no sobre toda la base.
+  sembrada con `aditivo:true`), acepta el `sembrar-dataset` normal. El dataset se
+  reconoce por contenido: sus 4 obras por id, sus 5 reportes por `(fuente, periodo)`
+  y ningun uso de esos reportes en `pendiente`. No se compara la huella de los
+  bytes, asi que una base sembrada por una revision anterior del sembrador (antes de
+  #158, cuando las filas de TV no traian fecha y hora) tambien cuenta como sembrada.
 
 El admin provisionado (`primer-administrador`) **se conserva**: el seed no
 pisa su hash. Las otras cuentas demo se crean con las claves por defecto de
