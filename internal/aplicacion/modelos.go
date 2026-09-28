@@ -312,6 +312,8 @@ type UsoDeReparto struct {
 //   - ONI: la cascada corrio y no reconocio ninguna obra.
 //   - Excluidos: el canal esta fuera del catalogo de REDES SGC (R-27), asi
 //     que la fila nunca tuvo obra que identificar.
+//   - Descartados: una persona decidio que no es un uso del repertorio de
+//     REDES SGC (#175): no pondera y no es ONI.
 //
 // # Esto SOLO cuenta. No reserva nada
 //
@@ -327,9 +329,10 @@ type UsoDeReparto struct {
 // identifica (R-19: 3 anos) -- es trabajo de #33/#34, registrado con
 // implementacion pendiente bajo R-18 en docs/dominio/reglas-negocio.md.
 type ResumenUsosDeCanal struct {
-	Pendientes int
-	ONI        int
-	Excluidos  int
+	Pendientes  int
+	ONI         int
+	Excluidos   int
+	Descartados int
 }
 
 // ItemRevision es una fila de la cola de revision: lo que no se pudo

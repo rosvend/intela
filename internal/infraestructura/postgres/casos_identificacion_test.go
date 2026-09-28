@@ -40,7 +40,8 @@ func sembrarCasos(t *testing.T) (*Store, *pgxpool.Pool) {
 	          ('u-1', $2, 0.55, 1, 'titulo original'),
 	          ('u-6', $1, 0.90, 0, 'viejo')`, obraIda, obraImdb)
 	ejecutar(`UPDATE usos SET escalon = 'manual', obra_id = $1, oni = FALSE,
-	                 resuelto_por = 'revisor-1', resuelto_en = '2025-02-03T09:00:00Z'
+	                 resuelto_por = 'revisor-1', resuelto_en = '2025-02-03T09:00:00Z',
+	                 nota_resolucion = 'coincide la ficha'
 	           WHERE id = 'u-2'`, obraImdb)
 	ejecutar(`UPDATE usos SET escalon = 'excluido', oni = FALSE WHERE id = 'u-5'`)
 	ejecutar(`UPDATE usos SET escalon = 'difuso', obra_id = $1, oni = FALSE, puntaje = 0.9 WHERE id = 'u-6'`, obraIda)

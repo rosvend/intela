@@ -924,8 +924,10 @@ paths:
       summary: Casos de identificacion
       description: |
         Lista los usos que la cascada no pudo identificar (`pendiente`,
-        escalon `oni`) y los que una persona ya resolvio (`asignado`,
-        escalon `manual`), con la evidencia y los candidatos de la banda
+        escalon `oni`), los que una persona ya resolvio asignandoles una obra
+        (`asignado`, escalon `manual`) y los que una persona descarto
+        (`descartado`: no es un uso del repertorio, no pondera y no sale en el
+        listado publico de ONI), con la evidencia y los candidatos de la banda
         ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
 
         Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
@@ -934,7 +936,8 @@ paths:
         `pendientes` cuenta los casos pendientes bajo los mismos filtros de
         `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
         contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
-        caso resuelto y el alta del reporte para uno pendiente.
+        caso resuelto y el alta del reporte para uno pendiente. `nota` es la
+        justificacion de la decision: `null` mientras el caso este pendiente.
 
         Sin sesion responde 401. Con sesion de otro rol responde 403. Un
         filtro mal formado responde 400.
@@ -946,10 +949,10 @@ paths:
         - name: estado
           in: query
           required: false
-          description: Filtra por estado del caso. Si se omite, lista los dos.
+          description: Filtra por estado del caso. Si se omite, lista los tres.
           schema:
             type: string
-            enum: [pendiente, asignado]
+            enum: [pendiente, asignado, descartado]
           example: pendiente
         - name: fuente
           in: query
@@ -1018,6 +1021,7 @@ paths:
                     resuelto_por: null
                     resuelto_en: null
                     ultima_actualizacion: "2025-02-01T10:00:00Z"
+                    nota: null
         "400":
           description: Un filtro o la paginacion vienen mal formados.
           content:
@@ -1050,6 +1054,197 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: la cola de identificacion no esta disponible
+
+  /identificacion/casos/{id}/resolucion:
+    post:
+      tags: [identificacion]
+      summary: Resolver un caso ONI a mano
+      description: |
+        Cierra un caso que la cascada dejo en `oni`, asignandole una obra
+        (`asignar`) o diciendo que no es un uso del repertorio de REDES SGC
+        (`descartar`). Quien firma sale de la SESION y no del cuerpo: la firma
+        del asiento del ADR 0006 tiene que nombrar a quien tomo la decision de
+        verdad.
+
+        **Asignar** deja el uso en el escalon `manual`, con la obra, `oni=false`
+        y el puntaje del candidato cuando la obra elegida estaba entre los
+        propuestos. Aprende ademas el alias del par canonico (fuente, tipo,
+        valor) del uso, para que el reporte siguiente de la misma fuente
+        resuelva solo en el escalon 1 (ADR 0007: resolver una vez, reutilizar
+        siempre).
+
+        **Descartar** deja el uso en el escalon `descartado`: sin obra, con
+        `oni=false` y sin ponderar. No sale en el listado publico de ONI de
+        `RD 13.8` -- no es una obra sin identificar, es una que no es del
+        repertorio (`RD 7.1`, `RD 9.5`, R-27) -- y la cascada no lo vuelve a
+        tocar: una decision humana no se pisa. Su parte no existe y la bolsa se
+        reparte entre las obras que si ponderan.
+
+        La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
+        Se puede resolver aunque el periodo este en reparto o ya distribuido:
+        la operacion se serializa con el cerrojo de periodo que comparten la
+        compuerta de anomalias, la ingesta y la valorizacion.
+
+        **Esta ruta no escribe titulares, porcentajes ni importes**: identificar
+        no mueve dinero (ADR 0007). Tampoco corrige una decision anterior:
+        reasignar o deshacer un descarte queda fuera de alcance.
+
+        Sin sesion responde 401. Con sesion de otro rol responde 403. Un caso
+        desconocido responde 404. El 409 tiene tres causas, distinguidas por el
+        mensaje: otra persona ya resolvio el caso, el caso ya no esta pendiente
+        (la cascada lo cerro), o el identificador de la fuente ya apunta a otra
+        obra.
+      operationId: resolverCasoIdentificacion
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del uso, tal como lo devuelve `GET /identificacion/casos`.
+          schema:
+            type: string
+          example: uso-1
+      requestBody:
+        required: true
+        description: |
+          La decision, la obra cuando se asigna, y la nota. Quien resolvio sale
+          de la sesion.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolucionDeCaso"
+            examples:
+              asignar:
+                summary: Asignar el caso a una obra del catalogo
+                value:
+                  decision: asignar
+                  obra_id: obra-12
+                  nota: coincide la ficha tecnica con la declaracion
+              descartar:
+                summary: Descartar el caso
+                value:
+                  decision: descartar
+                  nota: no es un uso del repertorio de REDES
+      responses:
+        "200":
+          description: El caso, ya resuelto y firmado, con el mismo esquema que la lista.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CasoIdentificacion"
+              examples:
+                asignar:
+                  summary: Caso asignado a una obra
+                  value:
+                    id: uso-1
+                    titulo: La Nina T3 E12
+                    titulo_original: ""
+                    fuente: caracol
+                    modalidad: tv
+                    reporte_id: rep-1
+                    periodo: 2024-11
+                    ids_fuente: "id_ficha=871732"
+                    evidencia: "manual: candidata obra-12 (0.52941) de 2 propuestas"
+                    estado: asignado
+                    candidatos: []
+                    obra_asignada:
+                      id: obra-12
+                      titulo: La Nina T3
+                    resuelto_por:
+                      id: usr-admin
+                      nombre: Ana Perez
+                    resuelto_en: "2026-09-27T15:04:05Z"
+                    ultima_actualizacion: "2026-09-27T15:04:05Z"
+                    nota: coincide la ficha tecnica con la declaracion
+                descartar:
+                  summary: Caso descartado
+                  value:
+                    id: uso-2
+                    titulo: Magazine de farandula
+                    titulo_original: ""
+                    fuente: caracol
+                    modalidad: tv
+                    reporte_id: rep-1
+                    periodo: 2024-11
+                    ids_fuente: ""
+                    evidencia: "descartado a mano: no es un uso del repertorio"
+                    estado: descartado
+                    candidatos: []
+                    obra_asignada: null
+                    resuelto_por:
+                      id: usr-admin
+                      nombre: Ana Perez
+                    resuelto_en: "2026-09-27T15:04:05Z"
+                    ultima_actualizacion: "2026-09-27T15:04:05Z"
+                    nota: no es un uso del repertorio de REDES
+        "400":
+          description: |
+            El cuerpo no es un JSON valido, la nota falta o pasa de 300
+            caracteres, la decision no es `asignar` ni `descartar`, `asignar`
+            viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
+            catalogo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la nota es obligatoria para resolver un caso
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: Ese caso no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: ese caso no existe
+        "409":
+          description: |
+            Tres causas, cada una con su mensaje: otra persona ya resolvio el
+            caso, el caso ya no esta pendiente (la cascada lo cerro), o el
+            identificador de la fuente ya apunta a otra obra.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                yaResuelto:
+                  summary: Otra persona lo resolvio antes
+                  value:
+                    error: 'otra persona ya resolvio este caso: el caso esta en "manual"'
+                noPendiente:
+                  summary: La cascada ya lo cerro
+                  value:
+                    error: 'el caso ya no esta pendiente: el caso esta en "difuso"'
+                aliasEnConflicto:
+                  summary: El identificador ya apunta a otra obra
+                  value:
+                    error: 'ese identificador ya apunta a otra obra: caracol id_ficha=871732 ya apunta a "obra-40"'
+        "503":
+          description: El binario no cableo la resolucion de casos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la resolucion de casos no esta disponible
 
   /auditoria/asientos:
     get:
@@ -5340,8 +5535,11 @@ components:
         `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
         su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
         el importe de la obra, la version de su declaracion, las partes y la
-        identificacion de cada uso. Append-only: un asiento nunca se modifica
-        ni se borra.
+        identificacion de cada uso; `identificacion.asignada` trae la decision,
+        el estado del uso TAL COMO ESTABA al decidir, la nota, el nombre del
+        actor y el alias aprendido, y referencia la obra; `identificacion.descartada`
+        trae lo mismo con `decision: descartar` y sin obra, y referencia el uso.
+        Append-only: un asiento nunca se modifica ni se borra.
       properties:
         id:
           type: string
@@ -5381,7 +5579,11 @@ components:
             Detalle del hecho, tal cual lo guardo el modulo que asento:
             cualquier JSON. `declaracion.guardada` trae version, estado y
             partes; `recaudo.registrado` trae periodo, circuito, bruto,
-            convenio, tarifa y factura.
+            convenio, tarifa y factura; `identificacion.asignada` trae
+            `uso_id`, `decision`, `obra_id`, `candidata`, `puntaje`, el estado
+            anterior del uso (`titulo`, `fuente`, `periodo`, `reporte_id`,
+            `ids_fuente`, `escalon_anterior`, `evidencia_anterior`), `nota`,
+            `actor_nombre` y `alias`.
         cuando:
           type: string
           format: date-time
@@ -5589,7 +5791,7 @@ components:
           description: Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion.
     CasoIdentificacion:
       type: object
-      required: [id, titulo, titulo_original, fuente, modalidad, reporte_id, periodo, ids_fuente, evidencia, estado, candidatos, obra_asignada, resuelto_por, resuelto_en, ultima_actualizacion]
+      required: [id, titulo, titulo_original, fuente, modalidad, reporte_id, periodo, ids_fuente, evidencia, estado, candidatos, obra_asignada, resuelto_por, resuelto_en, ultima_actualizacion, nota]
       description: |
         Un uso que la cascada no resolvio, tal como llego, con la evidencia
         para que una persona decida. Sin importes ni medidas (ADR 0007).
@@ -5615,10 +5817,15 @@ components:
           description: Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018).
         evidencia:
           type: string
-          description: Por que la cascada no lo resolvio.
+          description: Por que la cascada no lo resolvio, o como lo resolvio una persona.
         estado:
           type: string
-          enum: [pendiente, asignado]
+          enum: [pendiente, asignado, descartado]
+          description: |
+            `pendiente`: la cascada no lo reconocio y nadie lo ha mirado.
+            `asignado`: una persona le dio una obra. `descartado`: una persona
+            decidio que no es un uso del repertorio de REDES SGC: no pondera y
+            no sale en el listado publico de ONI.
         candidatos:
           type: array
           description: Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda.
@@ -5653,6 +5860,47 @@ components:
           type: string
           format: date-time
           description: "`resuelto_en` si esta resuelto; si no, el alta del reporte."
+        nota:
+          type: string
+          nullable: true
+          maxLength: 300
+          description: |
+            La justificacion de la decision, obligatoria al resolver (#175).
+            `null` mientras el caso este pendiente.
+
+    ResolucionDeCaso:
+      type: object
+      required: [decision, nota]
+      description: |
+        La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
+        servidor: la firma sale de la sesion y el instante del reloj del nucleo
+        (ADR 0006).
+      properties:
+        decision:
+          type: string
+          enum: [asignar, descartar]
+          description: |
+            `asignar` da una obra al caso y aprende el alias de su
+            identificador de fuente. `descartar` dice que no es un uso del
+            repertorio: el caso queda sin obra, sin ponderar y sin salir en el
+            listado publico de ONI.
+        obra_id:
+          type: string
+          description: |
+            Obligatoria si `decision` es `asignar`; prohibida si es
+            `descartar`. Tiene que existir en el catalogo. Lo valida el
+            servidor: no es un `oneOf` en el contrato porque la regla cruza los
+            dos campos.
+          example: obra-12
+        nota:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: |
+            Por que se decidio. Obligatoria y de hasta 300 caracteres: la firma
+            dice quien, la nota dice por que, y la auditoria de RD 16 pregunta
+            las dos cosas.
+          example: coincide la ficha tecnica con la declaracion
     CandidatoIdentificacion:
       type: object
       required: [obra_id, titulo, anio, genero, puntaje, titulo_consultado]
