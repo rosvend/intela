@@ -17,12 +17,16 @@ const columnasItemPublico = `uso_id, titulo, fuente, ids_fuente, modalidad`
 
 // PendientesDePeriodo lee la cola viva, no el listado publicado. Resolver un
 // ONI despues no tiene que cambiar lo que ya se congelo.
+//
+// El corte es escalon = 'oni', no la bandera oni. La ingesta siembra
+// escalon = 'pendiente' con oni = TRUE antes de que corra la cascada; esa
+// fila todavia no es un ONI y no puede congelarse ni arrancar R-19.
 func (s *Store) PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.DatosIdentificatorios, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT u.id, u.titulo, u.fuente, u.ids_fuente, u.modalidad, r.periodo
 		  FROM usos u
 		  JOIN reportes r ON r.id = u.reporte_id
-		 WHERE u.oni AND r.periodo = $1
+		 WHERE u.escalon = 'oni' AND r.periodo = $1
 		 ORDER BY u.titulo, u.id`, periodo)
 	if err != nil {
 		return nil, traducirError(err, "ONI pendientes del periodo %q", periodo)

@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	shaReporte  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	reporteONIA = "rep-oni-a"
-	reporteONIB = "rep-oni-b"
-	usoONI1     = "uso-oni-1"
-	usoONI2     = "uso-oni-2"
-	usoResuelto = "uso-resuelto-1"
+	shaReporte    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	reporteONIA   = "rep-oni-a"
+	reporteONIB   = "rep-oni-b"
+	usoONI1       = "uso-oni-1"
+	usoONI2       = "uso-oni-2"
+	usoResuelto   = "uso-resuelto-1"
+	usoSinCascada = "uso-pendiente-sin-cascada"
 )
 
 func sembrarUsosONI(t *testing.T, pool *pgxpool.Pool) {
@@ -44,6 +45,11 @@ func sembrarUsosONI(t *testing.T, pool *pgxpool.Pool) {
 	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, escalon, oni, modalidad)
 	          VALUES ($1, $2, 'caracol', 'Unitario Huerfano', 'ID-100', 'oni', TRUE, 'tv')`,
 		usoONI2, reporteONIA)
+	// La ingesta siembra oni=TRUE con escalon pendiente, antes de la cascada.
+	// Esa fila no es ONI real y no puede congelarse al publicar el periodo.
+	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, escalon, oni, modalidad)
+	          VALUES ($1, $2, 'caracol', 'Aun Sin Cascada', 'ID-pend', 'pendiente', TRUE, 'tv')`,
+		usoSinCascada, reporteONIA)
 	// Identificado: no puede salir en el listado publico de este periodo.
 	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, ids_fuente, escalon, oni, obra_id, modalidad)
 	          VALUES ($1, $2, 'caracol', 'La Casa de las Dos Palmas', 'ID-1', 'alias', FALSE, $3, 'tv')`,
@@ -144,6 +150,35 @@ func TestPublicarListadoONIPersisteVistaAsientoYAncla(t *testing.T) {
 	}
 	if ancla == nil {
 		t.Fatal("no se anclo la prescripcion")
+	}
+}
+
+func TestFilaPendienteConBanderaONINoSeCongela(t *testing.T) {
+	s, pool := sembrar(t)
+	sembrarUsosONI(t, pool)
+	ctx := t.Context()
+
+	pub := publicar(t, s, "2026-01", usuarioAdmin)
+	for _, o := range pub.Obras {
+		if o.ID == usoSinCascada {
+			t.Fatal("un uso con escalon pendiente no es ONI: la cascada aun no corrio")
+		}
+	}
+
+	var enVista int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM oni_publico WHERE id = $1`, usoSinCascada).Scan(&enVista); err != nil {
+		t.Fatalf("oni_publico: %v", err)
+	}
+	if enVista != 0 {
+		t.Fatalf("oni_publico incluye el pendiente: %d", enVista)
+	}
+
+	var ancla *time.Time
+	if err := pool.QueryRow(ctx, `SELECT publicado_en FROM usos WHERE id = $1`, usoSinCascada).Scan(&ancla); err != nil {
+		t.Fatalf("publicado_en: %v", err)
+	}
+	if ancla != nil {
+		t.Fatal("anclar la prescripcion de un pendiente arranca R-19 antes de identificar")
 	}
 }
 
