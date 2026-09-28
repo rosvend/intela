@@ -34,21 +34,31 @@ type OrigenDeUso struct {
 
 // AsientoValorizacion es el payload de reparto.valorizado: de donde salio y como cerro la corrida.
 type AsientoValorizacion struct {
-	ProcesoID            string                 `json:"proceso_id"`
-	Periodo              string                 `json:"periodo"`
-	Circuito             string                 `json:"circuito"`
-	Bolsa                BolsaAsentada          `json:"bolsa"`
-	SnapshotID           string                 `json:"snapshot_id"`
-	Reglamento           string                 `json:"reglamento"`
-	Deducciones          []DeduccionAsentada    `json:"deducciones"`
-	Neto                 string                 `json:"neto"`
-	Retenido             string                 `json:"retenido"`
-	Residuo              string                 `json:"residuo"`
-	NoDistribuido        string                 `json:"no_distribuido"`
-	ValorPunto           string                 `json:"valor_punto"`
+	ProcesoID     string              `json:"proceso_id"`
+	Periodo       string              `json:"periodo"`
+	Circuito      string              `json:"circuito"`
+	Bolsa         BolsaAsentada       `json:"bolsa"`
+	SnapshotID    string              `json:"snapshot_id"`
+	Reglamento    string              `json:"reglamento"`
+	Deducciones   []DeduccionAsentada `json:"deducciones"`
+	Neto          string              `json:"neto"`
+	Retenido      string              `json:"retenido"`
+	Residuo       string              `json:"residuo"`
+	NoDistribuido string              `json:"no_distribuido"`
+	ValorPunto    string              `json:"valor_punto"`
+	// Netos es el vector de titulares del proceso, ordenado por obra y titular.
+	// ExplicarCifra prorratea con el mismo vector que el export (#43).
+	Netos                []NetoTitularAsentado  `json:"netos,omitempty"`
 	PartesNoDistribuidas []ParteNoDistribuidaAs `json:"partes_no_distribuidas"`
 	PorGrupo             []GrupoAsentado        `json:"por_grupo"`
 	Reportes             []ReporteAsentado      `json:"reportes"`
+}
+
+// NetoTitularAsentado es una linea del vector con el que se prorratean las deducciones.
+type NetoTitularAsentado struct {
+	ObraID    string `json:"obra_id"`
+	TitularID string `json:"titular_id"`
+	Importe   string `json:"importe"`
 }
 
 // BolsaAsentada es la bolsa que se repartio.
@@ -176,6 +186,20 @@ func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
 		corrida.Reportes = append(corrida.Reportes, rep)
 	}
 	sort.Slice(corrida.Reportes, func(i, j int) bool { return corrida.Reportes[i].ID < corrida.Reportes[j].ID })
+
+	netos := make([]NetoTitularAsentado, 0, len(r.Titulares))
+	for _, t := range r.Titulares {
+		netos = append(netos, NetoTitularAsentado{
+			ObraID: t.ObraID, TitularID: t.TitularID, Importe: t.Importe.StringFixed(2),
+		})
+	}
+	sort.Slice(netos, func(i, j int) bool {
+		if netos[i].ObraID != netos[j].ObraID {
+			return netos[i].ObraID < netos[j].ObraID
+		}
+		return netos[i].TitularID < netos[j].TitularID
+	})
+	corrida.Netos = netos
 
 	titularesPorObra := make(map[string][]TitularAsentado)
 	for _, t := range r.Titulares {

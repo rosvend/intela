@@ -15,7 +15,10 @@ import (
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
-var _ aplicacion.RepositorioLiquidacion = (*Store)(nil)
+var (
+	_ aplicacion.RepositorioLiquidacion = (*Store)(nil)
+	_ aplicacion.RepositorioIngresos    = (*Store)(nil)
+)
 
 // columnasOrden va en una constante y no repetida en cada consulta porque
 // escanearOrden lee POSICIONALMENTE: si una consulta cambiara el orden de las
@@ -540,4 +543,82 @@ func (s *Store) deduccionesDe(ctx context.Context, ids []string) (map[string][]l
 		return nil, traducirError(err, "deducciones de ordenes")
 	}
 	return out, nil
+}
+
+// IngresosDe lista las lineas netas de un titular, recortadas por el filtro.
+//
+// El titularID lo pone el caso de uso desde la sesion. Aqui no hay forma de
+// pedir "los de otro": la consulta lleva WHERE titular_id = $1.
+//
+// La fuente es la del canal de la bolsa de ESA corrida (ADR 0019: una
+// corrida = una bolsa = un canal), el mismo corte que [Store.UsosDeCanal].
+// Filtrar solo por obra y periodo mezclaria el dinero de otra bolsa que
+// uso la misma obra en el mismo periodo.
+func (s *Store) IngresosDe(ctx context.Context, titularID string, f aplicacion.FiltroIngresos) ([]aplicacion.Ingreso, error) {
+	filas, err := s.pool.Query(ctx, `
+		SELECT
+			rt.proceso_id,
+			rt.obra_id,
+			rt.titular_id,
+			o.titulo,
+			p.periodo,
+			rt.importe,
+			COALESCE((
+				SELECT string_agg(DISTINCT r.fuente, ', ' ORDER BY r.fuente)
+				FROM usos u
+				JOIN reportes r ON r.id = u.reporte_id
+				WHERE u.obra_id = rt.obra_id
+				  AND r.periodo = p.periodo
+				  AND u.canal_id = b.usuario_id
+				  AND NOT u.oni
+			), '') AS fuente
+		FROM resultados_titular rt
+		JOIN procesos p ON p.id = rt.proceso_id
+		JOIN bolsas b ON b.id = p.bolsa_id
+		JOIN obras o ON o.id = rt.obra_id
+		WHERE rt.titular_id = $1
+		  AND ($2 = '' OR rt.obra_id = $2)
+		  AND ($3 = '' OR p.periodo = $3)
+		  AND (
+		        $4 = '' OR EXISTS (
+		            SELECT 1
+		            FROM usos u
+		            JOIN reportes r ON r.id = u.reporte_id
+		            WHERE u.obra_id = rt.obra_id
+		              AND r.periodo = p.periodo
+		              AND u.canal_id = b.usuario_id
+		              AND r.fuente = $4
+		              AND NOT u.oni
+		        )
+		      )
+		ORDER BY p.periodo, o.titulo, rt.obra_id`,
+		titularID, f.ObraID, f.Periodo, f.Fuente,
+	)
+	if err != nil {
+		return nil, traducirError(err, "ingresos de titular %q", titularID)
+	}
+	defer filas.Close()
+
+	ingresos := []aplicacion.Ingreso{}
+	for filas.Next() {
+		var (
+			procesoID, obraID, tit, titulo, periodo, fuente string
+			neto                                            decimal.Decimal
+		)
+		if err := filas.Scan(&procesoID, &obraID, &tit, &titulo, &periodo, &neto, &fuente); err != nil {
+			return nil, traducirError(err, "escanear ingreso de titular %q", titularID)
+		}
+		ingresos = append(ingresos, aplicacion.Ingreso{
+			Ref:     aplicacion.FormarRef(procesoID, obraID, tit),
+			ObraID:  obraID,
+			Obra:    titulo,
+			Fuente:  fuente,
+			Periodo: periodo,
+			Neto:    neto,
+		})
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "ingresos de titular %q", titularID)
+	}
+	return ingresos, nil
 }

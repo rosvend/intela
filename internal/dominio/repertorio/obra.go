@@ -154,6 +154,11 @@ func NuevaObra(id string, m Metadatos) (Obra, error) {
 	if id == "" {
 		return Obra{}, fmt.Errorf("%w: falta el identificador", ErrObraInvalida)
 	}
+	// FormarRef usa ':' para GET /explicar/{ref}. Un id con ese caracter
+	// parte la referencia en mas segmentos y la cifra deja de poder explicarse.
+	if strings.Contains(id, ":") {
+		return Obra{}, fmt.Errorf("%w: el identificador no puede contener ':'", ErrObraInvalida)
+	}
 	m, err := normalizar(m)
 	if err != nil {
 		return Obra{}, err
