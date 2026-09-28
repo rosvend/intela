@@ -1263,13 +1263,15 @@ export interface components {
             /**
              * @description Por que se aparto. Nombra el CAMPO canonico y la COLUMNA del
              *     archivo, que es lo que permite volver a pedirle al cliente
-             *     exactamente eso. Toda fila que salio de un archivo empieza por
-             *     `fila N`, decida el rechazo el adaptador de formato, la validacion
-             *     o la normalizacion. N es la linea del archivo en la que EMPIEZA el
-             *     registro (un campo entrecomillado de un CSV puede abarcar varias
-             *     lineas); en .xlsx, la fila de la hoja; en JSON, la posicion del
-             *     registro en el array contando desde 2. Es texto para una persona,
-             *     no un formato que analizar: el codigo tipado va aparte.
+             *     exactamente eso. Desde el issue #113, toda fila que salio de un
+             *     archivo empieza por `fila N`, decida el rechazo el adaptador de
+             *     formato, la validacion o la normalizacion; los rechazos guardados
+             *     antes pueden no traerlo. N es la linea del archivo en la que
+             *     EMPIEZA el registro (un campo entrecomillado de un CSV puede
+             *     abarcar varias lineas); en .xlsx, la fila de la hoja; en JSON, la
+             *     posicion del registro en el array contando desde 2. Es texto para
+             *     una persona, no un formato que analizar: el codigo tipado va
+             *     aparte.
              * @example fila 6, duracion_min (columna "Duracion_total"): "cuarenta y cinco" no es un numero
              */
             motivo: string;
@@ -2595,9 +2597,10 @@ export interface components {
             /**
              * @description Texto que nombra el campo y explica que falta o esta mal. Sale de
              *     los mismos rechazos que `Rechazo.motivo` y tiene su misma forma:
-             *     toda fila que salio de un archivo empieza por `fila N`, decida el
-             *     rechazo el adaptador de formato, la validacion o la normalizacion.
-             *     N es la linea del archivo en la que EMPIEZA el registro (un campo
+             *     desde el issue #113, toda fila que salio de un archivo empieza por
+             *     `fila N`, decida el rechazo el adaptador de formato, la validacion
+             *     o la normalizacion; los rechazos guardados antes pueden no
+             *     traerlo. N es la linea del archivo en la que EMPIEZA el registro (un campo
              *     entrecomillado de un CSV puede abarcar varias lineas); en .xlsx, la
              *     fila de la hoja; en JSON, la posicion del registro en el array
              *     contando desde 2. Es texto para una persona, no un formato que
