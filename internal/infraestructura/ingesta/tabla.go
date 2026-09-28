@@ -31,11 +31,13 @@ import (
 // cual de las dos cosas se le esta pidiendo.
 //
 // Filas NO incluye la cabecera. Las filas cortas se rellenan hasta
-// len(Columnas): excelize recorta las celdas vacias del final, y un CSV
-// escrito a mano se queda sin comas. Una fila MAS ancha que la cabecera se
-// deja con los campos de mas -- [Mapa.Aplicar] la rechaza -- porque recortarlos
-// en silencio es como se persiste un identificador corrido por una coma sin
-// entrecomillar.
+// len(Columnas), para que el mapa pueda leer lo que traen. En .xlsx eso es
+// todo: excelize recorta las celdas vacias del final y la fila corta es la
+// forma normal. En CSV no: una coma PERDIDA corre los valores a la izquierda,
+// asi que el lector anota el ancho real y [Mapa.Aplicar] rechaza la fila
+// (issue #113). Una fila MAS ancha que la cabecera se deja con los campos de
+// mas -- [Mapa.Aplicar] la rechaza -- porque recortarlos en silencio es como
+// se persiste un identificador corrido por una coma sin entrecomillar.
 type Tabla struct {
 	Columnas []string
 	Filas    [][]string
@@ -43,8 +45,10 @@ type Tabla struct {
 	// Lineas es, para cada elemento de Filas, el numero de fila DEL ARCHIVO del
 	// que salio, con la cabecera como 1.
 	//
-	// Existe porque Filas ya no es el archivo: [desdeFilas] descarta las filas
-	// enteras en blanco, que son relleno del export y no registros. Sin esta
+	// Existe porque Filas ya no es el archivo: se descartan las filas enteras
+	// en blanco, que son relleno del export y no registros -- las descarta
+	// [desdeFilasNumeradas], y en CSV ya antes el propio `encoding/csv`, que se
+	// salta las lineas fisicamente vacias sin avisar --. Sin esta
 	// correspondencia, el unico numero disponible aguas arriba es la posicion en
 	// la lista YA FILTRADA, y entonces cada blanco corre la numeracion de todo lo
 	// que viene detras: la fila mala de la linea 4 de la hoja se reporta como
@@ -60,6 +64,65 @@ type Tabla struct {
 	// mapeo a distinguir la celda de la anotacion. Se lee por [Tabla.Linea], que
 	// es lo unico que la consulta.
 	Lineas []int
+
+	// anchos es, cuando el formato lo hace significativo (solo CSV), cuantos
+	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON.
+	// anchoEsperado es el ancho que escribe el archivo (ver [anchoEsperado]):
+	// una fila con otro ancho, dentro del de la cabecera, es desajuste, sea
+	// mas corta o mas larga. Se leen por [Tabla.desajuste] y [Tabla.enDisputa].
+	anchos        []int
+	anchoEsperado int
+	// conEsperado es cuantas filas traen anchoEsperado, de len(anchos): lo que
+	// el motivo de rechazo cuenta para que diga la verdad sobre el archivo.
+	conEsperado int
+	// disputa son los anchos legitimos que se reparten las filas cuando
+	// ninguno llega a umbralMayoriaAncho. Vacia si el archivo se decidio.
+	disputa []anchoEnDisputa
+
+	// formato es de que lector salio la tabla. Solo lo usan los motivos que
+	// dependen de el: un dato sin cabecera es "una coma de mas" en CSV, una
+	// columna sin encabezado en .xlsx y una clave vacia en JSON.
+	formato string
+
+	// compuestas marca, por fila, las columnas cuyo valor era un objeto o un
+	// array JSON. Solo lo rellena [TablaJSON]. Existe porque la celda es
+	// texto: `{"x":1}` como texto es un titulo valido y un identificador
+	// valido, y sin la marca el mapa no tiene forma de saber que no lo era.
+	compuestas []map[int]bool
+}
+
+// compuesta dice si la celda (n, col) era un valor JSON compuesto.
+func (t Tabla) compuesta(n, col int) bool {
+	return n >= 0 && n < len(t.compuestas) && t.compuestas[n][col]
+}
+
+// anchoEnDisputa es un ancho legitimo y cuantas filas lo traen.
+type anchoEnDisputa struct{ ancho, filas int }
+
+// enDisputa dice si Filas[n] tiene uno de los anchos legitimos que el archivo
+// no pudo decidir (ver [anchoEsperado]). Toda fila asi se rechaza.
+func (t Tabla) enDisputa(n int) bool {
+	if len(t.disputa) == 0 || n < 0 || n >= len(t.anchos) {
+		return false
+	}
+	for _, d := range t.disputa {
+		if d.ancho == t.anchos[n] {
+			return true
+		}
+	}
+	return false
+}
+
+// desajuste dice si Filas[n] traia un numero de campos distinto del que
+// escribe el archivo, dentro del ancho de la cabecera, y cuantos traia. Una
+// fila MAS ancha que la cabecera no es desajuste: la rechaza [Mapa.Aplicar]
+// por ancha. Siempre false en los formatos que no anotan el ancho.
+func (t Tabla) desajuste(n int) (ancho int, es bool) {
+	if n < 0 || n >= len(t.anchos) {
+		return 0, false
+	}
+	a := t.anchos[n]
+	return a, a != t.anchoEsperado && a <= len(t.Columnas)
 }
 
 // Linea devuelve el numero de fila del archivo del que salio Filas[n].
@@ -168,7 +231,12 @@ func TablaXLSX(datos []byte, hoja string) (Tabla, error) {
 	if err := filasIter.Error(); err != nil {
 		return Tabla{}, fmt.Errorf("%w: no se pudo leer la hoja %q: %w", ErrFormato, hoja, err)
 	}
-	return desdeFilasNumeradas(crudas, fisicas)
+	t, err := desdeFilasNumeradas(crudas, fisicas, false)
+	if err != nil {
+		return Tabla{}, err
+	}
+	t.formato = aplicacion.FormatoXLSX
+	return t, nil
 }
 
 // maxFilasExcel es el tope de filas de una hoja .xlsx (2^20). Es el mismo
@@ -193,10 +261,10 @@ func filaFisica(rows *excelize.Rows) (int, error) {
 // el mismo numero de campos, y es deliberado: con la comprobacion puesta, UNA
 // fila con una coma de mas aborta la lectura del archivo ENTERO y las demas se
 // pierden sin motivo por fila. El desajuste no se ignora: la fila corta se
-// rellena, la fila ancha se deja con los campos de mas y [Mapa.Aplicar] la
-// rechaza nombrando el desajuste, que es lo que convierte un corrimiento por
-// coma sin entrecomillar en un rechazo de fila y no en un identificador
-// persistido.
+// rellena para poder leerla pero se anota su ancho real, la fila ancha se deja
+// con los campos de mas, y [Mapa.Aplicar] rechaza las dos nombrando el
+// desajuste. Es lo que convierte un corrimiento por coma -- de mas o perdida --
+// en un rechazo de fila y no en un identificador persistido.
 func TablaCSV(datos []byte) (Tabla, error) {
 	texto := strings.TrimPrefix(string(datos), bom)
 	// LazyQuotes se queda: una sinopsis con una comilla a medias DENTRO del
@@ -223,11 +291,35 @@ func TablaCSV(datos []byte) (Tabla, error) {
 	// Excel escribe CSV con `;` en configuraciones regionales europeas, pero el
 	// separador NO se adivina: adivinarlo mal parte los titulos por la mitad en
 	// silencio. Si algun dia hace falta, entra como campo declarado del mapa.
-	filas, err := lector.ReadAll()
-	if err != nil {
-		return Tabla{}, fmt.Errorf("%w: no se pudo leer como CSV: %w", ErrFormato, err)
+	//
+	// Se lee registro a registro y NO con ReadAll, por la numeracion: el lector
+	// descarta las lineas FISICAMENTE en blanco antes de devolver nada, asi que
+	// con ReadAll la posicion en la lista ya no es la linea del archivo, y la fila
+	// mala de la linea 5 con dos blancos delante se reportaba como "fila 3"
+	// (issue #113). FieldPos da la linea en la que EMPIEZA el registro, que es
+	// tambien lo correcto con un campo entrecomillado que abarca varias lineas.
+	var (
+		filas   [][]string
+		fisicas []int
+	)
+	for {
+		registro, err := lector.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Tabla{}, fmt.Errorf("%w: no se pudo leer como CSV: %w", ErrFormato, err)
+		}
+		linea, _ := lector.FieldPos(0)
+		filas = append(filas, registro)
+		fisicas = append(fisicas, linea)
 	}
-	return desdeFilas(filas)
+	t, err := desdeFilasNumeradas(filas, fisicas, true)
+	if err != nil {
+		return Tabla{}, err
+	}
+	t.formato = aplicacion.FormatoCSV
+	return t, nil
 }
 
 // lineaDeComillaSinCerrar devuelve la linea fisica (la 1 es la primera del
@@ -379,9 +471,12 @@ func longitudFinDeLinea(line []byte) int {
 // json.Number conserva el literal tal como venia: 80197856 no se convierte a
 // float64 y vuelve como 8.0197856e+07, que es exactamente como se estropea un
 // identificador al pasar por un JSON. Un valor compuesto -- objeto o array --
-// se conserva como su JSON compacto: si la columna no esta mapeada da igual, y
-// si lo esta, la coercion la rechaza NOMBRANDO el campo, que es mejor que
-// convertirla en cadena vacia sin decirlo.
+// se conserva como su JSON compacto y se MARCA como compuesto: si la columna
+// no esta mapeada da igual, y si lo esta, [Mapa.Aplicar] rechaza la fila
+// NOMBRANDO el campo, que es mejor que convertirla en cadena vacia sin
+// decirlo. La marca hace falta porque, como texto, `{"x":1}` pasa por un
+// titulo y `[1,2]` por un identificador: sin ella entraban los dos sin motivo
+// (issue #113).
 func TablaJSON(datos []byte) (Tabla, error) {
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(datos, []byte(bom))))
 	dec.UseNumber()
@@ -413,10 +508,18 @@ func TablaJSON(datos []byte) (Tabla, error) {
 
 	filas := make([][]string, 0, len(registros))
 	lineas := make([]int, 0, len(registros))
+	compuestas := make([]map[int]bool, len(registros))
 	for n, r := range registros {
 		fila := make([]string, len(columnas))
 		for i, c := range columnas {
-			fila[i] = textoJSON(r[c])
+			var compuesto bool
+			fila[i], compuesto = textoJSON(r[c])
+			if compuesto {
+				if compuestas[n] == nil {
+					compuestas[n] = map[int]bool{}
+				}
+				compuestas[n][i] = true
+			}
 		}
 		filas = append(filas, fila)
 		// Un array JSON no tiene cabecera, pero el registro n-esimo se numera
@@ -425,46 +528,70 @@ func TablaJSON(datos []byte) (Tabla, error) {
 		// deja UN solo formato de motivo para los tres formatos.
 		lineas = append(lineas, n+2)
 	}
-	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas}, nil
+	return Tabla{Columnas: columnas, Filas: filas, Lineas: lineas, compuestas: compuestas, formato: aplicacion.FormatoJSON}, nil
 }
 
-// textoJSON reduce un valor JSON a su texto de celda.
-func textoJSON(crudo json.RawMessage) string {
+// textoJSON reduce un valor JSON a su texto de celda, y dice si era un valor
+// compuesto (objeto o array).
+func textoJSON(crudo json.RawMessage) (string, bool) {
 	if len(crudo) == 0 {
-		return ""
+		return "", false
 	}
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(crudo))
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
-		return string(crudo)
+		return string(crudo), false
 	}
 	switch t := v.(type) {
 	case nil:
-		return ""
+		return "", false
 	case string:
-		return t
+		return t, false
 	case json.Number:
-		return t.String()
+		return t.String(), false
 	case bool:
 		if t {
-			return "true"
+			return "true", false
 		}
-		return "false"
+		return "false", false
 	default:
-		// Objeto o array. Se conserva su texto para que la coercion lo pueda
-		// rechazar nombrando el campo. Ver el doc de TablaJSON.
-		return string(crudo)
+		// Objeto o array. Se conserva su texto para el log de rechazos y se
+		// marca, para que el mapa lo rechace nombrando el campo. Ver el doc de
+		// TablaJSON.
+		//
+		// Compacto: un export con sangria trae el compuesto en varias lineas,
+		// y el motivo que lo cita es UNA linea del log. Copiado tal cual, el
+		// motivo salia partido y el recorte se gastaba en espacios. Compact
+		// no falla aqui -- el valor acaba de decodificarse --, pero si fallara
+		// queda el crudo, que sigue siendo el dato.
+		var compacto bytes.Buffer
+		if err := json.Compact(&compacto, crudo); err != nil {
+			return string(crudo), true
+		}
+		return compacto.String(), true
 	}
 }
 
-// desdeFilas parte la cabecera del cuerpo y cuadra el ancho de las filas.
+// desdeFilasNumeradas parte la cabecera del cuerpo y cuadra el ancho de las
+// filas. fisicas[i] es la linea del archivo de la que salio filas[i], con
+// fisicas[0] la de la cabecera: la posicion no sirve, porque los dos lectores
+// que pasan por aqui ya descartaron filas antes (el CSV las lineas en blanco,
+// el .xlsx los huecos fisicos).
+//
+// anotarAncho guarda cuantos campos traia de verdad cada fila antes de
+// rellenarla, para que [Mapa.Aplicar] rechace la corta. Solo lo pide el CSV:
+// en .xlsx una fila corta es lo normal -- excelize recorta las celdas vacias
+// del final -- y rechazarla tiraria toda fila con opcionales vacias al final.
 //
 // La cabecera se recorta con TrimSpace y se le quita el BOM. Los tres son
 // blancos que no se ven: una columna que en la pantalla del cliente se llama
 // `Titulo ` no casaria con `Titulo`, y el archivo se rechazaria entero
 // nombrando una columna que esta ahi.
-func desdeFilas(filas [][]string) (Tabla, error) {
+func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tabla, error) {
+	if len(filas) != len(fisicas) {
+		return Tabla{}, fmt.Errorf("%w: el lector desalineo filas y numeros de linea", ErrFormato)
+	}
 	if len(filas) == 0 {
 		return Tabla{}, fmt.Errorf("%w: el archivo no tiene ni cabecera", ErrFormato)
 	}
@@ -472,9 +599,18 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 	for i, c := range filas[0] {
 		columnas[i] = strings.TrimSpace(strings.TrimPrefix(c, bom))
 	}
+	// Las columnas sin nombre se CONSERVAN, en su posicion: quitarlas correria
+	// las de detras (en medio) o haria pasar por fila justa una fila con un
+	// campo de mas (al final: `titulo,id,taquilla,moneda` y una fila
+	// `Rapido, furioso,55,100,` solo se ve ancha contra el ancho ORIGINAL).
+	// Lo que traiga una fila bajo ellas lo rechaza [Mapa.Aplicar] con motivo.
 
 	cuerpo := make([][]string, 0, len(filas)-1)
 	lineas := make([]int, 0, len(filas)-1)
+	var anchos []int
+	if anotarAncho {
+		anchos = make([]int, 0, len(filas)-1)
+	}
 	for i, f := range filas[1:] {
 		if vacia(f) {
 			// Una fila entera en blanco es relleno del export, no un registro.
@@ -495,33 +631,115 @@ func desdeFilas(filas [][]string) (Tabla, error) {
 			copy(fila, f)
 		}
 		cuerpo = append(cuerpo, fila)
-		// El numero que ve el cliente en su hoja: `filas` incluye la cabecera,
-		// asi que el primer registro del archivo es la linea 2. Se anota AQUI,
-		// que es el unico sitio donde todavia se sabe de que linea salio: a
-		// partir de este return la fila descartada ya no existe y la posicion en
-		// `cuerpo` esta corrida.
-		lineas = append(lineas, i+2)
+		if anotarAncho {
+			anchos = append(anchos, len(f))
+		}
+		// El numero que ve el cliente en su hoja. Se anota AQUI, que es el
+		// unico sitio donde todavia se sabe de que linea salio: a partir de
+		// este return la fila descartada ya no existe y la posicion en
+		// `cuerpo` esta corrida. Y se anota en el MISMO bucle que descarta,
+		// no despues: numerar aparte desalinearia las dos listas en cuanto
+		// hubiera un registro de solo blancos, que el lector no descarta.
+		lineas = append(lineas, fisicas[i+1])
 	}
-	return Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas}, nil
+	t := Tabla{Columnas: columnas, Filas: cuerpo, Lineas: lineas, anchos: anchos}
+	if anotarAncho {
+		t.anchoEsperado, t.conEsperado, t.disputa = anchoEsperado(columnas, anchos)
+	}
+	return t, nil
 }
 
-// desdeFilasNumeradas es [desdeFilas] cuando el lector YA conoce el numero
-// fisico de cada fila -- el .xlsx, cuyo GetRows compacta huecos y no se usa.
-func desdeFilasNumeradas(filas [][]string, fisicas []int) (Tabla, error) {
-	if len(filas) != len(fisicas) {
-		return Tabla{}, fmt.Errorf("%w: el lector de xlsx desalineo filas y numeros de linea", ErrFormato)
+// umbralMayoriaAncho es la fraccion de las filas de ancho legitimo que tiene
+// que reunir un ancho para imponerse a los demas cuando el archivo los mezcla.
+// Las que se salen del rango legitimo no cuentan: ver anchoEsperado.
+//
+// Es alto a proposito. Por el ancho solo, una fila rara en un archivo sano --
+// con la coma final de mas -- y la unica fila buena de un archivo cuya
+// mayoria perdio la misma coma tienen la misma forma, y con mayoria simple el
+// segundo caso dejaba entrar corridas las filas de la mayoria y rechazaba la
+// buena. Ante la duda, ruido y no silencio: solo una mayoria abrumadora -- la
+// de un archivo sano con alguna fila suelta, como la parrilla de Caracol con
+// una fila de coma final, 58 de 59 -- se toma por la forma del archivo.
+const umbralMayoriaAncho = 0.9
+
+// anchoEsperado decide, para TODO el archivo, cuantos campos tiene que traer
+// una fila, cuantas filas los traen, y si el archivo no se pudo decidir.
+//
+// Solo es dudoso cuando la cabecera termina en columnas sin nombre -- la coma
+// final de `titulo,id,taquilla,` --, porque entonces hay mas de una forma
+// legitima de escribir una fila: con esas comas o sin ellas. Los anchos
+// legitimos van del de la ultima columna con nombre al ancho original de la
+// cabecera. Se decide por archivo porque por fila no se puede: con la coma
+// final en todas las filas, una coma PERDIDA deja la fila justo en el ancho de
+// las columnas con nombre.
+//
+// Tres casos:
+//
+//   - Todas las filas en un solo ancho legitimo: ese es el ancho, y se aceptan.
+//     Cubre las tres formas coherentes de exportar un archivo.
+//   - Anchos legitimos mezclados y uno con al menos umbralMayoriaAncho de las
+//     filas de ancho legitimo: ese es el ancho, y se rechaza la minoria --
+//     tambien la que se pasa, porque una celda en blanco al final bajo la
+//     columna sin nombre es indistinguible de una coma de mas --.
+//   - Ninguno llega al umbral: se devuelven los anchos en disputa y se rechazan
+//     TODAS sus filas. No hay forma de saber cual es la buena, y aceptar la
+//     mayoria es como entraban corridas las filas que perdieron la coma.
+//
+// Lo que NO puede ver, y conviene decirlo, porque ninguna regla de ancho
+// distingue estas filas de una bien escrita:
+//
+//   - Un archivo en un solo ancho con la misma coma perdida en todas sus filas
+//     se lee como coherente y entra corrido. El caso extremo es un archivo de
+//     una sola fila.
+//   - La mayoria que pierde la misma coma, a escala: si al menos
+//     umbralMayoriaAncho de las filas perdieron la misma coma, esas filas SON
+//     la mayoria. Entran corridas, y la fila buena cae como minoria con un
+//     motivo que dice "campo de mas". Es el precio del umbral; antes de #113
+//     entraban todas, tambien la buena, sin motivo.
+//   - Una fila que pierde un campo y gana otro (`Rapido, furioso,2` bajo
+//     `titulo,id,taquilla`) tiene el ancho de las buenas.
+//
+// Antes de #113 las tres entraban igual.
+func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa []anchoEnDisputa) {
+	nombradas := len(columnas)
+	for nombradas > 0 && columnas[nombradas-1] == "" {
+		nombradas--
 	}
-	t, err := desdeFilas(filas)
-	if err != nil {
-		return Tabla{}, err
+	// Solo votan las filas de ancho legitimo. Las que se pasan de la cabecera
+	// o no llegan a las columnas con nombre ya caen por su propio motivo, y
+	// contarlas en el total dejaba que UNA fila mala bajara de umbral a un
+	// archivo sano y lo tumbara entero.
+	cuenta := map[int]int{}
+	legitimas := 0
+	for _, a := range anchos {
+		if a >= nombradas && a <= len(columnas) {
+			cuenta[a]++
+			legitimas++
+		}
 	}
-	if len(fisicas) == 0 {
-		return t, nil
+	// Sin ninguna fila en el rango legitimo no hay mayoria que contar: el
+	// ancho es el de la cabecera, y ninguna fila lo trae.
+	if legitimas == 0 {
+		return len(columnas), 0, nil
 	}
-	// fisicas[0] es la cabecera. El cuerpo hereda el resto, que ya salio del
-	// XML y no se puede reconstruir como i+2.
-	t.Lineas = append([]int(nil), fisicas[1:]...)
-	return t, nil
+	// El ancho con mas filas. Solo cuenta si llega al umbral, que pasa de la
+	// mitad: si no llega, el archivo queda en disputa y da igual cual se tomo.
+	for a := nombradas; a <= len(columnas); a++ {
+		if cuenta[a] > con {
+			esperado, con = a, cuenta[a]
+		}
+	}
+	if float64(con)/float64(legitimas) >= umbralMayoriaAncho {
+		return esperado, con, nil
+	}
+	for a := nombradas; a <= len(columnas); a++ {
+		if cuenta[a] > 0 {
+			disputa = append(disputa, anchoEnDisputa{ancho: a, filas: cuenta[a]})
+		}
+	}
+	// Lo que queda por debajo de las columnas con nombre es corto igual, y
+	// su motivo cuenta contra el ancho minimo legitimo, que es un hecho.
+	return nombradas, cuenta[nombradas], disputa
 }
 
 func vacia(fila []string) bool {

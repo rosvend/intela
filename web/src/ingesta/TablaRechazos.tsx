@@ -54,11 +54,13 @@ const LIMITE_VISIBLE = 100;
  * parseadas del archivo, las aceptadas incluidas (es la posicion en el lote, no
  * entre los rechazos), asi que no es un orden de rechazos ni es la linea de la
  * hoja: un `rep-...-1` puede ser el primer rechazo y a la vez la segunda fila
- * del archivo. La linea solo aparece dentro del motivo, y no todos los motivos
- * la traen (los de validacion de campos y los de normalizacion no la numeran).
- * Titularla "Fila" prometeria una ubicacion en el archivo que el dato no da;
- * guardar la linea de la hoja en `usos_rechazados` es un seguimiento aparte. El
- * id, en cambio, si es unico y sirve para reportar el caso.
+ * del archivo. La linea solo aparece dentro del motivo: desde el issue #113
+ * todos los motivos de una fila que salio de un archivo empiezan por `fila N`
+ * (los del adaptador, los de validacion de campos y los de normalizacion), pero
+ * sigue siendo texto, no un campo. Titularla "Fila" prometeria una columna que
+ * el dato no da; guardar la linea de la hoja en `usos_rechazados` es un
+ * seguimiento aparte. El id, en cambio, si es unico y sirve para reportar el
+ * caso.
  *
  * Solo lleva id, titulo, ids de la fuente y motivo. Nunca medidas ni importes
  * (ADR 0016): un rechazo se explica por lo que le falto, no por lo que habria
