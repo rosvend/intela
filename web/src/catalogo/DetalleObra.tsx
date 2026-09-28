@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import Cargando from "../Cargando";
+import HistorialResoluciones from "../identificacion/HistorialResoluciones";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { formatearPorcentaje, formatearTipo } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
@@ -252,6 +253,8 @@ function FichaDeObra({
           hayDeclaracion={!sinDeclaracion}
         />
       </section>
+
+      <HistorialResoluciones obraId={obra.id} />
     </section>
   );
 }
