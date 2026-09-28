@@ -543,14 +543,7 @@ func TestCadaBolsaNacionalDelSeedValoriza(t *testing.T) {
 			PagadorCine, fuentes, FuenteCine)
 	}
 
-	uc := aplicacion.Procesos{
-		Repo: store, Parametros: store, Bolsas: store, Declaraciones: store, Usos: store,
-		Resultados: store, Unidad: store, Bitacora: store, Reloj: reloj.Sistema{}, Origen: store,
-		Anomalias: aplicacion.Anomalias{
-			Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
-			Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
-		},
-	}
+	uc := procesosComoEnCmdAPI(store)
 	d := Construir()
 	for _, b := range d.Bolsas {
 		if b.Circuito != recaudo.Nacional {
@@ -580,6 +573,117 @@ func TestCadaBolsaNacionalDelSeedValoriza(t *testing.T) {
 			if b.UsuarioID == PagadorCine && res.Obras[0].ObraID != ObraCine {
 				t.Errorf("la bolsa de %q pondero %q, se esperaba la obra del reporte de cine %q",
 					PagadorCine, res.Obras[0].ObraID, ObraCine)
+			}
+		})
+	}
+}
+
+// procesosComoEnCmdAPI cablea [aplicacion.Procesos] contra el Store real, con
+// las mismas dependencias que cmd/api.
+func procesosComoEnCmdAPI(store *postgres.Store) aplicacion.Procesos {
+	return aplicacion.Procesos{
+		Repo: store, Parametros: store, Bolsas: store, Declaraciones: store, Usos: store,
+		Resultados: store, Unidad: store, Bitacora: store, Reloj: reloj.Sistema{}, Origen: store,
+		Anomalias: aplicacion.Anomalias{
+			Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
+			Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+		},
+	}
+}
+
+// TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos es el criterio 2 de #194
+// contra Postgres real: el resumen y el conteo de usos sin canal que
+// distinguen los mensajes de [aplicacion.ErrorBolsaSinUsos] salen de
+// Store.UsosDeCanal y Store.UsosSinCanal, no de un doble.
+//
+// Cada caso parte del dataset sembrado y deja a una bolsa nacional sin nada
+// que la pondere de una forma distinta.
+func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
+	bolsaCine := "bolsa-procinal-" + Periodo + "-nacional"
+	casos := []struct {
+		nombre   string
+		preparar string
+		bolsaID  string
+		canalID  string
+		resumen  func(nCine int) aplicacion.ResumenUsosDeCanal
+		sinCanal func(nCine int) int
+	}{
+		{
+			nombre: "usuario de recaudo sin reporte",
+			preparar: `INSERT INTO usuarios_recaudo (id, nombre, categoria)
+			             VALUES ('cine-sin-reporte', 'Cine sin reporte (prueba)', 'cine');
+			           INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
+			             VALUES ('bolsa-cine-sin-reporte', 'cine-sin-reporte', '` + Periodo + `', 'nacional', 1000)`,
+			bolsaID:  "bolsa-cine-sin-reporte",
+			canalID:  "cine-sin-reporte",
+			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
+			sinCanal: func(int) int { return 0 },
+		},
+		{
+			nombre: "usos del pagador sin identificar",
+			preparar: `UPDATE usos SET obra_id = NULL, oni = true, escalon = 'pendiente', evidencia = '', puntaje = 0
+			            WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(n int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{Pendientes: n} },
+			sinCanal: func(int) int { return 0 },
+		},
+		{
+			nombre:   "usos del pagador sin canal",
+			preparar: `UPDATE usos SET canal_id = '' WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
+			sinCanal: func(n int) int { return n },
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			store, pool := abrir(t)
+			ctx := t.Context()
+			if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+				t.Fatalf("Cargar: %v", err)
+			}
+			var nCine int
+			if err := pool.QueryRow(ctx,
+				`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, PagadorCine).Scan(&nCine); err != nil {
+				t.Fatalf("contar usos de %q: %v", PagadorCine, err)
+			}
+			if nCine == 0 {
+				t.Fatalf("el dataset no siembra usos de %q: la prueba no distinguiria nada", PagadorCine)
+			}
+			if _, err := pool.Exec(ctx, c.preparar); err != nil {
+				t.Fatalf("preparar el caso: %v", err)
+			}
+
+			uc := procesosComoEnCmdAPI(store)
+			id := "proc-" + c.bolsaID
+			if _, err := uc.IniciarProceso(ctx, id, Periodo, recaudo.Nacional, c.bolsaID, UsuarioDistribucion); err != nil {
+				t.Fatalf("abrir la corrida de %q: %v", c.bolsaID, err)
+			}
+			if _, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion); err != nil {
+				t.Fatalf("avanzar %q a deducciones: %v", id, err)
+			}
+			_, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion)
+			var sinUsos *aplicacion.ErrorBolsaSinUsos
+			if !errors.As(err, &sinUsos) {
+				t.Fatalf("se esperaba *aplicacion.ErrorBolsaSinUsos, dio: %v", err)
+			}
+			if sinUsos.BolsaID != c.bolsaID || sinUsos.CanalID != c.canalID || sinUsos.Periodo != Periodo {
+				t.Errorf("error = %+v, se esperaba %s/%s/%s", *sinUsos, c.bolsaID, c.canalID, Periodo)
+			}
+			if quiero := c.resumen(nCine); sinUsos.Resumen != quiero {
+				t.Errorf("Resumen = %+v, se esperaba %+v", sinUsos.Resumen, quiero)
+			}
+			if quiero := c.sinCanal(nCine); sinUsos.UsosSinCanal != quiero {
+				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, quiero)
+			}
+			v, err := store.ProcesoPorID(ctx, id)
+			if err != nil {
+				t.Fatalf("releer %q: %v", id, err)
+			}
+			if v.Etapa != reparto.EtapaDeducciones {
+				t.Errorf("etapa = %q, una bolsa sin usos no sale de deducciones", v.Etapa)
 			}
 		})
 	}

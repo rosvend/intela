@@ -92,14 +92,17 @@ func (g *gestionDeclaracionesFalsa) VigentesDeObras(_ context.Context, _ []strin
 }
 
 type usosDeRepartoFalso struct {
-	usos    []UsoDeReparto
-	resumen ResumenUsosDeCanal
+	usos     []UsoDeReparto
+	resumen  ResumenUsosDeCanal
+	sinCanal int
 }
 
 func (u *usosDeRepartoFalso) UsosDeCanal(_ context.Context, _, _ string, _ int) ([]UsoDeReparto, ResumenUsosDeCanal, error) {
 	return u.usos, u.resumen, nil
 }
-func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) { return 0, nil }
+func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) {
+	return u.sinCanal, nil
+}
 
 type repositorioResultadosFalso struct {
 	procesoID string
@@ -603,17 +606,26 @@ func TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer(t *testing.T) {
 	t.Parallel()
 
 	casos := []struct {
-		nombre    string
-		resumen   ResumenUsosDeCanal
-		fragmento string
+		nombre     string
+		resumen    ResumenUsosDeCanal
+		sinCanal   int
+		fragmentos []string
+		noDice     string
 	}{
-		{"ninguna fila del canal", ResumenUsosDeCanal{}, "cargue el reporte"},
-		{"filas del canal sin identificar", ResumenUsosDeCanal{Pendientes: 1, ONI: 2}, "1 pendientes, 2 ONI"},
+		{"ninguna fila del canal", ResumenUsosDeCanal{}, 0,
+			[]string{"cargue el reporte", "si ya esta cargado, corrija el canal_id"}, "cola"},
+		{"reporte cargado con usos sin canal", ResumenUsosDeCanal{}, 3,
+			[]string{"3 usos del periodo no traen canal", "corrija la atribucion del canal"}, "cargue el reporte"},
+		{"filas del canal sin identificar", ResumenUsosDeCanal{Pendientes: 1, ONI: 2}, 0,
+			[]string{"1 pendientes, 2 ONI", "cola de identificacion"}, "cargue el reporte"},
+		{"filas del canal solo excluidas o descartadas", ResumenUsosDeCanal{Excluidos: 5, Descartados: 1}, 0,
+			[]string{"5 excluidos", "1 descartados", "R-27", "ninguno pondera"}, "identifique"},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			t.Parallel()
-			uc, repo := procesoNacionalListoParaValorizar(t, snapshotDePrueba(), &usosDeRepartoFalso{resumen: c.resumen})
+			uc, repo := procesoNacionalListoParaValorizar(t, snapshotDePrueba(),
+				&usosDeRepartoFalso{resumen: c.resumen, sinCanal: c.sinCanal})
 
 			_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
 			if !errors.Is(err, ErrBolsaSinUsos) {
@@ -626,10 +638,16 @@ func TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer(t *testing.T) {
 			if sinUsos.BolsaID != "bolsa-procinal" || sinUsos.CanalID != "procinal" || sinUsos.Periodo != "2025-01" {
 				t.Errorf("error = %+v, se esperaba bolsa-procinal/procinal/2025-01", *sinUsos)
 			}
-			for _, f := range []string{`"bolsa-procinal"`, `"procinal"`, "2025-01", c.fragmento} {
+			for _, f := range append([]string{`"bolsa-procinal"`, `"procinal"`, "2025-01"}, c.fragmentos...) {
 				if !strings.Contains(err.Error(), f) {
 					t.Errorf("el mensaje %q no dice %s", err, f)
 				}
+			}
+			if strings.Contains(err.Error(), c.noDice) {
+				t.Errorf("el mensaje %q no deberia decir %s", err, c.noDice)
+			}
+			if sinUsos.UsosSinCanal != c.sinCanal {
+				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, c.sinCanal)
 			}
 			// La corrida no sale de deducciones y no persiste un resultado vacio.
 			v, _ := repo.ProcesoPorID(t.Context(), "proc-1")

@@ -311,10 +311,16 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 		return nil, fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
 	}
 	// El motor tambien rechaza una lista vacia, pero con "no hay usos" a
-	// secas: no nombra la bolsa ni dice si falta el reporte o la
-	// identificacion (#194).
+	// secas: no nombra la bolsa ni dice si falta el reporte, la atribucion
+	// del canal o la identificacion (#194).
 	if len(usos) == 0 {
-		return nil, &ErrorBolsaSinUsos{BolsaID: bp.ID, CanalID: bp.UsuarioID, Periodo: p.Periodo, Resumen: resumen}
+		sinCanal, err := (Reparto{Usos: uc.Usos}).UsosSinCanal(ctx, p.Periodo)
+		if err != nil {
+			return nil, err
+		}
+		return nil, &ErrorBolsaSinUsos{
+			BolsaID: bp.ID, CanalID: bp.UsuarioID, Periodo: p.Periodo, Resumen: resumen, UsosSinCanal: sinCanal,
+		}
 	}
 
 	obraIDs := make([]string, 0, len(usos))

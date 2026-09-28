@@ -6972,11 +6972,14 @@ export interface operations {
              *     Al entrar a `importe_obra`, 409 si la bolsa no tiene usos
              *     identificados de su canal en el periodo: el mensaje nombra la
              *     bolsa, el canal y el periodo, y dice si falta cargar el reporte
-             *     del usuario de recaudo o identificar sus filas. Y 409 si el
-             *     snapshot congelado al abrir la corrida no trae un parametro que
-             *     el motor exige (una corrida abierta antes de que existiera
-             *     `cine_teatro.base`): el snapshot no se vuelve a resolver, hay
-             *     que abrir una corrida nueva de la bolsa.
+             *     del usuario de recaudo, corregir el `canal_id` de sus filas o
+             *     identificarlas en la cola, o si todas estan excluidas (`R-27`)
+             *     o descartadas y ninguna pondera. Y 409 si el snapshot congelado
+             *     al abrir la corrida no trae un parametro que el motor exige
+             *     (una corrida abierta antes de que existiera
+             *     `cine_teatro.base`): el mensaje nombra la clave, el snapshot no
+             *     se vuelve a resolver y hay que abrir una corrida nueva de la
+             *     bolsa.
              */
             409: {
                 headers: {
