@@ -625,27 +625,56 @@ func aDecimal(bruto string) (decimal.Decimal, error) {
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("%q no es un numero", bruto)
 	}
+	if v.IsZero() {
+		// `0e9999999` es cero, y se devuelve sin su exponente: validarUso lo
+		// redondea a la escala de la columna, que es reescalarlo.
+		return decimal.Zero, nil
+	}
 	if err := escalaAcotada(bruto, v); err != nil {
 		return decimal.Zero, err
 	}
 	return v, nil
 }
 
-// maxExponente acota el exponente decimal de una celda numerica. Las columnas
-// de medida de `usos` son NUMERIC(18,x) --a lo sumo 16 cifras enteras y 6
-// decimales--, asi que un exponente de 30 ya es un valor que ninguna guarda, y
-// un decimal escrito sin notacion cientifica no llega nunca: su exponente es,
-// como mucho, su numero de decimales.
-const maxExponente = 30
+// maxExponente y maxDecimales acotan la escala de una celda numerica antes de
+// que nada la reescale. Reescalar cuesta en proporcion al exponente, no al
+// largo de la celda: `1e9999999` son 9 bytes, y Truncate, GreaterThan o
+// IntPart tardan segundos en el, mas con cada cifra; String() al
+// serializarlo, igual.
+//
+// Por arriba, 10^30 ya no cabe en ninguna columna de medida de `usos`: son
+// NUMERIC(p,s) con p <= 18 y s <= 6, a lo sumo 16 cifras enteras.
+//
+// Por abajo el limite es mucho mas ancho a proposito. Mas decimales de los que
+// tiene la columna no son un rechazo -- validarUso deja que la base redondee a
+// su escala --, y un exportador escribe el ruido de coma flotante como
+// `5.551115123125783e-17`, que es 32 cifras decimales. Ningun literal de
+// float64 pasa de unas 340 (el subnormal mas pequeno, `4.9e-324`, con sus 17
+// cifras), y 400 decimales se reescalan en microsegundos.
+//
+// Ninguno de los dos valida la precision de la columna: `1e20` cabe aqui y
+// no cabe en NUMERIC(18,2). Eso lo comprueba validarUso, columna por columna,
+// contra la definicion de 00001_init.sql.
+const (
+	maxExponente = 30
+	maxDecimales = 400
+)
 
-// escalaAcotada rechaza un exponente fuera de +-maxExponente ANTES de que nada
-// reescale el decimal. Reescalar cuesta en proporcion al exponente, no al largo
-// de la celda: `1e9999999` son 9 bytes, y Truncate, GreaterThan o IntPart
-// tardan segundos en el, mas con cada cifra; String() al serializarlo, igual.
+// escalaAcotada rechaza un valor fuera de escala ANTES de que nada lo
+// reescale. El motivo habla del valor como lo escribio el cliente: el
+// exponente interno de la libreria (`5.55e-17` se guarda como 555...e-32) no
+// esta en ninguna celda.
+//
+// El cero se queda fuera: es cero con cualquier exponente, y los llamadores lo
+// devuelven como el cero de siempre sin reescalarlo.
 func escalaAcotada(bruto string, d decimal.Decimal) error {
-	if e := d.Exponent(); e > maxExponente || e < -maxExponente {
-		return fmt.Errorf("%q esta fuera de escala (exponente %d; el limite es de %d a %d)",
-			bruto, e, -maxExponente, maxExponente)
+	switch e := d.Exponent(); {
+	case e > maxExponente:
+		return fmt.Errorf("%q esta fuera de escala: pasa de 10^%d y no cabe en ninguna columna de medida",
+			bruto, maxExponente)
+	case e < -maxDecimales:
+		return fmt.Errorf("%q esta fuera de escala: se escribe con mas de %d cifras decimales",
+			bruto, maxDecimales)
 	}
 	return nil
 }
@@ -670,6 +699,9 @@ func aEntero(bruto string) (int64, error) {
 	d, err := decimal.NewFromString(bruto)
 	if err != nil {
 		return 0, fmt.Errorf("%q no es un numero entero", bruto)
+	}
+	if d.IsZero() {
+		return 0, nil
 	}
 	if err := escalaAcotada(bruto, d); err != nil {
 		return 0, err

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
@@ -600,6 +602,10 @@ func TestAEnteroRechazaLoQueNoCabeEnInt64(t *testing.T) {
 // al largo de la celda: `1e9999999` son 9 bytes y reescalarlo para Truncate,
 // GreaterThan o IntPart tardaba segundos, y mas con cada cifra. Se rechaza
 // antes de tocarlo, nombrando el valor, en las dos coerciones numericas.
+//
+// El motivo habla del valor tal como lo escribio el cliente y no del
+// exponente interno de la libreria: `5.55e-17` se guarda como 555...e-32, y
+// un "-32" en el motivo no esta en ninguna celda.
 func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 	t.Parallel()
 
@@ -608,27 +614,63 @@ func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 		"aDecimal": func(v string) error { _, err := aDecimal(v); return err },
 	}
 	for nombre, coercion := range coerciones {
-		for _, v := range []string{"1e9999999", "1e-9999999", "-1e9999999", "1e31", "1e-31"} {
+		for v, quiere := range map[string]string{
+			"1e9999999":  "pasa de 10^30",
+			"-1e9999999": "pasa de 10^30",
+			"1e31":       "pasa de 10^30",
+			"1e-9999999": "mas de 400 cifras decimales",
+			"1e-401":     "mas de 400 cifras decimales",
+		} {
 			inicio := time.Now()
 			err := coercion(v)
 			if dur := time.Since(inicio); dur > 100*time.Millisecond {
 				t.Errorf("%s(%q) tardo %v; el exponente tiene que cortarse antes de reescalar", nombre, v, dur)
 			}
 			if err == nil {
-				t.Errorf("%s(%q) sin error; el exponente no cabe en ninguna columna de medida", nombre, v)
+				t.Errorf("%s(%q) sin error; el valor no cabe en ninguna columna de medida", nombre, v)
 				continue
 			}
-			if !strings.Contains(err.Error(), v) || !strings.Contains(err.Error(), "exponente") {
-				t.Errorf("%s(%q): el error no nombra el valor ni el exponente: %v", nombre, v, err)
+			m := err.Error()
+			if !strings.Contains(m, v) || !strings.Contains(m, "fuera de escala") || !strings.Contains(m, quiere) {
+				t.Errorf("%s(%q): el error no nombra el valor ni dice %q: %v", nombre, v, quiere, err)
+			}
+			if strings.Contains(m, "exponente") {
+				t.Errorf("%s(%q): el motivo cita el exponente interno: %v", nombre, v, err)
+			}
+		}
+		// Un cero es cero con cualquier exponente, y se devuelve sin
+		// reescalar: nada de lo que viene detras toca el exponente enorme.
+		for _, v := range []string{"0e9999999", "0e-9999999"} {
+			inicio := time.Now()
+			if err := coercion(v); err != nil {
+				t.Errorf("%s(%q): %v; un cero con exponente es cero", nombre, v, err)
+			}
+			if dur := time.Since(inicio); dur > 100*time.Millisecond {
+				t.Errorf("%s(%q) tardo %v", nombre, v, dur)
 			}
 		}
 	}
-	// El borde si entra, y un decimal escrito a mano nunca llega cerca: su
-	// exponente es a lo sumo el numero de decimales.
-	for _, v := range []string{"1e30", "1e-30", "0.30000000000000004", "2172.0"} {
-		if _, err := aDecimal(v); err != nil {
+	// El borde positivo si entra. Y por abajo, cualquier literal de float64:
+	// un exportador escribe `5.551115123125783e-17` por el ruido de coma
+	// flotante, y validarUso lo redondea a la escala de la columna a
+	// proposito. Tambien un decimal escrito a mano con muchas cifras.
+	for _, v := range []string{
+		"1e30", "1e-30", "0.30000000000000004", "2172.0",
+		"5.551115123125783e-17", "4.440892098500626e-16",
+		"1.7976931348623157e-308", "4.9406564584124654e-324",
+		"0.000000000000000000000000000000001",
+	} {
+		d, err := aDecimal(v)
+		if err != nil {
 			t.Errorf("aDecimal(%q): %v; esta dentro del rango", v, err)
+			continue
 		}
+		if !d.Equal(decimal.RequireFromString(v)) {
+			t.Errorf("aDecimal(%q) = %s; cambio el valor", v, d)
+		}
+	}
+	if d, err := aDecimal("0e9999999"); err != nil || !d.IsZero() || d.Exponent() != decimal.Zero.Exponent() {
+		t.Errorf("aDecimal(%q) = %s (exponente %d), %v; se esperaba decimal.Zero, sin el exponente enorme", "0e9999999", d, d.Exponent(), err)
 	}
 	if n, err := aEntero("2e3"); err != nil || n != 2000 {
 		t.Errorf("aEntero(%q) = %d, %v; se esperaba 2000", "2e3", n, err)
