@@ -27,6 +27,12 @@ import (
 // dijo que el uso no es del repertorio de REDES SGC. La fila queda sin obra y
 // con oni=false, como una exclusion R-27 (RD 9.5), y por eso tampoco puede
 // volver a la cascada: reprocesable devuelve false para los dos.
+//
+// EscalonDuplicado es la correccion de una anomalia critica de duplicado
+// (#164, migracion 00024): una persona decidio que la fila repite un hecho que
+// ya cuenta otra, o que su entrega entera repite los bytes de otra. Sin obra y
+// con oni=false, firmada y con nota, y tampoco vuelve a la cascada: si
+// volviera, se identificaria otra vez y el doble conteo reapareceria solo.
 const (
 	EscalonPendiente  = "pendiente"
 	EscalonAlias      = "alias"
@@ -36,6 +42,7 @@ const (
 	EscalonONI        = "oni"
 	EscalonManual     = "manual"
 	EscalonDescartado = "descartado"
+	EscalonDuplicado  = "duplicado"
 )
 
 // IDGlobal identifica cual de los tres identificadores globales caso en el
