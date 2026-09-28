@@ -67,8 +67,9 @@ type Tabla struct {
 
 	// anchos es, cuando el formato lo hace significativo (solo CSV), cuantos
 	// campos traia cada fila ANTES de rellenarla. nil en .xlsx y JSON.
-	// anchoEsperado es el que tiene que alcanzar para no ser corta; ver
-	// [anchoEsperado]. Se leen por [Tabla.corta].
+	// anchoEsperado es el ancho que escribe el archivo (ver [anchoEsperado]):
+	// una fila con otro ancho, dentro del de la cabecera, es desajuste, sea
+	// mas corta o mas larga. Se leen por [Tabla.desajuste] y [Tabla.enDisputa].
 	anchos        []int
 	anchoEsperado int
 	// conEsperado es cuantas filas traen anchoEsperado, de len(anchos): lo que
@@ -675,11 +676,11 @@ const umbralMayoriaAncho = 0.9
 //   - K2 a escala: si al menos umbralMayoriaAncho de las filas perdieron la
 //     misma coma, esas filas SON la mayoria. Entran corridas, y la fila buena
 //     cae como minoria con un motivo que dice "campo de mas". Es el precio del
-//     umbral; en `main` entraban todas, tambien la buena, sin motivo.
+//     umbral; antes de #113 entraban todas, tambien la buena, sin motivo.
 //   - Una fila que pierde un campo y gana otro (`Rapido, furioso,2` bajo
 //     `titulo,id,taquilla`) tiene el ancho de las buenas.
 //
-// En `main` las tres entran igual.
+// Antes de #113 las tres entraban igual.
 func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa []anchoEnDisputa) {
 	nombradas := len(columnas)
 	for nombradas > 0 && columnas[nombradas-1] == "" {
