@@ -315,8 +315,10 @@ export interface paths {
         /**
          * Casos de identificacion
          * @description Lista los usos que la cascada no pudo identificar (`pendiente`,
-         *     escalon `oni`) y los que una persona ya resolvio (`asignado`,
-         *     escalon `manual`), con la evidencia y los candidatos de la banda
+         *     escalon `oni`), los que una persona ya resolvio asignandoles una obra
+         *     (`asignado`, escalon `manual`) y los que una persona descarto
+         *     (`descartado`: no es un uso del repertorio, no pondera y no sale en el
+         *     listado publico de ONI), con la evidencia y los candidatos de la banda
          *     ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
          *
          *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
@@ -325,7 +327,8 @@ export interface paths {
          *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
          *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
          *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
-         *     caso resuelto y el alta del reporte para uno pendiente.
+         *     caso resuelto y el alta del reporte para uno pendiente. `nota` es la
+         *     justificacion de la decision: `null` mientras el caso este pendiente.
          *
          *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un
          *     filtro mal formado responde 400.
@@ -333,6 +336,59 @@ export interface paths {
         get: operations["listarCasosIdentificacion"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/identificacion/casos/{id}/resolucion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolver un caso ONI a mano
+         * @description Cierra un caso que la cascada dejo en `oni`, asignandole una obra
+         *     (`asignar`) o diciendo que no es un uso del repertorio de REDES SGC
+         *     (`descartar`). Quien firma sale de la SESION y no del cuerpo: la firma
+         *     del asiento del ADR 0006 tiene que nombrar a quien tomo la decision de
+         *     verdad.
+         *
+         *     **Asignar** deja el uso en el escalon `manual`, con la obra, `oni=false`
+         *     y el puntaje del candidato cuando la obra elegida estaba entre los
+         *     propuestos. Aprende ademas el alias del par canonico (fuente, tipo,
+         *     valor) del uso, para que el reporte siguiente de la misma fuente
+         *     resuelva solo en el escalon 1 (ADR 0007: resolver una vez, reutilizar
+         *     siempre).
+         *
+         *     **Descartar** deja el uso en el escalon `descartado`: sin obra, con
+         *     `oni=false` y sin ponderar. No sale en el listado publico de ONI de
+         *     `RD 13.8` -- no es una obra sin identificar, es una que no es del
+         *     repertorio (`RD 7.1`, `RD 9.5`, R-27) -- y la cascada no lo vuelve a
+         *     tocar: una decision humana no se pisa. Su parte no existe y la bolsa se
+         *     reparte entre las obras que si ponderan.
+         *
+         *     La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
+         *     Se puede resolver aunque el periodo este en reparto o ya distribuido:
+         *     la operacion se serializa con el cerrojo de periodo que comparten la
+         *     compuerta de anomalias, la ingesta y la valorizacion.
+         *
+         *     **Esta ruta no escribe titulares, porcentajes ni importes**: identificar
+         *     no mueve dinero (ADR 0007). Tampoco corrige una decision anterior:
+         *     reasignar o deshacer un descarte queda fuera de alcance.
+         *
+         *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un caso
+         *     desconocido responde 404. El 409 tiene tres causas, distinguidas por el
+         *     mensaje: otra persona ya resolvio el caso, el caso ya no esta pendiente
+         *     (la cascada lo cerro), o el identificador de la fuente ya apunta a otra
+         *     obra.
+         */
+        post: operations["resolverCasoIdentificacion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2297,8 +2353,11 @@ export interface components {
          *     `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
          *     su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
          *     el importe de la obra, la version de su declaracion, las partes y la
-         *     identificacion de cada uso. Append-only: un asiento nunca se modifica
-         *     ni se borra.
+         *     identificacion de cada uso; `identificacion.asignada` trae la decision,
+         *     el estado del uso TAL COMO ESTABA al decidir, la nota, el nombre del
+         *     actor y el alias aprendido, y referencia la obra; `identificacion.descartada`
+         *     trae lo mismo con `decision: descartar` y sin obra, y referencia el uso.
+         *     Append-only: un asiento nunca se modifica ni se borra.
          */
         Asiento: {
             /**
@@ -2339,7 +2398,11 @@ export interface components {
              * @description Detalle del hecho, tal cual lo guardo el modulo que asento:
              *     cualquier JSON. `declaracion.guardada` trae version, estado y
              *     partes; `recaudo.registrado` trae periodo, circuito, bruto,
-             *     convenio, tarifa y factura.
+             *     convenio, tarifa y factura; `identificacion.asignada` trae
+             *     `uso_id`, `decision`, `obra_id`, `candidata`, `puntaje`, el estado
+             *     anterior del uso (`titulo`, `fuente`, `periodo`, `reporte_id`,
+             *     `ids_fuente`, `escalon_anterior`, `evidencia_anterior`), `nota`,
+             *     `actor_nombre` y `alias`.
              */
             payload: {
                 [key: string]: unknown;
@@ -2523,10 +2586,16 @@ export interface components {
             periodo: string;
             /** @description Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018). */
             ids_fuente: string;
-            /** @description Por que la cascada no lo resolvio. */
+            /** @description Por que la cascada no lo resolvio, o como lo resolvio una persona. */
             evidencia: string;
-            /** @enum {string} */
-            estado: "pendiente" | "asignado";
+            /**
+             * @description `pendiente`: la cascada no lo reconocio y nadie lo ha mirado.
+             *     `asignado`: una persona le dio una obra. `descartado`: una persona
+             *     decidio que no es un uso del repertorio de REDES SGC: no pondera y
+             *     no sale en el listado publico de ONI.
+             * @enum {string}
+             */
+            estado: "pendiente" | "asignado" | "descartado";
             /** @description Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda. */
             candidatos: components["schemas"]["CandidatoIdentificacion"][];
             /** @description La obra que una persona le dio al caso. `null` si esta pendiente. */
@@ -2547,6 +2616,41 @@ export interface components {
              * @description `resuelto_en` si esta resuelto; si no, el alta del reporte.
              */
             ultima_actualizacion: string;
+            /**
+             * @description La justificacion de la decision, obligatoria al resolver (#175).
+             *     `null` mientras el caso este pendiente.
+             */
+            nota: string | null;
+        };
+        /**
+         * @description La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
+         *     servidor: la firma sale de la sesion y el instante del reloj del nucleo
+         *     (ADR 0006).
+         */
+        ResolucionDeCaso: {
+            /**
+             * @description `asignar` da una obra al caso y aprende el alias de su
+             *     identificador de fuente. `descartar` dice que no es un uso del
+             *     repertorio: el caso queda sin obra, sin ponderar y sin salir en el
+             *     listado publico de ONI.
+             * @enum {string}
+             */
+            decision: "asignar" | "descartar";
+            /**
+             * @description Obligatoria si `decision` es `asignar`; prohibida si es
+             *     `descartar`. Tiene que existir en el catalogo. Lo valida el
+             *     servidor: no es un `oneOf` en el contrato porque la regla cruza los
+             *     dos campos.
+             * @example obra-12
+             */
+            obra_id?: string;
+            /**
+             * @description Por que se decidio. Obligatoria y de hasta 300 caracteres: la firma
+             *     dice quien, la nota dice por que, y la auditoria de RD 16 pregunta
+             *     las dos cosas.
+             * @example coincide la ficha tecnica con la declaracion
+             */
+            nota: string;
         };
         CandidatoIdentificacion: {
             obra_id: string;
@@ -3592,10 +3696,10 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description Filtra por estado del caso. Si se omite, lista los dos.
+                 * @description Filtra por estado del caso. Si se omite, lista los tres.
                  * @example pendiente
                  */
-                estado?: "pendiente" | "asignado";
+                estado?: "pendiente" | "asignado" | "descartado";
                 /**
                  * @description Fuente del uso, exacta.
                  * @example caracol
@@ -3658,7 +3762,8 @@ export interface operations {
                      *           "obra_asignada": null,
                      *           "resuelto_por": null,
                      *           "resuelto_en": null,
-                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z"
+                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z",
+                     *           "nota": null
                      *         }
                      *       ]
                      *     }
@@ -3717,6 +3822,128 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "la cola de identificacion no esta disponible"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resolverCasoIdentificacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Id del uso, tal como lo devuelve `GET /identificacion/casos`.
+                 * @example uso-1
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * @description La decision, la obra cuando se asigna, y la nota. Quien resolvio sale
+         *     de la sesion.
+         */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolucionDeCaso"];
+            };
+        };
+        responses: {
+            /** @description El caso, ya resuelto y firmado, con el mismo esquema que la lista. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CasoIdentificacion"];
+                };
+            };
+            /**
+             * @description El cuerpo no es un JSON valido, la nota falta o pasa de 300
+             *     caracteres, la decision no es `asignar` ni `descartar`, `asignar`
+             *     viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
+             *     catalogo.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la nota es obligatoria para resolver un caso"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Ese caso no existe. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "ese caso no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Tres causas, cada una con su mensaje: otra persona ya resolvio el
+             *     caso, el caso ya no esta pendiente (la cascada lo cerro), o el
+             *     identificador de la fuente ya apunta a otra obra.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo la resolucion de casos. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la resolucion de casos no esta disponible"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

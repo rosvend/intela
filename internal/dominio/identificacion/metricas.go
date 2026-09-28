@@ -20,6 +20,7 @@ type Reporte struct {
 	AONI        int // ONI sin candidatos: no se parecio a nada
 	Excluidas   int // fuera de repertorio (R-27): ni se intento identificar
 	Manuales    int // decision de una persona (#39): no es de la cascada, no cuenta como automatica
+	Descartadas int // decision de una persona (#175): no es un uso del repertorio, no pondera
 }
 
 // Metricas cuenta un conjunto ya resuelto: pura, probable sin base de datos.
@@ -35,6 +36,12 @@ func Metricas(evs []Evaluacion) Reporte {
 		// contarla como automatica inflaria KR-2 con trabajo humano.
 		case ev.Resultado.Escalon == EscalonManual:
 			r.Manuales++
+		// Y por la misma razon antes de mirar la obra: un descartado no tiene
+		// obra, asi que sin esta rama caeria en AONI -- "no se parecio a nada",
+		// que es una afirmacion distinta y falsa: si se parecio, y una persona
+		// dijo que no era.
+		case ev.Resultado.Escalon == EscalonDescartado:
+			r.Descartadas++
 		case ev.Resultado.ObraID != "":
 			r.Automaticas++
 			if ev.Resultado.ObraID == ev.ObraEsperada {
@@ -54,12 +61,13 @@ func Metricas(evs []Evaluacion) Reporte {
 // TasaAutoAsociacionPct es KR-2 (">= 90%"), en unidad 0-100. La unidad va en
 // el nombre: confundirla con una fraccion es un error de factor 100.
 //
-// El denominador es Total - Excluidas: las filas fuera de repertorio (R-27) no
-// se intentan identificar, y contarlas como "no auto-asociadas" castigaria a la
+// El denominador es Total - Excluidas - Descartadas: las filas fuera de
+// repertorio (R-27) y las que una persona descarto a mano (#175) no se
+// intentan identificar, y contarlas como "no auto-asociadas" castigaria a la
 // cascada por algo que no le toca. Las manuales SI estan en el denominador: la
 // cascada no las resolvio, y no suben el numerador.
 func (r Reporte) TasaAutoAsociacionPct() decimal.Decimal {
-	return porcentaje(r.Automaticas, r.Total-r.Excluidas)
+	return porcentaje(r.Automaticas, r.Total-r.Excluidas-r.Descartadas)
 }
 
 // PrecisionPct es KR-2 (">= 95%"), medido SOLO sobre lo que se asigno solo:
