@@ -624,8 +624,9 @@ func TestJSONRecortaElCompuestoDentroDelMotivo(t *testing.T) {
 
 // Los dos archivos reales, exportados a CSV de las formas en que Excel y una
 // persona lo hacen. Todas entran enteras menos la mezclada, en la que solo
-// cae la fila que no escribe como las demas (J1 de la tercera auditoria:
-// antes caian TODAS las otras, con un motivo que decia un ancho falso).
+// cae la fila que no escribe como las demas (una fila con la coma final de
+// mas en un archivo sano: antes caian TODAS las otras, con un motivo que
+// decia un ancho falso).
 func TestLosArchivosRealesEnCSVEntranEnterosEnTodasSusFormas(t *testing.T) {
 	t.Parallel()
 

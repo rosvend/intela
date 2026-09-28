@@ -766,10 +766,12 @@ func TestAplicarNoRechazaLaFilaXLSXQueExcelizeRecorta(t *testing.T) {
 // NINGUNA variante acepta una fila corrida; lo que no se puede decidir con
 // seguridad se rechaza con motivo.
 //
-//   - El ancho esperado se decide POR ARCHIVO y POR MAYORIA, entre el de las
-//     columnas con nombre y el ancho original de la cabecera. Con empate gana
-//     el mayor. Solo se rechaza la minoria: una fila que no llega es corta,
-//     una que se pasa (sin salir de la cabecera) trae un campo de mas.
+//   - El ancho esperado se decide POR ARCHIVO, entre el de las columnas con
+//     nombre y el ancho original de la cabecera. Si un ancho reune al menos
+//     umbralMayoriaAncho (90 %) de las filas de ancho legitimo, cae solo la
+//     minoria: una fila que no llega es corta, una que se pasa (sin salir de
+//     la cabecera) trae un campo de mas. Si ninguno llega, o hay empate, caen
+//     TODAS las filas de los anchos en disputa. Ver anchoEsperado.
 //   - Mas alla del ancho ORIGINAL de la cabecera, todo campo -- vacio o no --
 //     hace la fila ancha.
 //   - Un dato bajo una columna sin nombre rechaza la fila: no hay nombre al que
@@ -809,9 +811,9 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 		quiere []string
 	}{
 		{
-			// H1 de la segunda auditoria: la cabecera NO tiene coma final, y la
-			// coma de mas de "Rapido, furioso" deja una celda vacia al final.
-			// Recortarla hacia entrar la fila corrida (id=furioso, taquilla=55).
+			// La cabecera NO tiene coma final, y la coma de mas de "Rapido,
+			// furioso" deja una celda vacia al final. Recortarla hacia entrar la
+			// fila corrida (id=furioso, taquilla=55).
 			nombre: "coma de mas con la ultima celda vacia",
 			datos:  "titulo,id,taquilla,moneda\nRapido, furioso,55,100,\nB,PX-2,2,COP\n",
 			quiere: []string{"campo de mas", ""},
@@ -822,8 +824,8 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"", "campo de mas"},
 		},
 		{
-			// H2: con la coma final en todas las filas, la coma PERDIDA de la
-			// fila 3 la deja justo en el ancho de las columnas con nombre.
+			// Con la coma final en todas las filas, la coma PERDIDA de la fila 3
+			// la deja justo en el ancho de las columnas con nombre.
 			nombre: "coma perdida en un archivo que escribe la coma final",
 			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7,\nA55,100,7,\n",
 			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 1 filas)", "mezcla filas de 4 y 5 campos"},
@@ -837,10 +839,10 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"mezcla filas de 3 y 5 campos", "mezcla filas de 3 y 5 campos"},
 		},
 		{
-			// J1 de la tercera auditoria: UNA fila con coma final en un archivo
-			// que no la escribe. 3 de 4 es el 75 %, por debajo del umbral: no
-			// se puede saber cual es la buena y caen las cuatro, con un motivo
-			// que lo dice. Con 58 de 59 (Caracol) si manda la mayoria; ver
+			// UNA fila con coma final en un archivo que no la escribe. 3 de 4 es
+			// el 75 %, por debajo del umbral: no se puede saber cual es la buena
+			// y caen las cuatro, con un motivo que lo dice. Con 58 de 59
+			// (Caracol) si manda la mayoria; ver
 			// TestLosArchivosRealesEnCSVEntranEnterosEnTodasSusFormas.
 			nombre: "una fila con coma final en un archivo corto que no la escribe",
 			datos:  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2,2\nC,PX-3,3,\nD,PX-4,4\n",
@@ -854,29 +856,29 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"mezcla", "mezcla", "mezcla"},
 		},
 		{
-			// H2 con tres filas escribiendo la coma y la cuarta perdiendola: 75 %,
-			// por debajo del umbral. Caen las cuatro.
+			// La coma perdida con tres filas escribiendola y la cuarta sin:
+			// 75 %, por debajo del umbral. Caen las cuatro.
 			nombre: "coma perdida con el 75 % escribiendo la coma final",
 			datos:  "titulo,id,taquilla,espectadores,\nA,A-1,1,7,\nB,B-1,2,7,\nC,C-1,3,7,\nD55,100,7,\n",
 			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 3 filas)", "mezcla", "mezcla", "mezcla"},
 		},
 		{
-			// K2 de la cuarta auditoria: la MAYORIA pierde la coma. Con mayoria
-			// simple entraban B y C corridas y caia A, la buena. Ahora caen las
-			// tres: ante la duda, ruido y no silencio.
+			// La MAYORIA pierde la coma. Con mayoria simple entraban B y C
+			// corridas y caia A, la buena. Ahora caen las tres: ante la duda,
+			// ruido y no silencio.
 			nombre: "la mayoria pierde la coma",
 			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7,\nB55,100,7,\nC66,200,8,\n",
 			quiere: []string{"mezcla filas de 4 y 5 campos (2 y 1 filas)", "mezcla", "mezcla"},
 		},
 		{
-			// K3: empate entre una buena sin coma y una coma de mas con blanco.
+			// Empate entre una buena sin coma y una coma de mas con blanco.
 			nombre: "empate entre buena y coma de mas",
 			datos:  "titulo,id,taquilla,espectadores,\nA,55,100,7\nRapido, furioso,55,100,\n",
 			quiere: []string{"mezcla filas de 4 y 5 campos (1 y 1 filas)", "mezcla"},
 		},
 		{
-			// N10: el numero del motivo es el del ARCHIVO, no el de la cabecera
-			// (aqui 3 y no 4).
+			// El numero del motivo es el del ARCHIVO, no el de la cabecera (aqui
+			// 3 y no 4).
 			nombre: "fila corta en un archivo sin coma final bajo cabecera con coma final",
 			datos:  "titulo,id,taquilla,\nA,PX-1,1\nB,PX-2\nC,PX-3,3\n",
 			quiere: []string{"", "trae 2 campos y 2 de 3 filas de este archivo traen 3", ""},
@@ -899,8 +901,8 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"mezcla filas de 3, 4 y 5 campos (1, 1 y 1 filas)", "mezcla", "mezcla"},
 		},
 		{
-			// N11: el dato sin nombre pisa el motivo de celda, aunque la fila
-			// traiga ademas una requerida vacia.
+			// El dato sin nombre pisa el motivo de celda, aunque la fila traiga
+			// ademas una requerida vacia.
 			nombre: "dato sin nombre y requerida vacia en la misma fila",
 			datos:  "titulo,,id,taquilla\nA,huerfano,,1\n",
 			quiere: []string{"columna 2, que no tiene nombre"},
@@ -911,8 +913,8 @@ func TestAplicarNoAceptaCorridoAlrededorDeColumnasSinNombre(t *testing.T) {
 			quiere: []string{"columna 4, que no tiene nombre", ""},
 		},
 		{
-			// H3: una columna sin nombre EN MEDIO se conserva en su posicion, y
-			// lo que traiga no se descarta en silencio.
+			// Una columna sin nombre EN MEDIO se conserva en su posicion, y lo
+			// que traiga no se descarta en silencio.
 			nombre: "dato bajo una columna sin nombre en medio",
 			datos:  "titulo,,id,taquilla\nA,huerfano,PX-1,1\nB,,PX-2,2\n",
 			quiere: []string{"columna 2, que no tiene nombre", ""},
@@ -964,7 +966,7 @@ func TestAplicarAceptaLaColumnaFinalSinNombreEnXLSXYRechazaSuDato(t *testing.T) 
 	}
 }
 
-// J2: en JSON el hueco es una clave vacia, y " " es tan vacia como "": antes
+// En JSON el hueco es una clave vacia, y " " es tan vacia como "": antes
 // la primera se rechazaba y la segunda entraba sin motivo.
 func TestJSONRechazaElDatoBajoUnaClaveVacia(t *testing.T) {
 	t.Parallel()
@@ -1065,7 +1067,7 @@ func TestAplicarUmbralDeMayoriaDeAncho(t *testing.T) {
 	}
 }
 
-// K4: en .xlsx una celda con dato mas alla de la cabecera se nombra como la
+// En .xlsx una celda con dato mas alla de la cabecera se nombra como la
 // ve el cliente, por su referencia de Excel, y no se habla de comas.
 func TestAplicarNombraLaCeldaFueraDeLaCabeceraEnXLSX(t *testing.T) {
 	t.Parallel()

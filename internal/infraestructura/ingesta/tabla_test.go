@@ -435,7 +435,7 @@ func TestTablaCSVNumeraBienConCamposMultilineaYBlancosAntesDeLaCabecera(t *testi
 	}
 }
 
-// H3: la columna sin nombre en medio conserva las posiciones de las de detras.
+// La columna sin nombre en medio conserva las posiciones de las de detras.
 // Borrar todas las cabeceras vacias correria `id` y `taquilla` una posicion.
 func TestTablaCSVConservaLaColumnaSinNombreEnMedio(t *testing.T) {
 	t.Parallel()

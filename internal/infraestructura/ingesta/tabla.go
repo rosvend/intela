@@ -653,9 +653,9 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 // que reunir un ancho para imponerse a los demas cuando el archivo los mezcla.
 // Las que se salen del rango legitimo no cuentan: ver anchoEsperado.
 //
-// Es alto a proposito. Por el ancho solo, una fila con la coma final de mas
-// (J1: una fila rara en un archivo sano) y una fila con la coma PERDIDA (K2:
-// la mayoria perdio la coma) tienen la misma forma, y con mayoria simple el
+// Es alto a proposito. Por el ancho solo, una fila rara en un archivo sano --
+// con la coma final de mas -- y la unica fila buena de un archivo cuya
+// mayoria perdio la misma coma tienen la misma forma, y con mayoria simple el
 // segundo caso dejaba entrar corridas las filas de la mayoria y rechazaba la
 // buena. Ante la duda, ruido y no silencio: solo una mayoria abrumadora -- la
 // de un archivo sano con alguna fila suelta, como la parrilla de Caracol con
@@ -683,15 +683,15 @@ const umbralMayoriaAncho = 0.9
 //     nombre es indistinguible de una coma de mas --.
 //   - Ninguno llega al umbral: se devuelven los anchos en disputa y se rechazan
 //     TODAS sus filas. No hay forma de saber cual es la buena, y aceptar la
-//     mayoria es como entraban corridas las filas de K2.
+//     mayoria es como entraban corridas las filas que perdieron la coma.
 //
 // Lo que NO puede ver, y conviene decirlo, porque ninguna regla de ancho
 // distingue estas filas de una bien escrita:
 //
 //   - Un archivo en un solo ancho con la misma coma perdida en todas sus filas
-//     se lee como coherente y entra corrido. El caso extremo es una sola fila
-//     (K1).
-//   - K2 a escala: si al menos umbralMayoriaAncho de las filas perdieron la
+//     se lee como coherente y entra corrido. El caso extremo es un archivo de
+//     una sola fila.
+//   - La mayoria que pierde la misma coma, a escala: si al menos umbralMayoriaAncho de las filas perdieron la
 //     misma coma, esas filas SON la mayoria. Entran corridas, y la fila buena
 //     cae como minoria con un motivo que dice "campo de mas". Es el precio del
 //     umbral; antes de #113 entraban todas, tambien la buena, sin motivo.
