@@ -195,6 +195,19 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   return res;
 }
 
+// Lectura sin sesion. El listado ONI es publico (R-18): adjuntar el token
+// y redirigir a /login ante un 401 convertiria la publicacion legal en una
+// pagina interna.
+export async function apiPublica(path: string) {
+  const res = await fetch(path);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(res.status, await mensajeDeError(res));
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("json")) return res.json();
+  return res;
+}
 // Lo que se muestra cuando el cuerpo de un error no parsea como JSON. El
 // contrato promete que un error de la API viene como `{"error": "..."}`, asi que
 // un cuerpo que no es JSON no es un mensaje suyo: lo pone la infraestructura.

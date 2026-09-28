@@ -86,6 +86,31 @@ variable "log_format" {
   default     = "json"
 }
 
+# RD 13.8.4.3. The public ONI listing has to name where documentation is sent.
+# Empty is a production outage: PublicarListadoONI rejects it and POST
+# /oni/publicaciones answers 500, so GET /publico/oni never has anything to
+# show. There is no default: an invented notification address on a public page
+# is worse than a plan that refuses to apply. The value lives in infra/envs.
+variable "oni_direccion_fisica" {
+  description = "Value for ONI_DIRECCION_FISICA. Physical address where ONI documentation is sent (RD 13.8.4.3). Not a secret: it is printed on a public page."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.oni_direccion_fisica)) > 0
+    error_message = "oni_direccion_fisica must be non-empty. An empty value makes POST /oni/publicaciones return 500 and the public ONI listing stays empty."
+  }
+}
+
+variable "oni_direccion_electronica" {
+  description = "Value for ONI_DIRECCION_ELECTRONICA. Electronic address where ONI documentation is sent (RD 13.8.4.3). Not a secret: it is printed on a public page."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.oni_direccion_electronica)) > 0
+    error_message = "oni_direccion_electronica must be non-empty. An empty value makes POST /oni/publicaciones return 500 and the public ONI listing stays empty."
+  }
+}
+
 variable "log_retention_days" {
   description = "CloudWatch Logs retention."
   type        = number
