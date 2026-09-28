@@ -393,6 +393,29 @@ var (
 
 	// ErrAnomaliasCriticasAbiertas: el periodo tiene alertas criticas sin resolver y la corrida no puede entrar a calcular (#37, ADR 0021).
 	ErrAnomaliasCriticasAbiertas = errors.New("el periodo tiene anomalias criticas sin resolver")
+
+	// ErrObraInexistente: resolver un caso nombra un obra_id que no esta en el
+	// catalogo.
+	//
+	// Es la hermana de ErrTitularInexistente y se distingue de ErrNoEncontrado
+	// por lo mismo: ese es "el recurso de la URL no esta" (el caso), este es "un
+	// dato DENTRO del cuerpo senala una entidad que no existe". Confundirlos
+	// convertiria un typo de obra_id en el JSON en un 404 que dice que el caso
+	// no existe, mandando a buscar el error donde no esta.
+	//
+	// Va con la convencion de ErrTitularInexistente: un dato del cuerpo que
+	// senala una entidad inexistente es un 400, no un 5xx.
+	ErrObraInexistente = errors.New("esa obra no esta en el catalogo")
+
+	// ErrAliasEnConflicto: el par canonico (fuente, tipo, valor) del uso ya
+	// tiene alias hacia OTRA obra (#175, D6).
+	//
+	// No es "no se pudo escribir" y no es un dato invalido: el pedido estaba
+	// bien y el alias ya existia apuntando a otra obra. Distinguirlo es lo que
+	// deja responder 409 en vez de pisar el alias en silencio -- y pisarlo
+	// desharia una decision humana anterior, que es justo lo que el ADR 0007
+	// pide no hacer: resolver una vez, reutilizar siempre.
+	ErrAliasEnConflicto = errors.New("ese identificador ya apunta a otra obra")
 )
 
 // ErrorParametroAusente nombra las clausulas normativas que no tienen valor

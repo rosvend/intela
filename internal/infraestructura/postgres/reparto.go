@@ -66,20 +66,21 @@ func (s *Store) UsosDeCanal(
 }
 
 // resumenExclusiones cuenta, en el mismo (periodo, canal), las filas sin obra
-// por cada motivo. Los tres son mutuamente excluyentes por el CHECK de la
+// por cada motivo. Los cuatro son mutuamente excluyentes por el CHECK de la
 // tabla: una fila esta en un escalon exactamente.
 func (s *Store) resumenExclusiones(ctx context.Context, periodo, canalID string) (aplicacion.ResumenUsosDeCanal, error) {
 	var r aplicacion.ResumenUsosDeCanal
 	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE escalon = 'pendiente'),
 		        COUNT(*) FILTER (WHERE escalon = 'oni'),
-		        COUNT(*) FILTER (WHERE escalon = 'excluido')
+		        COUNT(*) FILTER (WHERE escalon = 'excluido'),
+		        COUNT(*) FILTER (WHERE escalon = 'descartado')
 		   FROM usos
 		  WHERE reporte_id IN (SELECT id FROM reportes WHERE periodo = $1)
 		    AND canal_id = $2
 		    AND obra_id IS NULL`,
 		periodo, canalID,
-	).Scan(&r.Pendientes, &r.ONI, &r.Excluidos)
+	).Scan(&r.Pendientes, &r.ONI, &r.Excluidos, &r.Descartados)
 	if err != nil {
 		return aplicacion.ResumenUsosDeCanal{}, traducirError(err,
 			"resumen de exclusiones del canal %q en %q", canalID, periodo)

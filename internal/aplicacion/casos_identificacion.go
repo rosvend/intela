@@ -14,14 +14,16 @@ import (
 
 // Estados de un caso de la cola manual. "descartado" llega con la escritura de #175.
 const (
-	EstadoCasoPendiente = "pendiente"
-	EstadoCasoAsignado  = "asignado"
+	EstadoCasoPendiente  = "pendiente"
+	EstadoCasoAsignado   = "asignado"
+	EstadoCasoDescartado = "descartado"
 )
 
 // escalonesDeEstado es la unica traduccion estado <-> escalon; el adaptador no la repite.
 var escalonesDeEstado = map[string]string{
-	EstadoCasoPendiente: identificacion.EscalonONI,
-	EstadoCasoAsignado:  identificacion.EscalonManual,
+	EstadoCasoPendiente:  identificacion.EscalonONI,
+	EstadoCasoAsignado:   identificacion.EscalonManual,
+	EstadoCasoDescartado: identificacion.EscalonDescartado,
 }
 
 // FiltroCasos es lo que pide quien lee la cola; un campo vacio no filtra.
@@ -37,6 +39,9 @@ type ConsultaCasos struct {
 	Escalones []string
 	Fuente    string
 	Periodo   string
+	// UsoID lee UN caso concreto: la respuesta de una resolucion reusa la
+	// misma sentencia que la lista, para que las dos no puedan divergir.
+	UsoID string
 	Paginacion
 }
 
@@ -81,6 +86,10 @@ type CasoIdentificacion struct {
 	ResueltoEn          *time.Time
 	ReporteCreado       time.Time
 	UltimaActualizacion time.Time
+
+	// Nota es la justificacion de la decision manual (#175, D5). Vacia en un
+	// caso pendiente, y obligatoria en uno asignado o descartado.
+	Nota string
 }
 
 // PaginaCasos es una pagina de la cola y el total de pendientes bajo los mismos filtros de fuente y periodo.
@@ -127,12 +136,13 @@ func consultaDe(f FiltroCasos) (ConsultaCasos, error) {
 	}
 	estado := strings.TrimSpace(f.Estado)
 	if estado == "" {
-		q.Escalones = []string{identificacion.EscalonONI, identificacion.EscalonManual}
+		q.Escalones = []string{identificacion.EscalonONI, identificacion.EscalonManual, identificacion.EscalonDescartado}
 		return q, nil
 	}
 	escalon, ok := escalonesDeEstado[estado]
 	if !ok {
-		return ConsultaCasos{}, fmt.Errorf("%w: estado %q, se esperaba %q o %q", ErrFiltroCasosInvalido, estado, EstadoCasoPendiente, EstadoCasoAsignado)
+		return ConsultaCasos{}, fmt.Errorf("%w: estado %q, se esperaba %q, %q o %q",
+			ErrFiltroCasosInvalido, estado, EstadoCasoPendiente, EstadoCasoAsignado, EstadoCasoDescartado)
 	}
 	q.Escalones = []string{escalon}
 	return q, nil
@@ -148,6 +158,14 @@ func completarCaso(caso CasoIdentificacion) (CasoIdentificacion, error) {
 			return CasoIdentificacion{}, fmt.Errorf("caso %s: escalon manual sin resuelto_en", caso.UsoID)
 		}
 		caso.Estado = EstadoCasoAsignado
+		caso.UltimaActualizacion = *caso.ResueltoEn
+	case identificacion.EscalonDescartado:
+		// Igual que manual: un descarte tambien va firmado y con fecha, o no
+		// es un descarte (ADR 0006, D1).
+		if caso.ResueltoEn == nil {
+			return CasoIdentificacion{}, fmt.Errorf("caso %s: escalon descartado sin resuelto_en", caso.UsoID)
+		}
+		caso.Estado = EstadoCasoDescartado
 		caso.UltimaActualizacion = *caso.ResueltoEn
 	default:
 		return CasoIdentificacion{}, fmt.Errorf("caso %s: escalon %q no es un caso de la cola manual", caso.UsoID, caso.Escalon)
