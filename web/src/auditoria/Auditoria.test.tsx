@@ -86,6 +86,66 @@ describe("pantalla de auditoria", () => {
     expect(screen.queryByText(/append-only/i)).not.toBeNull();
   });
 
+  it("pide la bitacora de a diez, sin desplazamiento en la primera pagina", async () => {
+    vi.mocked(fetch).mockResolvedValue(json(BITACORA));
+    montar();
+    await screen.findAllByRole("listitem");
+
+    const consultas = vi
+      .mocked(fetch)
+      .mock.calls.map(([entrada]) => String(entrada))
+      .filter((url) => url.includes("/auditoria/asientos"));
+    expect(consultas).toEqual(["/api/auditoria/asientos?limite=10"]);
+  });
+
+  it("con una pagina llena la paginacion avanza contra el servidor y ofrece volver", async () => {
+    // Una pagina llena (10, el limite) para que "Siguiente" se ofrezca; con
+    // los 3 asientos de BITACORA -menos que el limite- nunca se ofreceria.
+    const diez: Asiento[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `a-${i}`,
+      hecho: "obra.registrada",
+      ref_tipo: "obra",
+      ref_id: `obra-${i}`,
+      actor: "usr-admin",
+      payload: { titulo: `Obra ${i}` },
+      cuando: `2026-01-${String(i + 1).padStart(2, "0")}T09:00:00Z`,
+    }));
+    const segundaPagina: Asiento[] = [BITACORA[0]];
+
+    vi.mocked(fetch).mockImplementation((entrada) => {
+      const url = String(entrada);
+      if (url.includes("desplazamiento=10")) {
+        return Promise.resolve(json(segundaPagina));
+      }
+      return Promise.resolve(json(diez));
+    });
+    montar();
+
+    expect(await screen.findAllByRole("listitem")).toHaveLength(10);
+    expect(
+      screen.getByRole("button", { name: "Página anterior" }),
+    ).toHaveProperty("disabled", true);
+    const siguiente = screen.getByRole("button", { name: "Página siguiente" });
+    expect(siguiente).toHaveProperty("disabled", false);
+
+    fireEvent.click(siguiente);
+
+    await vi.waitFor(async () => {
+      expect(await screen.findAllByRole("listitem")).toHaveLength(1);
+    });
+    expect(
+      screen.getByRole("button", { name: "Página anterior" }),
+    ).toHaveProperty("disabled", false);
+    const consultas = vi
+      .mocked(fetch)
+      .mock.calls.map(([entrada]) => String(entrada))
+      .filter((url) => url.includes("/auditoria/asientos"));
+    expect(consultas).toEqual([
+      "/api/auditoria/asientos?limite=10",
+      "/api/auditoria/asientos?limite=10&desplazamiento=10",
+    ]);
+  });
+
   it("el filtro por tipo recorta a la familia pedida", async () => {
     vi.mocked(fetch).mockResolvedValue(json(BITACORA));
     montar();
