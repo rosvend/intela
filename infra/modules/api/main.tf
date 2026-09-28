@@ -22,9 +22,11 @@ module "function" {
   # owns the socket and the lifecycle, so setting them would be configuration
   # that reads as meaningful and does nothing.
   environment = {
-    DATABASE_URL  = var.database_url
-    SESION_TTL    = var.session_ttl
-    CORS_ORIGENES = var.cors_origins
-    LOG_FORMATO   = var.log_format
+    DATABASE_URL              = var.database_url
+    SESION_TTL                = var.session_ttl
+    CORS_ORIGENES             = var.cors_origins
+    LOG_FORMATO               = var.log_format
+    ONI_DIRECCION_FISICA      = var.oni_direccion_fisica
+    ONI_DIRECCION_ELECTRONICA = var.oni_direccion_electronica
   }
 }

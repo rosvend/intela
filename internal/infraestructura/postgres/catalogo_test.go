@@ -79,7 +79,7 @@ func TestRegistrarYLeerLaObraCompleta(t *testing.T) {
 		t.Fatalf("Registrar: %v", err)
 	}
 
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRegistrarRechazaElIdentificadorDuplicado(t *testing.T) {
 	}
 
 	// Y el rechazo no dejo nada a medias: la obra sigue siendo la primera.
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRegistrarEsAtomico(t *testing.T) {
 func TestPorIDDeUnaObraQueNoExiste(t *testing.T) {
 	s, _ := sembrar(t)
 
-	_, err := s.PorID(t.Context(), "obra-que-no-existe")
+	_, err := s.CatalogoObras().PorID(t.Context(), "obra-que-no-existe")
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -207,7 +207,7 @@ func TestActualizarReemplazaMetadatosYCoautores(t *testing.T) {
 		t.Fatalf("Actualizar: %v", err)
 	}
 
-	tengo, err := s.PorID(ctx, "obra-nueva")
+	tengo, err := s.CatalogoObras().PorID(ctx, "obra-nueva")
 	if err != nil {
 		t.Fatalf("PorID: %v", err)
 	}
