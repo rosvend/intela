@@ -84,6 +84,22 @@ export const RUTAS: readonly ItemDeNav[] = [
     seccion: "principal",
   },
   {
+    // Solo administrador: el contrato protege `GET /identificacion/casos`
+    // con `x-required-roles: [administrador]` (api/openapi.yaml, #174/#175).
+    to: "/identificacion",
+    label: "Identificación",
+    roles: ["administrador"],
+    seccion: "principal",
+  },
+  {
+    // Misma proteccion que /identificacion: es la otra vista de la misma
+    // cola (`x-required-roles: [administrador]` en el contrato).
+    to: "/lista-oni",
+    label: "Lista ONI",
+    roles: ["administrador"],
+    seccion: "principal",
+  },
+  {
     to: "/anomalias",
     label: "Anomalías",
     // Contabilidad es la segunda firma de la compuerta: sin /anomalias no
