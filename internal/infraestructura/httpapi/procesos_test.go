@@ -300,7 +300,8 @@ func TestProcesoParametroAusenteOInvalidoEs409(t *testing.T) {
 		{"abrir con un valor invalido", http.MethodPost, "/procesos", cuerpoAbrirProceso,
 			fmt.Errorf("parametro %q: %w", "cine_teatro.base", aplicacion.ErrParametroInvalido), "cine_teatro.base"},
 		{"valorizar con un snapshot sin la base", http.MethodPost, "/procesos/proc-1/avanzar", "",
-			fmt.Errorf("motor de reparto: %w: base_cine_teatro", reparto.ErrParametroAusente), "base_cine_teatro"},
+			fmt.Errorf("motor de reparto: %w: base_cine_teatro (clave cine_teatro.base, P-18)", reparto.ErrParametroAusente),
+			"cine_teatro.base"},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {

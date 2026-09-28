@@ -677,7 +677,7 @@ func TestAvanzarEtapaConSnapshotSinBaseCineDiceQueAbraOtraCorrida(t *testing.T) 
 	if !errors.Is(err, reparto.ErrParametroAusente) {
 		t.Fatalf("se esperaba reparto.ErrParametroAusente, dio: %v", err)
 	}
-	for _, f := range []string{"base_cine_teatro", `"snp1-viejo"`, "abra una corrida nueva", `"bolsa-procinal"`} {
+	for _, f := range []string{"base_cine_teatro", "cine_teatro.base", `"snp1-viejo"`, "abra una corrida nueva", `"bolsa-procinal"`} {
 		if !strings.Contains(err.Error(), f) {
 			t.Errorf("el mensaje %q no dice %s", err, f)
 		}

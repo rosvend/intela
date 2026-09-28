@@ -77,6 +77,11 @@ const (
 	BaseTaquilla     = "taquilla"
 )
 
+// ClaveBaseCineTeatro es la clave del parametro normativo que llena
+// [Snapshot.BaseCineTeatro] (P-18). Vive aqui y no solo en el adaptador para
+// que el error del motor la nombre: es lo que el operador tiene que cargar.
+const ClaveBaseCineTeatro = "cine_teatro.base"
+
 // ParseBaseCineTeatro valida la base de cine/teatro que trae un parametro.
 // Simetrico a [ParseGrupoCanal]: una base desconocida es un error tipado al
 // congelar el snapshot, no una corrida de cine que falla meses despues.

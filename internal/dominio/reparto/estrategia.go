@@ -64,7 +64,9 @@ func puntosCineTeatro(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, er
 	switch snap.BaseCineTeatro {
 	case BaseEspectadores, BaseTaquilla:
 	default:
-		return nil, fmt.Errorf("%w: base_cine_teatro", ErrParametroAusente)
+		// El mensaje nombra tambien la clave de `parametros` que la llena:
+		// es la que el operador reconoce y carga (ADR 0004), no el campo.
+		return nil, fmt.Errorf("%w: base_cine_teatro (clave %s, P-18)", ErrParametroAusente, ClaveBaseCineTeatro)
 	}
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {

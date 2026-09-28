@@ -192,7 +192,7 @@ var clausulasDelSnapshotV1 = []clausula{
 // mismas clausulas, y una copia a mano podria divergir sin que nada lo note.
 // slices.Clip obliga a que append copie y no escriba sobre la V1.
 var clausulasDelSnapshot = append(slices.Clip(clausulasDelSnapshotV1),
-	textual("cine_teatro.base", func(s *reparto.Snapshot, v string) error {
+	textual(reparto.ClaveBaseCineTeatro, func(s *reparto.Snapshot, v string) error {
 		base, err := reparto.ParseBaseCineTeatro(v)
 		s.BaseCineTeatro = base
 		return err

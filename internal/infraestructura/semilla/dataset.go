@@ -607,7 +607,7 @@ func (d *Dataset) parametros() {
 		// es P-18, abierta, y por eso va sintetica. Taquilla porque es lo que
 		// prescribe el texto y la unica medida que MapaCine exige. Es la
 		// misma fila que la migracion 00024 anade a una base ya sembrada.
-		sinteticoTexto("cine_teatro.base", reparto.BaseTaquilla),
+		sinteticoTexto(reparto.ClaveBaseCineTeatro, reparto.BaseTaquilla),
 	}
 }
 
