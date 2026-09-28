@@ -429,27 +429,33 @@ func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 		columnas []string
 		fila     []string
 		enMotivo []string
+		// noEnMotivo: una celda vacia no se describe como placeholder (ni con
+		// un `("")` que no dice nada), y un placeholder no como celda vacia.
+		noEnMotivo []string
 	}{
 		{
-			nombre:   "cine sin id: la cascada no puede casar ni aprender alias",
-			mapa:     MapaCine(),
-			columnas: []string{"titulo", "id", "taquilla"},
-			fila:     []string{"Pelicula X", "", "100"},
-			enMotivo: []string{"fila 2", "ids_fuente", `"id"`, "requerida"},
+			nombre:     "cine sin id: la cascada no puede casar ni aprender alias",
+			mapa:       MapaCine(),
+			columnas:   []string{"titulo", "id", "taquilla"},
+			fila:       []string{"Pelicula X", "", "100"},
+			enMotivo:   []string{"fila 2", "ids_fuente", `"id"`, "requerida", "la celda viene vacia"},
+			noEnMotivo: []string{"placeholder", `("")`},
 		},
 		{
-			nombre:   "cine sin taquilla: no pondera nada y no dejaba rastro",
-			mapa:     MapaCine(),
-			columnas: []string{"titulo", "id", "taquilla"},
-			fila:     []string{"Pelicula X", "PX-1", " "},
-			enMotivo: []string{"fila 2", "taquilla", `"taquilla"`, "requerida"},
+			nombre:     "cine sin taquilla: no pondera nada y no dejaba rastro",
+			mapa:       MapaCine(),
+			columnas:   []string{"titulo", "id", "taquilla"},
+			fila:       []string{"Pelicula X", "PX-1", " "},
+			enMotivo:   []string{"fila 2", "taquilla", `"taquilla"`, "requerida", "la celda viene vacia"},
+			noEnMotivo: []string{"placeholder", `("")`},
 		},
 		{
-			nombre:   "placeholder en una columna requerida no es un hueco declarado",
-			mapa:     MapaCine(),
-			columnas: []string{"titulo", "id", "taquilla"},
-			fila:     []string{"Pelicula X", "PX-1", "--"},
-			enMotivo: []string{"fila 2", "taquilla", "--", "vacia o con un placeholder"},
+			nombre:     "placeholder en una columna requerida no es un hueco declarado",
+			mapa:       MapaCine(),
+			columnas:   []string{"titulo", "id", "taquilla"},
+			fila:       []string{"Pelicula X", "PX-1", "--"},
+			enMotivo:   []string{"fila 2", "taquilla", `la celda trae el placeholder "--"`},
+			noEnMotivo: []string{"vacia"},
 		},
 		{
 			nombre:   "netflix sin show_id: falta el par que sondea la cascada",
@@ -459,18 +465,20 @@ func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 			enMotivo: []string{"fila 2", "ids_fuente", `"show_id"`},
 		},
 		{
-			nombre:   "titulo vacio: lo dice el adaptador, con linea y columna",
-			mapa:     mapaMinimo(),
-			columnas: []string{"titulo", "duracion"},
-			fila:     []string{"", "10"},
-			enMotivo: []string{"fila 2", "titulo", `"titulo"`},
+			nombre:     "titulo vacio: lo dice el adaptador, con linea y columna",
+			mapa:       mapaMinimo(),
+			columnas:   []string{"titulo", "duracion"},
+			fila:       []string{"", "10"},
+			enMotivo:   []string{"fila 2", "titulo", `"titulo"`, "la celda viene vacia"},
+			noEnMotivo: []string{"placeholder"},
 		},
 		{
-			nombre:   "titulo con placeholder, que validarUso no ve",
-			mapa:     mapaMinimo(),
-			columnas: []string{"titulo", "duracion"},
-			fila:     []string{"N/A", "10"},
-			enMotivo: []string{"fila 2", "titulo", "N/A", "vacia o con un placeholder"},
+			nombre:     "titulo con placeholder, que validarUso no ve",
+			mapa:       mapaMinimo(),
+			columnas:   []string{"titulo", "duracion"},
+			fila:       []string{"N/A", "10"},
+			enMotivo:   []string{"fila 2", "titulo", `la celda trae el placeholder "N/A"`},
+			noEnMotivo: []string{"vacia"},
 		},
 	}
 	for _, c := range casos {
@@ -490,6 +498,11 @@ func TestAplicarRechazaLaCeldaVaciaDeUnaColumnaRequerida(t *testing.T) {
 			for _, quiere := range c.enMotivo {
 				if !strings.Contains(motivo, quiere) {
 					t.Errorf("el motivo no dice %q: %s", quiere, motivo)
+				}
+			}
+			for _, sobra := range c.noEnMotivo {
+				if strings.Contains(motivo, sobra) {
+					t.Errorf("el motivo no deberia decir %q: %s", sobra, motivo)
 				}
 			}
 		})

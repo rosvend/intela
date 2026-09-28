@@ -471,10 +471,16 @@ func (m Mapa) fila(fila []string, indices map[string]int, linea int, compuesta f
 		if c.Requerida && esPlaceholder(bruto) && motivo == "" {
 			// Antes que la coercion: aDecimal convertiria el hueco en un cero
 			// valido y nadie volveria a ver que faltaba.
-			// "vacia O con un placeholder": para un `N/A` o un `null` decir
-			// solo "vacia" es falso, y el cliente veria texto en esa celda.
-			motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia o con un placeholder (%q)",
-				linea, c.Campo, c.Nombre, strings.TrimSpace(bruto))
+			// Para un `N/A` o un `null` decir "vacia" es falso, y el cliente
+			// veria texto en esa celda; para una celda en blanco, nombrar un
+			// placeholder que no esta es ruido.
+			if v := strings.TrimSpace(bruto); v == "" {
+				motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda viene vacia",
+					linea, c.Campo, c.Nombre)
+			} else {
+				motivo = fmt.Sprintf("fila %d, %s (columna %q): la columna es requerida y la celda trae el placeholder %q",
+					linea, c.Campo, c.Nombre, v)
+			}
 		}
 		if c.Campo == CampoIDsFuente {
 			ids = append(ids, aplicacion.IDFuente{
