@@ -237,6 +237,53 @@ Estado: Firme. Fuente: `RD 10.1`, `RD 10.2.1`
 Para poder identificar a que tipo de reparto corresponden los rendimientos.
 Estado: Firme. Fuente: `RD 10.3`
 
+### R-36 Resolucion manual de un caso ONI
+Una persona con rol `administrador` cierra a mano un uso que la cascada dejo en ONI
+(`RD 13.8`), de dos formas:
+
+- **Asignar**: le da una obra del catalogo. El uso queda en el escalon `manual`, con
+  `oni = false`, y pondera como cualquier otro. Puede ser una de las obras que el motor
+  propuso (banda ambigua) o cualquiera del catalogo, buscada a mano. Ademas se **aprende el
+  alias** del par canonico (fuente, tipo, valor) del uso, con `quien` = el usuario que
+  decidio, para que el reporte siguiente de la misma fuente resuelva solo en el escalon 1
+  (ADR 0007: resolver una vez, reutilizar siempre).
+- **Descartar**: dice que el uso **no es del repertorio de REDES SGC**. El uso queda en el
+  escalon `descartado`: sin obra, `oni = false` y **sin ponderar**. Su parte no existe y la
+  bolsa se reparte entre las obras que si ponderan, el mismo efecto monetario que una
+  exclusion R-27.
+
+En las dos hace falta **nota** (hasta 300 caracteres, tras recortar espacios) y queda
+**firmado** con el usuario de la sesion y el instante del reloj del nucleo (ADR 0006). La
+resolucion se puede hacer aunque el periodo este en reparto o ya distribuido: se serializa
+con el cerrojo de periodo de #171. Corregir una decision anterior -reasignar o deshacer un
+descarte- queda fuera de alcance hoy.
+
+`descartado` **no es** `excluido`: la exclusion es configuracion (R-27,
+`FuentesExcluidas`), y la cascada la vuelve a evaluar en cada corrida; una decision humana no
+se pisa, asi que `descartado` y `manual` quedan fuera de `ResolverUsos`. Y **no es ONI**: una
+obra sin identificar sigue publicandose en el listado de `RD 13.8`, y un descartado no, porque
+no es del repertorio (`RD 7.1`: REDES SGC solo representa autores de guion o libreto;
+`RD 9.5`).
+
+Matiz: hoy el motor **todavia no reserva la parte ONI** (R-18 pendiente, dueno #33/#34), asi
+que ONI y descartado pesan lo mismo, cero. La diferencia se vuelve real cuando llegue la
+reserva ONI.
+
+Estado: **Decidido por el equipo** (sanmemu09, 2026-09-27); confirmar con el PO
+(P-22). Fuente: `RD 7.1`, `RD 9.5` (R-27), `RD 13.8`, ADR 0006, ADR 0007.
+Implementacion: `internal/dominio/identificacion/resolucion.go`;
+`internal/aplicacion/resolucion_identificacion.go`;
+`internal/infraestructura/postgres/resolucion_identificacion.go`;
+`POST /identificacion/casos/{id}/resolucion`. Asientos `identificacion.asignada` (referencia
+la obra) e `identificacion.descartada` (referencia el uso). Migracion
+`00022_resolucion_manual_identificacion.sql`. Pruebas: `TestResolverCaso` y
+`TestNormalizarNota` (dominio); `TestResolverAsignaAUnaCandidata`,
+`TestResolverDescarta`, `TestResolverSiElAsientoFallaNoQuedaNadaHecho` (aplicacion);
+`TestResolverIntegracionAsignaAUnaCandidata`,
+`TestResolverIntegracionDosResolucionesConcurrentesSoloUnaGana`,
+`TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte` (postgres);
+`TestElCheckDeUsosSostieneLaResolucionManual` (esquema).
+
 ## Tarifas
 
 ### T-01 Television abierta y cerrada: 4%

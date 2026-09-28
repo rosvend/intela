@@ -59,6 +59,21 @@ completar el 100%**. Es la unica fuente valida de los splits. `RD 3`, `RD 13.1.2
 **Repertorio** — Conjunto de obras que REDES SGC representa, propias y de sociedades
 hermanas por contrato de representacion.
 
+**Caso de Identificacion** — Uso de un reporte que la cascada no pudo asignar a ninguna obra
+y que queda en la bandeja de resolucion manual. Tiene tres estados: `pendiente` (nadie lo ha
+mirado), `asignado` (una persona le dio una obra) y `descartado` (una persona decidio que no
+es un uso del repertorio). `RD 13.8`, R-36
+
+**Descartado** — Uso que una persona resolvio marcandolo como **fuera del repertorio de REDES
+SGC**: ni se le asigna obra ni cuenta como ONI. No pondera, no sale en el listado publico de
+`RD 13.8` y la cascada no lo vuelve a tocar. El mismo efecto monetario que una exclusion
+R-27; la diferencia es que la decide una persona caso por caso, no la configuracion de
+fuentes. `RD 7.1`, `RD 9.5`, R-36
+
+**Nota de resolucion** — Justificacion escrita de una decision manual sobre un caso de
+identificacion: obligatoria, de hasta 300 caracteres, y viaja con el asiento `identificacion.*`
+junto al nombre de quien la tomo (ADR 0006). R-36
+
 ## Dinero
 
 **Recaudo** — Proceso de recoleccion de los pagos que hacen los usuarios por la comunicacion
