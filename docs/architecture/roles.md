@@ -18,19 +18,28 @@ en el handler. Ese chequeo de grupo es grueso: `requiereRol` no sustituye
 a la autorizacion dentro del caso de uso. El middleware solo cierra la
 puerta del prefijo; la autorizacion fina vive con el caso de uso.
 
-| Prefijo | Roles |
-| ------- | ----- |
-| `/admin/*` | `administrador` |
-| `/auditoria/*` | `auditor`, `administrador` |
-| `/obras/*` | `administrador` |
-| `/recaudo/*` | `contabilidad`, `administrador` |
-| `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` |
-| `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo |
-| `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` |
-| `/reportes/*` | `administrador` |
-| `GET /procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` |
-| `POST /procesos`, `POST /procesos/{id}/avanzar` | `administrador` |
-| `POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar` | `distribucion`, `contabilidad` |
+La tabla lleva **dos columnas de roles** porque `/alertas/*` y `/procesos/*` son
+prefijos donde leer y escribir no piden lo mismo. Donde las dos
+columnas coinciden, el prefijo tiene un solo grupo de `requiereRol`; donde
+difieren, el `Route` se parte en un `Group` por cada conjunto de roles y **la diferencia es la que hay que
+justificar**, porque una columna de escritura mas ancha de lo necesario no falla
+en ninguna prueba.
+
+| Prefijo | Lectura | Escritura |
+| ------- | ------- | --------- |
+| `/admin/*` | `administrador` | `administrador` |
+| `/auditoria/*` | `auditor`, `administrador` | — |
+| `/obras/*` | `administrador` | `administrador` |
+| `/identificacion/*` | `administrador` | — |
+| `/recaudo/*` | `contabilidad`, `administrador` | `contabilidad`, `administrador` |
+| `/bolsas/*` | `contabilidad`, `administrador`, `distribucion`, `auditor` | — |
+| `/liquidaciones`, `/mis-liquidaciones` | staff y `titular`, respectivamente: son ordenes de pago y el rol lo decide el caso de uso, no el grupo | — |
+| `/mis-liquidaciones/obras`, `/mis-liquidaciones/export` | `titular` | — |
+| `/mis-ingresos` | `titular` | — |
+| `/alertas/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador`, `distribucion` |
+| `/reportes/*` | `administrador` | `administrador` |
+| `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
+| `/explicar/{ref}` | `titular` (solo lineas suyas, `OE-6`), `auditor`, `administrador` | — |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -48,6 +57,20 @@ export (`/mis-liquidaciones/obras`, `/mis-liquidaciones/export`) son la
 excepcion: ahi ve su propio neto, no el bruto de la sociedad. Las ordenes
 de pago van por `/mis-liquidaciones`.
 
+`/alertas/*` es la bandeja de anomalias de un periodo (#37, ADR 0021) y, con
+`/procesos/*`, uno de los dos prefijos con las columnas distintas. **Lee** quien tiene que ver que
+impide repartir: `distribucion`, que es quien persigue las alertas con los
+autores (`RD 13.5`); `auditor`, que lee todo; y `contabilidad`, que es la otra
+firma de las mismas compuertas y necesita saber cuantas criticas siguen abiertas
+**antes de firmar** (`RD 13.8.6`, ADR 0008 — el dinero de las ONI se mueve con
+su aval). **Escribe** -evaluar un periodo y cerrar una alerta- solo
+`administrador` y `distribucion`: cerrar una alerta es decir que alguien se hizo
+cargo de una gestion, y ni `auditor` ni `contabilidad` operan el pipeline.
+
+No esta bajo `/admin/*` a proposito: ese prefijo es solo `administrador`, y
+meterlo ahi dejaria el tablero de anomalias en 403 permanente para tres de los
+cuatro roles que lo miran.
+
 `/obras/*` es el catalogo maestro, y pide `administrador` tambien para
 LEER. No es un descuido: el catalogo es el cubo contra el que resuelve todo
 el matching, y quien lo lista entero ve el repertorio completo de la
@@ -64,7 +87,9 @@ el menu del cliente.
 
 `SoloPropiasObras` no es un grupo de rutas: es el predicado que los
 endpoints de datos aplican cuando el actor es titular. Se compara
-`TitularID`, no el id de usuario.
+`TitularID`, no el id de usuario. En `/mis-ingresos` el recorte es el
+`TitularID` de la sesion (nunca un parametro). En `/explicar/{ref}` una
+cifra de otro titular responde 403.
 
 `/procesos/*` es el flujo de aprobaciones de `RD 13.5` (#34), y se parte en
 tres grupos por la misma razon que `/recaudo` y `/bolsas`: `administrador`

@@ -18,10 +18,10 @@ import (
 //
 // aplicacion.Procesos la satisface sin nombrarla.
 type Procesos interface {
-	IniciarProceso(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (aplicacion.ProcesoVista, error)
-	AvanzarEtapa(ctx context.Context, id string) (aplicacion.ProcesoVista, error)
+	IniciarProceso(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID, actorID string) (aplicacion.ProcesoVista, error)
+	AvanzarEtapa(ctx context.Context, id, actorID string) (aplicacion.ProcesoVista, error)
 	Firmar(ctx context.Context, id string, rol reparto.RolAcompuerta, actorID string) (aplicacion.ProcesoVista, error)
-	RechazarGate(ctx context.Context, id, motivo string) (aplicacion.ProcesoVista, error)
+	RechazarGate(ctx context.Context, id, motivo, actorID string) (aplicacion.ProcesoVista, error)
 	ConsultarEstadoProceso(ctx context.Context, id string) (aplicacion.ProcesoVista, error)
 	ListarProcesos(ctx context.Context) ([]aplicacion.ProcesoVista, error)
 }
@@ -97,6 +97,11 @@ const maxCuerpoProceso = 16 << 10
 // abrirProceso inicia una corrida (RD 13.5). Reservado a administrador -es
 // quien opera el pipeline (roles.md)-, igual que /reportes y /obras.
 func (a *API) abrirProceso(w http.ResponseWriter, r *http.Request) {
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoProceso)
 
 	var cuerpo abrirProcesoJSON
@@ -105,7 +110,7 @@ func (a *API) abrirProceso(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := a.procesos.IniciarProceso(r.Context(), cuerpo.ID, cuerpo.Periodo, reparto.Circuito(cuerpo.Circuito), cuerpo.BolsaID)
+	p, err := a.procesos.IniciarProceso(r.Context(), cuerpo.ID, cuerpo.Periodo, reparto.Circuito(cuerpo.Circuito), cuerpo.BolsaID, usuario.ID)
 	if err := escribirErrorDeProceso(w, r, a.log, err, "abrir el proceso"); err != nil {
 		return
 	}
@@ -141,7 +146,12 @@ func (a *API) procesoPorID(w http.ResponseWriter, r *http.Request) {
 // avanzarEtapaProceso mueve el proceso a la siguiente etapa de RD 13.5.
 // Reservado a administrador, igual que abrirProceso.
 func (a *API) avanzarEtapaProceso(w http.ResponseWriter, r *http.Request) {
-	p, err := a.procesos.AvanzarEtapa(r.Context(), chi.URLParam(r, "id"))
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+	p, err := a.procesos.AvanzarEtapa(r.Context(), chi.URLParam(r, "id"), usuario.ID)
 	if err := escribirErrorDeProceso(w, r, a.log, err, "avanzar el proceso"); err != nil {
 		return
 	}
@@ -172,6 +182,11 @@ func (a *API) firmarProceso(w http.ResponseWriter, r *http.Request) {
 // rechazarGateProceso rechaza la compuerta actual: el proceso retrocede una
 // etapa, no aborta (ADR 0008).
 func (a *API) rechazarGateProceso(w http.ResponseWriter, r *http.Request) {
+	usuario, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoProceso)
 
 	var cuerpo rechazarGateJSON
@@ -180,7 +195,7 @@ func (a *API) rechazarGateProceso(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := a.procesos.RechazarGate(r.Context(), chi.URLParam(r, "id"), cuerpo.Motivo)
+	p, err := a.procesos.RechazarGate(r.Context(), chi.URLParam(r, "id"), cuerpo.Motivo, usuario.ID)
 	if err := escribirErrorDeProceso(w, r, a.log, err, "rechazar la compuerta"); err != nil {
 		return
 	}
@@ -208,6 +223,9 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		// 409: el dato esta bien formado, lo que conflictua es contra otro
 		// recurso -la bolsa referenciada, o un proceso que ya existe con
 		// otros datos bajo el mismo id.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas):
+		// 409: el periodo tiene criticas abiertas; se resuelven en /alertas (#37, ADR 0021).
 		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
 		// 409 tambien, pero es control de concurrencia optimista, no un

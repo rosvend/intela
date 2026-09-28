@@ -11,6 +11,7 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 // sembrarProcesoNacionalListoParaValorizar deja una bolsa, un uso
@@ -99,9 +100,13 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		Usos:          s,
 		Resultados:    s,
 		Unidad:        s,
+		Anomalias:     servicioDeAnomalias(s, time.Now()),
+		Bitacora:      s,
+		Reloj:         reloj.Sistema{},
+		Origen:        s,
 	}
 
-	p, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1")
+	p, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist")
 	if err != nil {
 		t.Fatalf("iniciar proceso: %v", err)
 	}
@@ -111,13 +116,13 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 
 	// Idempotente: reabrir el mismo id no reinicia nada (prueba lo que un
 	// reintento del trabajo de cola haria).
-	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
 		t.Fatalf("reabrir proceso (idempotente): %v", err)
 	}
 
 	// recaudo -> deducciones -> importe_obra (aqui valoriza de verdad).
 	for _, esperada := range []reparto.Etapa{reparto.EtapaDeducciones, reparto.EtapaImporteObra} {
-		p, err = uc.AvanzarEtapa(ctx, "proc-y")
+		p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 		if err != nil {
 			t.Fatalf("avanzar a %q: %v", esperada, err)
 		}
@@ -142,7 +147,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 
 	// importe_titular -> liquidacion_parcial -> verificacion (compuerta).
 	for _, esperada := range []reparto.Etapa{reparto.EtapaImporteTitular, reparto.EtapaLiquidacionParcial, reparto.EtapaVerificacion} {
-		p, err = uc.AvanzarEtapa(ctx, "proc-y")
+		p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 		if err != nil {
 			t.Fatalf("avanzar a %q: %v", esperada, err)
 		}
@@ -152,7 +157,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 	}
 
 	// Verificacion sin firmas no deja pasar (RD 13.5).
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err == nil {
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err == nil {
 		t.Fatal("se esperaba error: verificacion sin firmas no avanza")
 	}
 
@@ -164,14 +169,14 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 	}
 
 	// liquidacion_final -> pago_registro (otra compuerta).
-	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
 		t.Fatalf("avanzar a liquidacion_final: %v", err)
 	}
 	if p.Etapa != reparto.EtapaLiquidacionFinal {
 		t.Fatalf("etapa = %q, se esperaba liquidacion_final", p.Etapa)
 	}
-	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
 		t.Fatalf("avanzar a pago_registro: %v", err)
 	}
@@ -181,7 +186,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 
 	// Las firmas de la compuerta de verificacion no cuentan para esta:
 	// avanzar en la revision actual tiene que fallar hasta firmar de nuevo.
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err == nil {
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err == nil {
 		t.Fatal("se esperaba error: pago_registro exige sus propias firmas, no reusa las de verificacion")
 	}
 	if _, err := uc.Firmar(ctx, "proc-y", reparto.RolDistribucion, "actor-dist"); err != nil {
@@ -191,7 +196,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		t.Fatalf("firmar contabilidad (pago_registro): %v", err)
 	}
 
-	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
 		t.Fatalf("avanzar a auditoria: %v", err)
 	}
@@ -199,7 +204,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		t.Fatalf("etapa = %q, se esperaba auditoria", p.Etapa)
 	}
 
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err == nil {
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err == nil {
 		t.Fatal("se esperaba error: auditoria es terminal")
 	}
 }
@@ -218,13 +223,13 @@ func TestProcesoVerificacionRechazadaRetrocedeYSubeRevision(t *testing.T) {
 		t.Fatalf("sembrar proceso en verificacion: %v", err)
 	}
 
-	uc := aplicacion.Procesos{Repo: s}
+	uc := aplicacion.Procesos{Repo: s, Bitacora: s, Reloj: reloj.Sistema{}, Unidad: s}
 
 	if _, err := uc.Firmar(ctx, "proc-1", reparto.RolDistribucion, "actor-dist"); err != nil {
 		t.Fatalf("firmar distribucion: %v", err)
 	}
 
-	leido, err := uc.RechazarGate(ctx, "proc-1", "faltan soportes")
+	leido, err := uc.RechazarGate(ctx, "proc-1", "faltan soportes", "actor-conta")
 	if err != nil {
 		t.Fatalf("rechazar compuerta: %v", err)
 	}
@@ -285,19 +290,23 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 		Usos:          s,
 		Resultados:    s,
 		Unidad:        s,
+		Anomalias:     servicioDeAnomalias(s, time.Now()),
+		Bitacora:      s,
+		Reloj:         reloj.Sistema{},
+		Origen:        s,
 	}
 
-	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1"); err != nil {
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
 		t.Fatalf("iniciar proceso: %v", err)
 	}
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err != nil {
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err != nil {
 		t.Fatalf("avanzar a deducciones: %v", err)
 	}
 
 	// Solo a partir de aqui falla: este AvanzarEtapa entra a importe_obra,
 	// valorizar corre de verdad, y GuardarProceso falla justo despues.
 	repoQueFalla.fallar = true
-	if _, err := uc.AvanzarEtapa(ctx, "proc-y"); err == nil {
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err == nil {
 		t.Fatal("se esperaba el fallo simulado de GuardarProceso")
 	}
 
@@ -315,7 +324,7 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 	// El reintento -- el mismo AvanzarEtapa, ahora con GuardarProceso sin
 	// fallar -- tiene que valorizar y guardar limpio, no reventar con
 	// "duplicate key value violates unique constraint resultados_proceso_pkey".
-	p, err = uc.AvanzarEtapa(ctx, "proc-y")
+	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
 		t.Fatalf("el reintento de avanzar a importe_obra fallo: %v", err)
 	}
@@ -328,5 +337,136 @@ func TestAvanzarEtapaSinAtomicidadDejaHuerfanoYRompeElReintento(t *testing.T) {
 	}
 	if len(resultado.Titulares) != 1 || resultado.Titulares[0].Importe.IsZero() {
 		t.Fatalf("resultado tras el reintento = %+v, se esperaba una linea de titular con importe", resultado)
+	}
+}
+
+// TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones: sin evaluar -> evalua y bloquea; resuelta -> avanza (#37).
+func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
+	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+
+	// Un duplicado de registro en 2026-01: la misma emision de caracol en dos entregas.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+		 VALUES ('rep-caracol-enero-bis', 'caracol', '2026-01', repeat('c', 64), 'reportes/c.csv', 64)`); err != nil {
+		t.Fatalf("sembrar la segunda entrega: %v", err)
+	}
+	insertarUsoDeAlertas(t, pool, "u-dup1", reporteEnero, "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+	insertarUsoDeAlertas(t, pool, "u-dup2", "rep-caracol-enero-bis", "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
+
+	anomalias := servicioDeAnomalias(s, time.Now())
+	uc := aplicacion.Procesos{
+		Repo:          s,
+		Parametros:    s,
+		Bolsas:        s,
+		Declaraciones: s,
+		Usos:          s,
+		Resultados:    s,
+		Unidad:        s,
+		Anomalias:     anomalias,
+		Bitacora:      s,
+		Reloj:         reloj.Sistema{},
+		Origen:        s,
+	}
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
+		t.Fatalf("iniciar proceso: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err != nil {
+		t.Fatalf("avanzar a deducciones: %v", err)
+	}
+
+	// Nadie evaluo el periodo: la bandeja esta vacia, y aun asi la compuerta no abre.
+	var guardadas int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM alertas WHERE periodo = '2026-01'`).Scan(&guardadas); err != nil {
+		t.Fatalf("contar alertas: %v", err)
+	}
+	if guardadas != 0 {
+		t.Fatalf("el periodo no deberia estar evaluado todavia, hay %d alertas", guardadas)
+	}
+	_, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
+	if !errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas) {
+		t.Fatalf("err = %v, se esperaba ErrAnomaliasCriticasAbiertas", err)
+	}
+	p, err := s.ProcesoPorID(ctx, "proc-y")
+	if err != nil {
+		t.Fatalf("leer proceso: %v", err)
+	}
+	if p.Etapa != reparto.EtapaDeducciones {
+		t.Fatalf("etapa = %q, la compuerta debio dejarlo en deducciones", p.Etapa)
+	}
+	if _, err := s.ResultadoPorProceso(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("se valorizo con criticas abiertas: %v", err)
+	}
+
+	// Un segundo intento sigue bloqueado: la evaluacion es idempotente, no "ya mire".
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); !errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas) {
+		t.Fatalf("segundo intento: err = %v, se esperaba seguir bloqueado", err)
+	}
+
+	sinResolver := false
+	criticas, err := anomalias.Listar(ctx, aplicacion.FiltroAlertas{Periodo: "2026-01", Resueltas: &sinResolver})
+	if err != nil {
+		t.Fatalf("listar abiertas: %v", err)
+	}
+	resueltas := 0
+	for _, a := range criticas {
+		if !a.Critica {
+			continue
+		}
+		if _, err := anomalias.Resolver(ctx, a.ID, "actor-dist", "entrega bis es reenvio, se excluye en #39"); err != nil {
+			t.Fatalf("resolver %s: %v", a.ID, err)
+		}
+		resueltas++
+	}
+	if resueltas == 0 {
+		t.Fatal("la evaluacion no dejo ninguna critica que resolver")
+	}
+
+	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
+	if err != nil {
+		t.Fatalf("con las criticas resueltas deberia avanzar: %v", err)
+	}
+	if p.Etapa != reparto.EtapaImporteObra {
+		t.Fatalf("etapa = %q, se esperaba importe_obra", p.Etapa)
+	}
+}
+
+var errBitacoraCaida = errors.New("bitacora caida")
+
+// bitacoraQueFalla es un *Store real cuya bitacora rechaza todo asiento.
+type bitacoraQueFalla struct{ *Store }
+
+func (bitacoraQueFalla) Asentar(context.Context, aplicacion.Asiento) error {
+	return errBitacoraCaida
+}
+
+// Sin asiento no hay valorizacion: el rollback alcanza a resultados_* y a la etapa (ADR 0006).
+func TestValorizarSinAsientoNoDejaResultado(t *testing.T) {
+	s, _ := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+
+	uc := aplicacion.Procesos{
+		Repo: s, Parametros: s, Bolsas: s, Declaraciones: s, Usos: s,
+		Resultados: s, Unidad: s, Bitacora: s, Reloj: reloj.Sistema{}, Origen: s,
+		Anomalias: servicioDeAnomalias(s, time.Now()),
+	}
+	if _, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist"); err != nil {
+		t.Fatalf("iniciar proceso: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); err != nil {
+		t.Fatalf("avanzar a deducciones: %v", err)
+	}
+
+	// Con la compuerta cableada el error tiene que ser el del asiento: si fuera el de la compuerta, esto no probaria el rollback.
+	uc.Bitacora = bitacoraQueFalla{s}
+	if _, err := uc.AvanzarEtapa(ctx, "proc-y", "actor-dist"); !errors.Is(err, errBitacoraCaida) {
+		t.Fatalf("err = %v, se esperaba el fallo de la bitacora", err)
+	}
+	if _, err := s.ResultadoPorProceso(ctx, "proc-y"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("quedo un resultado sin asiento: %v", err)
+	}
+	p, err := s.ProcesoPorID(ctx, "proc-y")
+	if err != nil || p.Etapa != reparto.EtapaDeducciones {
+		t.Fatalf("etapa = %q (%v), se esperaba deducciones", p.Etapa, err)
 	}
 }

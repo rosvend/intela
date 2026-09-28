@@ -279,10 +279,15 @@ export interface paths {
         };
         /**
          * Cola de revision
-         * @description Lista las filas que esperan ojo humano antes de ponderar: las que
-         *     no se pudieron normalizar (fecha inparseable, moneda no reconocida,
-         *     parametro normativo ausente) y, cuando aterrice el #37, las anomalias
-         *     de un periodo (ONI, duplicados, declaraciones que no suman 100%).
+         * @description Lista las filas que esperan ojo humano antes de ponderar: las que no
+         *     se pudieron normalizar (fecha inparseable, moneda no reconocida,
+         *     parametro normativo ausente) y los rechazos del adaptador de formato.
+         *
+         *     **Las anomalias de un periodo NO salen por aqui.** Esta descripcion
+         *     prometia que el #37 aterrizaria en esta ruta y no fue asi: una anomalia
+         *     necesita estado de resolucion y este schema no lo tiene, y este prefijo
+         *     es solo de `administrador` mientras el tablero de anomalias lo miran
+         *     ademas `distribucion`, `contabilidad` y `auditor`. Viven en `/alertas` (ADR 0021).
          *
          *     Un solo listado y un solo schema. `tipo` discrimina el origen
          *     (`normalizacion` | `anomalia` | `adaptador`); `codigo` es el motivo
@@ -292,6 +297,40 @@ export interface paths {
          *     Sin sesion responde 401. Con sesion de otro rol responde 403.
          */
         get: operations["listarColaRevision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/identificacion/casos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Casos de identificacion
+         * @description Lista los usos que la cascada no pudo identificar (`pendiente`,
+         *     escalon `oni`) y los que una persona ya resolvio (`asignado`,
+         *     escalon `manual`), con la evidencia y los candidatos de la banda
+         *     ambigua en su orden. Sirve la bandeja y la lista ONI de #39.
+         *
+         *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
+         *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
+         *
+         *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
+         *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
+         *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
+         *     caso resuelto y el alta del reporte para uno pendiente.
+         *
+         *     Sin sesion responde 401. Con sesion de otro rol responde 403. Un
+         *     filtro mal formado responde 400.
+         */
+        get: operations["listarCasosIdentificacion"];
         put?: never;
         post?: never;
         delete?: never;
@@ -400,6 +439,73 @@ export interface paths {
          *     otro valor es 400. El filtro `periodo` es el mismo del panel.
          */
         get: operations["exportarLiquidaciones"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mis-ingresos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ingresos netos del titular de la sesion
+         * @description Lista las cifras netas del titular autenticado, recortadas a las
+         *     obras donde tiene participacion registrada (OE-6).
+         *
+         *     El titular se toma de la sesion. Un `titular_id` en la query no
+         *     cambia a quien se consulta.
+         *
+         *     El unico monto de cada fila es `neto`. El bruto, las deducciones
+         *     y el linaje (fuente, reporte, regla, split) estan en
+         *     `/explicar/{ref}`.
+         */
+        get: operations["misIngresos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/explicar/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Linaje de una cifra
+         * @description Devuelve el linaje de una cifra distribuida, reconstruido solo desde
+         *     los asientos de la corrida (`reparto.valorizado`, `firma.registrada`),
+         *     de la obra (`reparto.obra_valorizada`) y de la bolsa
+         *     (`recaudo.registrado`). No recalcula nada contra las tablas actuales:
+         *     el snapshot, la declaracion y el archivo que valen son los que la
+         *     corrida uso.
+         *
+         *     `ref` es `proceso_id:obra_id:titular_id` para la linea de un titular,
+         *     o `proceso_id:obra_id` para la cifra de la obra, incluida una obra
+         *     retenida porque su declaracion no suma 100% (RD 13.1.3).
+         *
+         *     Si falta la valorizacion de la corrida o de la obra, la respuesta es
+         *     404: una explicacion a medias es peor que ninguna. Un eslabon
+         *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
+         *     no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
+         *     de la bolsa (`recaudo.registrado`) y el alta de la obra
+         *     (`obra.registrada`, que se nombra aunque haya correcciones asentadas).
+         *
+         *     Un titular solo ve lineas suyas; la de otro titular responde 403, no
+         *     404. `auditor` y `administrador` ven cualquiera.
+         */
+        get: operations["explicarCifra"];
         put?: never;
         post?: never;
         delete?: never;
@@ -751,6 +857,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/alertas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar las anomalias de un periodo
+         * @description Devuelve las alertas que cuadran con el filtro, de la mas reciente a
+         *     la mas antigua. Sin coincidencias devuelve una lista vacia, no un 404.
+         *
+         *     Los tres filtros son opcionales y ninguno se ignora cuando llega mal:
+         *     un `periodo` mal formado o un `tipo` que no esta en la lista cerrada
+         *     salen con 400. Ignorados devolverian todo -o nada- y quien pregunta lo
+         *     leeria como "ese periodo no tuvo anomalias".
+         *
+         *     Esta ruta NO evalua: es una lectura. La pasada de deteccion se dispara
+         *     con `POST /alertas/evaluacion`.
+         */
+        get: operations["listarAlertas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alertas/evaluacion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluar las anomalias de un periodo
+         * @description Corre los seis detectores sobre el periodo ya armado y escribe las
+         *     alertas que encuentre.
+         *
+         *     **Es idempotente.** Se puede correr al cerrar la ingesta, otra vez
+         *     cuando un autor declara, y otra antes de la compuerta: la clave natural
+         *     de la tabla es la identidad del hallazgo (periodo, tipo y registro
+         *     ofensor), asi que la misma anomalia no se escribe dos veces. Por eso la
+         *     respuesta trae `detectadas` y `nuevas` por separado: la segunda pasada
+         *     sigue detectando seis y escribe cero.
+         *
+         *     Una alerta que una persona ya cerro **no se reabre** aunque la anomalia
+         *     siga ahi. Limitacion conocida, ver ADR 0021.
+         *
+         *     Responde 200 y no 201: la pasada no crea un recurso con URL, crea N
+         *     alertas o ninguna, y lo que devuelve es el recuento.
+         *
+         *     Escribe, asi que pide `administrador` o `distribucion`. `auditor` lee
+         *     la bandeja y no la dispara.
+         */
+        post: operations["evaluarAnomalias"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alertas/{id}/resolver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolver una alerta
+         * @description Marca la alerta como atendida a nombre de quien la atiende. Quien firma
+         *     sale de la SESION y no del cuerpo: dejarlo llegar por JSON permitiria
+         *     firmar la decision a nombre de otro, y el asiento del ADR 0006 tiene
+         *     que nombrar a quien la tomo de verdad.
+         *
+         *     **No toca el registro ofensor.** Asignar la obra de un ONI o descartar
+         *     una fila es la bandeja de #39, con su propio caso de uso y su propio
+         *     asiento; esto solo deja constancia de que alguien se hizo cargo.
+         *
+         *     Resolver dos veces responde 409, no 200: quien pulsa el boton el
+         *     segundo tiene que saber que la firma escrita no es la suya. Dos
+         *     personas mirando el mismo tablero es el caso normal.
+         */
+        post: operations["resolverAlerta"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/procesos": {
         parameters: {
             query?: never;
@@ -834,6 +1037,10 @@ export interface paths {
          *     dejar pasar. Al entrar a `importe_obra` del circuito nacional invoca
          *     el motor puro de valorizacion; el internacional nunca la alcanza
          *     (`RD 7.4`).
+         *
+         *     Al salir de `deducciones` (hacia `importe_obra` o
+         *     `liquidacion_parcial`) evalua las anomalias del periodo y no deja
+         *     pasar si queda alguna critica sin resolver (ADR 0021).
          */
         post: operations["avanzarEtapaProceso"];
         delete?: never;
@@ -1676,6 +1883,209 @@ export interface components {
             error: string;
         };
         /**
+         * @description Los seis detectores de OE-5 / #37. Lista cerrada: lo que se guarde con
+         *     otra grafia no lo encuentra ningun filtro, y nada falla de forma
+         *     visible.
+         *
+         *     Los cinco primeros son el contrato que el tablero de anomalias ya fijo
+         *     antes de que existiera el backend; el sexto lo anade esta issue.
+         *
+         *     - `oni` — la cascada de identificacion corrio y no reconocio la obra
+         *       (ADR 0007). No es un fallo: es una etapa del diseno, y su parte queda
+         *       en reserva hasta que se resuelva o prescriba (`R-19`, `RD 13.8`).
+         *     - `duplicado_archivo` — los mismos bytes en dos entregas. El
+         *       `UNIQUE (sha256, fuente)` de `reportes` solo cierra la repeticion de
+         *       la MISMA fuente; esto caza la que cruza fuentes o periodos.
+         *     - `duplicado_registro` — el mismo registro logico en dos archivos del
+         *       mismo periodo. La repeticion DENTRO de un archivo ya la rechaza el
+         *       adaptador de formato al ingerir.
+         *     - `titular_sin_porcentaje` — un coautor del catalogo sin parte en la
+         *       declaracion vigente, o una parte sin IPI. Nombra a la PERSONA.
+         *     - `reserva_declaracion_incompleta` — `R-04` / `RD 13.1.3`: lo declarado
+         *       no suma 100 y se retiene el TOTAL de esa obra. Nombra la OBRA y el
+         *       dinero. Es un estado valido del modelo, no un error.
+         *     - `tipo_obra_sin_mapear` — un uso identificado llega sin `tipo_obra`
+         *       en una modalidad que pondera por el (TV, suscripcion, hotel): no cae
+         *       en ninguna de las cuatro categorias de `RD 9.1.1` y el motor aborta
+         *       la corrida. Nombra el USO: en el catalogo la obra si tiene tipo.
+         * @enum {string}
+         */
+        TipoDeAnomalia: "oni" | "duplicado_archivo" | "duplicado_registro" | "titular_sin_porcentaje" | "reserva_declaracion_incompleta" | "tipo_obra_sin_mapear";
+        /**
+         * @description Una anomalia de un periodo, con el registro exacto que la disparo.
+         *
+         *     No hay importes, y por la misma razon que no los tiene un uso: una
+         *     alerta dice que una fila o una obra no esta en condiciones de ponderar,
+         *     nunca cuanto vale.
+         */
+        Alerta: {
+            /**
+             * Format: uuid
+             * @description Identificador de la alerta. Lo genera la base.
+             */
+            id: string;
+            tipo: components["schemas"]["TipoDeAnomalia"];
+            /**
+             * @description La frase que lee una persona de distribucion, con las cifras
+             *     concretas -que suma da, que otra entrega colisiona, en que fila
+             *     venia el registro repetido-. Quien persigue la alerta tiene que
+             *     poder actuar sin abrir la base.
+             */
+            detalle: string;
+            /**
+             * @description Periodo de la evaluacion que la levanto. Va en la fila y no se
+             *     deduce del registro ofensor: la misma obra puede quedar retenida en
+             *     dos periodos seguidos y cada uno tiene su propia alerta.
+             * @example 2025-01
+             */
+            periodo: string;
+            /**
+             * @description El registro ofensor en una sola cadena, para pintar:
+             *     `<ref_tipo>:<ref_id>`, y `#<ref_titular>` detras cuando lo hay.
+             *     Es lo que el tablero mete en la celda "Referencia"; para navegar al
+             *     registro usar `ref_tipo` y `ref_id`, que no hay que partir.
+             * @example obra:obra-12#IPI-00000002
+             */
+            referencia: string;
+            /**
+             * @description A que tabla apunta el registro ofensor. NO es una clave foranea, y
+             *     es deliberado: la referencia apunta a tablas distintas segun el
+             *     detector, y una FK con CASCADE se llevaria la alerta por delante el
+             *     dia que la resolucion de #39 borre el uso ofensor -y con ella el
+             *     rastro de que aquello paso.
+             * @enum {string}
+             */
+            ref_tipo: "uso" | "reporte" | "obra";
+            /**
+             * @description Identificador del registro ofensor dentro de su tabla.
+             * @example obra-12
+             */
+            ref_id: string;
+            /**
+             * @description IPI de la persona a la que le falta la parte. Solo lo trae
+             *     `titular_sin_porcentaje`: es la segunda coordenada del registro
+             *     ofensor, porque lo que falta es una fila de `declaraciones` y su
+             *     identidad es (obra, titular). Con la obra sola, dos coautores
+             *     ausentes de la misma obra serian la misma alerta.
+             * @example IPI-00000002
+             */
+            ref_titular?: string;
+            /**
+             * @description Si este tipo BLOQUEA la distribucion del periodo. Es DERIVADO del
+             *     tipo, no un dato guardado: persistirlo congelaria la clasificacion
+             *     en el momento de detectar.
+             *
+             *     La linea no es "que tan grave suena" sino si dejarlo sin resolver
+             *     hace que las cifras del periodo salgan MAL. Bloquean los dos
+             *     duplicados -una emision contada dos veces infla los puntos de su
+             *     obra y desinfla los de todas las demas del mismo canal, y el valor
+             *     punto de `RD 9.1.1` es un cociente- y `tipo_obra_sin_mapear`. NO
+             *     bloquean `oni` -etapa del diseno- ni las dos de declaracion -estado
+             *     valido del modelo: se retiene esa obra y el periodo sigue-.
+             */
+            critica: boolean;
+            /**
+             * Format: date-time
+             * @description Cuando se vio por PRIMERA vez. Una segunda pasada que vuelva a
+             *     detectarla no lo mueve, salvo que la reabra tras un autocierre.
+             */
+            detectada: string;
+            /**
+             * @description Si alguien ya se hizo cargo, o si el sistema la autocerro porque
+             *     una reevaluacion ya no la detecta (ver `autocerrada`). La que cerro
+             *     una persona no se reabre aunque la anomalia siga ahi; la
+             *     autocerrada si (ADR 0021).
+             */
+            resuelta: boolean;
+            /**
+             * @description Cuenta que la cerro. Sale de la sesion, nunca del cuerpo. Ausente
+             *     si la autocerro el sistema.
+             * @example usr-admin
+             */
+            resuelta_por?: string;
+            /**
+             * Format: date-time
+             * @description Instante de la resolucion, tomado del reloj del nucleo.
+             */
+            resuelta_en?: string;
+            /**
+             * @description Justificacion de quien la resolvio. Vacia solo mientras la alerta
+             *     esta abierta.
+             */
+            nota?: string;
+            /**
+             * @description La cerro el sistema porque una reevaluacion del periodo ya no la
+             *     detecto. Si la anomalia vuelve, la alerta se reabre.
+             */
+            autocerrada?: boolean;
+        };
+        /**
+         * @description El periodo que se va a evaluar. Va en el cuerpo y no en la query porque
+         *     esta operacion ESCRIBE: un POST cuyo unico argumento viaja en la URL se
+         *     copia y se repite desde la barra del navegador con demasiada facilidad.
+         */
+        PedidoDeEvaluacion: {
+            /** @example 2025-01 */
+            periodo: string;
+        };
+        /**
+         * @description La nota de quien resuelve, obligatoria. Todo lo demas -quien y
+         *     cuando- lo pone el servidor: la firma sale de la sesion y el instante
+         *     del reloj del nucleo.
+         */
+        ResolucionDeAlerta: {
+            /** @example hablado con la autora, declara esta semana */
+            nota: string;
+        };
+        /** @description Recuento de una pasada de deteccion. */
+        ResumenDeEvaluacion: {
+            /** @example 2025-01 */
+            periodo: string;
+            /**
+             * @description Cuantas anomalias tiene el periodo AHORA. No baja porque ya
+             *     estuvieran escritas.
+             */
+            detectadas: number;
+            /**
+             * @description Cuantas de esas no estaban antes de esta pasada (incluye las
+             *     autocerradas que se reabren, cada una con su asiento
+             *     `alerta.reabierta`). Las dos cifras hacen falta: con una
+             *     sola, correr la evaluacion dos veces daria 0 la segunda y se leeria
+             *     como "el periodo esta limpio".
+             */
+            nuevas: number;
+            /**
+             * @description Alertas abiertas que esta pasada ya no detecto y el sistema cerro,
+             *     cada una con su asiento `alerta.autocerrada`.
+             */
+            autocerradas: number;
+            /**
+             * @description Lo detectado en esta pasada, por tipo. Trae los SEIS tipos siempre,
+             *     con cero explicito donde no hubo nada: una clave ausente no se
+             *     distingue de un cero al otro lado del JSON, y el tablero pinta una
+             *     tarjeta por tipo.
+             */
+            por_tipo: {
+                [key: string]: number;
+            };
+            /**
+             * @description Alertas sin resolver del periodo cuyo tipo bloquea la distribucion.
+             *     Es la cifra que mira la compuerta de `/procesos/{id}/avanzar` al
+             *     salir de `deducciones` (ADR 0021).
+             */
+            criticas_abiertas: number;
+            /**
+             * @description Filas del periodo a las que no se les pudo componer clave de
+             *     registro, asi que el detector de duplicados NO las comparo con
+             *     ninguna otra. No cuenta anomalias: cuenta el tamano del punto
+             *     ciego.
+             *     Viaja porque sin ella "cero duplicados" y "no se miro" se leen
+             *     igual. El caso es real: `Hora` no es obligatoria en el mapa de
+             *     Caracol y a la vez forma parte de su clave de registro.
+             */
+            usos_sin_cotejar: number;
+        };
+        /**
          * @description Importe en COP con dos decimales, sin separador de miles. Es una
          *     cadena para no perder centavos en JSON number.
          * @example 3900.00
@@ -1887,8 +2297,14 @@ export interface components {
          *     viaja tal cual lo guardo el modulo que asento -es su evidencia, no
          *     una proyeccion-: `declaracion.guardada` trae version, estado y
          *     partes; `recaudo.registrado` trae periodo, circuito, bruto, convenio,
-         *     tarifa y factura. Append-only: no hay escritura ni borrado que
-         *     documentar.
+         *     tarifa y factura; `proceso.abierto`, `proceso.etapa_avanzada`,
+         *     `firma.registrada` y `proceso.gate_rechazado` traen la etapa, la
+         *     revision y, segun el caso, la firma o el motivo;
+         *     `reparto.valorizado` trae la bolsa, el snapshot, las deducciones con
+         *     su porcentaje y los reportes exactos; `reparto.obra_valorizada` trae
+         *     el importe de la obra, la version de su declaracion, las partes y la
+         *     identificacion de cada uso. Append-only: un asiento nunca se modifica
+         *     ni se borra.
          */
         Asiento: {
             /**
@@ -1919,6 +2335,13 @@ export interface components {
              */
             actor: string;
             /**
+             * @description Columna reservada para enlazar una correccion con el asiento que
+             *     corrige (ADR 0006). Ningun caso de uso escribe correcciones todavia,
+             *     asi que hoy siempre esta ausente.
+             * @example 3f9a2c1e-7b4d-4a8e-9c0f-1a2b3c4d5e6f
+             */
+            refiere_a?: string;
+            /**
              * @description Detalle del hecho, tal cual lo guardo el modulo que asento:
              *     cualquier JSON. `declaracion.guardada` trae version, estado y
              *     partes; `recaudo.registrado` trae periodo, circuito, bruto,
@@ -1934,12 +2357,225 @@ export interface components {
              */
             cuando: string;
         };
+        ListaIngresos: {
+            /**
+             * @description Cifras netas del titular de la sesion. El bruto no forma parte
+             *     de este objeto (OE-6).
+             */
+            ingresos: components["schemas"]["Ingreso"][];
+        };
+        Ingreso: {
+            /**
+             * @description Identificador de la linea, para `GET /explicar/{ref}`.
+             * @example proc-2026-01:obra-completa:tit-ana
+             */
+            ref: string;
+            /** @description Identificador interno de la obra. */
+            obra_id: string;
+            /** @description Titulo para mostrar. */
+            obra: string;
+            /**
+             * @description Fuentes de los reportes que ponderaron esta cifra en el periodo,
+             *     separadas por coma si hay mas de una. El detalle del archivo
+             *     crudo esta en la explicacion.
+             */
+            fuente: string;
+            /**
+             * @description Periodo de la corrida.
+             * @example 2026-01
+             */
+            periodo: string;
+            /**
+             * @description Monto neto despues de deducciones. Nunca el bruto.
+             * @example 3600.00
+             */
+            neto: string;
+        };
         /**
-         * @description Una fila de la cola de revision. El mismo schema sirve a la
-         *     normalizacion (OE-1), a los rechazos del adaptador de formato (#25)
-         *     y a las anomalias (OE-5 / #37): `tipo` dice de cual detector salio,
-         *     `codigo` es el motivo tipado (columna propia) y `motivo` nombra el
-         *     campo. No hay importes: una fila en revision no pondera.
+         * @description Linaje de una cifra (ADR 0006). Montos como cadena con dos decimales
+         *     (ADR 0010); porcentajes como cadena en escala 0-100.
+         */
+        Explicacion: {
+            /** @description La ref pedida. */
+            ref: string;
+            /** @description Titular de la linea. Ausente en la cifra de una obra. */
+            titular_id?: string;
+            /**
+             * @description La cifra explicada, despues de deducciones.
+             * @example 650000.00
+             */
+            neto: string;
+            /**
+             * @description Neto mas las deducciones que le corresponden.
+             * @example 1000000.00
+             */
+            bruto: string;
+            /** @description La obra se retuvo entera (RD 13.1.3, R-04). */
+            retenida: boolean;
+            /** @description Por que se retuvo. Ausente si no se retuvo. */
+            motivo?: string;
+            corrida: {
+                proceso_id: string;
+                /** @example 2026-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /** @description De donde salio el dinero. */
+            bolsa: {
+                id: string;
+                /** @description Usuario de recaudo que pago la bolsa. */
+                usuario_id: string;
+                /** @example 1000000.00 */
+                bruto: string;
+                /** @description Como se cobro. Null si el recaudo no tiene asiento; ver `faltantes`. */
+                recaudo: {
+                    convenio: string;
+                    tarifa: string;
+                    factura: string;
+                } | null;
+            };
+            reporte: components["schemas"]["ReporteDeLinaje"];
+            /** @description Los archivos exactos que ponderaron esta obra en la corrida. */
+            reportes: components["schemas"]["ReporteDeLinaje"][];
+            /** @description La obra, resumida por su identificacion menos cierta. */
+            obra: {
+                id: string;
+                /** @description De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos. */
+                titulo: string;
+                /** @enum {string} */
+                escalon: "alias" | "id_global" | "difuso" | "manual";
+                /** @description Vacio para alias e id global, que son exactos. */
+                puntaje: string;
+            };
+            /** @description Como se reconocio la obra en cada uso que peso (ADR 0007). */
+            identificacion: {
+                uso_id: string;
+                reporte_id: string;
+                escalon: string;
+                puntaje?: string;
+                evidencia?: string;
+                /** @description Quien decidio, si fue manual. */
+                resuelto_por?: string;
+                /** Format: date-time */
+                resuelto_en?: string;
+            }[];
+            regla: {
+                snapshot_id: string;
+                reglamento: string;
+            };
+            /** @description La parte declarada del titular. Null en la cifra de una obra. */
+            split: {
+                titular_id: string;
+                ipi: string;
+                /** @example 60 */
+                porcentaje: string;
+                /** @description Version de la declaracion que uso la corrida. */
+                version: number | null;
+            } | null;
+            deducciones: {
+                /** @enum {string} */
+                concepto: "gastos_administrativos" | "bienestar_social" | "reserva_errores_tecnicos";
+                /** @example 20 */
+                porcentaje: string;
+                /** @example 200000.00 */
+                monto: string;
+            }[];
+            /** @description Firmas de compuerta de la corrida, incluidas las de revisiones rechazadas. */
+            firmas: {
+                /** @enum {string} */
+                rol: "distribucion" | "contabilidad";
+                actor_id: string;
+                sobre_revision: number;
+                etapa: string;
+                /** Format: date-time */
+                cuando: string;
+            }[];
+            /**
+             * @description Eslabones accesorios sin asiento, por el nombre del hecho que falta:
+             *     `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
+             *     de la obra; una correccion asentada no la sustituye). Vacio solo si
+             *     los dos estan asentados; la cadena del dinero nunca falta, sin ella
+             *     la respuesta es 404.
+             */
+            faltantes: string[];
+        };
+        /** @description La version exacta de un archivo crudo en la boveda. */
+        ReporteDeLinaje: {
+            id: string;
+            fuente: string;
+            sha256: string;
+            clave_objeto: string;
+        };
+        /** @description Una pagina de la cola manual y el total de pendientes bajo los mismos filtros. */
+        PaginaCasosIdentificacion: {
+            casos: components["schemas"]["CasoIdentificacion"][];
+            /** @description Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion. */
+            pendientes: number;
+        };
+        /**
+         * @description Un uso que la cascada no resolvio, tal como llego, con la evidencia
+         *     para que una persona decida. Sin importes ni medidas (ADR 0007).
+         */
+        CasoIdentificacion: {
+            /** @description Id del uso. */
+            id: string;
+            titulo: string;
+            titulo_original: string;
+            fuente: string;
+            modalidad: string;
+            reporte_id: string;
+            /** @description Periodo del reporte del que salio el uso. */
+            periodo: string;
+            /** @description Identificadores de la fuente, una pareja `tipo=valor` por linea (ADR 0018). */
+            ids_fuente: string;
+            /** @description Por que la cascada no lo resolvio. */
+            evidencia: string;
+            /** @enum {string} */
+            estado: "pendiente" | "asignado";
+            /** @description Obras de la banda ambigua en orden. Vacia si el uso quedo bajo la banda. */
+            candidatos: components["schemas"]["CandidatoIdentificacion"][];
+            /** @description La obra que una persona le dio al caso. `null` si esta pendiente. */
+            obra_asignada: {
+                id: string;
+                titulo: string;
+            } | null;
+            /** @description Quien resolvio el caso. `null` si esta pendiente. */
+            resuelto_por: {
+                id: string;
+                /** @description Nombre para mostrar del usuario. */
+                nombre: string;
+            } | null;
+            /** Format: date-time */
+            resuelto_en: string | null;
+            /**
+             * Format: date-time
+             * @description `resuelto_en` si esta resuelto; si no, el alta del reporte.
+             */
+            ultima_actualizacion: string;
+        };
+        CandidatoIdentificacion: {
+            obra_id: string;
+            /** @description Titulo de la obra en el catalogo. */
+            titulo: string;
+            anio: number;
+            genero: string;
+            /** @description Similitud del escalon difuso. */
+            puntaje: number;
+            /** @description El titulo del uso con el que se obtuvo el puntaje. */
+            titulo_consultado: string;
+        };
+        /**
+         * @description Una fila de la cola de revision. Sirve a la normalizacion (OE-1) y a
+         *     los rechazos del adaptador de formato (#25): `tipo` dice de cual
+         *     detector salio, `codigo` es el motivo tipado (columna propia) y
+         *     `motivo` nombra el campo. No hay importes: una fila en revision no
+         *     pondera.
+         *
+         *     `anomalia` sigue en el enum de `tipo` porque la columna
+         *     `usos_rechazados.tipo` lo admite desde la migracion 00010, pero las
+         *     anomalias de OE-5 / #37 **no se sirven por aqui**: van por `/alertas`,
+         *     que si tiene estado de resolucion y roles propios (ADR 0021).
          */
         ItemRevision: {
             /** @description Identificador de la fila, el mismo espacio que `usos`. */
@@ -1951,9 +2587,9 @@ export interface components {
             tipo: "normalizacion" | "anomalia" | "adaptador";
             /**
              * @description Motivo tipado (`fecha_inparseable`, `moneda_desconocida`,
-             *     `parametro_ausente`, `rechazo_formato`, y los del #37). Permite
-             *     filtrar sin parsear prosa. Se persiste en columna propia; no se
-             *     re-deriva cortando el texto del motivo.
+             *     `parametro_ausente`, `rechazo_formato`). Permite filtrar sin
+             *     parsear prosa. Se persiste en columna propia; no se re-deriva
+             *     cortando el texto del motivo.
              */
             codigo: string;
             /** @description Texto que nombra el campo y explica que falta o esta mal. */
@@ -2958,6 +3594,142 @@ export interface operations {
             };
         };
     };
+    listarCasosIdentificacion: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Filtra por estado del caso. Si se omite, lista los dos.
+                 * @example pendiente
+                 */
+                estado?: "pendiente" | "asignado";
+                /**
+                 * @description Fuente del uso, exacta.
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo del reporte, `AAAA` o `AAAA-MM` con mes entre 01 y 12.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Tamano de la pagina. Si se omite, el servidor aplica 100. Tiene
+                 *     que ser un entero positivo y no mayor que 500.
+                 * @example 50
+                 */
+                limite?: number;
+                /**
+                 * @description Cuantos casos saltarse. Cero o ausente es la primera pagina.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pagina de casos, en orden de llegada del reporte. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "pendientes": 1,
+                     *       "casos": [
+                     *         {
+                     *           "id": "uso-1",
+                     *           "titulo": "La Casa",
+                     *           "titulo_original": "The House",
+                     *           "fuente": "caracol",
+                     *           "modalidad": "tv",
+                     *           "reporte_id": "rep-1",
+                     *           "periodo": "2025-01",
+                     *           "ids_fuente": "id_ficha=871732",
+                     *           "evidencia": "banda ambigua: 1 candidatos, mejor obra-12 (0.61000) para \"la casa\" bajo umbral 0.85000",
+                     *           "estado": "pendiente",
+                     *           "candidatos": [
+                     *             {
+                     *               "obra_id": "obra-12",
+                     *               "titulo": "La Casa de las Dos Palmas",
+                     *               "anio": 1990,
+                     *               "genero": "Drama",
+                     *               "puntaje": 0.61,
+                     *               "titulo_consultado": "la casa"
+                     *             }
+                     *           ],
+                     *           "obra_asignada": null,
+                     *           "resuelto_por": null,
+                     *           "resuelto_en": null,
+                     *           "ultima_actualizacion": "2025-02-01T10:00:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PaginaCasosIdentificacion"];
+                };
+            };
+            /** @description Un filtro o la paginacion vienen mal formados. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "filtro de casos invalido: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo la cola de identificacion. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la cola de identificacion no esta disponible"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     auditoriaAsientos: {
         parameters: {
             query?: {
@@ -3301,6 +4073,256 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    misIngresos: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Identificador de obra. Vacio, todas las del titular.
+                 * @example obra-completa
+                 */
+                obra?: string;
+                /**
+                 * @description Fuente del reporte que pondero la bolsa (caracol, netflix, ...).
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo de la corrida, `YYYY` o `YYYY-MM`.
+                 * @example 2026-01
+                 */
+                periodo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lista de ingresos netos. Vacia si no hay cifras con esos filtros. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "ingresos": [
+                     *         {
+                     *           "ref": "proc-2026-01:obra-completa:tit-ana",
+                     *           "obra_id": "obra-completa",
+                     *           "obra": "La Casa de las Dos Palmas",
+                     *           "fuente": "caracol",
+                     *           "periodo": "2026-01",
+                     *           "neto": "3600.00"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListaIngresos"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    explicarCifra: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description `proceso_id:obra_id:titular_id` o `proceso_id:obra_id`. Cualquier
+                 *     otra forma responde 404.
+                 * @example proc-bolsa-1-1:obra-1:titular-1
+                 */
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Linaje completo de la cifra. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "ref": "proc-bolsa-1-1:obra-1:titular-1",
+                     *       "titular_id": "titular-1",
+                     *       "neto": "650000.00",
+                     *       "bruto": "1000000.00",
+                     *       "retenida": false,
+                     *       "corrida": {
+                     *         "proceso_id": "proc-bolsa-1-1",
+                     *         "periodo": "2026-01",
+                     *         "circuito": "nacional"
+                     *       },
+                     *       "bolsa": {
+                     *         "id": "bolsa-1",
+                     *         "usuario_id": "caracol",
+                     *         "bruto": "1000000.00",
+                     *         "recaudo": {
+                     *           "convenio": "conv-2026",
+                     *           "tarifa": "T-01",
+                     *           "factura": "F-0001"
+                     *         }
+                     *       },
+                     *       "reporte": {
+                     *         "id": "rep-caracol-2026-01",
+                     *         "fuente": "caracol",
+                     *         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                     *         "clave_objeto": "reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                     *       },
+                     *       "reportes": [
+                     *         {
+                     *           "id": "rep-caracol-2026-01",
+                     *           "fuente": "caracol",
+                     *           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                     *           "clave_objeto": "reportes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                     *         }
+                     *       ],
+                     *       "obra": {
+                     *         "id": "obra-1",
+                     *         "titulo": "La Casa de las Dos Palmas",
+                     *         "escalon": "difuso",
+                     *         "puntaje": "0.91"
+                     *       },
+                     *       "identificacion": [
+                     *         {
+                     *           "uso_id": "uso-1",
+                     *           "reporte_id": "rep-caracol-2026-01",
+                     *           "escalon": "difuso",
+                     *           "puntaje": "0.91",
+                     *           "evidencia": "trgm sobre titulo normalizado"
+                     *         }
+                     *       ],
+                     *       "regla": {
+                     *         "snapshot_id": "snap-2026-01",
+                     *         "reglamento": "RD-IX"
+                     *       },
+                     *       "split": {
+                     *         "titular_id": "titular-1",
+                     *         "ipi": "IPI-00000001",
+                     *         "porcentaje": "100",
+                     *         "version": 3
+                     *       },
+                     *       "deducciones": [
+                     *         {
+                     *           "concepto": "gastos_administrativos",
+                     *           "porcentaje": "20",
+                     *           "monto": "200000.00"
+                     *         },
+                     *         {
+                     *           "concepto": "bienestar_social",
+                     *           "porcentaje": "10",
+                     *           "monto": "100000.00"
+                     *         },
+                     *         {
+                     *           "concepto": "reserva_errores_tecnicos",
+                     *           "porcentaje": "5",
+                     *           "monto": "50000.00"
+                     *         }
+                     *       ],
+                     *       "firmas": [
+                     *         {
+                     *           "rol": "distribucion",
+                     *           "actor_id": "usr-dist",
+                     *           "sobre_revision": 1,
+                     *           "etapa": "verificacion",
+                     *           "cuando": "2026-02-01T10:00:00Z"
+                     *         },
+                     *         {
+                     *           "rol": "contabilidad",
+                     *           "actor_id": "usr-conta",
+                     *           "sobre_revision": 1,
+                     *           "etapa": "verificacion",
+                     *           "cuando": "2026-02-01T11:00:00Z"
+                     *         }
+                     *       ],
+                     *       "faltantes": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Explicacion"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Autenticado, pero el rol no basta, o el titular pide una cifra
+             *     que no es suya.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description La ref no tiene forma valida, o la corrida o la obra no tienen
+             *     valorizacion asentada, o el titular no tiene linea en esa obra.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no hay linaje asentado para esa cifra"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
@@ -4796,6 +5818,377 @@ export interface operations {
             };
         };
     };
+    listarAlertas: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y `12`.
+                 *     Un valor mal formado se rechaza con 400 en vez de ignorarse.
+                 * @example 2025-01
+                 */
+                periodo?: string;
+                /**
+                 * @description Uno de los seis tipos de anomalia. Una grafia que no este en la
+                 *     lista se rechaza con 400: devolver la lista vacia haria pasar un
+                 *     `onni` por "no hay ninguna de ese tipo".
+                 */
+                tipo?: components["schemas"]["TipoDeAnomalia"];
+                /**
+                 * @description `false` deja solo las abiertas, `true` solo las cerradas. Sin el
+                 *     parametro salen las dos: "no filtrar" y "solo las resueltas" no
+                 *     pueden ser el mismo valor, o no habria forma de pedir el historial.
+                 * @example false
+                 */
+                resueltas?: boolean;
+                /**
+                 * @description Cuantas alertas devolver. Igual que en `/obras` y `/titulares`.
+                 *     Sin el, el por defecto (100). Tres de los seis detectores emiten
+                 *     UNA alerta por fila de uso, asi que una evaluacion real sobre un
+                 *     lote de 10.000 registros deja del orden de 10.000 alertas: sin
+                 *     recorte, el panel -que sondea cada 15 segundos- se traeria varios
+                 *     MB en cada vuelta.
+                 * @example 100
+                 */
+                limite?: number;
+                /**
+                 * @description Desde que fila. Cero es el principio.
+                 * @example 0
+                 */
+                desplazamiento?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Las alertas que cuadran. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "3f1d0a4e-0000-4000-8000-000000000001",
+                     *         "tipo": "reserva_declaracion_incompleta",
+                     *         "detalle": "la declaracion vigente de la obra \"obra-12\" suma 60% en 1 parte(s) y no llega a 100: se retiene el TOTAL de esa obra, no se reparte la parte declarada (R-04, RD 13.1.3)",
+                     *         "periodo": "2025-01",
+                     *         "referencia": "obra:obra-12",
+                     *         "ref_tipo": "obra",
+                     *         "ref_id": "obra-12",
+                     *         "critica": false,
+                     *         "detectada": "2026-05-02T08:30:00Z",
+                     *         "resuelta": false
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Alerta"][];
+                };
+            };
+            /** @description Un filtro llego mal formado o fuera de su lista cerrada. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    evaluarAnomalias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "periodo": "2025-01"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PedidoDeEvaluacion"];
+            };
+        };
+        responses: {
+            /** @description La pasada termino. Recuento de lo que se vio y de lo que se escribio. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2025-01",
+                     *       "detectadas": 6,
+                     *       "nuevas": 6,
+                     *       "autocerradas": 0,
+                     *       "por_tipo": {
+                     *         "oni": 1,
+                     *         "duplicado_archivo": 1,
+                     *         "duplicado_registro": 1,
+                     *         "titular_sin_porcentaje": 1,
+                     *         "reserva_declaracion_incompleta": 1,
+                     *         "tipo_obra_sin_mapear": 1
+                     *       },
+                     *       "criticas_abiertas": 3,
+                     *       "usos_sin_cotejar": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ResumenDeEvaluacion"];
+                };
+            };
+            /** @description El periodo falta o esta mal formado. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resolverAlerta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identificador de la alerta (UUID).
+                 * @example 3f1d0a4e-0000-4000-8000-000000000001
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * @description La nota es obligatoria: es la justificacion auditable de la
+         *     decision y viaja al asiento `alerta.resuelta`. Quien resolvio sale
+         *     de la sesion.
+         */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "nota": "hablado con la autora, declara esta semana"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ResolucionDeAlerta"];
+            };
+        };
+        responses: {
+            /** @description La alerta, ya cerrada y firmada. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "3f1d0a4e-0000-4000-8000-000000000001",
+                     *       "tipo": "reserva_declaracion_incompleta",
+                     *       "detalle": "la declaracion vigente de la obra \"obra-12\" suma 60% en 1 parte(s) y no llega a 100",
+                     *       "periodo": "2025-01",
+                     *       "referencia": "obra:obra-12",
+                     *       "ref_tipo": "obra",
+                     *       "ref_id": "obra-12",
+                     *       "critica": false,
+                     *       "detectada": "2026-05-02T08:30:00Z",
+                     *       "resuelta": true,
+                     *       "resuelta_por": "usr-admin",
+                     *       "resuelta_en": "2026-05-03T14:05:00Z",
+                     *       "nota": "hablado con la autora, declara esta semana"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Alerta"];
+                };
+            };
+            /** @description El id no es un UUID, el cuerpo no es un JSON valido, o la nota falta o esta vacia. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la nota es obligatoria para resolver una alerta"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ninguna alerta con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "esa alerta no existe"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description La alerta existe y alguien la cerro antes. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "esa alerta ya estaba resuelta"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listarProcesos: {
         parameters: {
             query?: never;
@@ -5065,6 +6458,9 @@ export interface operations {
              *     Tambien 409 si otra transicion escribio la fila entre que este
              *     request la leyo y la escribio (control de concurrencia
              *     optimista): releer el proceso y reintentar resuelve esto.
+             *
+             *     Y 409 si el periodo tiene anomalias criticas sin resolver al
+             *     salir de `deducciones`: se resuelven en `/alertas`.
              */
             409: {
                 headers: {

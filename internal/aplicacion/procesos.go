@@ -36,6 +36,14 @@ type Procesos struct {
 	// que un reintento volveria a valorizar -- doble escritura del mismo
 	// dinero. Solo hace falta cuando AvanzarEtapa entra a valorizar.
 	Unidad UnidadDeTrabajo
+	// Anomalias es la compuerta de #37: sin ella la corrida no sale de deducciones (falla cerrada).
+	Anomalias CompuertaAnomalias
+
+	// Bitacora y Reloj asientan cada transicion en la misma unidad que la escribe (ADR 0006).
+	Bitacora BitacoraAuditoria
+	Reloj    Reloj
+	// Origen da el archivo exacto y la identificacion de cada uso que pondero.
+	Origen RepositorioOrigenDeUsos
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -73,7 +81,7 @@ func unProceso(v ProcesoVista) reparto.ProcesoDeReparto {
 // IniciarProceso congela el snapshot vigente a la fecha del periodo y abre
 // la corrida en EtapaRecaudo (ADR 0004/0005). Se llama UNA VEZ: un
 // reproceso lee el snapshot ya congelado, no vuelve a pasar por aqui.
-func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (ProcesoVista, error) {
+func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID, actorID string) (ProcesoVista, error) {
 	// Idempotente por ID: un reintento de TrabajoEjecutarReparto vuelve a
 	// tomar el MISMO trabajo (Intentos, no Corrida) y llamaria aqui otra vez.
 	// Sin esta guarda, reabrir un proceso que un humano ya avanzo lo
@@ -83,13 +91,8 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	// MISMOS: un id que colisiona con un proceso de otros datos no se
 	// devuelve en silencio, porque el cliente no podria distinguir "se creo"
 	// de "se devolvio otra cosa con este mismo id" (revision de PR #159).
-	if existente, err := uc.Repo.ProcesoPorID(ctx, id); err == nil {
-		if existente.Periodo != periodo || existente.Circuito != circuito || existente.BolsaID != bolsaID {
-			return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoIDReutilizado)
-		}
-		return existente, nil
-	} else if !errors.Is(err, ErrNoEncontrado) {
-		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
+	if existente, hay, err := uc.procesoExistente(ctx, id, periodo, circuito, bolsaID); err != nil || hay {
+		return existente, err
 	}
 
 	fecha, err := fechaDePeriodo(strings.TrimSpace(periodo))
@@ -116,12 +119,38 @@ func (uc Procesos) IniciarProceso(ctx context.Context, id, periodo string, circu
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
-	// revisionAnterior no importa aqui: es un alta nueva, nunca hay fila
-	// previa con la que competir.
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), p.Revision); err != nil {
+	// La guarda de arriba es una lectura: dos aperturas simultaneas la pasan las dos. RevisionAlta hace que solo una inserte.
+	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
+		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), RevisionAlta); err != nil {
+			return nil, err
+		}
+		return []pendiente{pendienteDeProceso(HechoProcesoAbierto, p, asientoProceso(p, ""))}, nil
+	})
+	if errors.Is(err, ErrProcesoConflictoDeConcurrencia) {
+		// Perdio la carrera: su asiento se deshizo con la unidad y devuelve el proceso del ganador.
+		if existente, hay, errE := uc.procesoExistente(ctx, id, periodo, circuito, bolsaID); errE != nil || hay {
+			return existente, errE
+		}
+	}
+	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("iniciar proceso %q: %w", id, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// procesoExistente devuelve el proceso ya abierto con ese id si coincide en periodo, circuito y bolsa (PR #159).
+func (uc Procesos) procesoExistente(ctx context.Context, id, periodo string, circuito reparto.Circuito, bolsaID string) (ProcesoVista, bool, error) {
+	existente, err := uc.Repo.ProcesoPorID(ctx, id)
+	if errors.Is(err, ErrNoEncontrado) {
+		return ProcesoVista{}, false, nil
+	}
+	if err != nil {
+		return ProcesoVista{}, false, fmt.Errorf("iniciar proceso %q: %w", id, err)
+	}
+	if existente.Periodo != periodo || existente.Circuito != circuito || existente.BolsaID != bolsaID {
+		return ProcesoVista{}, false, fmt.Errorf("iniciar proceso %q: %w", id, ErrProcesoIDReutilizado)
+	}
+	return existente, true, nil
 }
 
 // AbrirCorridaDelPeriodo abre un ProcesoDeReparto por cada bolsa del
@@ -142,7 +171,7 @@ func (uc Procesos) AbrirCorridaDelPeriodo(ctx context.Context, periodo string, c
 	}
 	for _, b := range bolsas {
 		id := fmt.Sprintf("proc-%s-%d", b.ID, corrida)
-		if _, err := uc.IniciarProceso(ctx, id, periodo, b.Circuito, b.ID); err != nil {
+		if _, err := uc.IniciarProceso(ctx, id, periodo, b.Circuito, b.ID, actorSistema); err != nil {
 			return fmt.Errorf("abrir corrida de %q: bolsa %q: %w", periodo, b.ID, err)
 		}
 	}
@@ -152,7 +181,7 @@ func (uc Procesos) AbrirCorridaDelPeriodo(ctx context.Context, periodo string, c
 // AvanzarEtapa mueve el proceso a la siguiente etapa y la persiste. Al
 // entrar a EtapaImporteObra del circuito nacional invoca el motor puro de
 // #33 -- el internacional nunca la alcanza (RD 7.4), asi que nunca valoriza.
-func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoVista, error) {
+func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) (ProcesoVista, error) {
 	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -161,52 +190,67 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID string) (ProcesoV
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-
-	if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
-		// Valorizar y guardar la nueva etapa son un solo hecho: sin la unidad,
-		// un fallo entre las dos escrituras deja un resultado ya guardado pero
-		// el proceso todavia en deducciones, y un reintento lo volveria a
-		// valorizar -- doble escritura del mismo dinero.
-		if uc.Unidad == nil {
-			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: procesos mal cableado: falta UnidadDeTrabajo", procesoID)
-		}
-		err := uc.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
-			if err := uc.valorizar(ctx, p); err != nil {
-				return err
-			}
-			return uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision)
-		})
-		if err != nil {
+	if v.Etapa == reparto.EtapaDeducciones {
+		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
-		return aProcesoVista(p), nil
 	}
 
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
+	// Valorizar, guardar la etapa y asentar son un solo hecho: sin la unidad,
+	// un reintento tras un fallo parcial valorizaria dos veces el mismo dinero.
+	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
+		var asientos []pendiente
+		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
+			var err error
+			if asientos, err = uc.valorizar(ctx, p); err != nil {
+				return nil, err
+			}
+		}
+		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
+			return nil, err
+		}
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+	})
+	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// compuertaAnomalias bloquea la salida de deducciones (hacia importe_obra o liquidacion_parcial) si el periodo tiene criticas abiertas.
+func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
+	if uc.Anomalias == nil {
+		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
+	}
+	n, err := uc.Anomalias.Bloqueantes(ctx, periodo)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, n, periodo)
+	}
+	return nil
 }
 
 // valorizar reune bolsa, usos y declaraciones y llama al motor puro de #33,
 // luego persiste el resultado. El snapshot ya esta congelado desde
 // [Procesos.IniciarProceso]: recalcular lee ESE snapshot, no vuelve a
 // resolverlo (ADR 0004, ADR 0005).
-func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) error {
+func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([]pendiente, error) {
 	bp, err := uc.Bolsas.BolsaPorID(ctx, p.BolsaID)
 	if err != nil {
-		return fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
+		return nil, fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
 	}
 	bolsa, err := recaudo.NuevaBolsa(bp.UsuarioID, bp.Periodo, bp.Circuito, bp.Bruto)
 	if err != nil {
-		return fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
+		return nil, fmt.Errorf("bolsa %q: %w", p.BolsaID, err)
 	}
 
 	// ADR 0019: una corrida = una bolsa = un canal, y el usuario de recaudo de
 	// television ES el canal (ver [recaudo.Usuario]).
-	usos, _, err := (Reparto{Usos: uc.Usos}).UsosDeCanal(ctx, p.Periodo, bp.UsuarioID)
+	usos, filas, _, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
 	if err != nil {
-		return fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
+		return nil, fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
 	}
 
 	obraIDs := make([]string, 0, len(usos))
@@ -220,7 +264,7 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) er
 	}
 	vigentes, err := uc.Declaraciones.VigentesDeObras(ctx, obraIDs)
 	if err != nil {
-		return fmt.Errorf("declaraciones vigentes: %w", err)
+		return nil, fmt.Errorf("declaraciones vigentes: %w", err)
 	}
 	// Una obra ausente del mapa queda fuera de decls a proposito: el motor la
 	// trata como declaracion_incompleta (R-04) y retiene su importe completo,
@@ -234,17 +278,27 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) er
 
 	snap, err := uc.Parametros.SnapshotPorID(ctx, p.SnapshotID)
 	if err != nil {
-		return fmt.Errorf("snapshot %q: %w", p.SnapshotID, err)
+		return nil, fmt.Errorf("snapshot %q: %w", p.SnapshotID, err)
 	}
 
 	resultado, err := reparto.Reparto(bolsa, usos, snap, decls, reparto.Opciones{SnapshotID: p.SnapshotID})
 	if err != nil {
-		return fmt.Errorf("motor de reparto: %w", err)
+		return nil, fmt.Errorf("motor de reparto: %w", err)
 	}
 	if err := uc.Resultados.GuardarResultado(ctx, p.ID, resultado); err != nil {
-		return fmt.Errorf("guardar resultado: %w", err)
+		return nil, fmt.Errorf("guardar resultado: %w", err)
 	}
-	return nil
+	if uc.Origen == nil {
+		return nil, fmt.Errorf("procesos mal cableado: falta Origen")
+	}
+	origen, err := uc.Origen.OrigenDeUsos(ctx, idsDeUsos(filas))
+	if err != nil {
+		return nil, fmt.Errorf("origen de usos: %w", err)
+	}
+	return asientosDeValorizacion(entradaValorizacion{
+		proceso: p, bolsa: bp, snap: snap, resultado: resultado,
+		vigentes: vigentes, usos: filas, origen: origen,
+	})
 }
 
 // Firmar agrega una firma a la compuerta actual del proceso y la persiste.
@@ -257,18 +311,23 @@ func (uc Procesos) Firmar(ctx context.Context, procesoID string, rol reparto.Rol
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-	// Firmar solo agrega una fila a `firmas`: no toca etapa, revision ni
-	// rechazo de `procesos`, asi que no hay una segunda escritura que
-	// coordinar con esta.
 	nueva := p.Firmas[len(p.Firmas)-1]
-	if err := uc.Repo.GuardarFirma(ctx, procesoID, nueva); err != nil {
+	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
+		if err := uc.Repo.GuardarFirma(ctx, procesoID, nueva); err != nil {
+			return nil, err
+		}
+		payload := asientoProceso(p, "")
+		payload.Firma = &FirmaAsentada{Rol: nueva.Rol, ActorID: nueva.ActorID, SobreRevision: nueva.SobreRev}
+		return []pendiente{pendienteDeProceso(HechoFirmaRegistrada, p, payload)}, nil
+	})
+	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("firmar %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
 }
 
 // RechazarGate retrocede el proceso una etapa y persiste el rechazo.
-func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (ProcesoVista, error) {
+func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo, actorID string) (ProcesoVista, error) {
 	v, err := uc.Repo.ProcesoPorID(ctx, procesoID)
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("rechazar compuerta de %q: %w", procesoID, err)
@@ -277,7 +336,13 @@ func (uc Procesos) RechazarGate(ctx context.Context, procesoID, motivo string) (
 	if err != nil {
 		return ProcesoVista{}, err
 	}
-	if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
+	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
+		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
+			return nil, err
+		}
+		return []pendiente{pendienteDeProceso(HechoProcesoCompuertaRechazada, p, asientoProceso(p, v.Etapa))}, nil
+	})
+	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("rechazar compuerta de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil

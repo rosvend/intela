@@ -245,3 +245,58 @@ func TestUpYDownRecorrenTodasLasMigraciones(t *testing.T) {
 		t.Fatalf("version tras el segundo up = %d (err %v), se esperaba %d", v, err, version)
 	}
 }
+
+// El Down de refiere_a restaura el cuerpo anterior de bitacora_solo_append y suelta la columna; el Up los repone.
+func TestDownDeRefiereARestauraLaFuncionAnterior(t *testing.T) {
+	ctx := t.Context()
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	var version int64
+	for _, s := range p.ListSources() {
+		if strings.HasSuffix(s.Path, "_bitacora_refiere_a.sql") {
+			version = s.Version
+		}
+	}
+	if version == 0 {
+		t.Fatal("no se encontro la migracion *_bitacora_refiere_a.sql")
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+
+	estado := func() (codigo, columna bool) {
+		var def string
+		if err := db.QueryRowContext(ctx, `SELECT pg_get_functiondef('bitacora_solo_append'::regproc)`).Scan(&def); err != nil {
+			t.Fatalf("leer la funcion: %v", err)
+		}
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'asientos' AND column_name = 'refiere_a')`).Scan(&columna); err != nil {
+			t.Fatalf("leer la columna: %v", err)
+		}
+		return strings.Contains(def, "IN006"), columna
+	}
+
+	if codigo, columna := estado(); !codigo || !columna {
+		t.Fatalf("tras el up: IN006=%v refiere_a=%v, se esperaban los dos", codigo, columna)
+	}
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar a %d: %v", version-1, err)
+	}
+	if codigo, columna := estado(); codigo || columna {
+		t.Fatalf("tras el down: IN006=%v refiere_a=%v, se esperaba el cuerpo anterior sin columna", codigo, columna)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+	if codigo, columna := estado(); !codigo || !columna {
+		t.Fatalf("tras el segundo up: IN006=%v refiere_a=%v", codigo, columna)
+	}
+}

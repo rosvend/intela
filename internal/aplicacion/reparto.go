@@ -46,9 +46,15 @@ type Reparto struct {
 // lo reserva: ver la advertencia en el propio tipo antes de pasar `usos`
 // directo a [reparto.Reparto].
 func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]reparto.Uso, ResumenUsosDeCanal, error) {
+	usos, _, resumen, err := r.usosYFilasDeCanal(ctx, periodo, canalID)
+	return usos, resumen, err
+}
+
+// usosYFilasDeCanal devuelve ademas las filas persistidas, en el mismo orden, para el linaje.
+func (r Reparto) usosYFilasDeCanal(ctx context.Context, periodo, canalID string) ([]reparto.Uso, []UsoDeReparto, ResumenUsosDeCanal, error) {
 	canalID = strings.TrimSpace(canalID)
 	if canalID == "" {
-		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos de %q: %w", periodo, ErrCanalVacio)
+		return nil, nil, ResumenUsosDeCanal{}, fmt.Errorf("usos de %q: %w", periodo, ErrCanalVacio)
 	}
 
 	// Recortado ANTES de consultar y no solo antes de comparar contra "": un
@@ -57,28 +63,28 @@ func (r Reparto) UsosDeCanal(ctx context.Context, periodo, canalID string) ([]re
 	// canal no emitio".
 	periodo, err := recaudo.ValidarPeriodo(periodo)
 	if err != nil {
-		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q: %w", canalID, err)
+		return nil, nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q: %w", canalID, err)
 	}
 
 	anio, err := anioDeClasificacion(periodo)
 	if err != nil {
-		return nil, ResumenUsosDeCanal{}, err
+		return nil, nil, ResumenUsosDeCanal{}, err
 	}
 
 	filas, resumen, err := r.Usos.UsosDeCanal(ctx, periodo, canalID, anio)
 	if err != nil {
-		return nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q en %q: %w", canalID, periodo, err)
+		return nil, nil, ResumenUsosDeCanal{}, fmt.Errorf("usos del canal %q en %q: %w", canalID, periodo, err)
 	}
 
 	usos := make([]reparto.Uso, 0, len(filas))
 	for _, f := range filas {
 		u, err := aUsoDeReparto(f)
 		if err != nil {
-			return nil, ResumenUsosDeCanal{}, fmt.Errorf("uso %q del canal %q: %w", f.Uso.ID, canalID, err)
+			return nil, nil, ResumenUsosDeCanal{}, fmt.Errorf("uso %q del canal %q: %w", f.Uso.ID, canalID, err)
 		}
 		usos = append(usos, u)
 	}
-	return usos, resumen, nil
+	return usos, filas, resumen, nil
 }
 
 // UsosSinCanal cuenta los usos de un periodo que ningun canal reclama.

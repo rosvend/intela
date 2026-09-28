@@ -51,26 +51,6 @@ type Opciones struct {
 	Log                *slog.Logger
 }
 
-// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
-// entren sus PRs.
-type API struct {
-	salud         Salud
-	auth          Autenticacion
-	ordenes       ConsultaLiquidaciones
-	admision      Admision
-	catalogo      Catalogo
-	padron        Padron
-	ingesta       Ingesta
-	declaraciones Declaraciones
-	recaudo       Recaudo
-	reporte       ReporteLiquidaciones
-	procesos      Procesos
-	cola          ColaRevision
-	auditoria     Auditoria
-	opts          Opciones
-	log           *slog.Logger
-}
-
 // Casos agrupa los casos de uso que sirve el adaptador.
 //
 // Iban como parametros sueltos de [Nueva] mientras fueron dos. Con el tercero
@@ -79,26 +59,52 @@ type API struct {
 // pasan a campos con nombre. Opciones sigue aparte: eso es configuracion del
 // entorno, esto son dependencias.
 type Casos struct {
-	Salud         Salud
-	Auth          Autenticacion
-	Ordenes       ConsultaLiquidaciones
-	Admision      Admision
-	Catalogo      Catalogo
-	Padron        Padron
-	Ingesta       Ingesta
-	Declaraciones Declaraciones
-	Recaudo       Recaudo
-	Reporte       ReporteLiquidaciones
-	Procesos      Procesos
-	Cola          ColaRevision
-	Auditoria     Auditoria
+	Salud          Salud
+	Auth           Autenticacion
+	Ordenes        ConsultaLiquidaciones
+	Admision       Admision
+	Catalogo       Catalogo
+	Padron         Padron
+	Ingesta        Ingesta
+	Declaraciones  Declaraciones
+	Recaudo        Recaudo
+	Reporte        ReporteLiquidaciones
+	Procesos       Procesos
+	Cola           ColaRevision
+	Anomalias      Anomalias
+	Auditoria      Auditoria
+	Identificacion CasosIdentificacion
+	Explicar       Explicador
+	Ingresos       ConsultaIngresos
 }
 
-// ColaRevision lista lo que espera ojo humano: filas que no se pudieron
-// normalizar, y mas adelante las anomalias del #37. Se declara en el
-// consumidor, igual que [Catalogo].
+// ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
 type ColaRevision interface {
 	ListarRevision(ctx context.Context) ([]aplicacion.ItemRevision, error)
+}
+
+// API es el adaptador. Los casos de uso se inyectan de uno en uno segun
+// entren sus PRs.
+type API struct {
+	salud          Salud
+	auth           Autenticacion
+	ordenes        ConsultaLiquidaciones
+	admision       Admision
+	catalogo       Catalogo
+	padron         Padron
+	ingesta        Ingesta
+	declaraciones  Declaraciones
+	recaudo        Recaudo
+	reporte        ReporteLiquidaciones
+	procesos       Procesos
+	cola           ColaRevision
+	anomalias      Anomalias
+	auditoria      Auditoria
+	identificacion CasosIdentificacion
+	explicar       Explicador
+	ingresos       ConsultaIngresos
+	opts           Opciones
+	log            *slog.Logger
 }
 
 // Nueva construye el adaptador.
@@ -113,21 +119,25 @@ func Nueva(casos Casos, opts Opciones) *API {
 		log = slog.Default()
 	}
 	return &API{
-		salud:         casos.Salud,
-		auth:          casos.Auth,
-		ordenes:       casos.Ordenes,
-		admision:      casos.Admision,
-		catalogo:      casos.Catalogo,
-		padron:        casos.Padron,
-		ingesta:       casos.Ingesta,
-		declaraciones: casos.Declaraciones,
-		recaudo:       casos.Recaudo,
-		reporte:       casos.Reporte,
-		procesos:      casos.Procesos,
-		cola:          casos.Cola,
-		auditoria:     casos.Auditoria,
-		opts:          opts,
-		log:           log,
+		salud:          casos.Salud,
+		auth:           casos.Auth,
+		ordenes:        casos.Ordenes,
+		admision:       casos.Admision,
+		catalogo:       casos.Catalogo,
+		padron:         casos.Padron,
+		ingesta:        casos.Ingesta,
+		declaraciones:  casos.Declaraciones,
+		recaudo:        casos.Recaudo,
+		reporte:        casos.Reporte,
+		procesos:       casos.Procesos,
+		cola:           casos.Cola,
+		anomalias:      casos.Anomalias,
+		auditoria:      casos.Auditoria,
+		identificacion: casos.Identificacion,
+		explicar:       casos.Explicar,
+		ingresos:       casos.Ingresos,
+		opts:           opts,
+		log:            log,
 	}
 }
 
@@ -179,10 +189,23 @@ func (a *API) Router() http.Handler {
 			admin.Get("/pipeline", superficieOK)
 			admin.Get("/cola-revision", a.listarColaRevision)
 		})
+		protegido.Route("/identificacion", func(ident chi.Router) {
+			ident.Use(requiereRol(aplicacion.RolAdministrador))
+			ident.Get("/casos", a.listarCasosIdentificacion)
+		})
 		protegido.Route("/auditoria", func(audit chi.Router) {
 			audit.Use(requiereRol(aplicacion.RolAuditor, aplicacion.RolAdministrador))
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
+		})
+		protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+			Get("/explicar/{ref}", a.explicarCifra)
+
+		// Panel del titular (OE-6). El middleware cierra el prefijo al
+		// rol; el caso de uso recorta por TitularID de la sesion.
+		protegido.Group(func(titular chi.Router) {
+			titular.Use(requiereRol(aplicacion.RolTitular))
+			titular.Get("/mis-ingresos", a.misIngresos)
 		})
 		// El catalogo maestro. Las cuatro rutas piden `administrador`,
 		// lectura incluida: el catalogo es el cubo contra el que resuelve
@@ -249,6 +272,24 @@ func (a *API) Router() http.Handler {
 			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
 			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
 			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
+		})
+
+		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
+		protegido.Route("/alertas", func(al chi.Router) {
+			al.Group(func(lectura chi.Router) {
+				lectura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				lectura.Get("/", a.conAnomalias(a.listarAlertas))
+			})
+			al.Group(func(escritura chi.Router) {
+				escritura.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+				))
+				escritura.Post("/evaluacion", a.conAnomalias(a.evaluarAnomalias))
+				escritura.Post("/{id}/resolver", a.conAnomalias(a.resolverAlerta))
+			})
 		})
 
 		// El flujo de aprobaciones de RD 13.5 (#34). Tres grupos, no uno,

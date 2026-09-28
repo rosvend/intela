@@ -618,10 +618,14 @@ type LectorReporte interface {
 	Leer(datos []byte) ([]UsoPersistido, error)
 }
 
-// RepositorioONI es la cola manual. Separado de identificacion porque son dos
-// modulos distintos del ADR 0003.
-type RepositorioONI interface {
-	Listar(ctx context.Context) ([]UsoPersistido, error)
+// RepositorioOrigenDeUsos devuelve, por id de uso, su reporte exacto y como se identifico su obra.
+type RepositorioOrigenDeUsos interface {
+	OrigenDeUsos(ctx context.Context, usoIDs []string) (map[string]OrigenDeUso, error)
+}
+
+// RepositorioCasosIdentificacion es la lectura de la cola manual (ADR 0007): pagina y conteo de pendientes en una sola lectura.
+type RepositorioCasosIdentificacion interface {
+	ListarCasosIdentificacion(ctx context.Context, q ConsultaCasos) (PaginaCasos, error)
 }
 
 // RepositorioRecaudo expone las bolsas. Recaudo es el unico modulo que conoce
@@ -719,6 +723,11 @@ type FilaParametro struct {
 	Reglamento      string
 }
 
+// CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo; nunca cuenta sin mirar (ADR 0021).
+type CompuertaAnomalias interface {
+	Bloqueantes(ctx context.Context, periodo string) (int, error)
+}
+
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
 //
 // Nombres largos y no Guardar/PorID a secas, por la misma razon que
@@ -735,13 +744,15 @@ type RepositorioProcesos interface {
 	// AvanzarEtapa y un RechazarGate- podrian valorizar dos veces o pisar un
 	// rechazo sin que nadie se entere (revision de PR #159). Devuelve
 	// ErrProcesoConflictoDeConcurrencia si la fila cambio entre la lectura y
-	// la escritura; no aplica a un alta nueva, que nunca tiene fila previa
-	// que comparar.
+	// la escritura. Un alta pasa RevisionAlta: si la fila ya existe, es conflicto.
 	GuardarProceso(ctx context.Context, p ProcesoVista, revisionAnterior int) error
 	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
 	ListarProcesos(ctx context.Context) ([]ProcesoVista, error)
 	GuardarFirma(ctx context.Context, procesoID string, f reparto.Firma) error
 }
+
+// RevisionAlta como revisionAnterior de GuardarProceso solo inserta: el CHECK revision >= 1 impide que una fila existente la cumpla.
+const RevisionAlta = 0
 
 // ProcesoVista es el proceso tal como se persiste.
 //
@@ -802,7 +813,12 @@ type Exportador interface {
 }
 
 // RepositorioLiquidacion persiste ordenes de pago y lee el insumo de la
-// corrida. DeTitular es el camino del panel del titular (#42).
+// corrida.
+//
+// El panel de cifras netas por obra (#42) no pasa por este puerto: usa
+// [RepositorioIngresos]. El linaje de cada cifra lo lee ExplicarCifra desde
+// la bitacora. DeTitular lista las ordenes de pago del titular, no las
+// lineas de ese panel.
 //
 // EmitirOrdenes y TransicionarOrdenes y no un Guardar: el mismo *Store
 // satisface tambien [GestionDeclaraciones], que ya tiene un Guardar con otra
@@ -943,6 +959,15 @@ type InsumoLiquidacion struct {
 	Social    decimal.Decimal
 	Reserva   decimal.Decimal
 	Titulares []reparto.LineaTitular
+}
+
+// RepositorioIngresos lista las cifras netas del panel del titular (OE-6).
+//
+// El recorte es por titularID, que el caso de uso toma de la sesion y nunca
+// de un parametro de la peticion. Filtrar por obra, fuente o periodo recorta
+// esa lista; no amplia el alcance.
+type RepositorioIngresos interface {
+	IngresosDe(ctx context.Context, titularID string, f FiltroIngresos) ([]Ingreso, error)
 }
 
 // RepositorioReservas guarda y lee las reservas de errores tecnicos (RD 14), una por corrida.
@@ -1098,8 +1123,99 @@ type Calendario interface {
 	MarcarDisparado(ctx context.Context, periodo string) error
 }
 
+// RepositorioAlertas es la bandeja de anomalias de un periodo (#37).
+//
+// # Guardar tiene que ser IDEMPOTENTE, y no es un detalle del adaptador
+//
+// [Anomalias.Evaluar] se puede correr las veces que haga falta -- al cerrar la
+// ingesta, otra vez despues de arreglar una declaracion, otra vez antes de la
+// compuerta de #34 -- y las tres pasadas ven las mismas anomalias. Sin clave
+// natural, la tercera pasada triplica el tablero y el contador de la compuerta
+// deja de significar nada.
+//
+// La clave es (periodo, tipo, ref_tipo, ref_id, ref_titular), que es la
+// identidad del HALLAZGO: la misma anomalia sobre el mismo registro del mismo
+// periodo es una sola alerta, se detecte una vez o veinte. El detalle NO entra
+// en la clave a proposito -- es prosa, y reescribir una frase duplicaria la
+// fila --.
+//
+// Devuelve cuantas filas nuevas entraron, no cuantas se le pasaron: es la
+// unica forma de que quien llama pueda decir "esta pasada encontro tres
+// anomalias que antes no estaban".
+//
+// # Reapertura
+//
+// Una alerta que cerro una PERSONA no se reabre al volver a detectarla; una que autocerro el
+// sistema si (ADR 0021).
+//
+// # Los metodos llevan "Alerta(s)" en el nombre y no es redundancia
+//
+// `Listar`, `Guardar` y `Resolver` a secas serian mas cortos y no caben: el
+// mismo *Store satisface este puerto y [GestionDeclaraciones], que ya tiene un
+// `Guardar` con otra firma, y dos metodos con el mismo nombre no caben en un
+// tipo. Es lo mismo que le paso a `Store.Cerrar` cuando llego
+// [ColaTrabajos.Cerrar] (ver [postgres.Store.CerrarPool]). El issue ademas
+// nombra `ResolverAlerta` por su nombre.
 type RepositorioAlertas interface {
-	Listar(ctx context.Context) ([]Alerta, error)
+	// ListarAlertas devuelve las que cuadran con el filtro, de la mas reciente
+	// a la mas antigua y desempatando por id. Sin coincidencias devuelve la
+	// lista vacia, no ErrNoEncontrado.
+	//
+	// ESTA PAGINADO. `FiltroAlertas` lleva [Paginacion] y el cero significa
+	// [LimiteObrasPorDefecto], no "todo": una evaluacion real puede dejar del
+	// orden de 10.000 alertas -- tres de los seis detectores emiten una por
+	// fila de uso y KR-1 habla de lotes de 10.000 registros -- y devolverlas
+	// en un array de ~4 MB a un panel que sondea cada 15 segundos no es
+	// servible. Quien necesite TODAS tiene que pedirlo con [LimiteSinTope],
+	// explicitamente.
+	//
+	// Por eso una cuenta NO se hace sobre este metodo. Ver
+	// ContarAlertasSinResolver.
+	ListarAlertas(ctx context.Context, f FiltroAlertas) ([]Alerta, error)
+
+	// GuardarAlertas escribe las que todavia no estaban. El lote entra entero
+	// o no entra ninguna, por lo mismo que [RepositorioIngesta.GuardarUsos]:
+	// una evaluacion guardada a medias deja un tablero que no corresponde a
+	// ninguna pasada.
+	//
+	// Las autocerradas que el lote vuelve a traer se reabren: cuentan en nuevas y se devuelven en
+	// reabiertas para que el caso de uso deje su asiento `alerta.reabierta`.
+	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, reabiertas []Alerta, err error)
+
+	// ResolverAlerta marca una alerta y devuelve como quedo. Devuelve
+	// ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo estaba --
+	// que no es lo mismo: lo primero es un id equivocado, lo segundo es una
+	// carrera entre dos personas mirando el mismo tablero.
+	ResolverAlerta(ctx context.Context, id, actorID, nota string, cuando time.Time) (Alerta, error)
+
+	// AutocerrarAlertas cierra a nombre del sistema las abiertas del periodo que no estan en vigentes
+	// (misma clave natural) y devuelve las que cerro.
+	AutocerrarAlertas(ctx context.Context, periodo string, vigentes []Alerta, nota string, cuando time.Time) ([]Alerta, error)
+
+	// BloquearAlertasDePeriodo serializa las evaluaciones de un periodo hasta que la unidad termine; exige unidad abierta.
+	BloquearAlertasDePeriodo(ctx context.Context, periodo string) error
+
+	// ContarAlertasSinResolver cuenta las abiertas de un periodo entre los
+	// tipos que se le pidan. Una lista de tipos vacia cuenta TODOS.
+	//
+	// Los tipos llegan como parametro y no se deciden en el SQL: cuales
+	// bloquean es [anomalias.EsCritica], en el dominio, y un adaptador que
+	// llevara su propia lista seria un segundo criterio que nadie mira.
+	//
+	// # Cuenta en la base, y NO se puede reimplementar sobre ListarAlertas
+	//
+	// Es un COUNT(*) y no un `len()` de la lista a proposito, porque esta
+	// cuenta es la que lee la compuerta de #34: `ListarAlertas` pagina, asi
+	// que contar sus filas daria como mucho [LimiteObrasPorDefecto] y un
+	// periodo con 3.000 criticas abiertas se leeria como 100 -- o como 0 si
+	// alguien pide la segunda pagina de un periodo limpio. Una compuerta que
+	// cuenta de menos ABRE EL PASO al reparto, que es el unico sentido en el
+	// que puede fallar sin que nadie se entere. Es el mismo modo de fallo que
+	// el `cardinality(NULL)` que ya obligo a un COALESCE en el adaptador.
+	//
+	// [TestLaCompuertaCuentaMasAlertasQueUnaPagina] lo defiende sembrando mas
+	// criticas que el tamano de pagina.
+	ContarAlertasSinResolver(ctx context.Context, periodo string, tipos []string) (int, error)
 }
 
 type RepositorioAnticipos interface {
