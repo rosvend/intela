@@ -82,7 +82,10 @@ const linaje: Explicacion = {
 // devolver GET /explicar/{ref}.
 const linajeReal: Explicacion = {
   ...linaje,
-  regla: { snapshot_id: "snap-2026-01", reglamento: "RD 9.1.1+RD-IX-seed-sintetico" },
+  regla: {
+    snapshot_id: "snap-2026-01",
+    reglamento: "RD 9.1.1+RD-IX-seed-sintetico",
+  },
   deducciones: [
     {
       concepto: "gastos_administrativos",
@@ -141,9 +144,7 @@ describe("PanelExplicacion", () => {
   it("el recibo de 'mas detalles' empieza oculto", () => {
     render(<PanelExplicacion cifra={linajeReal} />);
     expect(screen.queryByLabelText("Recibo en lenguaje sencillo")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Mas detalles" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Mas detalles" })).toBeTruthy();
   });
 
   it("'mas detalles' pinta bruto, cada deduccion en lenguaje llano con su cita, y neto", () => {
@@ -165,13 +166,13 @@ describe("PanelExplicacion", () => {
     expect(recibo.textContent).toContain("60.0000%");
     expect(recibo.textContent).toContain("IPI-00000001");
     // La cita de la modalidad y del marcador sintetico, con nombre humano.
-    expect(recibo.textContent).toContain(
-      "Television abierta y radiodifundida",
-    );
+    expect(recibo.textContent).toContain("Television abierta y radiodifundida");
     expect(recibo.textContent).toContain("Total puntos por obra");
     expect(recibo.textContent).toContain("Cifra provisional de siembra");
 
-    fireEvent.click(screen.getByRole("button", { name: "Ocultar mas detalles" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ocultar mas detalles" }),
+    );
     expect(screen.queryByLabelText("Recibo en lenguaje sencillo")).toBeNull();
   });
 
@@ -188,8 +189,12 @@ describe("PanelExplicacion", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
     const recibo = screen.getByLabelText("Recibo en lenguaje sencillo");
     expect(recibo.textContent).toContain("retuvo por completo");
-    expect(recibo.textContent).toContain("declaracion incompleta: falta un titular");
-    expect(recibo.textContent).toContain("Retencion por declaracion incompleta");
+    expect(recibo.textContent).toContain(
+      "declaracion incompleta: falta un titular",
+    );
+    expect(recibo.textContent).toContain(
+      "Retencion por declaracion incompleta",
+    );
     expect(recibo.textContent).toContain("declaracion discriminada del 100%");
   });
 

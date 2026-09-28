@@ -10,7 +10,12 @@ import {
   type Ingreso,
   type ListaIngresos,
 } from "./ingresos";
-import { citarReglamento, citaDeConcepto, citaDeRetencion, nombreConcepto } from "./reglamento";
+import {
+  citarReglamento,
+  citaDeConcepto,
+  citaDeRetencion,
+  nombreConcepto,
+} from "./reglamento";
 
 /**
  * Panel del titular (OE-6): ingresos netos por obra, fuente y periodo.

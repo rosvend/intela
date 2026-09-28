@@ -35,7 +35,8 @@ const CITAS: Record<string, CitaReglamento> = {
     texto:
       '"Total puntos por obra = Tipo de obra * Duracion * Rating (franja horaria)". ' +
       "Ponderacion por tipo de obra: Cinematografica 5.0, Unitario 2.8, Serie/Telenovela 1.3, Sketches 0.8.",
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.2": {
     titulo: "Exhibidores cinematograficos y salas de cine",
@@ -43,7 +44,8 @@ const CITAS: Record<string, CitaReglamento> = {
       '"El importe correspondiente a cada obra cinematografica se determinara con base en los ' +
       "ingresos de taquilla de cada ejercicio economico que obtuvo cada obra basado en la " +
       'informacion suministrada por el usuario."',
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.3": {
     titulo: "Teatros",
@@ -51,24 +53,27 @@ const CITAS: Record<string, CitaReglamento> = {
       '"El importe correspondiente a cada obra se determinara con base en los ingresos de ' +
       "taquilla de cada ejercicio economico que obtuvo cada obra, basado en la informacion " +
       'suministrada por el usuario."',
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.4": {
     titulo: "Medios de transporte publico",
     texto:
       '"REDES SGC recaudara los datos de las obras exhibidas durante el ejercicio y el numero ' +
       'de exhibiciones de cada una de ellas."',
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.5": {
     titulo: "Operadores de television por suscripcion",
     texto:
       '"El porcentaje que a cada grupo de canales le corresponde, se distribuira entre los ' +
       "escritores de las obras audiovisuales representadas por REDES SGC que se comuniquen en " +
-      'dichos canales, aplicando la formula de valorizacion de la obra descrita en el numeral ' +
+      "dichos canales, aplicando la formula de valorizacion de la obra descrita en el numeral " +
       '9.1.1 de este Reglamento." Grupos: privados nacionales 50%, regionales/locales/publicos ' +
       "20%, premium 10%, lideres en rating 10%, estandar 10%.",
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.6": {
     titulo: "Establecimientos hoteleros y otros abiertos al publico",
@@ -76,7 +81,8 @@ const CITAS: Record<string, CitaReglamento> = {
       '"La distribucion se efectuara a partir del importe recaudado de los diferentes ' +
       "establecimientos, una vez practicadas las Deducciones Legales, utilizando las " +
       'disposiciones del numeral 9.5 del presente reglamento."',
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD 9.7": {
     titulo: "Plataformas Over The Top (OTT) y nuevas tecnologias",
@@ -84,7 +90,8 @@ const CITAS: Record<string, CitaReglamento> = {
       '"Pi = Cantidad de puntos asignados a la obra audiovisual. PB = Puntaje base para el ' +
       "tipo de obra. Du = Tiempo en minutos durante los cuales la obra es vista. V = " +
       'Representa la cantidad de veces que una obra ha sido vista."',
-    fuente: "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/09-metodologia-para-la-distribucion.md",
   },
   "RD-IX-seed-sintetico": {
     titulo: "Cifra provisional de siembra (sin acta de Asamblea)",
@@ -128,7 +135,8 @@ const CITAS_POR_CONCEPTO: Record<string, CitaReglamento> = {
       '"REDES SGC podra mantener en reserva hasta un 5% del recaudo nacional del porcentaje ' +
       "asignado a REDES SGC para distribucion, para corregir dichos errores y/o solucionar " +
       'adecuadamente los reclamos de los titulares." (RD 14.1)',
-    fuente: "docs/reglamentos/distribucion-v9/14-reserva-para-correccion-de-errores-tecnicos.md",
+    fuente:
+      "docs/reglamentos/distribucion-v9/14-reserva-para-correccion-de-errores-tecnicos.md",
   },
 };
 
@@ -168,6 +176,8 @@ export function citarReglamento(
     .filter(Boolean)
     .map((token) => {
       const cita = CITAS[token];
-      return cita ? { ...cita, token } : { token, titulo: token, texto: "", fuente: "" };
+      return cita
+        ? { ...cita, token }
+        : { token, titulo: token, texto: "", fuente: "" };
     });
 }

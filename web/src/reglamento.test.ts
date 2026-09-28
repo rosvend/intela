@@ -44,9 +44,7 @@ describe("citarReglamento", () => {
 
 describe("citaDeConcepto", () => {
   it("mapea los tres conceptos de deduccion a R-06/R-07", () => {
-    expect(citaDeConcepto("gastos_administrativos")?.titulo).toContain(
-      "R-06",
-    );
+    expect(citaDeConcepto("gastos_administrativos")?.titulo).toContain("R-06");
     expect(citaDeConcepto("bienestar_social")?.titulo).toContain("R-06");
     expect(citaDeConcepto("reserva_errores_tecnicos")?.titulo).toContain(
       "R-07",
