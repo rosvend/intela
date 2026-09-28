@@ -27,6 +27,7 @@
 // que no depende del transporte: [SoloPropiasObras] (OE-6). Los casos de
 // uso que aterrizen lo aplican; no es un filtro SQL.
 //
+// # Casos de uso
 // # Operacion
 //
 // [Despachador] y [Planificador] son los dos casos de uso que mueven la cola
@@ -45,9 +46,8 @@
 //
 // # Que falta aqui
 //
-// El resto de los casos de uso. Este paquete declara los contratos, el
-// predicado de titularidad y los casos que ya aterrizaron (autenticacion,
-// liquidacion exportable). Cada PR de seguimiento trae los suyos, y con
-// ellos el asiento en bitacora, que el ADR 0006 declara "parte de la
-// definicion de hecho de cada caso de uso".
+// Autenticacion, ConsultaIngresos (OE-6), ExplicarCifra (ADR 0006) y la
+// liquidacion exportable. Cada uno declara solo los puertos que necesita.
+// El asiento en bitacora es parte de la definicion de hecho de los que
+// mueven dinero; consultar e explicar leen, no asientan.
 package aplicacion

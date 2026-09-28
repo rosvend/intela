@@ -447,6 +447,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mis-ingresos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ingresos netos del titular de la sesion
+         * @description Lista las cifras netas del titular autenticado, recortadas a las
+         *     obras donde tiene participacion registrada (OE-6).
+         *
+         *     El titular se toma de la sesion. Un `titular_id` en la query no
+         *     cambia a quien se consulta.
+         *
+         *     El unico monto de cada fila es `neto`. El bruto, las deducciones
+         *     y el linaje (fuente, reporte, regla, split) estan en
+         *     `/explicar/{ref}`.
+         */
+        get: operations["misIngresos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explicar/{ref}": {
         parameters: {
             query?: never;
@@ -2323,6 +2351,40 @@ export interface components {
              */
             cuando: string;
         };
+        ListaIngresos: {
+            /**
+             * @description Cifras netas del titular de la sesion. El bruto no forma parte
+             *     de este objeto (OE-6).
+             */
+            ingresos: components["schemas"]["Ingreso"][];
+        };
+        Ingreso: {
+            /**
+             * @description Identificador de la linea, para `GET /explicar/{ref}`.
+             * @example proc-2026-01:obra-completa:tit-ana
+             */
+            ref: string;
+            /** @description Identificador interno de la obra. */
+            obra_id: string;
+            /** @description Titulo para mostrar. */
+            obra: string;
+            /**
+             * @description Fuentes de los reportes que ponderaron esta cifra en el periodo,
+             *     separadas por coma si hay mas de una. El detalle del archivo
+             *     crudo esta en la explicacion.
+             */
+            fuente: string;
+            /**
+             * @description Periodo de la corrida.
+             * @example 2026-01
+             */
+            periodo: string;
+            /**
+             * @description Monto neto despues de deducciones. Nunca el bruto.
+             * @example 3600.00
+             */
+            neto: string;
+        };
         /**
          * @description Linaje de una cifra (ADR 0006). Montos como cadena con dos decimales
          *     (ADR 0010); porcentajes como cadena en escala 0-100.
@@ -3980,6 +4042,84 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    misIngresos: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Identificador de obra. Vacio, todas las del titular.
+                 * @example obra-completa
+                 */
+                obra?: string;
+                /**
+                 * @description Fuente del reporte que pondero la bolsa (caracol, netflix, ...).
+                 * @example caracol
+                 */
+                fuente?: string;
+                /**
+                 * @description Periodo de la corrida, `YYYY` o `YYYY-MM`.
+                 * @example 2026-01
+                 */
+                periodo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lista de ingresos netos. Vacia si no hay cifras con esos filtros. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "ingresos": [
+                     *         {
+                     *           "ref": "proc-2026-01:obra-completa:tit-ana",
+                     *           "obra_id": "obra-completa",
+                     *           "obra": "La Casa de las Dos Palmas",
+                     *           "fuente": "caracol",
+                     *           "periodo": "2026-01",
+                     *           "neto": "3600.00"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListaIngresos"];
                 };
             };
             /** @description Falta el token, o esta caducado o revocado. */
