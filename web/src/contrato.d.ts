@@ -2598,9 +2598,9 @@ export interface components {
              * @description Texto que nombra el campo y explica que falta o esta mal. Sale de
              *     los mismos rechazos que `Rechazo.motivo` y tiene su misma forma:
              *     desde el issue #113, toda fila que salio de un archivo empieza por
-             *     `fila N`, decida el rechazo el adaptador de formato, la validacion
-             *     o la normalizacion; los rechazos guardados antes pueden no
-             *     traerlo. N es la linea del archivo en la que EMPIEZA el registro (un campo
+             *     `fila N`, decida el rechazo el adaptador de formato, la validacion o
+             *     la normalizacion; los rechazos guardados antes pueden no traerlo. N
+             *     es la linea del archivo en la que EMPIEZA el registro (un campo
              *     entrecomillado de un CSV puede abarcar varias lineas); en .xlsx, la
              *     fila de la hoja; en JSON, la posicion del registro en el array
              *     contando desde 2. Es texto para una persona, no un formato que
