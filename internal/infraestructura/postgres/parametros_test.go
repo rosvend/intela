@@ -1346,12 +1346,20 @@ func TestArmarSnapshotRechazaUnaFilaDelTipoContrario(t *testing.T) {
 // Cambiar la base de cine es otro snapshot: repartir la misma bolsa por
 // taquilla o por espectadores da cifras distintas.
 func TestElIDCambiaSiCambiaLaBaseDeCine(t *testing.T) {
-	taquilla, _, _, _ := armarSnapshot(consumidos(juegoCompleto(), clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	// Las dos llamadas se comprueban: si la primera no armara, taquilla
+	// quedaria vacio y la comparacion de abajo pasaria sin comparar dos ids.
+	taquilla, _, faltan, err := armarSnapshot(consumidos(juegoCompleto(), clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("armarSnapshot con taquilla: err=%v faltan=%v", err, faltan)
+	}
 	juego := append(sin("cine_teatro.base"),
 		unParametroTexto("cine_teatro.base", reparto.BaseEspectadores, organoSintetic, reglamentoSintetico))
-	espectadores, snap, _, err := armarSnapshot(consumidos(juego, clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
-	if err != nil {
-		t.Fatalf("armarSnapshot: %v", err)
+	espectadores, snap, faltan, err := armarSnapshot(consumidos(juego, clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("armarSnapshot con espectadores: err=%v faltan=%v", err, faltan)
+	}
+	if !strings.HasPrefix(taquilla, prefijoSnapshot) || !strings.HasPrefix(espectadores, prefijoSnapshot) {
+		t.Fatalf("ids = %q, %q; se esperaban dos ids %s validos", taquilla, espectadores, prefijoSnapshot)
 	}
 	if taquilla == espectadores {
 		t.Fatal("cambiar la base de cine tiene que cambiar el id")
@@ -1464,7 +1472,9 @@ func TestUnSnapshotV1YaCongeladoSeSigueReleyendo(t *testing.T) {
 
 // Las dos columnas de valor son excluyentes y el texto tiene charset: es lo
 // que impide que un valor fabrique la preimagen "clave=valor\n" de otro
-// conjunto (migracion 00024).
+// conjunto (migracion 00024). Se prueba en las dos tablas: la de
+// `snapshots_parametros` es la que protege la preimagen que se recalcula al
+// releer un snapshot congelado.
 func TestLaBaseExigeUnSoloValorYTextoCanonico(t *testing.T) {
 	_, pool := colaVacia(t)
 	ctx := t.Context()
@@ -1473,22 +1483,28 @@ func TestLaBaseExigeUnSoloValorYTextoCanonico(t *testing.T) {
 		valor, texto any
 		restriccion  string
 	}{
-		"los dos":          {"1", "taquilla", "parametros_un_solo_valor"},
-		"ninguno":          {nil, nil, "parametros_un_solo_valor"},
-		"texto con igual":  {nil, "taquilla=1", "parametros_valor_texto_charset"},
-		"texto con salto":  {nil, "taquilla\nott.wa", "parametros_valor_texto_charset"},
-		"texto mayusculas": {nil, "Taquilla", "parametros_valor_texto_charset"},
-		"texto vacio":      {nil, "", "parametros_valor_texto_charset"},
+		"los dos":          {"1", "taquilla", "_un_solo_valor"},
+		"ninguno":          {nil, nil, "_un_solo_valor"},
+		"texto con igual":  {nil, "taquilla=1", "_valor_texto_charset"},
+		"texto con salto":  {nil, "taquilla\nott.wa", "_valor_texto_charset"},
+		"texto mayusculas": {nil, "Taquilla", "_valor_texto_charset"},
+		"texto vacio":      {nil, "", "_valor_texto_charset"},
 	}
-	for nombre, c := range casos {
-		t.Run(nombre, func(t *testing.T) {
-			_, err := pool.Exec(ctx,
-				`INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
-				 VALUES ('cine_teatro.base', $1, $2, DATE '2024-01-01', $3, $4)`,
-				c.valor, c.texto, organoSintetic, reglamentoSintetico)
-			if err == nil || !strings.Contains(err.Error(), c.restriccion) {
-				t.Fatalf("se esperaba el rechazo de %s, dio: %v", c.restriccion, err)
-			}
-		})
+	tablas := map[string]string{
+		"parametros": `INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			VALUES ('cine_teatro.base', $1, $2, DATE '2024-01-01', $3, $4)`,
+		"snapshots_parametros": `INSERT INTO snapshots_parametros
+			(snapshot_id, clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			VALUES ('snp2-` + strings.Repeat("b", 64) + `', 'cine_teatro.base', $1, $2, DATE '2024-01-01', $3, $4)`,
+	}
+	for tabla, insert := range tablas {
+		for nombre, c := range casos {
+			t.Run(tabla+"/"+nombre, func(t *testing.T) {
+				_, err := pool.Exec(ctx, insert, c.valor, c.texto, organoSintetic, reglamentoSintetico)
+				if err == nil || !strings.Contains(err.Error(), tabla+c.restriccion) {
+					t.Fatalf("se esperaba el rechazo de %s%s, dio: %v", tabla, c.restriccion, err)
+				}
+			})
+		}
 	}
 }

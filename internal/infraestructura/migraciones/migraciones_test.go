@@ -393,7 +393,7 @@ func TestParametrosTextualesSiembraLaBaseDeCineSoloEnUnaBaseSintetica(t *testing
 
 // El down de 00024 no puede dejar un snapshot congelado sin su valor: se
 // niega mientras haya uno textual (ADR 0005). Sin snapshots textuales baja y
-// vuelve a subir limpio.
+// vuelve a subir limpio: ver TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual.
 func TestDownDeParametrosTextualesNoDejaSnapshotsSinValor(t *testing.T) {
 	ctx := t.Context()
 	p, db, version := proveedorEnLaVersionAnteriorA(t, "_parametros_textuales.sql")
@@ -407,5 +407,52 @@ func TestDownDeParametrosTextualesNoDejaSnapshotsSinValor(t *testing.T) {
 	}
 	if _, err := p.DownTo(ctx, version-1); err == nil || !strings.Contains(err.Error(), "ADR 0005") {
 		t.Fatalf("el down tenia que negarse citando la ADR 0005, dio: %v", err)
+	}
+}
+
+// Sin snapshots textuales el down de 00024 si baja: borra la fila textual de
+// `parametros` -no cabe en el esquema de 00023- y devuelve `valor` a NOT NULL.
+// Es el camino del DELETE y del SET NOT NULL, que la prueba de la negativa no
+// recorre. Despues vuelve a subir.
+func TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual(t *testing.T) {
+	ctx := t.Context()
+	p, db, version := proveedorEnLaVersionAnteriorA(t, "_parametros_textuales.sql")
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+		 VALUES ('cine_teatro.base', NULL, 'taquilla', DATE '2024-01-01', 'sintetico', 'RD-IX-seed-sintetico'),
+		        ('ott.wa', 0.5, NULL, DATE '2024-01-01', 'sintetico', 'RD-IX-seed-sintetico')`); err != nil {
+		t.Fatalf("sembrar una fila textual y una numerica: %v", err)
+	}
+
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar sin snapshots textuales tenia que funcionar: %v", err)
+	}
+	var textuales, numericas int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE clave = 'cine_teatro.base'), COUNT(*) FILTER (WHERE clave = 'ott.wa')
+		   FROM parametros`).Scan(&textuales, &numericas); err != nil {
+		t.Fatalf("contar parametros tras el down: %v", err)
+	}
+	if textuales != 0 || numericas != 1 {
+		t.Fatalf("tras el down quedan %d filas textuales y %d numericas, se esperaban 0 y 1", textuales, numericas)
+	}
+	for _, tabla := range []string{"parametros", "snapshots_parametros"} {
+		var nulable string
+		if err := db.QueryRowContext(ctx,
+			`SELECT is_nullable FROM information_schema.columns
+			  WHERE table_schema = current_schema() AND table_name = $1 AND column_name = 'valor'`,
+			tabla).Scan(&nulable); err != nil {
+			t.Fatalf("leer la nulabilidad de %s.valor: %v", tabla, err)
+		}
+		if nulable != "NO" {
+			t.Errorf("%s.valor quedo nulable tras el down", tabla)
+		}
+	}
+
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("volver a subir: %v", err)
 	}
 }
