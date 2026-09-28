@@ -155,6 +155,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `ADDR` | `:8080` | Donde escucha la API |
 | `CORS_ORIGENES` | *(vacio)* | Lista blanca separada por comas. Vacio = sin CORS. Nunca `*` |
 | `OBJECT_DIR` | `./data/objetos` | Raiz del almacen de reportes crudos. Relativa a proposito: con una ruta absoluta, `go run ./cmd/seed` falla con EACCES. En contenedor la fija `docker-compose.yml` a `/objetos` |
+| `OBJECT_BUCKET` | *(vacio)* | Bucket S3 con Object Lock de la boveda. Si esta, gana a `OBJECT_DIR` ([ADR 0023](decisiones/0023-boveda-s3-con-object-lock-governance.md)). La Lambda de la API no arranca sin el |
 | `LOG_FORMATO` | `json` | `texto` para desarrollo |
 | `DEBUG` | `false` | Sube el nivel de log a debug |
 | `SHUTDOWN_TIMEOUT` | `15s` | Margen para terminar las peticiones en vuelo |
