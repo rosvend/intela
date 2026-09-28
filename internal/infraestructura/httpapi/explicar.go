@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -165,7 +166,13 @@ func (a *API) explicarCifra(w http.ResponseWriter, r *http.Request) {
 		noAutenticado(w, "sesion invalida o expirada")
 		return
 	}
-	x, err := a.explicar.Explicar(r.Context(), usuario, chi.URLParam(r, "ref"))
+	// chi entrega el segmento todavia codificado cuando trae %3A (el frontend usa encodeURIComponent).
+	ref, err := url.PathUnescape(chi.URLParam(r, "ref"))
+	if err != nil {
+		escribirError(w, http.StatusNotFound, "no hay linaje asentado para esa cifra")
+		return
+	}
+	x, err := a.explicar.Explicar(r.Context(), usuario, ref)
 	switch {
 	case err == nil:
 		escribirJSON(w, http.StatusOK, aExplicacionJSON(x))
