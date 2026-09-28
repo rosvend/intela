@@ -410,7 +410,7 @@ describe("detalle de obra (integracion con App)", () => {
     expect(
       await screen.findByRole("table", { name: "Catálogo de obras" }),
     ).toBeTruthy();
-    expect(consultas()).toContain("/api/obras?limite=20");
+    expect(consultas()).toContain("/api/obras?limite=10");
     expect(consultas().some((url) => url.includes("titulo="))).toBe(false);
     expect(
       screen.getByRole("textbox", { name: "Texto de búsqueda" }),

@@ -15,8 +15,13 @@ import { useLista } from "./useLista";
  * defecto (100, api/openapi.yaml) y `limite` no admite mas de 500, pero se
  * manda explicito: asi la pagina que se ve es la que dice la URL y un enlace
  * compartido abre lo mismo que vio quien lo copio.
+ *
+ * En 10, no en el maximo que el servidor tolera: una pagina de un listado
+ * largo tiene que caber en el alto de `.contenido` sin volverse ella misma un
+ * scroll interminable (queja del PO al demoar /catalogo). Es el mismo numero
+ * que usa /auditoria (`auditoria/Auditoria.tsx`).
  */
-const LIMITE_POR_PAGINA = 20;
+const LIMITE_POR_PAGINA = 10;
 
 /**
  * La clave con la que el catalogo le entrega su direccion al detalle de una obra.

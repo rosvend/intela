@@ -147,10 +147,18 @@ a {
 
 /* ---------- shell autenticado (Layout.tsx) ---------- */
 
+/*
+ * `height: 100vh` (no `min-height`): el shell tiene que quedarse en el alto
+ * del viewport, nunca crecer con su contenido. Con `min-height` el grid
+ * crecia hasta la fila mas alta -el listado largo de /catalogo o /auditoria-
+ * y el navegador scrolleaba el `.shell` ENTERO, que se llevaba el sidebar
+ * fuera de vista con el. La region que scrollea tiene que ser `.contenido`
+ * sola (ver mas abajo), no el shell que la contiene.
+ */
 .shell {
   display: grid;
   grid-template-columns: 240px 1fr;
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .sidebar {
@@ -159,6 +167,14 @@ a {
   background: var(--superficie);
   border-right: 1px solid var(--borde);
   padding: 1.25rem 0.75rem;
+  /*
+   * El shell ya fija el alto a 100vh; si el viewport es bajo y la nav tiene
+   * mas items de los que caben, el sidebar scrollea por su cuenta en vez de
+   * empujar al shell a crecer. Hoy la nav es corta y esto no dispara, pero
+   * sin esto un rol con muchos modulos visibles perderia el pie con el
+   * usuario detras del borde inferior sin forma de llegar a el.
+   */
+  overflow-y: auto;
 }
 
 /* Mismo activo y misma tecnica que el logo del login, mas pequeno. */
@@ -396,7 +412,17 @@ a {
   }
 }
 
+/*
+ * La UNICA region que scrollea dentro del shell autenticado: alta como su
+ * columna del grid (100%, que es el `height: 100vh` de `.shell`) y con su
+ * propio scroll. Una lista larga -/catalogo, /auditoria- crece dentro de
+ * esta caja y nunca contra el shell, asi que el sidebar, su logo y el pie
+ * con el usuario se quedan fijos en pantalla pase lo que pase con el
+ * contenido.
+ */
 .contenido {
+  height: 100%;
+  overflow-y: auto;
   padding: 2rem 2.5rem;
 }
 
