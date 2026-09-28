@@ -14,6 +14,7 @@ import Catalogo from "./catalogo/Catalogo";
 import DetalleObra from "./catalogo/DetalleObra";
 import EditorReparto from "./catalogo/EditorReparto";
 import HistorialVersiones from "./catalogo/HistorialVersiones";
+import BandejaIdentificacion from "./identificacion/BandejaIdentificacion";
 import Ingesta from "./ingesta/Ingesta";
 import { RUTAS } from "./navegacion";
 import PanelCorridas from "./reparto/PanelCorridas";
@@ -28,6 +29,7 @@ import TableroAnomalias from "./reparto/TableroAnomalias";
 const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/ingesta": <Ingesta />,
   "/catalogo": <Catalogo />,
+  "/identificacion": <BandejaIdentificacion />,
   "/distribucion": <PanelCorridas />,
   "/anomalias": <TableroAnomalias />,
   "/auditoria": <Auditoria />,
