@@ -18,7 +18,15 @@ module "function" {
     DATABASE_URL    = var.database_url
     MIGRATE_TIMEOUT = var.migrate_timeout
     LOG_FORMATO     = var.log_format
+    OBJECT_BUCKET   = var.vault_bucket_name
   }
+}
+
+# sembrar-dataset writes the seed's raw reports to the vault; inline for the same reason as modules/api.
+resource "aws_iam_role_policy" "vault" {
+  name   = "${var.name_prefix}-migrate-vault"
+  role   = module.function.role_name
+  policy = var.vault_policy_json
 }
 
 # Running the migration IS the deploy step, so it belongs in the graph rather

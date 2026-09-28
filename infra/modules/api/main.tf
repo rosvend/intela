@@ -28,5 +28,13 @@ module "function" {
     LOG_FORMATO               = var.log_format
     ONI_DIRECCION_FISICA      = var.oni_direccion_fisica
     ONI_DIRECCION_ELECTRONICA = var.oni_direccion_electronica
+    OBJECT_BUCKET             = var.vault_bucket_name
   }
+}
+
+# Inline, not attached: the deploy role may only attach the two Lambda execution policies.
+resource "aws_iam_role_policy" "vault" {
+  name   = "${var.name_prefix}-api-vault"
+  role   = module.function.role_name
+  policy = var.vault_policy_json
 }
