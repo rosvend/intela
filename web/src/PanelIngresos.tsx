@@ -10,6 +10,7 @@ import {
   type Ingreso,
   type ListaIngresos,
 } from "./ingresos";
+import { citarReglamento, citaDeConcepto, citaDeRetencion, nombreConcepto } from "./reglamento";
 
 /**
  * Panel del titular (OE-6): ingresos netos por obra, fuente y periodo.
@@ -269,6 +270,7 @@ export function FilaIngreso({
 }
 
 export function PanelExplicacion({ cifra }: { cifra: Explicacion }) {
+  const [detalles, setDetalles] = useState(false);
   return (
     <section
       className="explicacion card"
@@ -334,6 +336,106 @@ export function PanelExplicacion({ cifra }: { cifra: Explicacion }) {
           </tbody>
         </table>
       )}
+      <button
+        type="button"
+        className="boton-detalles"
+        aria-expanded={detalles}
+        onClick={() => setDetalles((d) => !d)}
+      >
+        {detalles ? "Ocultar mas detalles" : "Mas detalles"}
+      </button>
+      {detalles && <Recibo cifra={cifra} />}
     </section>
+  );
+}
+
+/**
+ * El "recibo": la misma Explicacion ya cargada, en prosa de bruto a neto y
+ * con la cita de reglamento traducida (feedback del PO: nadie tiene el
+ * reglamento memorizado). No pide datos nuevos -- ver web/src/reglamento.ts.
+ */
+function Recibo({ cifra }: { cifra: Explicacion }) {
+  const citasRegla = citarReglamento(cifra.regla.reglamento);
+  const citaRetencion = citaDeRetencion();
+  return (
+    <div className="recibo" aria-label="Recibo en lenguaje sencillo">
+      <h3>Recibo</h3>
+      <ol className="recibo-lineas">
+        <li className="recibo-linea recibo-bruto">
+          <span>Bruto</span>
+          <span className="neto">{formatearNeto(cifra.bruto)}</span>
+        </li>
+        {cifra.deducciones.map((d) => {
+          const cita = citaDeConcepto(d.concepto);
+          return (
+            <li key={d.concepto} className="recibo-linea recibo-deduccion">
+              <p>
+                {nombreConcepto(d.concepto)} ({d.concepto}): {d.porcentaje}% ={" "}
+                {formatearNeto(d.monto)}
+              </p>
+              {cita && (
+                <p className="muted recibo-cita">
+                  <strong>{cita.titulo}.</strong> {cita.texto}
+                </p>
+              )}
+            </li>
+          );
+        })}
+        <li className="recibo-linea recibo-neto">
+          <span>Neto</span>
+          <span className="neto">{formatearNeto(cifra.neto)}</span>
+        </li>
+      </ol>
+
+      {cifra.split && (
+        <p className="recibo-split">
+          Tu parte declarada: <strong>{cifra.split.porcentaje}%</strong> (IPI{" "}
+          {cifra.split.ipi}
+          {typeof cifra.split.version === "number"
+            ? `, declaracion v${cifra.split.version}`
+            : ""}
+          )
+        </p>
+      )}
+
+      {cifra.retenida && (
+        <div className="recibo-retencion alerta">
+          <p>
+            Esta obra se retuvo por completo
+            {cifra.motivo ? `: ${cifra.motivo}` : "."}
+          </p>
+          {citaRetencion && (
+            <p className="recibo-cita">
+              <strong>{citaRetencion.titulo}.</strong> {citaRetencion.texto}
+            </p>
+          )}
+        </div>
+      )}
+
+      {citasRegla.length > 0 && (
+        <div className="recibo-reglamento">
+          <h4>Regla aplicada</h4>
+          {citasRegla.map((c) => (
+            <p key={c.token} className="recibo-cita">
+              <strong>{c.titulo}</strong>
+              {c.texto ? <> — {c.texto}</> : null}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {cifra.firmas.length > 0 && (
+        <div className="recibo-firmas">
+          <h4>Firmas</h4>
+          <ul>
+            {cifra.firmas.map((f) => (
+              <li key={`${f.rol}-${f.etapa}-${f.sobre_revision}-${f.cuando}`}>
+                {f.rol} · {f.actor_id} · {f.etapa} · {f.cuando.slice(0, 10)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
