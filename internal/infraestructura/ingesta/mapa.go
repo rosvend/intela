@@ -3,6 +3,7 @@ package ingesta
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -648,8 +649,9 @@ func aDecimal(bruto string) (decimal.Decimal, error) {
 // IntPart tardan segundos en el, mas con cada cifra; String() al
 // serializarlo, igual.
 //
-// Por arriba, 10^30 ya no cabe en ninguna columna de medida de `usos`: son
-// NUMERIC(p,s) con p <= 18 y s <= 6, a lo sumo 16 cifras enteras.
+// Por arriba, un valor que pasa de 10^30 ya no cabe en ninguna columna de
+// medida de `usos`: son NUMERIC(p,s) con p <= 18 y s <= 6, a lo sumo 16
+// cifras enteras.
 //
 // Por abajo el limite es mucho mas ancho a proposito. Mas decimales de los que
 // tiene la columna no son un rechazo -- validarUso deja que la base redondee a
@@ -667,22 +669,56 @@ const (
 )
 
 // escalaAcotada rechaza un valor fuera de escala ANTES de que nada lo
-// reescale. El motivo habla del valor como lo escribio el cliente: el
-// exponente interno de la libreria (`5.55e-17` se guarda como 555...e-32) no
-// esta en ninguna celda.
+// reescale. Las dos cotas son sobre el VALOR y no sobre como lo guarda la
+// libreria: `10e30` se guarda con exponente 30 y pasa de 10^30, y `1.000e0`
+// se guarda con exponente -3 y no tiene ninguna cifra decimal. Por eso el
+// motivo tampoco cita el exponente interno, que no esta en ninguna celda.
 //
 // El cero se queda fuera: es cero con cualquier exponente, y los llamadores lo
 // devuelven como el cero de siempre sin reescalarlo.
 func escalaAcotada(bruto string, d decimal.Decimal) error {
-	switch e := d.Exponent(); {
-	case e > maxExponente:
+	if pasaDeLaCota(d) {
 		return fmt.Errorf("%q esta fuera de escala: pasa de 10^%d y no cabe en ninguna columna de medida",
 			bruto, maxExponente)
-	case e < -maxDecimales:
-		return fmt.Errorf("%q esta fuera de escala: se escribe con mas de %d cifras decimales",
+	}
+	if sobranDecimales(d) {
+		return fmt.Errorf("%q esta fuera de escala: tiene mas de %d cifras decimales",
 			bruto, maxDecimales)
 	}
 	return nil
+}
+
+// pasaDeLaCota dice si |d| > 10^maxExponente sin reescalar d. La cifra mas
+// alta de d esta en la posicion exponente + cifras - 1: por encima de
+// maxExponente pasa seguro, por debajo no llega, y justo en maxExponente
+// solo 10^maxExponente exacto (un 1 seguido de ceros) no pasa.
+//
+// NumDigits no reescala, y el coeficiente solo se escribe en ese borde.
+func pasaDeLaCota(d decimal.Decimal) bool {
+	switch alta := int64(d.Exponent()) + int64(d.NumDigits()) - 1; {
+	case alta > maxExponente:
+		return true
+	case alta < maxExponente:
+		return false
+	}
+	c := new(big.Int).Abs(d.Coefficient()).String()
+	return strings.TrimRight(c, "0") != "1"
+}
+
+// sobranDecimales dice si el valor de d tiene mas de maxDecimales cifras
+// decimales. Los ceros finales del coeficiente no son cifras: `1.000` no tiene
+// ninguna y `0.1e-400` tiene 401.
+//
+// Con exponente >= -maxDecimales no puede haber mas, y el coeficiente solo se
+// escribe cuando el exponente pasa la cota.
+func sobranDecimales(d decimal.Decimal) bool {
+	e := int64(d.Exponent())
+	if e >= -maxDecimales {
+		return false
+	}
+	c := d.Coefficient().String()
+	ceros := int64(len(c) - len(strings.TrimRight(c, "0")))
+	return -(e + ceros) > maxDecimales
 }
 
 // aEntero convierte una celda a un recuento.

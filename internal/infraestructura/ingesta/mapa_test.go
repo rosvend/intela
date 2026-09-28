@@ -620,6 +620,16 @@ func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 			"1e31":       "pasa de 10^30",
 			"1e-9999999": "mas de 400 cifras decimales",
 			"1e-401":     "mas de 400 cifras decimales",
+			// La cota es sobre el valor y no sobre como lo guarda la
+			// libreria: todos estos pasan de 10^30 aunque su exponente
+			// interno sea 30 o menos.
+			"1.5e31":                               "pasa de 10^30",
+			"10e30":                                "pasa de 10^30",
+			"99e30":                                "pasa de 10^30",
+			"10000000000000000000000000000000":     "pasa de 10^30",
+			"1.0000000000000000000000000000001e30": "pasa de 10^30",
+			// Una sola cifra decimal escrita, pero el valor es 10^-401.
+			"0.1e-400": "mas de 400 cifras decimales",
 		} {
 			inicio := time.Now()
 			err := coercion(v)
@@ -634,7 +644,7 @@ func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 			if !strings.Contains(m, v) || !strings.Contains(m, "fuera de escala") || !strings.Contains(m, quiere) {
 				t.Errorf("%s(%q): el error no nombra el valor ni dice %q: %v", nombre, v, quiere, err)
 			}
-			if strings.Contains(m, "exponente") {
+			if strings.Contains(m, "exponente") || strings.Contains(m, "se escribe") {
 				t.Errorf("%s(%q): el motivo cita el exponente interno: %v", nombre, v, err)
 			}
 		}
@@ -659,6 +669,13 @@ func TestLaCoercionNumericaRechazaUnExponenteFueraDeRango(t *testing.T) {
 		"5.551115123125783e-17", "4.440892098500626e-16",
 		"1.7976931348623157e-308", "4.9406564584124654e-324",
 		"0.000000000000000000000000000000001",
+		// El borde de arriba es 10^30 como valor, se escriba como se
+		// escriba, y por abajo cuentan las cifras decimales del valor:
+		// los ceros finales no son cifras significativas.
+		"-1e30", "10e29", "1" + strings.Repeat("0", 30),
+		"1." + strings.Repeat("0", 401),
+		"1" + strings.Repeat("0", 5000) + "e-5000",
+		"100e-402", "1e-400",
 	} {
 		d, err := aDecimal(v)
 		if err != nil {
