@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -311,6 +313,32 @@ func TestProcesoParametroAusenteOInvalidoEs409(t *testing.T) {
 				t.Errorf("el cuerpo %s no nombra %s", rec.Body, c.fragmento)
 			}
 		})
+	}
+}
+
+// Un snapshot congelado que no se puede releer es corrupcion de la tabla, no
+// una vigencia que falte: 500 con log, aunque el error envuelva ademas un
+// ErrParametroInvalido (una fila `cine_teatro.base = 'boletas'` alterada por
+// fuera del adaptador). Antes ganaba el case de parametros: 409 "cargue la
+// vigencia", que no arregla nada, y sin rastro en el log.
+func TestAvanzarEtapaConSnapshotCorruptoEs500ConLogAunqueEnvuelvaUnParametroInvalido(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: snapshot %q: %w: %w", "proc-1", "snp2-abc",
+		aplicacion.ErrSnapshotCorrupto,
+		fmt.Errorf("parametro %q: %w", "cine_teatro.base", aplicacion.ErrParametroInvalido))
+	var buf bytes.Buffer
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador}}
+	h := Nueva(Casos{Auth: auth, Procesos: &procesosFalso{err: err}},
+		Opciones{Log: slog.New(slog.NewTextHandler(&buf, nil))}).Router()
+
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "cine_teatro.base") {
+		t.Errorf("el 500 no expone el detalle interno al cliente: %s", rec.Body)
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "snapshot de parametros corrupto") {
+		t.Errorf("el snapshot corrupto tiene que quedar en el log a Error, log: %s", buf.String())
 	}
 }
 
