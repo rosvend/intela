@@ -33,7 +33,7 @@ pasando (`go test ./...`).
 | Estado | Conteo | Reglas |
 | ------ | ------ | ------ |
 | done | 5 | R-02, R-03, R-04, R-27, R-35 |
-| partial | 26 | R-01, R-05, R-08–R-10, R-12–R-26, R-28–R-30, R-32–R-34 |
+| partial | 27 | R-01, R-05, R-08–R-10, R-12–R-26, R-28–R-30, R-32–R-34, R-36 |
 | blocked-on-client-data | 4 | R-06, R-07, R-11, R-31 |
 | fuera-de-alcance | 11 | T-01…T-11 |
 
@@ -76,6 +76,7 @@ pasando (`go test ./...`).
 | R-33 Descuento automático del anticipo | `RA 2.1` | `anticipos` + `liquidacion` (andamiaje) | — | partial |
 | R-34 Fechas de corte de rendimientos | `RD 10.1`, `RD 10.2.1` | `internal/dominio/recaudo` (circuitos / periodos) | `TestNuevaBolsaRechaza`; `TestCircuitosSonLosDosDelReglamento` | partial |
 | R-35 Inversiones nacional e internacional separadas | `RD 10.3` | `internal/dominio/recaudo`; UNIQUE bolsa (usuario, periodo, circuito) | `TestCircuitosSonLosDosDelReglamento`; `TestNuevaBolsaRechaza`; `TestNacionalEInternacionalDelMismoPeriodoConviven` | done |
+| R-36 Resolución manual de un caso ONI | `RD 7.1`, `RD 9.5` (R-27), `RD 13.8` | `internal/dominio/identificacion` (resolucion); `internal/aplicacion` (resolucion_identificacion); postgres; `POST /identificacion/casos/{id}/resolucion` | `TestResolverCaso`; `TestNormalizarNota`; `TestResolverAsignaAUnaCandidata`; `TestResolverDescarta`; `TestResolverSiElAsientoFallaNoQuedaNadaHecho`; `TestResolverIntegracionAsignaAUnaCandidata`; `TestResolverIntegracionDosResolucionesConcurrentesSoloUnaGana`; `TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte`; `TestElCheckDeUsosSostieneLaResolucionManual` | partial |
 | T-01 Televisión abierta y cerrada: 4% | `RT 3.1.1`, `RT 3.1.2` | `CategoriaUsuario` en `recaudo` (etiqueta) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |
 | T-02 Salas de cine: 4% sobre 50% taquilla | `RT 4` (P-01 provisional) | Idem (`cine`) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |
 | T-03 Transporte aéreo | `RT 3.3` | Idem (`transporte_aereo`) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |

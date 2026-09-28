@@ -182,7 +182,8 @@ func imprimir(c conjunto, evs []identificacion.Evaluacion, u identificacion.Umbr
 	fmt.Printf("etiquetados=%d  automaticas=%d (%s%% de lo que se intento identificar)  aciertos=%d  fallos=%d  precision=%s%%\n",
 		r.Total, r.Automaticas, r.TasaAutoAsociacionPct().StringFixed(1),
 		r.Aciertos, r.Fallos, r.PrecisionPct().StringFixed(1))
-	fmt.Printf("banda=%d  oni=%d  excluidas=%d  manuales=%d\n\n", r.ABanda, r.AONI, r.Excluidas, r.Manuales)
+	fmt.Printf("banda=%d  oni=%d  excluidas=%d  manuales=%d  descartadas=%d\n\n",
+		r.ABanda, r.AONI, r.Excluidas, r.Manuales, r.Descartadas)
 
 	for i, ev := range evs {
 		fmt.Printf("  %-24s %s\n", c.Casos[i].Titulo, desenlace(ev))

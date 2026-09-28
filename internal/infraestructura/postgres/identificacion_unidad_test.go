@@ -105,7 +105,8 @@ func TestResolverUsosIntegracionONIQuePierdeLaCarreraConservaLaBandejaAnterior(t
 			if _, err := pool.Exec(ctx,
 				`UPDATE usos
 				    SET escalon = 'manual', obra_id = $1, oni = FALSE,
-				        resuelto_por = 'revisor-1', resuelto_en = now()
+				        resuelto_por = 'revisor-1', resuelto_en = now(),
+				        nota_resolucion = 'coincide la ficha'
 				  WHERE id = 'u-3'`, obraVacia); err != nil {
 				t.Errorf("resolver u-3 a mano: %v", err)
 			}

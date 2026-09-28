@@ -90,6 +90,16 @@ func TestMetricas(t *testing.T) {
 			},
 			quiero: Reporte{Total: 2, Automaticas: 1, Aciertos: 1, Excluidas: 1},
 		},
+		{
+			// Un descartado no tiene obra y SI se parecio a algo: sin su rama
+			// caeria en AONI, que dice lo contrario.
+			nombre: "un descartado a mano cuenta como descartado y no como ONI",
+			evs: []Evaluacion{
+				{ObraEsperada: "obra-1", Resultado: automatica("obra-1")},
+				{Resultado: Resultado{Escalon: EscalonDescartado}},
+			},
+			quiero: Reporte{Total: 2, Automaticas: 1, Aciertos: 1, Descartadas: 1},
+		},
 	}
 
 	for _, c := range casos {
@@ -111,10 +121,11 @@ func TestReporteCierra(t *testing.T) {
 		{ObraEsperada: "obra-4", Resultado: sinCandidato()},
 		{Resultado: Resultado{Escalon: EscalonExcluido}},
 		{ObraEsperada: "obra-5", Resultado: Resultado{ObraID: "obra-5", Escalon: EscalonManual}},
+		{Resultado: Resultado{Escalon: EscalonDescartado}},
 	}
 	r := Metricas(evs)
 
-	if suma := r.Automaticas + r.ABanda + r.AONI + r.Excluidas + r.Manuales; suma != r.Total {
+	if suma := r.Automaticas + r.ABanda + r.AONI + r.Excluidas + r.Manuales + r.Descartadas; suma != r.Total {
 		t.Fatalf("las categorias suman %d y el total es %d: %+v", suma, r.Total, r)
 	}
 	if r.Aciertos+r.Fallos != r.Automaticas {
@@ -166,6 +177,18 @@ func TestReportePorcentajes(t *testing.T) {
 			nombre: "una manual no sube la tasa de auto-asociacion",
 			r:      Reporte{Total: 4, Automaticas: 1, Aciertos: 1, Manuales: 1, AONI: 2},
 			auto:   "25", precisio: "100",
+		},
+		{
+			// Un descartado es "no es repertorio", como una excluida: sale del
+			// denominador por la misma razon.
+			nombre: "las descartadas no cuentan en el denominador de la tasa",
+			r:      Reporte{Total: 4, Automaticas: 1, Aciertos: 1, AONI: 2, Descartadas: 1},
+			auto:   "33.3333", precisio: "100",
+		},
+		{
+			nombre: "todo descartado: la tasa es cero y no hay division por cero",
+			r:      Reporte{Total: 2, Descartadas: 2},
+			auto:   "0", precisio: "0",
 		},
 	}
 

@@ -487,7 +487,8 @@ func TestGuardarMatchNoPisaUnaFilaQueCambioDeEscalon(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx,
 		`UPDATE usos SET escalon = 'manual', obra_id = $1, oni = FALSE,
-		        resuelto_por = 'usr-1', resuelto_en = now()
+		        resuelto_por = 'usr-1', resuelto_en = now(),
+		        nota_resolucion = 'coincide la ficha'
 		  WHERE id = 'u-1'`, obraIda); err != nil {
 		t.Fatalf("resolver a mano: %v", err)
 	}
