@@ -2110,3 +2110,35 @@ func TestRechazosDeCargaPaginaSinTruncarElRecuentoDelListado(t *testing.T) {
 		t.Fatalf("pagina fuera de rango = %#v, err = %v", mas, err)
 	}
 }
+
+// EntregarFilas es acuse y filas en un solo hecho: un fallo del lote no quema la huella, y un duplicado implica filas.
+func TestEntregarFilasEsUnSoloHecho(t *testing.T) {
+	ing, repo, _ := nuevaIngesta()
+	datos := []byte("titulo\nA\n")
+	usos := []UsoPersistido{usoBueno("A"), usoBueno("B")}
+
+	repo.errUsos = errors.New("el lote falla")
+	if _, err := ing.EntregarFilas(t.Context(), "caracol", "2025-02", datos, usos); err == nil {
+		t.Fatal("se esperaba el error del lote")
+	}
+	if len(repo.reportes) != 0 {
+		t.Fatalf("un lote que falla no deja acuse: %+v", repo.reportes)
+	}
+
+	repo.errUsos = nil
+	rec, err := ing.EntregarFilas(t.Context(), "caracol", "2025-02", datos, usos)
+	if err != nil {
+		t.Fatalf("reintento tras el fallo: %v", err)
+	}
+	if rec.Aceptados != 2 || len(repo.usos) != 2 || len(repo.reportes) != 1 {
+		t.Fatalf("aceptados = %d, usos = %d, reportes = %d", rec.Aceptados, len(repo.usos), len(repo.reportes))
+	}
+
+	otra, err := ing.EntregarFilas(t.Context(), "caracol", "2025-02", datos, usos)
+	if !errors.Is(err, ErrReporteDuplicado) {
+		t.Fatalf("segunda entrega: err = %v, se esperaba ErrReporteDuplicado", err)
+	}
+	if otra.Reporte.ID != rec.Reporte.ID {
+		t.Fatalf("el duplicado devuelve el id de la entrega que ya estaba: %q != %q", otra.Reporte.ID, rec.Reporte.ID)
+	}
+}
