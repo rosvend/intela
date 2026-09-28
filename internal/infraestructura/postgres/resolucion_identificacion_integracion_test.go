@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -78,12 +79,16 @@ func solicitudResolucion(usoID, decision, obraID, nota string) aplicacion.Solici
 }
 
 // leerResolucion trae lo que la resolucion escribe y no esta en filaUso.
+//
+// resueltoPor es cadena y no puntero para que la struct sea comparable con ==:
+// con punteros, dos lecturas de la MISMA fila salen distintas y una prueba de
+// "no cambio nada" fallaria siempre.
 type resolucionEscrita struct {
 	escalon     string
 	obraIDNulo  bool
 	obraID      string
 	oni         bool
-	resueltoPor *string
+	resueltoPor string
 	resueltoEn  *time.Time
 	nota        string
 	tipoObra    string
@@ -94,7 +99,7 @@ func leerResolucion(t *testing.T, pool *pgxpool.Pool, id string) resolucionEscri
 	var r resolucionEscrita
 	err := pool.QueryRow(t.Context(),
 		`SELECT escalon, obra_id IS NULL, COALESCE(obra_id, ''), oni,
-		        resuelto_por, resuelto_en, nota_resolucion, tipo_obra
+		        COALESCE(resuelto_por, ''), resuelto_en, nota_resolucion, tipo_obra
 		   FROM usos WHERE id = $1`, id).
 		Scan(&r.escalon, &r.obraIDNulo, &r.obraID, &r.oni,
 			&r.resueltoPor, &r.resueltoEn, &r.nota, &r.tipoObra)
@@ -102,6 +107,23 @@ func leerResolucion(t *testing.T, pool *pgxpool.Pool, id string) resolucionEscri
 		t.Fatalf("leer la resolucion de %q: %v", id, err)
 	}
 	return r
+}
+
+// igualResolucion compara dos lecturas de la misma fila, instante incluido.
+func igualResolucion(a, b resolucionEscrita) bool {
+	if a.escalon != b.escalon || a.obraIDNulo != b.obraIDNulo || a.obraID != b.obraID ||
+		a.oni != b.oni || a.resueltoPor != b.resueltoPor || a.nota != b.nota ||
+		a.tipoObra != b.tipoObra {
+		return false
+	}
+	switch {
+	case a.resueltoEn == nil && b.resueltoEn == nil:
+		return true
+	case a.resueltoEn == nil || b.resueltoEn == nil:
+		return false
+	default:
+		return a.resueltoEn.Equal(*b.resueltoEn)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +144,7 @@ func TestResolverIntegracionAsignaAUnaCandidata(t *testing.T) {
 	if f.escalon != identificacion.EscalonManual || f.obraID != obraIda || f.oni {
 		t.Fatalf("la fila quedo %+v", f)
 	}
-	if f.resueltoPor == nil || *f.resueltoPor != revisorDePrueba ||
+	if f.resueltoPor != revisorDePrueba ||
 		f.resueltoEn == nil || !f.resueltoEn.Equal(instanteResolucion) {
 		t.Fatalf("la fila no quedo firmada: %+v", f)
 	}
@@ -210,12 +232,18 @@ func TestResolverIntegracionAsignaAUnaObraBuscada(t *testing.T) {
 	if len(asientos) != 1 {
 		t.Fatalf("asientos = %+v", asientos)
 	}
-	payload := string(asientos[0].Payload)
-	if !strings.Contains(payload, `"candidata":false`) {
-		t.Fatalf("el asiento no dice que la obra no era candidata: %s", payload)
+	// El payload se lee decodificado y no con un Contains sobre el crudo: la
+	// columna es jsonb y Postgres lo reformatea (claves ordenadas, espacio
+	// despues de los dos puntos).
+	var payload map[string]any
+	if err := json.Unmarshal(asientos[0].Payload, &payload); err != nil {
+		t.Fatalf("payload del asiento: %v", err)
 	}
-	if strings.Contains(payload, `"puntaje"`) {
-		t.Fatalf("una obra buscada no tiene puntaje que heredar: %s", payload)
+	if payload["candidata"] != false {
+		t.Fatalf("el asiento no dice que la obra no era candidata: %v", payload)
+	}
+	if _, hay := payload["puntaje"]; hay {
+		t.Fatalf("una obra buscada no tiene puntaje que heredar: %v", payload)
 	}
 }
 
@@ -237,7 +265,7 @@ func TestResolverIntegracionDescarta(t *testing.T) {
 	if f.escalon != identificacion.EscalonDescartado || !f.obraIDNulo || f.oni {
 		t.Fatalf("la fila quedo %+v: un descartado no tiene obra y no es ONI", f)
 	}
-	if f.resueltoPor == nil || f.resueltoEn == nil || f.nota == "" {
+	if f.resueltoPor == "" || f.resueltoEn == nil || f.nota == "" {
 		t.Fatalf("un descarte va firmado y con nota: %+v", f)
 	}
 	if caso.Estado != aplicacion.EstadoCasoDescartado || caso.ObraAsignada != nil {
@@ -384,7 +412,7 @@ func TestResolverIntegracionSiElAsientoFallaNoQuedaNadaEscrito(t *testing.T) {
 	// El rollback es de verdad: la fila sigue en ONI, sin nota y sin firma.
 	f := leerResolucion(t, pool, "u-1")
 	if f.escalon != identificacion.EscalonONI || !f.obraIDNulo || !f.oni ||
-		f.nota != "" || f.resueltoPor != nil || f.resueltoEn != nil {
+		f.nota != "" || f.resueltoPor != "" || f.resueltoEn != nil {
 		t.Fatalf("la fila no se revirtio: %+v", f)
 	}
 	// Y el alias tampoco quedo: se aprendio dentro de la unidad que fallo.
@@ -407,7 +435,12 @@ func TestResolverIntegracionSiElAsientoFallaNoQuedaNadaEscrito(t *testing.T) {
 // y el calculo.
 func TestResolverIntegracionEsperaElCerrojoDelPeriodo(t *testing.T) {
 	s, _ := sembrarResolucion(t)
-	r := resolucionDePrueba(s, relojQuieto{instanteResolucion})
+	// Pool aparte: el de testhelp es de UNA conexion y la retiene la
+	// transaccion de fuera. Con el mismo Store, la resolucion esperaria una
+	// conexion libre y no el cerrojo, y la prueba pasaria por el motivo
+	// equivocado.
+	otro := storeAparte(t, s)
+	r := resolucionDePrueba(otro, relojQuieto{instanteResolucion})
 
 	termino := make(chan error, 1)
 	err := s.EnUnidad(t.Context(), func(ctx context.Context) error {
@@ -518,10 +551,10 @@ func TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte(t *testing.T) {
 		t.Fatalf("ResolverUsos: %v", err)
 	}
 
-	if despues := leerResolucion(t, pool, "u-1"); despues != antesUno {
+	if despues := leerResolucion(t, pool, "u-1"); !igualResolucion(despues, antesUno) {
 		t.Fatalf("la cascada piso la asignacion: antes %+v, ahora %+v", antesUno, despues)
 	}
-	if despues := leerResolucion(t, pool, "u-2"); despues != antesDos {
+	if despues := leerResolucion(t, pool, "u-2"); !igualResolucion(despues, antesDos) {
 		t.Fatalf("la cascada piso el descarte: antes %+v, ahora %+v", antesDos, despues)
 	}
 }
@@ -540,7 +573,7 @@ func TestResolverIntegracionRechazaUnaObraFueraDelCatalogo(t *testing.T) {
 	if !errors.Is(err, aplicacion.ErrObraInexistente) {
 		t.Fatalf("err = %v, se esperaba ErrObraInexistente", err)
 	}
-	if despues := leerResolucion(t, pool, "u-1"); despues != antes {
+	if despues := leerResolucion(t, pool, "u-1"); !igualResolucion(despues, antes) {
 		t.Fatalf("nada puede cambiar con una obra inexistente: %+v", despues)
 	}
 }
@@ -563,7 +596,7 @@ func TestResolverIntegracionAliasEnConflicto(t *testing.T) {
 	if !errors.Is(err, aplicacion.ErrAliasEnConflicto) {
 		t.Fatalf("err = %v, se esperaba ErrAliasEnConflicto", err)
 	}
-	if despues := leerResolucion(t, pool, "u-1"); despues != antes {
+	if despues := leerResolucion(t, pool, "u-1"); !igualResolucion(despues, antes) {
 		t.Fatalf("un conflicto de alias no escribe nada: %+v", despues)
 	}
 

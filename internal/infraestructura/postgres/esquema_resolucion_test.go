@@ -26,6 +26,12 @@ func TestElCheckDeUsosSostieneLaResolucionManual(t *testing.T) {
 		hashBcrypt); err != nil {
 		t.Fatalf("sembrar el usuario revisor: %v", err)
 	}
+	// Y una obra, porque `manual` exige obra_id y la columna es FK a `obras`.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO obras (id, titulo, genero, anio, tipo)
+		 VALUES ($1, 'Obra de catalogo', 'Drama', 2000, 'serie')`, obraImdb); err != nil {
+		t.Fatalf("sembrar la obra: %v", err)
+	}
 
 	// insertar escribe el crudo: escalon, oni, obra, firmas y nota, sin pasar
 	// por ninguna validacion del nucleo.
