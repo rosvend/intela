@@ -44,6 +44,11 @@ func dinero(d decimal.Decimal) string {
 }
 
 func (a *API) misIngresos(w http.ResponseWriter, r *http.Request) {
+	if a.ingresos == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"el panel de ingresos no esta configurado en esta instalacion")
+		return
+	}
 	actor, hay := UsuarioDe(r.Context())
 	if !hay {
 		noAutenticado(w, "sesion invalida o expirada")

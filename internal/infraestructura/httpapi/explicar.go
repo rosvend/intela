@@ -155,6 +155,11 @@ func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
 
 // explicarCifra sirve el linaje de una cifra; el alcance del titular lo decide el caso de uso.
 func (a *API) explicarCifra(w http.ResponseWriter, r *http.Request) {
+	if a.explicar == nil {
+		escribirError(w, http.StatusServiceUnavailable,
+			"explicar una cifra no esta configurado en esta instalacion")
+		return
+	}
 	usuario, hay := UsuarioDe(r.Context())
 	if !hay {
 		noAutenticado(w, "sesion invalida o expirada")

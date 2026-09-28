@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import {
-  filtrarIngresos,
   formatearNeto,
   opcionesFiltro,
   rutaExplicar,
@@ -21,7 +20,8 @@ import {
  * Ingresos.tsx e ingresos.ts son el mismo path.
  */
 export function PanelIngresos() {
-  const [filas, setFilas] = useState<Ingreso[]>([]);
+  const [catalogo, setCatalogo] = useState<Ingreso[]>([]);
+  const [visibles, setVisibles] = useState<Ingreso[] | null>(null);
   const [filtro, setFiltro] = useState<FiltroIngresos>({
     obra: "",
     fuente: "",
@@ -29,6 +29,7 @@ export function PanelIngresos() {
   });
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(true);
+  const filtroVacio = !filtro.obra && !filtro.fuente && !filtro.periodo;
 
   useEffect(() => {
     let vigente = true;
@@ -39,7 +40,7 @@ export function PanelIngresos() {
       ) as Promise<ListaIngresos>
     )
       .then((r) => {
-        if (vigente) setFilas(r.ingresos);
+        if (vigente) setCatalogo(r.ingresos);
       })
       .catch((e: Error) => vigente && setError(e.message))
       .finally(() => vigente && setCargando(false));
@@ -48,11 +49,26 @@ export function PanelIngresos() {
     };
   }, []);
 
-  const visibles = useMemo(
-    () => filtrarIngresos(filas, filtro),
-    [filas, filtro],
-  );
-  const opciones = useMemo(() => opcionesFiltro(filas), [filas]);
+  useEffect(() => {
+    if (filtroVacio) {
+      setVisibles(null);
+      return;
+    }
+    let vigente = true;
+    setCargando(true);
+    (api(rutaMisIngresos(filtro)) as Promise<ListaIngresos>)
+      .then((r) => {
+        if (vigente) setVisibles(r.ingresos);
+      })
+      .catch((e: Error) => vigente && setError(e.message))
+      .finally(() => vigente && setCargando(false));
+    return () => {
+      vigente = false;
+    };
+  }, [filtro, filtroVacio]);
+
+  const filas = visibles ?? catalogo;
+  const opciones = useMemo(() => opcionesFiltro(catalogo), [catalogo]);
 
   if (error) {
     return (
@@ -77,10 +93,10 @@ export function PanelIngresos() {
       <Filtros filtro={filtro} opciones={opciones} onChange={setFiltro} />
       {cargando ? (
         <p>Consultando...</p>
-      ) : visibles.length === 0 ? (
+      ) : filas.length === 0 ? (
         <p className="muted">No hay ingresos con esos filtros.</p>
       ) : (
-        <TablaIngresos filas={visibles} />
+        <TablaIngresos filas={filas} />
       )}
     </section>
   );
@@ -151,12 +167,15 @@ export function TablaIngresos({ filas }: { filas: Ingreso[] }) {
   const [explicacion, setExplicacion] = useState<Explicacion | null>(null);
   const [errorExplicar, setErrorExplicar] = useState("");
   const [cargandoExplicar, setCargandoExplicar] = useState(false);
+  const pedido = useRef(0);
 
   function pedirExplicacion(ref: string) {
+    const id = ++pedido.current;
     if (abierta === ref) {
       setAbierta("");
       setExplicacion(null);
       setErrorExplicar("");
+      setCargandoExplicar(false);
       return;
     }
     setAbierta(ref);
@@ -165,10 +184,17 @@ export function TablaIngresos({ filas }: { filas: Ingreso[] }) {
     setCargandoExplicar(true);
     (api(rutaExplicar(ref)) as Promise<Explicacion>)
       .then((r) => {
+        if (pedido.current !== id) return;
         setExplicacion(r);
       })
-      .catch((e: Error) => setErrorExplicar(e.message))
-      .finally(() => setCargandoExplicar(false));
+      .catch((e: Error) => {
+        if (pedido.current !== id) return;
+        setErrorExplicar(e.message);
+      })
+      .finally(() => {
+        if (pedido.current !== id) return;
+        setCargandoExplicar(false);
+      });
   }
 
   return (

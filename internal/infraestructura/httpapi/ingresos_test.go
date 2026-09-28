@@ -101,6 +101,26 @@ func TestMisIngresosOtroRolEs403(t *testing.T) {
 	}
 }
 
+func TestMisIngresosSinCasoDeUsoEs503(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: titularAna()}
+	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
+
+	rec := pedir(t, h, http.MethodGet, "/mis-ingresos", "", "tok")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestExplicarSinCasoDeUsoEs503(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: titularAna()}
+	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
+
+	rec := pedir(t, h, http.MethodGet, "/explicar/proc-1:obra-1:tit-ana", "", "tok")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestMisIngresosSinSesionEs401(t *testing.T) {
 	rec := pedir(t, servidorCon(t, &autenticacionFalsa{}, &ingresosFalsos{}), http.MethodGet, "/mis-ingresos", "", "")
 	if rec.Code != http.StatusUnauthorized {

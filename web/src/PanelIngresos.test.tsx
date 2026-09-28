@@ -6,7 +6,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FilaIngreso, PanelExplicacion, PanelIngresos } from "./PanelIngresos";
+import {
+  FilaIngreso,
+  PanelExplicacion,
+  PanelIngresos,
+  TablaIngresos,
+} from "./PanelIngresos";
 import type { Explicacion, Ingreso } from "./ingresos";
 import { api } from "./api";
 
@@ -159,7 +164,17 @@ describe("PanelIngresos", () => {
   beforeEach(() => {
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path.startsWith("/api/mis-ingresos")) {
-        return { ingresos: [anaCasa, anaSegundo] };
+        const q = new URL(path, "http://local").searchParams;
+        return {
+          ingresos: [anaCasa, anaSegundo].filter((fila) => {
+            if (q.get("obra") && fila.obra_id !== q.get("obra")) return false;
+            if (q.get("fuente") && fila.fuente !== q.get("fuente"))
+              return false;
+            if (q.get("periodo") && fila.periodo !== q.get("periodo"))
+              return false;
+            return true;
+          }),
+        };
       }
       if (path.includes(encodeURIComponent(anaCasa.ref))) {
         return linaje;
@@ -193,6 +208,13 @@ describe("PanelIngresos", () => {
     fireEvent.change(screen.getByLabelText("Filtrar por obra"), {
       target: { value: "obra-completa" },
     });
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(api)
+          .mock.calls.some((c) => String(c[0]).includes("obra=obra-completa")),
+      ).toBe(true);
+    });
     expect(
       screen.getByRole("cell", { name: "La Casa de las Dos Palmas" }),
     ).toBeTruthy();
@@ -204,7 +226,9 @@ describe("PanelIngresos", () => {
     fireEvent.change(screen.getByLabelText("Filtrar por fuente"), {
       target: { value: "caracol" },
     });
-    expect(screen.getByRole("cell", { name: "El Segundo Guion" })).toBeTruthy();
+    expect(
+      await screen.findByRole("cell", { name: "El Segundo Guion" }),
+    ).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Filtrar por periodo"), {
       target: { value: "2026-01" },
@@ -247,5 +271,78 @@ describe("PanelIngresos", () => {
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.queryByText("Solo de Beto")).toBeNull();
     expect(screen.queryByText("tit-beto")).toBeNull();
+  });
+});
+
+describe("TablaIngresos", () => {
+  const linajeB: Explicacion = {
+    ...linaje,
+    ref: anaSegundo.ref,
+    neto: "750.00",
+    bruto: "900.00",
+    obra: {
+      ...linaje.obra,
+      id: anaSegundo.obra_id,
+      titulo: "El Segundo Guion",
+    },
+  };
+
+  it("una respuesta tardia no sustituye el linaje de la cifra abierta", async () => {
+    let resolverA: (v: Explicacion) => void = () => {};
+    let resolverB: (v: Explicacion) => void = () => {};
+    vi.mocked(api).mockImplementation((path: string) => {
+      if (String(path).includes(encodeURIComponent(anaCasa.ref))) {
+        return new Promise((resolver) => {
+          resolverA = resolver as (v: Explicacion) => void;
+        });
+      }
+      if (String(path).includes(encodeURIComponent(anaSegundo.ref))) {
+        return new Promise((resolver) => {
+          resolverB = resolver as (v: Explicacion) => void;
+        });
+      }
+      return Promise.reject(new Error("ruta no mockeada: " + path));
+    });
+
+    render(<TablaIngresos filas={[anaCasa, anaSegundo]} />);
+    const botones = screen.getAllByRole("button", {
+      name: "Explicar esta cifra",
+    });
+    fireEvent.click(botones[0]);
+    fireEvent.click(botones[1]);
+    resolverB(linajeB);
+    resolverA(linaje);
+
+    const panel = await screen.findByRole("region", {
+      name: "Explicacion de la cifra",
+    });
+    expect(panel.textContent).toContain("El Segundo Guion");
+    expect(panel.textContent).toContain("750.00");
+    expect(panel.textContent).not.toContain("La Casa de las Dos Palmas");
+    expect(panel.textContent).not.toContain("4800.00");
+  });
+
+  it("cerrar el panel invalida la peticion pendiente", async () => {
+    let resolverA: (v: Explicacion) => void = () => {};
+    vi.mocked(api).mockImplementation((path: string) => {
+      if (String(path).includes(encodeURIComponent(anaCasa.ref))) {
+        return new Promise((resolver) => {
+          resolverA = resolver as (v: Explicacion) => void;
+        });
+      }
+      return Promise.reject(new Error("ruta no mockeada: " + path));
+    });
+
+    render(<TablaIngresos filas={[anaCasa]} />);
+    const boton = screen.getByRole("button", { name: "Explicar esta cifra" });
+    fireEvent.click(boton);
+    fireEvent.click(boton);
+    resolverA(linaje);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "Explicacion de la cifra" }),
+      ).toBeNull();
+    });
   });
 });

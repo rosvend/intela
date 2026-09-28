@@ -197,10 +197,8 @@ func (a *API) Router() http.Handler {
 			audit.Get("/asientos", a.listarAsientos)
 			audit.Get("/obra/{id}", a.historialDeObra)
 		})
-		if a.explicar != nil {
-			protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
-				Get("/explicar/{ref}", a.explicarCifra)
-		}
+		protegido.With(requiereRol(aplicacion.RolTitular, aplicacion.RolAuditor, aplicacion.RolAdministrador)).
+			Get("/explicar/{ref}", a.explicarCifra)
 
 		// Panel del titular (OE-6). El middleware cierra el prefijo al
 		// rol; el caso de uso recorta por TitularID de la sesion.
