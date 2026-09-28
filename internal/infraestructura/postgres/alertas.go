@@ -25,7 +25,8 @@ var _ aplicacion.RepositorioAlertas = (*Store)(nil)
 // puntero en el modelo, y por eso NO lleva COALESCE: un cero de time.Time
 // seria un instante del ano 1 indistinguible de un dato mal escrito.
 const columnasAlerta = `id::text, periodo, tipo, ref_tipo, ref_id, ref_titular, detalle,
-	detectada, resuelta, COALESCE(resuelta_por, ''), resuelta_en, nota, autocerrada`
+	detectada, resuelta, COALESCE(resuelta_por, ''), resuelta_en, nota, autocerrada,
+	resuelta_rol, accion, accion_objetivo`
 
 // GuardarAlertas escribe el lote en UNA sentencia (INSERT ... SELECT FROM unnest) y devuelve cuantas entraron.
 //
@@ -61,7 +62,8 @@ func (s *Store) GuardarAlertas(ctx context.Context, alertas []aplicacion.Alerta)
 			var reabierta bool
 			if err := filas.Scan(
 				&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
-				&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada, &reabierta,
+				&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada,
+				&a.ResueltaRol, &a.Accion, &a.AccionObjetivo, &reabierta,
 			); err != nil {
 				return traducirError(err, "escanear alerta guardada")
 			}
@@ -258,15 +260,19 @@ func (s *Store) ListarAlertas(ctx context.Context, f aplicacion.FiltroAlertas) (
 //
 // RETURNING y no un SELECT posterior: la fila que se devuelve es exactamente
 // la que este UPDATE escribio.
+//
+// La accion y su objetivo (#164) se escriben en el mismo UPDATE: son parte del
+// cierre, y los CHECK de 00024 exigen que solo una persona cierre con accion.
 func (s *Store) ResolverAlerta(
-	ctx context.Context, id, actorID, nota string, cuando time.Time,
+	ctx context.Context, id string, c aplicacion.CierreDeAlerta,
 ) (aplicacion.Alerta, error) {
 	fila := s.ejecutorDe(ctx).QueryRow(ctx,
 		`UPDATE alertas
-		    SET resuelta = TRUE, resuelta_por = $2, resuelta_en = $3, nota = $4
+		    SET resuelta = TRUE, resuelta_por = $2, resuelta_en = $3, nota = $4,
+		        resuelta_rol = $5, accion = $6, accion_objetivo = $7
 		  WHERE id = $1::uuid AND NOT resuelta
 		  RETURNING `+columnasAlerta,
-		id, actorID, cuando, nota)
+		id, c.ActorID, c.Cuando, c.Nota, c.ActorRol, c.Accion, c.AccionObjetivo)
 
 	a, err := escanearAlerta(fila)
 	if err == nil {
@@ -289,6 +295,29 @@ func (s *Store) ResolverAlerta(
 		return aplicacion.Alerta{}, fmt.Errorf("resolver la alerta %q: %w", id, aplicacion.ErrAlertaYaResuelta)
 	}
 	return aplicacion.Alerta{}, fmt.Errorf("resolver la alerta %q: %w", id, aplicacion.ErrNoEncontrado)
+}
+
+// AlertaPorID lee una alerta sin bloquearla. El cierre la vuelve a condicionar
+// con `AND NOT resuelta` en [Store.ResolverAlerta]: esta lectura solo decide
+// que correccion pide su tipo.
+func (s *Store) AlertaPorID(ctx context.Context, id string) (aplicacion.Alerta, error) {
+	a, err := escanearAlerta(s.ejecutorDe(ctx).QueryRow(ctx,
+		`SELECT `+columnasAlerta+` FROM alertas WHERE id = $1::uuid`, id))
+	if err != nil {
+		return aplicacion.Alerta{}, traducirError(err, "leer la alerta %q", id)
+	}
+	return a, nil
+}
+
+// ContarAlertasConAccion cuenta las alertas de un periodo cerradas con esa accion (#164).
+func (s *Store) ContarAlertasConAccion(ctx context.Context, periodo, accion string) (int, error) {
+	var n int
+	if err := s.ejecutorDe(ctx).QueryRow(ctx,
+		`SELECT COUNT(*) FROM alertas WHERE periodo = $1 AND accion = $2`,
+		periodo, accion).Scan(&n); err != nil {
+		return 0, traducirError(err, "contar alertas de %q con accion %q", periodo, accion)
+	}
+	return n, nil
 }
 
 // ContarAlertasSinResolver cuenta las alertas abiertas de un periodo entre los tipos
@@ -330,6 +359,7 @@ func escanearAlerta(fila pgx.Row) (aplicacion.Alerta, error) {
 	err := fila.Scan(
 		&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
 		&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada,
+		&a.ResueltaRol, &a.Accion, &a.AccionObjetivo,
 	)
 	return a, err
 }

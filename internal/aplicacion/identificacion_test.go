@@ -934,6 +934,10 @@ func TestReprocesable(t *testing.T) {
 		{identificacion.EscalonIDGlobal, false},
 		{identificacion.EscalonDifuso, false},
 		{identificacion.EscalonManual, false},
+		{identificacion.EscalonDescartado, false},
+		// #164: una fila excluida por duplicada que volviera a la cascada se
+		// identificaria otra vez y el doble conteo reapareceria solo.
+		{identificacion.EscalonDuplicado, false},
 	}
 	for _, c := range casos {
 		t.Run(c.escalon, func(t *testing.T) {

@@ -2,6 +2,7 @@ package aplicacion
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -707,14 +708,15 @@ func TestListarProcesosDelegaAlRepositorio(t *testing.T) {
 
 // compuertaFalsa es una CompuertaAnomalias con respuesta fija.
 type compuertaFalsa struct {
-	criticas int
-	err      error
-	pedidos  []string
+	criticas  int
+	aceptadas int
+	err       error
+	pedidos   []string
 }
 
-func (c *compuertaFalsa) Bloqueantes(_ context.Context, periodo string) (int, error) {
+func (c *compuertaFalsa) Bloqueantes(_ context.Context, periodo string) (EstadoCompuerta, error) {
 	c.pedidos = append(c.pedidos, periodo)
-	return c.criticas, c.err
+	return EstadoCompuerta{Abiertas: c.criticas, AceptadasTalCual: c.aceptadas}, c.err
 }
 
 func procesoEnDeducciones(t *testing.T, circuito reparto.Circuito) *repositorioProcesosFalso {
@@ -882,4 +884,83 @@ func (origenCompleto) OrigenDeUsos(_ context.Context, ids []string) (map[string]
 		m[id] = OrigenDeUso{UsoID: id, ReporteID: "rep", Escalon: "alias"}
 	}
 	return m, nil
+}
+
+// Una critica aceptada tal cual no bloquea, pero la transicion que la
+// compuerta deja pasar dice con cuantas se paso (#164): "cero abiertas" no es
+// "cero anomalias". Y la que no pasa por la compuerta no lo dice.
+func TestElAsientoDeLaTransicionCuentaLasCriticasAceptadasTalCual(t *testing.T) {
+	t.Parallel()
+
+	aceptadasDe := func(t *testing.T, bitacora *bitacoraFalsa) (int, bool) {
+		t.Helper()
+		for _, a := range bitacora.asientos {
+			if a.Hecho != HechoProcesoEtapaAvanzada {
+				continue
+			}
+			var p struct {
+				Aceptadas *int `json:"criticas_aceptadas_tal_cual"`
+			}
+			if err := json.Unmarshal(a.Payload, &p); err != nil {
+				t.Fatalf("payload del asiento: %v", err)
+			}
+			if p.Aceptadas == nil {
+				return 0, false
+			}
+			return *p.Aceptadas, true
+		}
+		t.Fatal("no se asento la transicion")
+		return 0, false
+	}
+
+	t.Run("sale de deducciones con dos aceptadas", func(t *testing.T) {
+		t.Parallel()
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{
+			Repo: procesoEnDeducciones(t, reparto.Internacional), Bitacora: bitacora,
+			Anomalias: &compuertaFalsa{aceptadas: 2},
+		})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if n, hay := aceptadasDe(t, bitacora); !hay || n != 2 {
+			t.Fatalf("criticas_aceptadas_tal_cual = %d (presente=%v), se esperaba 2", n, hay)
+		}
+	})
+
+	// Un cero explicito: paso por la compuerta y no habia ninguna.
+	t.Run("sale de deducciones sin aceptadas", func(t *testing.T) {
+		t.Parallel()
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{
+			Repo: procesoEnDeducciones(t, reparto.Internacional), Bitacora: bitacora,
+			Anomalias: &compuertaFalsa{},
+		})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if n, hay := aceptadasDe(t, bitacora); !hay || n != 0 {
+			t.Fatalf("criticas_aceptadas_tal_cual = %d (presente=%v), se esperaba un cero explicito", n, hay)
+		}
+	})
+
+	t.Run("recaudo a deducciones no pasa por la compuerta", func(t *testing.T) {
+		t.Parallel()
+		repo := nuevoRepositorioProcesosFalso()
+		p, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Internacional, "bolsa-1", "snap-1", "IX")
+		if err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{Repo: repo, Bitacora: bitacora, Anomalias: &compuertaFalsa{aceptadas: 4}})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if _, hay := aceptadasDe(t, bitacora); hay {
+			t.Fatal("una transicion que no pasa por la compuerta no puede afirmar cuantas aceptadas habia")
+		}
+	})
 }

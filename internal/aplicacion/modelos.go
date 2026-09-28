@@ -229,6 +229,10 @@ type EntregaRecibida struct {
 	Fuente  string
 	Periodo string
 	SHA256  string
+
+	// Excluida: una persona la saco del reparto al resolver un duplicado de
+	// huella (#164). El detector deja de contarla como pata de una colision.
+	Excluida bool
 }
 
 // UsoPersistido es una fila de reporte tal como quedo guardada, con el
@@ -330,6 +334,8 @@ type UsoDeReparto struct {
 //     que la fila nunca tuvo obra que identificar.
 //   - Descartados: una persona decidio que no es un uso del repertorio de
 //     REDES SGC (#175): no pondera y no es ONI.
+//   - Duplicados: una persona decidio que la fila repite un hecho que ya
+//     cuenta otra, al resolver una anomalia de duplicado (#164).
 //
 // # Esto SOLO cuenta. No reserva nada
 //
@@ -349,6 +355,7 @@ type ResumenUsosDeCanal struct {
 	ONI         int
 	Excluidos   int
 	Descartados int
+	Duplicados  int
 }
 
 // ItemRevision es una fila de la cola de revision: lo que no se pudo
@@ -475,6 +482,17 @@ type Alerta struct {
 	Nota        string
 	// Autocerrada: la cerro el sistema porque una reevaluacion ya no la detecto (ResueltaPor vacio).
 	Autocerrada bool
+
+	// ResueltaRol es el rol de quien la cerro, tal como estaba al cerrarla (#164).
+	// Vacio si la autocerro el sistema o si se cerro antes de la migracion 00024.
+	ResueltaRol string
+
+	// Accion es la correccion que acompano el cierre ([anomalias.Acciones]) y
+	// AccionObjetivo el registro sobre el que actuo: el uso o la entrega
+	// excluidos, o el tipo de obra asignado. Vacias en las no criticas y en las
+	// autocerradas. `aceptar_tal_cual` no lleva objetivo: no toco el dato.
+	Accion         string
+	AccionObjetivo string
 }
 
 // FiltroAlertas recorta el listado de alertas. Un campo en su valor cero NO

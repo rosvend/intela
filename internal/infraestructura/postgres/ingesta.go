@@ -238,7 +238,7 @@ func (s *Store) ListarCargas(ctx context.Context, periodo string, pag aplicacion
 // entre pasadas (ADR 0005).
 func (s *Store) EntregasRecibidas(ctx context.Context) ([]aplicacion.EntregaRecibida, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
-		SELECT r.id, r.fuente, r.periodo, r.sha256
+		SELECT r.id, r.fuente, r.periodo, r.sha256, r.excluida_en IS NOT NULL
 		  FROM reportes r
 		 ORDER BY r.creado DESC, r.id`)
 	if err != nil {
@@ -249,7 +249,7 @@ func (s *Store) EntregasRecibidas(ctx context.Context) ([]aplicacion.EntregaReci
 	entregas := make([]aplicacion.EntregaRecibida, 0)
 	for filas.Next() {
 		var e aplicacion.EntregaRecibida
-		if err := filas.Scan(&e.ID, &e.Fuente, &e.Periodo, &e.SHA256); err != nil {
+		if err := filas.Scan(&e.ID, &e.Fuente, &e.Periodo, &e.SHA256, &e.Excluida); err != nil {
 			return nil, traducirError(err, "escanear entrega recibida")
 		}
 		entregas = append(entregas, e)

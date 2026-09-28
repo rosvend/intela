@@ -739,9 +739,10 @@ type FilaParametro struct {
 	Reglamento      string
 }
 
-// CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo; nunca cuenta sin mirar (ADR 0021).
+// CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo, y cuantas se
+// aceptaron tal cual sin corregir el dato (#164); nunca cuenta sin mirar (ADR 0021).
 type CompuertaAnomalias interface {
-	Bloqueantes(ctx context.Context, periodo string) (int, error)
+	Bloqueantes(ctx context.Context, periodo string) (EstadoCompuerta, error)
 }
 
 // RepositorioProcesos cubre el flujo de aprobaciones del RD 13.5.
@@ -1198,11 +1199,14 @@ type RepositorioAlertas interface {
 	// reabiertas para que el caso de uso deje su asiento `alerta.reabierta`.
 	GuardarAlertas(ctx context.Context, alertas []Alerta) (nuevas int, reabiertas []Alerta, err error)
 
-	// ResolverAlerta marca una alerta y devuelve como quedo. Devuelve
-	// ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo estaba --
-	// que no es lo mismo: lo primero es un id equivocado, lo segundo es una
-	// carrera entre dos personas mirando el mismo tablero.
-	ResolverAlerta(ctx context.Context, id, actorID, nota string, cuando time.Time) (Alerta, error)
+	// AlertaPorID lee una alerta sin bloquearla. ErrNoEncontrado si no existe.
+	AlertaPorID(ctx context.Context, id string) (Alerta, error)
+
+	// ResolverAlerta marca una alerta con el cierre y devuelve como quedo.
+	// Devuelve ErrNoEncontrado si no existe y ErrAlertaYaResuelta si ya lo
+	// estaba -- que no es lo mismo: lo primero es un id equivocado, lo segundo
+	// es una carrera entre dos personas mirando el mismo tablero.
+	ResolverAlerta(ctx context.Context, id string, c CierreDeAlerta) (Alerta, error)
 
 	// AutocerrarAlertas cierra a nombre del sistema las abiertas del periodo que no estan en vigentes
 	// (misma clave natural) y devuelve las que cerro.
@@ -1232,6 +1236,12 @@ type RepositorioAlertas interface {
 	// [TestLaCompuertaCuentaMasAlertasQueUnaPagina] lo defiende sembrando mas
 	// criticas que el tamano de pagina.
 	ContarAlertasSinResolver(ctx context.Context, periodo string, tipos []string) (int, error)
+
+	// ContarAlertasConAccion cuenta las alertas de un periodo cerradas con esa
+	// accion (#164). La compuerta lo usa para contar aparte las criticas
+	// aceptadas tal cual; en la base y no sobre ListarAlertas, por lo mismo que
+	// ContarAlertasSinResolver.
+	ContarAlertasConAccion(ctx context.Context, periodo, accion string) (int, error)
 }
 
 type RepositorioAnticipos interface {
