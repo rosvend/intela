@@ -988,6 +988,39 @@ func TestAplicarUmbralDeMayoriaDeAncho(t *testing.T) {
 			}
 		}
 	})
+	// Una fila fuera de los anchos legitimos -- mas ancha que la cabecera o
+	// mas corta que las columnas con nombre -- ya cae por su propio motivo, y
+	// no puede votar: contarla en el total bajaba 20 de 22 (91 %) a 20 de 23
+	// (87 %), y UNA fila mala tumbaba el archivo entero con un motivo de
+	// "mezcla" que citaba una mayoria por encima del umbral.
+	for nombre, intrusa := range map[string]string{
+		"mas ancha que la cabecera":         "W,W-1,1,,x\n",
+		"mas corta que las columnas nombre": "Z,Z-1\n",
+	} {
+		t.Run("20 de 22 y una fila "+nombre+": manda la mayoria", func(t *testing.T) {
+			t.Parallel()
+			usos, err := lector(t, MapaCine(), aplicacion.FormatoCSV).Leer([]byte(archivo(2, 20) + intrusa))
+			if err != nil {
+				t.Fatalf("Leer: %v", err)
+			}
+			if len(usos) != 23 {
+				t.Fatalf("usos = %d, se esperaban 23", len(usos))
+			}
+			for i, u := range usos[:2] {
+				if !strings.Contains(u.RechazoMotivo, "trae 3 campos y 20 de 23 filas de este archivo traen 4") {
+					t.Errorf("fila %d de la minoria: %q", i, u.RechazoMotivo)
+				}
+			}
+			for i, u := range usos[2:22] {
+				if u.RechazoMotivo != "" {
+					t.Errorf("fila %d de la mayoria rechazada: %s", i+2, u.RechazoMotivo)
+				}
+			}
+			if m := usos[22].RechazoMotivo; m == "" || strings.Contains(m, "mezcla") {
+				t.Errorf("la intrusa tiene que caer por su ancho, no por mezcla: %q", m)
+			}
+		})
+	}
 }
 
 // K4: en .xlsx una celda con dato mas alla de la cabecera se nombra como la

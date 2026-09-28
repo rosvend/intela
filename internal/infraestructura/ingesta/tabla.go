@@ -632,8 +632,9 @@ func desdeFilasNumeradas(filas [][]string, fisicas []int, anotarAncho bool) (Tab
 	return t, nil
 }
 
-// umbralMayoriaAncho es la fraccion de las filas de datos que tiene que
-// reunir un ancho para imponerse a los demas cuando el archivo los mezcla.
+// umbralMayoriaAncho es la fraccion de las filas de ancho legitimo que tiene
+// que reunir un ancho para imponerse a los demas cuando el archivo los mezcla.
+// Las que se salen del rango legitimo no cuentan: ver anchoEsperado.
 //
 // Es alto a proposito. Por el ancho solo, una fila con la coma final de mas
 // (J1: una fila rara en un archivo sano) y una fila con la coma PERDIDA (K2:
@@ -660,7 +661,7 @@ const umbralMayoriaAncho = 0.9
 //   - Todas las filas en un solo ancho legitimo: ese es el ancho, y se aceptan.
 //     Cubre las tres formas coherentes de exportar un archivo.
 //   - Anchos legitimos mezclados y uno con al menos umbralMayoriaAncho de las
-//     filas de datos: ese es el ancho, y se rechaza la minoria -- tambien la
+//     filas de ancho legitimo: ese es el ancho, y se rechaza la minoria -- tambien la
 //     que se pasa, porque una celda en blanco al final bajo la columna sin
 //     nombre es indistinguible de una coma de mas --.
 //   - Ninguno llega al umbral: se devuelven los anchos en disputa y se rechazan
@@ -686,10 +687,16 @@ func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa 
 	for nombradas > 0 && columnas[nombradas-1] == "" {
 		nombradas--
 	}
+	// Solo votan las filas de ancho legitimo. Las que se pasan de la cabecera
+	// o no llegan a las columnas con nombre ya caen por su propio motivo, y
+	// contarlas en el total dejaba que UNA fila mala bajara de umbral a un
+	// archivo sano y lo tumbara entero.
 	cuenta := map[int]int{}
+	legitimas := 0
 	for _, a := range anchos {
 		if a >= nombradas && a <= len(columnas) {
 			cuenta[a]++
+			legitimas++
 		}
 	}
 	// De menor a mayor con >=: en empate se queda el mayor. Sin ninguna fila
@@ -700,7 +707,7 @@ func anchoEsperado(columnas []string, anchos []int) (esperado, con int, disputa 
 			esperado, con = a, cuenta[a]
 		}
 	}
-	if len(cuenta) <= 1 || float64(con)/float64(len(anchos)) >= umbralMayoriaAncho {
+	if len(cuenta) <= 1 || float64(con)/float64(legitimas) >= umbralMayoriaAncho {
 		return esperado, con, nil
 	}
 	for a := nombradas; a <= len(columnas); a++ {
