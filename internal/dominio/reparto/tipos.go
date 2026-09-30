@@ -227,12 +227,17 @@ type LineaObra struct {
 
 // LineaTitular es una orden de pago en potencia. Solo se emite a escritor
 // persona natural (R-01, RD 4.5).
+//
+// DeclaracionVersion es la version de la declaracion con la que se repartio
+// esta linea. Nil si la corrida no la guardo: no se inventa 1 ni se lee la
+// vigente de otro momento (ADR 0006, #183).
 type LineaTitular struct {
-	ObraID     string
-	TitularID  string
-	IPI        string
-	Porcentaje decimal.Decimal
-	Importe    decimal.Decimal
+	ObraID             string
+	TitularID          string
+	IPI                string
+	Porcentaje         decimal.Decimal
+	Importe            decimal.Decimal
+	DeclaracionVersion *int
 }
 
 // MotivoNoDistribuido explica por que un importe no llego a titulares ni a

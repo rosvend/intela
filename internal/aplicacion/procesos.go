@@ -343,6 +343,10 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 	if err != nil {
 		return nil, fmt.Errorf("motor de reparto: %w", err)
 	}
+	// Misma corrida, mismo mapa de vigentes que vio el motor: la version
+	// queda en la linea antes de persistir el resultado y de escribir el
+	// asiento. Explicar la lee de ahi, no de la declaracion vigente de hoy.
+	resultado = conVersionDeDeclaracion(resultado, vigentes)
 	if err := uc.Resultados.GuardarResultado(ctx, p.ID, resultado); err != nil {
 		return nil, fmt.Errorf("guardar resultado: %w", err)
 	}
