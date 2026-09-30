@@ -140,6 +140,13 @@ func TestValorizarAsientaCadaObraConSplitYLinaje(t *testing.T) {
 	if len(declarada.Titulares) != 1 || declarada.Titulares[0].TitularID != "titular-1" || declarada.Titulares[0].Porcentaje != "100" || declarada.Titulares[0].Importe == "" {
 		t.Fatalf("titulares = %+v", declarada.Titulares)
 	}
+	if declarada.Titulares[0].DeclaracionVersion == nil || *declarada.Titulares[0].DeclaracionVersion != 3 {
+		t.Fatalf("version de la linea = %v, se esperaba la v3 usada al valorizar", declarada.Titulares[0].DeclaracionVersion)
+	}
+	guardado := e.uc.Resultados.(*repositorioResultadosFalso).guardado
+	if len(guardado.Titulares) != 1 || guardado.Titulares[0].DeclaracionVersion == nil || *guardado.Titulares[0].DeclaracionVersion != 3 {
+		t.Fatalf("resultado persistido = %+v, la linea tiene que llevar la version que la repartio", guardado.Titulares)
+	}
 	if len(declarada.Usos) != 1 || declarada.Usos[0].Escalon != "difuso" || declarada.Usos[0].Puntaje != "0.91" || declarada.Usos[0].ReporteID != "rep-1" {
 		t.Fatalf("usos = %+v, se esperaba escalon y puntaje", declarada.Usos)
 	}

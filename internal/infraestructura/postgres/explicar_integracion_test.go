@@ -75,8 +75,11 @@ func TestExplicarCifraDeUnaCorridaReal(t *testing.T) {
 	if x.Regla.SnapshotID == "" || x.Regla.SnapshotID != resultado.SnapshotID {
 		t.Fatalf("4. regla = %+v, snapshot del resultado %q", x.Regla, resultado.SnapshotID)
 	}
-	if x.Split == nil || x.Split.Version == nil || *x.Split.Version != 1 || x.Split.IPI != "IPI-Y" {
-		t.Fatalf("5. split = %+v", x.Split)
+	if len(resultado.Titulares) != 1 || resultado.Titulares[0].DeclaracionVersion == nil || *resultado.Titulares[0].DeclaracionVersion != 1 {
+		t.Fatalf("la linea persistida no guardo la version usada: %+v", resultado.Titulares)
+	}
+	if x.Split == nil || x.Split.Version == nil || *x.Split.Version != *resultado.Titulares[0].DeclaracionVersion || x.Split.IPI != "IPI-Y" {
+		t.Fatalf("5. split = %+v, se esperaba la version persistida en la linea", x.Split)
 	}
 	suma := x.Neto
 	for _, d := range x.Deducciones {
