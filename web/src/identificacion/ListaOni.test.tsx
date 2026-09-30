@@ -8,7 +8,7 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ListaOni from "./ListaOni";
-import type { CasoIdentificacion } from "./tipos";
+import { sugerenciaNinguna, type CasoIdentificacion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(cuerpo), {
@@ -35,6 +35,7 @@ const casoPendiente = {
   resuelto_en: null,
   ultima_actualizacion: "2024-11-05T10:00:00Z",
   nota: null,
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 const casoAsignado = {
@@ -54,6 +55,7 @@ const casoAsignado = {
   resuelto_en: "2026-09-27T15:04:05Z",
   ultima_actualizacion: "2026-09-27T15:04:05Z",
   nota: "coincide la ficha técnica con la declaración",
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 const casoDescartado = {
@@ -73,6 +75,7 @@ const casoDescartado = {
   resuelto_en: "2026-09-27T16:00:00Z",
   ultima_actualizacion: "2026-09-27T16:00:00Z",
   nota: "no es un uso del repertorio de REDES",
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 /** Un servidor falso que registra cada consulta a la cola de casos. */

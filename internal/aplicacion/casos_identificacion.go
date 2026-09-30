@@ -90,6 +90,10 @@ type CasoIdentificacion struct {
 	// Nota es la justificacion de la decision manual (#175, D5). Vacia en un
 	// caso pendiente, y obligatoria en uno asignado o descartado.
 	Nota string
+
+	// Sugerencia es la propuesta del rankeador (#53). No resuelve el caso:
+	// la persona la confirma o elige otra.
+	Sugerencia *SugerenciaCaso
 }
 
 // PaginaCasos es una pagina de la cola y el total de pendientes bajo los mismos filtros de fuente y periodo.
@@ -99,8 +103,15 @@ type PaginaCasos struct {
 }
 
 // CasosIdentificacion sirve la bandeja de identificacion manual (#39).
+//
+// Ejemplos y Rankeador son opcionales en la lectura: sin ellos la bandeja
+// sigue listando y la sugerencia queda en "ninguna". La escritura de una
+// resolucion si los exige, porque ahi es donde el ejemplo tiene que quedar
+// guardado (#53).
 type CasosIdentificacion struct {
-	Repo RepositorioCasosIdentificacion
+	Repo      RepositorioCasosIdentificacion
+	Ejemplos  RepositorioEjemplosResolucion
+	Rankeador PuertoRankeadorDeResoluciones
 }
 
 // Listar valida el filtro, lo traduce a escalones y completa estado y ultima actualizacion de cada caso.
@@ -121,8 +132,95 @@ func (c CasosIdentificacion) Listar(ctx context.Context, f FiltroCasos) (PaginaC
 		}
 		casos = append(casos, completo)
 	}
+	casos, err = c.conSugerencias(ctx, casos)
+	if err != nil {
+		return PaginaCasos{}, err
+	}
 	pag.Casos = casos
 	return pag, nil
+}
+
+// conSugerencias adjunta la propuesta de cada caso.
+//
+// Un pendiente se rankea con el historial de su titulo, sin contarse a si
+// mismo: todavia nadie lo resolvio. Uno ya resuelto muestra la sugerencia que
+// quedo guardada al decidir, no una recalculada con historia posterior.
+//
+// El estado del caso no se toca. Una sugerencia de asignar deja el caso
+// pendiente: rankear no es resolver (ADR 0007).
+func (c CasosIdentificacion) conSugerencias(ctx context.Context, casos []CasoIdentificacion) ([]CasoIdentificacion, error) {
+	if c.Ejemplos == nil || c.Rankeador == nil {
+		for i := range casos {
+			casos[i].Sugerencia = sugerenciaNinguna()
+		}
+		return casos, nil
+	}
+
+	var claves []string
+	var resueltos []string
+	vistos := map[string]bool{}
+	for _, caso := range casos {
+		if caso.Estado == EstadoCasoPendiente {
+			clave := identificacion.ClaveDeTitulo(caso.Titulo, caso.TituloOriginal)
+			if clave != "" && !vistos[clave] {
+				vistos[clave] = true
+				claves = append(claves, clave)
+			}
+			continue
+		}
+		resueltos = append(resueltos, caso.UsoID)
+	}
+
+	var historia []identificacion.EjemploEtiquetado
+	var err error
+	if len(claves) > 0 {
+		historia, err = c.Ejemplos.HistoriaPorClaves(ctx, claves)
+		if err != nil {
+			return nil, err
+		}
+	}
+	guardados := map[string]EjemploGuardado{}
+	if len(resueltos) > 0 {
+		guardados, err = c.Ejemplos.EjemplosDe(ctx, resueltos)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for i, caso := range casos {
+		if caso.Estado != EstadoCasoPendiente {
+			g, hay := guardados[caso.UsoID]
+			if !hay {
+				casos[i].Sugerencia = sugerenciaNinguna()
+				continue
+			}
+			aceptada := g.Aceptada
+			casos[i].Sugerencia = &SugerenciaCaso{
+				Decision:  g.SugerenciaDecision,
+				ObraID:    g.SugerenciaObraID,
+				Titulo:    g.Titulo,
+				Confianza: g.Confianza,
+				Motivo:    g.Motivo,
+				Orden:     g.Orden,
+				Aceptada:  &aceptada,
+			}
+			if casos[i].Sugerencia.Orden == nil {
+				casos[i].Sugerencia.Orden = []string{}
+			}
+			if casos[i].Sugerencia.Titulo == "" {
+				casos[i].Sugerencia.Titulo = tituloDeCandidato(caso.Candidatos, g.SugerenciaObraID)
+			}
+			continue
+		}
+		clave := identificacion.ClaveDeTitulo(caso.Titulo, caso.TituloOriginal)
+		sug := c.Rankeador.Rankear(identificacion.PedidoTriage{
+			Clave:      clave,
+			Candidatos: candidatosDeRanking(caso.Candidatos),
+			Historia:   historia,
+		})
+		casos[i].Sugerencia = sugerenciaVisible(sug, caso.Candidatos, nil)
+	}
+	return casos, nil
 }
 
 func consultaDe(f FiltroCasos) (ConsultaCasos, error) {

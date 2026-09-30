@@ -13,6 +13,8 @@ import type { components, paths } from "../contrato";
 export type CasoIdentificacion = components["schemas"]["CasoIdentificacion"];
 export type CandidatoIdentificacion =
   components["schemas"]["CandidatoIdentificacion"];
+export type SugerenciaIdentificacion =
+  components["schemas"]["SugerenciaIdentificacion"];
 export type PaginaCasosIdentificacion =
   components["schemas"]["PaginaCasosIdentificacion"];
 export type EstadoDeCaso = CasoIdentificacion["estado"];
@@ -86,6 +88,19 @@ export const ETIQUETA_ESTADO: Record<EstadoDeCaso, string> = {
 /** Los estados del contrato, en el orden del filtro de la lista ONI. */
 export const ESTADOS_DE_CASO = Object.keys(ETIQUETA_ESTADO) as EstadoDeCaso[];
 
+/** Propuesta vacia: el contrato exige el campo aunque no haya con que sugerir. */
+export function sugerenciaNinguna(): SugerenciaIdentificacion {
+  return {
+    decision: "ninguna",
+    obra_id: null,
+    titulo: null,
+    confianza: 0,
+    motivo: "",
+    orden: [],
+    aceptada: null,
+  };
+}
+
 /**
  * `modalidad` llega en minusculas (`tv`, `ott`, `cine`...). Las siglas se
  * muestran como siglas; lo demas, tal cual: no hay traduccion de la casa que no
@@ -154,6 +169,34 @@ function esCandidato(valor: unknown): valor is CandidatoIdentificacion {
   );
 }
 
+function esSugerencia(valor: unknown): valor is SugerenciaIdentificacion {
+  if (!esObjeto(valor)) return false;
+  const decision = valor["decision"];
+  if (
+    decision !== "asignar" &&
+    decision !== "descartar" &&
+    decision !== "ninguna"
+  ) {
+    return false;
+  }
+  const confianza = valor["confianza"];
+  const aceptada = valor["aceptada"];
+  return (
+    typeof confianza === "number" &&
+    Number.isFinite(confianza) &&
+    confianza >= 0 &&
+    confianza <= 1 &&
+    esTextoONulo(valor["obra_id"]) &&
+    esTextoONulo(valor["titulo"]) &&
+    esTexto(valor["motivo"]) &&
+    Array.isArray(valor["orden"]) &&
+    valor["orden"].every(esTexto) &&
+    (aceptada === null || typeof aceptada === "boolean") &&
+    (decision !== "asignar" ||
+      (esTexto(valor["obra_id"]) && valor["obra_id"] !== ""))
+  );
+}
+
 /**
  * Si un valor sin tipar tiene la forma de un `CasoIdentificacion`.
  *
@@ -167,6 +210,8 @@ function esCandidato(valor: unknown): valor is CandidatoIdentificacion {
  * - `nota`, `obra_asignada`, `resuelto_por` y `resuelto_en`: `null` es una
  *   afirmacion del servidor ("pendiente"), no la falta del dato. Un caso que no
  *   los trae -el de un backend sin #175- se rechaza, no se lee como pendiente.
+ * - `sugerencia`: la propuesta del rankeador (#53). Ausente no es "ninguna":
+ *   un backend que no la manda no se pinta como si no hubiera propuesto nada.
  */
 export function esCaso(valor: unknown): valor is CasoIdentificacion {
   if (!esObjeto(valor)) return false;
@@ -192,7 +237,8 @@ export function esCaso(valor: unknown): valor is CasoIdentificacion {
       (esObjeto(quien) && esTexto(quien["id"]) && esTexto(quien["nombre"]))) &&
     esTextoONulo(valor["resuelto_en"]) &&
     esTexto(valor["ultima_actualizacion"]) &&
-    esTextoONulo(valor["nota"])
+    esTextoONulo(valor["nota"]) &&
+    esSugerencia(valor["sugerencia"])
   );
 }
 

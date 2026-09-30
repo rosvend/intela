@@ -378,6 +378,13 @@ export interface paths {
          *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
          *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
          *
+         *     `sugerencia` es una propuesta del rankeador (#53): un orden y una
+         *     accion (`asignar`, `descartar` o `ninguna`) que la persona confirma o
+         *     cambia. No resuelve el caso. `aceptada` es `null` mientras este
+         *     pendiente y, una vez resuelto, dice si la persona confirmo esa
+         *     propuesta. `candidatos` sigue en el orden de la cascada; `sugerencia.orden`
+         *     es el orden propuesto.
+         *
          *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
          *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
          *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
@@ -2729,6 +2736,42 @@ export interface components {
              *     `null` mientras el caso este pendiente.
              */
             nota: string | null;
+            sugerencia: components["schemas"]["SugerenciaIdentificacion"];
+        };
+        /**
+         * @description Lo que el rankeador propone para un caso de la cola (#53). Es una
+         *     sugerencia: la persona la confirma o elige otra. Ningun caso se
+         *     resuelve solo (ADR 0007).
+         *
+         *     `orden` son los ids de obra de mejor a peor ajuste. `candidatos` no se
+         *     reordena: sigue siendo la evidencia de la cascada.
+         */
+        SugerenciaIdentificacion: {
+            /**
+             * @description `asignar` propone `obra_id`. `descartar` propone dejar el caso
+             *     fuera del repertorio. `ninguna` es que no hay con que proponer.
+             * @enum {string}
+             */
+            decision: "asignar" | "descartar" | "ninguna";
+            /** @description Obra propuesta cuando `decision` es `asignar`. `null` en los otros dos. */
+            obra_id: string | null;
+            /** @description Titulo de catalogo de `obra_id`, para mostrarlo sin otro cruce. `null` si no hay obra. */
+            titulo: string | null;
+            /**
+             * @description Ajuste entre la similitud del escalon difuso y las resoluciones
+             *     anteriores del mismo titulo. No es una probabilidad ni un porcentaje
+             *     de reparto.
+             */
+            confianza: number;
+            /** @description Por que se propuso eso, en una frase. */
+            motivo: string;
+            /** @description Ids de obra en el orden sugerido. Lista vacia si no hay candidatas. */
+            orden: string[];
+            /**
+             * @description `null` mientras el caso esta pendiente. Tras resolver, `true` si la
+             *     persona confirmo la sugerencia y `false` si la cambio.
+             */
+            aceptada: boolean | null;
         };
         /**
          * @description La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
@@ -4043,7 +4086,18 @@ export interface operations {
                      *           "resuelto_por": null,
                      *           "resuelto_en": null,
                      *           "ultima_actualizacion": "2025-02-01T10:00:00Z",
-                     *           "nota": null
+                     *           "nota": null,
+                     *           "sugerencia": {
+                     *             "decision": "asignar",
+                     *             "obra_id": "obra-12",
+                     *             "titulo": "La Casa de las Dos Palmas",
+                     *             "confianza": 0.43,
+                     *             "motivo": "sin resoluciones anteriores de este titulo",
+                     *             "orden": [
+                     *               "obra-12"
+                     *             ],
+                     *             "aceptada": null
+                     *           }
                      *         }
                      *       ]
                      *     }

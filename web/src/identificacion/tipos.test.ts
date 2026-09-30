@@ -10,6 +10,7 @@ import {
   formatearPuntaje,
   idsDeFuente,
   leerResolucionAsentada,
+  sugerenciaNinguna,
   type CandidatoIdentificacion,
   type CasoIdentificacion,
   type PaginaCasosIdentificacion,
@@ -44,6 +45,7 @@ const pendiente = {
   resuelto_en: null,
   ultima_actualizacion: "2024-11-28T14:03:00Z",
   nota: null,
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 const asignado = {
@@ -97,6 +99,11 @@ describe("esCaso", () => {
 
   it("rechaza un estado fuera del enum del contrato", () => {
     expect(esCaso({ ...pendiente, estado: "excluido" })).toBe(false);
+  });
+
+  it("rechaza un caso sin `sugerencia`: ausente no es ninguna", () => {
+    const { sugerencia: _sugerencia, ...sinSugerencia } = pendiente;
+    expect(esCaso(sinSugerencia)).toBe(false);
   });
 
   it("rechaza un caso sin `nota`: ausente no es lo mismo que null", () => {

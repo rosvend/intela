@@ -12,7 +12,7 @@ import { DEBOUNCE_TECLEO_MS } from "../useValorDiferido";
 import Dialogo from "./Dialogo";
 import PanelResolucion, { type ModoResolucion } from "./PanelResolucion";
 import { MAX_NOTA } from "./resolucion";
-import type { CasoIdentificacion } from "./tipos";
+import { sugerenciaNinguna, type CasoIdentificacion } from "./tipos";
 
 function json(cuerpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(cuerpo), {
@@ -38,6 +38,7 @@ const casoUno = {
   resuelto_en: null,
   ultima_actualizacion: "2024-11-05T10:00:00Z",
   nota: null,
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 /**

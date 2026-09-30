@@ -56,6 +56,9 @@ type resolucionFalsa struct {
 	errAlias     error
 	errGuardar   error
 	errRelectura error
+	errEjemplo   error
+
+	ejemplos map[string]EjemploResolucion
 }
 
 func claveAlias(fuente, tipo, valor string) string {
@@ -181,6 +184,59 @@ func (f *resolucionFalsa) CasoIdentificacionPorID(_ context.Context, usoID strin
 	return caso, nil
 }
 
+func (f *resolucionFalsa) HistoriaPorClaves(_ context.Context, claves []string) ([]identificacion.EjemploEtiquetado, error) {
+	if f.errEjemplo != nil {
+		return nil, f.errEjemplo
+	}
+	quiere := map[string]bool{}
+	for _, c := range claves {
+		quiere[c] = true
+	}
+	var out []identificacion.EjemploEtiquetado
+	for _, e := range f.ejemplos {
+		if len(quiere) > 0 && !quiere[e.Clave] {
+			continue
+		}
+		if len(quiere) == 0 {
+			continue
+		}
+		out = append(out, identificacion.EjemploEtiquetado{
+			Clave: e.Clave, Decision: e.Decision, ObraID: e.ObraElegida,
+		})
+	}
+	return out, nil
+}
+
+func (f *resolucionFalsa) GuardarEjemplo(_ context.Context, e EjemploResolucion) error {
+	if f.errEjemplo != nil {
+		return f.errEjemplo
+	}
+	if f.ejemplos == nil {
+		f.ejemplos = map[string]EjemploResolucion{}
+	}
+	f.ejemplos[e.UsoID] = e
+	return nil
+}
+
+func (f *resolucionFalsa) EjemplosDe(_ context.Context, usoIDs []string) (map[string]EjemploGuardado, error) {
+	out := map[string]EjemploGuardado{}
+	for _, id := range usoIDs {
+		e, hay := f.ejemplos[id]
+		if !hay {
+			continue
+		}
+		out[id] = EjemploGuardado{
+			SugerenciaDecision: e.SugerenciaDecision,
+			SugerenciaObraID:   e.SugerenciaObraID,
+			Confianza:          e.Confianza,
+			Motivo:             e.Motivo,
+			Orden:              e.Orden,
+			Aceptada:           e.Aceptada,
+		}
+	}
+	return out, nil
+}
+
 // instantanea copia el estado para que la unidad pueda revertirlo.
 func (f *resolucionFalsa) instantanea() map[string]usoEnCola {
 	copia := make(map[string]usoEnCola, len(f.usos))
@@ -213,10 +269,11 @@ type unidadConRollback struct {
 
 func (u *unidadConRollback) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
 	u.entradas++
-	antes, aliasAntes := u.repo.instantanea(), copiarAlias(u.repo.alias)
+	antes, aliasAntes, ejemplosAntes := u.repo.instantanea(), copiarAlias(u.repo.alias), copiarEjemplos(u.repo.ejemplos)
 	if err := fn(ctx); err != nil {
 		u.repo.restaurar(antes)
 		u.repo.alias = aliasAntes
+		u.repo.ejemplos = ejemplosAntes
 		return err
 	}
 	u.confirmo = true
@@ -225,6 +282,14 @@ func (u *unidadConRollback) EnUnidad(ctx context.Context, fn func(context.Contex
 
 func copiarAlias(m map[string]string) map[string]string {
 	copia := make(map[string]string, len(m))
+	for k, v := range m {
+		copia[k] = v
+	}
+	return copia
+}
+
+func copiarEjemplos(m map[string]EjemploResolucion) map[string]EjemploResolucion {
+	copia := make(map[string]EjemploResolucion, len(m))
 	for k, v := range m {
 		copia[k] = v
 	}
@@ -256,7 +321,10 @@ const (
 // servicioDeResolucion cablea los cuatro puertos como lo hace cmd/api.
 func servicioDeResolucion(repo *resolucionFalsa, libro *bitacoraFalsa, reloj Reloj) (ResolucionIdentificacion, *unidadConRollback) {
 	unidad := &unidadConRollback{repo: repo, alias: repo.alias}
-	return ResolucionIdentificacion{Repo: repo, Bitacora: libro, Unidad: unidad, Reloj: reloj}, unidad
+	return ResolucionIdentificacion{
+		Repo: repo, Bitacora: libro, Unidad: unidad, Reloj: reloj,
+		Ejemplos: repo, Rankeador: rankeadorDeDominio{},
+	}, unidad
 }
 
 // repoDePrueba siembra un caso ONI con dos candidatos y un alias que no existe.
@@ -277,8 +345,9 @@ func repoDePrueba() *resolucionFalsa {
 				},
 			},
 		},
-		alias: map[string]string{},
-		obras: map[string]string{"obra-12": "La Nina T3", "obra-40": "Otra obra"},
+		alias:    map[string]string{},
+		obras:    map[string]string{"obra-12": "La Nina T3", "obra-40": "Otra obra"},
+		ejemplos: map[string]EjemploResolucion{},
 	}
 }
 
@@ -671,6 +740,9 @@ func TestResolverSiElAsientoFallaNoQuedaNadaHecho(t *testing.T) {
 	if _, hay := repo.alias[claveAlias("caracol", "id_ficha", "871732")]; hay {
 		t.Fatalf("el alias no se revirtio: %v", repo.alias)
 	}
+	if len(repo.ejemplos) != 0 {
+		t.Fatalf("el ejemplo etiquetado no se revirtio: %+v", repo.ejemplos)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +781,12 @@ func TestResolverMalCableadoNoAbreUnidad(t *testing.T) {
 		"sin BitacoraAuditoria":                   {Repo: repo, Unidad: unidad, Reloj: relojFijo{}},
 		"sin UnidadDeTrabajo":                     {Repo: repo, Bitacora: libro, Reloj: relojFijo{}},
 		"sin Reloj":                               {Repo: repo, Bitacora: libro, Unidad: unidad},
+		"sin RepositorioEjemplosResolucion": {
+			Repo: repo, Bitacora: libro, Unidad: unidad, Reloj: relojFijo{}, Rankeador: rankeadorDeDominio{},
+		},
+		"sin PuertoRankeadorDeResoluciones": {
+			Repo: repo, Bitacora: libro, Unidad: unidad, Reloj: relojFijo{}, Ejemplos: repo,
+		},
 	}
 	for nombre, svc := range casos {
 		t.Run(nombre, func(t *testing.T) {
