@@ -265,6 +265,37 @@ func TestResultadosRoundTripConservaNoDistribuidoPartesYGrupos(t *testing.T) {
 	}
 }
 
+func TestResultadosRoundTripConservaLaVersionDeLaDeclaracion(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO declaracion_versiones (obra_id, version, vigente_desde) VALUES ('obra-1', 3, now())`); err != nil {
+		t.Fatalf("sembrar version: %v", err)
+	}
+
+	v3 := 3
+	r := resultadoDeCorridaBase()
+	r.Titulares[0].DeclaracionVersion = &v3
+	r.Titulares[1].DeclaracionVersion = &v3
+
+	if err := s.GuardarResultado(ctx, "proceso-1", r); err != nil {
+		t.Fatalf("guardar resultado: %v", err)
+	}
+	leido, err := s.ResultadoPorProceso(ctx, "proceso-1")
+	if err != nil {
+		t.Fatalf("leer resultado: %v", err)
+	}
+	for i, orig := range r.Titulares {
+		got := leido.Titulares[i]
+		switch {
+		case orig.DeclaracionVersion == nil && got.DeclaracionVersion != nil:
+			t.Fatalf("linea %d invento version %d", i, *got.DeclaracionVersion)
+		case orig.DeclaracionVersion != nil && (got.DeclaracionVersion == nil || *got.DeclaracionVersion != *orig.DeclaracionVersion):
+			t.Fatalf("linea %d: version = %v, se esperaba %d", i, got.DeclaracionVersion, *orig.DeclaracionVersion)
+		}
+	}
+}
+
 func assertCierreResultado(t *testing.T, r reparto.Resultado) {
 	t.Helper()
 	sumaT := decimal.Zero

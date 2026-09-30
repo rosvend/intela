@@ -236,7 +236,13 @@ func splitDe(t TitularAsentado, decl *DeclaracionAsentada) (*SplitLinaje, decima
 		return nil, decimal.Zero, fmt.Errorf("importe de %q: %w", t.TitularID, ErrLinajeIncompleto)
 	}
 	s := &SplitLinaje{TitularID: t.TitularID, IPI: t.IPI, Porcentaje: porcentaje}
-	if decl != nil {
+	// La version de la linea es la que esa corrida guardo. El asiento de la
+	// obra solo cubre corridas anteriores a #183, que no la tenian por linea.
+	switch {
+	case t.DeclaracionVersion != nil:
+		s.Version = copiarVersion(t.DeclaracionVersion)
+	case decl != nil:
+		// Asientos anteriores a #183: la version vivia solo en la obra.
 		v := decl.Version
 		s.Version = &v
 	}

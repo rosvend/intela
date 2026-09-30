@@ -52,9 +52,10 @@ func (s *Store) GuardarResultado(ctx context.Context, procesoID string, r repart
 
 		for _, t := range r.Titulares {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO resultados_titular (proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
-				 VALUES ($1,$2,$3,$4,$5,$6)`,
-				procesoID, t.ObraID, t.TitularID, t.IPI, t.Porcentaje, t.Importe,
+				`INSERT INTO resultados_titular
+				   (proceso_id, obra_id, titular_id, ipi, porcentaje, importe, declaracion_version)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+				procesoID, t.ObraID, t.TitularID, t.IPI, t.Porcentaje, t.Importe, t.DeclaracionVersion,
 			); err != nil {
 				if esClaveForanea(err) {
 					return fmt.Errorf("guardar linea de titular %q en %q: %w", t.TitularID, procesoID, aplicacion.ErrNoEncontrado)
@@ -131,7 +132,8 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 	}
 
 	titularFilas, err := ejecutor.Query(ctx,
-		`SELECT obra_id, titular_id, ipi, porcentaje, importe FROM resultados_titular
+		`SELECT obra_id, titular_id, ipi, porcentaje, importe, declaracion_version
+		   FROM resultados_titular
 		  WHERE proceso_id = $1 ORDER BY obra_id, titular_id`, procesoID)
 	if err != nil {
 		return reparto.Resultado{}, traducirError(err, "leer resultados_titular de %q", procesoID)
@@ -139,7 +141,7 @@ func (s *Store) ResultadoPorProceso(ctx context.Context, procesoID string) (repa
 	defer titularFilas.Close()
 	for titularFilas.Next() {
 		var t reparto.LineaTitular
-		if err := titularFilas.Scan(&t.ObraID, &t.TitularID, &t.IPI, &t.Porcentaje, &t.Importe); err != nil {
+		if err := titularFilas.Scan(&t.ObraID, &t.TitularID, &t.IPI, &t.Porcentaje, &t.Importe, &t.DeclaracionVersion); err != nil {
 			return reparto.Resultado{}, traducirError(err, "escanear resultados_titular de %q", procesoID)
 		}
 		r.Titulares = append(r.Titulares, t)
