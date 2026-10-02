@@ -607,6 +607,7 @@ func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
 		canalID  string
 		resumen  func(nCine int) aplicacion.ResumenUsosDeCanal
 		sinCanal func(nCine int) int
+		dice     string
 	}{
 		{
 			nombre: "usuario de recaudo sin reporte",
@@ -618,6 +619,7 @@ func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
 			canalID:  "cine-sin-reporte",
 			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
 			sinCanal: func(int) int { return 0 },
+			dice:     "cargue el reporte",
 		},
 		{
 			nombre: "usos del pagador sin identificar",
@@ -627,6 +629,7 @@ func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
 			canalID:  PagadorCine,
 			resumen:  func(n int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{Pendientes: n} },
 			sinCanal: func(int) int { return 0 },
+			dice:     "cola de identificacion",
 		},
 		{
 			nombre:   "usos del pagador sin canal",
@@ -635,6 +638,17 @@ func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
 			canalID:  PagadorCine,
 			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
 			sinCanal: func(n int) int { return n },
+			dice:     "corrija la atribucion del canal",
+		},
+		{
+			nombre: "usos del pagador todos excluidos",
+			preparar: `UPDATE usos SET obra_id = NULL, oni = false, escalon = 'excluido', evidencia = '', puntaje = 0
+			            WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(n int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{Excluidos: n} },
+			sinCanal: func(int) int { return 0 },
+			dice:     "ninguno pondera",
 		},
 	}
 	for _, c := range casos {
@@ -677,6 +691,9 @@ func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
 			}
 			if quiero := c.sinCanal(nCine); sinUsos.UsosSinCanal != quiero {
 				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, quiero)
+			}
+			if !strings.Contains(err.Error(), c.dice) {
+				t.Errorf("el mensaje %q no dice %q", err, c.dice)
 			}
 			v, err := store.ProcesoPorID(ctx, id)
 			if err != nil {
