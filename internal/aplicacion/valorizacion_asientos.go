@@ -113,11 +113,16 @@ type DeclaracionAsentada struct {
 }
 
 // TitularAsentado es la parte de un titular en la obra.
+//
+// DeclaracionVersion es la version sellada en la linea al valorizar. Un
+// asiento anterior a #183 no la trae: omitempty la deja fuera y explicar
+// cae al asiento de la obra.
 type TitularAsentado struct {
-	TitularID  string `json:"titular_id"`
-	IPI        string `json:"ipi"`
-	Porcentaje string `json:"porcentaje"`
-	Importe    string `json:"importe"`
+	TitularID          string `json:"titular_id"`
+	IPI                string `json:"ipi"`
+	Porcentaje         string `json:"porcentaje"`
+	Importe            string `json:"importe"`
+	DeclaracionVersion *int   `json:"declaracion_version,omitempty"`
 }
 
 // IdentificacionDeUso es como se reconocio la obra en un uso (ADR 0007).
@@ -205,6 +210,7 @@ func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
 	for _, t := range r.Titulares {
 		titularesPorObra[t.ObraID] = append(titularesPorObra[t.ObraID], TitularAsentado{
 			TitularID: t.TitularID, IPI: t.IPI, Porcentaje: t.Porcentaje.String(), Importe: t.Importe.StringFixed(2),
+			DeclaracionVersion: copiarVersion(t.DeclaracionVersion),
 		})
 	}
 
@@ -225,6 +231,30 @@ func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
 		asientos = append(asientos, pendiente{hecho: HechoRepartoObraValorizada, refTipo: RefObra, refID: o.ObraID, payload: obra})
 	}
 	return asientos, nil
+}
+
+// conVersionDeDeclaracion sella en cada linea la version con la que el motor
+// la repartio, tomada del mismo mapa de vigentes de esa corrida. Una obra
+// ausente del mapa deja la version en nil: inventar 1 atribuiria un split
+// que esta corrida no uso (#183).
+func conVersionDeDeclaracion(r reparto.Resultado, vigentes map[string]VersionDeclaracion) reparto.Resultado {
+	for i := range r.Titulares {
+		vd, ok := vigentes[r.Titulares[i].ObraID]
+		if !ok {
+			continue
+		}
+		v := vd.Version
+		r.Titulares[i].DeclaracionVersion = &v
+	}
+	return r
+}
+
+func copiarVersion(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	copia := *v
+	return &copia
 }
 
 func identificacionDe(o OrigenDeUso) IdentificacionDeUso {

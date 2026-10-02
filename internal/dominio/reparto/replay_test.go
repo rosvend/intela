@@ -62,9 +62,19 @@ func TestDistribuirSobreProporcionesNoRevaloriza(t *testing.T) {
 		t.Fatalf("residuo = %s, se esperaba cero cuando la proporcion cierra exacto", residuo)
 	}
 	// El porcentaje declarado original queda intacto: esto es un replay, no un
-	// nuevo calculo de participacion.
+	// nuevo calculo de participacion. La version sellada tampoco se relee.
+	v := 4
+	original[0].DeclaracionVersion = &v
+	nuevas, _, err = reparto.DistribuirSobreProporciones(d("1000.00"), original)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
 	if !nuevas[0].Porcentaje.Equal(d("30")) || !nuevas[1].Porcentaje.Equal(d("70")) {
 		t.Fatalf("el porcentaje declarado no debe cambiar en un replay")
+	}
+	if nuevas[0].DeclaracionVersion == nil || *nuevas[0].DeclaracionVersion != 4 || nuevas[1].DeclaracionVersion != nil {
+		t.Fatalf("version = %v / %v, el replay no debe inventar ni perder la de la linea",
+			nuevas[0].DeclaracionVersion, nuevas[1].DeclaracionVersion)
 	}
 }
 
