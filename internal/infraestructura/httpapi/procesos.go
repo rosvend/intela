@@ -229,14 +229,20 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, aplicacion.ErrLiquidacionEnEspera),
 		errors.Is(err, aplicacion.ErrPeriodoYaLiquidado),
-		errors.Is(err, aplicacion.ErrProcesoNoListo),
-		errors.Is(err, aplicacion.ErrCorridaNoCuadra):
+		errors.Is(err, aplicacion.ErrBolsaRepetida):
 		// 409: la liquidacion del periodo no deja mover la corrida (#193,
 		// ADR 0024) -- faltan corridas hermanas por verificar, el periodo ya se
-		// liquido sin esta, o sus datos no cuadran --. El mensaje nombra las
-		// corridas implicadas, que es lo que el operador tiene que ir a mirar;
-		// un 500 generico lo mandaria a buscar un fallo del servidor.
+		// liquido sin esta, o dos corridas del periodo reparten la misma bolsa --.
+		// El mensaje nombra las corridas implicadas.
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrInconsistenciaLiquidacion),
+		errors.Is(err, aplicacion.ErrCorridaNoCuadra):
+		// 500: fallo de integridad que el operador no puede arreglar
+		// moviendo corridas (descuadre de dinero, corrida sin resultados,
+		// corrida en etapa posterior sin firmas o disparador ausente).
+		// Se registra en el log para que deje rastro en el servidor.
+		log.ErrorContext(r.Context(), "inconsistencia en liquidacion al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "inconsistencia en los datos de liquidacion")
 	case errors.Is(err, aplicacion.ErrParametroAusente):
 		// Sin SMMLV vigente la liquidacion no puede evaluar R-11 (ADR 0004:
 		// se falla, no se inventa). Es configuracion del servidor, no del

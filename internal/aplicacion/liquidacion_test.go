@@ -1282,8 +1282,8 @@ func TestGenerarLiquidacionNoSumaDosCorridasDeLaMismaBolsa(t *testing.T) {
 	repo.sembrar(dos, unaLineaDeAna("100000"))
 
 	_, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "proc-bolsa-x-2")
-	if !errors.Is(err, ErrCorridaNoCuadra) {
-		t.Fatalf("se esperaba ErrCorridaNoCuadra, se obtuvo %v", err)
+	if !errors.Is(err, ErrBolsaRepetida) {
+		t.Fatalf("se esperaba ErrBolsaRepetida, se obtuvo %v", err)
 	}
 	if !strings.Contains(err.Error(), "bolsa-x") {
 		t.Fatalf("el error tiene que nombrar la bolsa repetida: %v", err)
@@ -1305,11 +1305,121 @@ func TestGenerarLiquidacionRechazaUnaHermanaSinFirmas(t *testing.T) {
 	repo.sembrar(rara, unaLineaDeAna("100000"))
 
 	_, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "prc-a")
-	if !errors.Is(err, ErrProcesoNoListo) || !strings.Contains(err.Error(), "prc-rara") {
-		t.Fatalf("se esperaba ErrProcesoNoListo nombrando prc-rara, se obtuvo %v", err)
+	if !errors.Is(err, ErrInconsistenciaLiquidacion) || !strings.Contains(err.Error(), "prc-rara") {
+		t.Fatalf("se esperaba ErrInconsistenciaLiquidacion nombrando prc-rara, se obtuvo %v", err)
 	}
 	if len(repo.ordenes) != 0 {
 		t.Fatalf("%d ordenes emitidas con una corrida inconsistente en el periodo", len(repo.ordenes))
+	}
+}
+
+// TestGenerarLiquidacionRechazaHermanaSinResultadosDeProceso: si una corrida
+// hermana esta en liquidacion_final pero no tiene resultados_proceso en la
+// base, es una inconsistencia (ErrInconsistenciaLiquidacion) que nombra la
+// corrida faltante, no un 404 generico.
+func TestGenerarLiquidacionRechazaHermanaSinResultadosDeProceso(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	repo.sembrar(metaLista("prc-a", "2026-01", reparto.Nacional), unaLineaDeAna("100000"))
+	sinRes := metaLista("prc-sin-res", "2026-01", reparto.Nacional)
+	sinRes.BolsaID = "bolsa-otra"
+	repo.procesos["prc-sin-res"] = sinRes
+
+	_, err := servicio(repo, envio()).GenerarLiquidacion(context.Background(), "prc-a")
+	if !errors.Is(err, ErrInconsistenciaLiquidacion) {
+		t.Fatalf("se esperaba ErrInconsistenciaLiquidacion, se obtuvo %v", err)
+	}
+	if !strings.Contains(err.Error(), "prc-sin-res") {
+		t.Fatalf("el error tiene que nombrar la corrida sin resultados: %v", err)
+	}
+}
+
+// TestGenerarLiquidacionAvisoUsaCorridaQueAportaSoloAlTitular: si Ana esta solo
+// en prc-b y Carlos solo en prc-a, el aviso y ProcesoID de referencia de Ana
+// tienen que ser prc-b (donde tiene lineas) y los de Carlos prc-a.
+func TestGenerarLiquidacionAvisoUsaCorridaQueAportaSoloAlTitular(t *testing.T) {
+	repo := &repoLiqMemoria{smmlv: liqDec("1300000"), docs: map[string]liquidacion.Documentos{}}
+	a := metaLista("prc-a", "2026-01", reparto.Nacional)
+	a.BolsaID = "bolsa-a"
+	b := metaLista("prc-b", "2026-01", reparto.Nacional)
+	b.BolsaID = "bolsa-b"
+	repo.sembrar(a, InsumoLiquidacion{
+		Bruto: liqDec("100000"), Admin: liqDec("10000"), Social: liqDec("5000"), Reserva: liqDec("2500"),
+		Titulares: []reparto.LineaTitular{{TitularID: "tit-carlos", Importe: liqDec("82500")}},
+	})
+	repo.sembrar(b, InsumoLiquidacion{
+		Bruto: liqDec("200000"), Admin: liqDec("20000"), Social: liqDec("10000"), Reserva: liqDec("5000"),
+		Titulares: []reparto.LineaTitular{{TitularID: "tit-ana", Importe: liqDec("165000")}},
+	})
+
+	e := montar(repo, envio())
+	vistas, err := e.svc.GenerarLiquidacion(context.Background(), "prc-b")
+	if err != nil {
+		t.Fatalf("GenerarLiquidacion: %v", err)
+	}
+	if len(vistas) != 2 {
+		t.Fatalf("se esperaban 2 ordenes, llegaron %d", len(vistas))
+	}
+
+	var ordenAna, ordenCarlos liquidacion.OrdenDePago
+	for _, v := range vistas {
+		if v.Orden.TitularID == "tit-ana" {
+			ordenAna = v.Orden
+		} else if v.Orden.TitularID == "tit-carlos" {
+			ordenCarlos = v.Orden
+		}
+	}
+
+	if ordenAna.ProcesoID != "prc-b" || !slices.Equal(ordenAna.Procesos, []string{"prc-b"}) {
+		t.Fatalf("orden Ana: ProcesoID = %q, Procesos = %v; se esperaba prc-b", ordenAna.ProcesoID, ordenAna.Procesos)
+	}
+	if ordenCarlos.ProcesoID != "prc-a" || !slices.Equal(ordenCarlos.Procesos, []string{"prc-a"}) {
+		t.Fatalf("orden Carlos: ProcesoID = %q, Procesos = %v; se esperaba prc-a", ordenCarlos.ProcesoID, ordenCarlos.Procesos)
+	}
+
+	var avisoAna, avisoCarlos avisoEnviado
+	for _, av := range e.avisos.enviados {
+		if av.Dest == "tit-ana" {
+			avisoAna = av
+		} else if av.Dest == "tit-carlos" {
+			avisoCarlos = av
+		}
+	}
+	if avisoAna.Proceso != "prc-b" {
+		t.Fatalf("aviso Ana: proceso = %q, se esperaba prc-b", avisoAna.Proceso)
+	}
+	if avisoCarlos.Proceso != "prc-a" {
+		t.Fatalf("aviso Carlos: proceso = %q, se esperaba prc-a", avisoCarlos.Proceso)
+	}
+}
+
+func TestExigirListoParaLiquidarMensajeDeFirma(t *testing.T) {
+	// Revision 1: no debe decir "revision 0"
+	m1 := MetaProceso{ID: "proc-1", Etapa: reparto.EtapaLiquidacionFinal, Revision: 1}
+	err1 := m1.ExigirListoParaLiquidar()
+	if !errors.Is(err1, ErrProcesoNoListo) {
+		t.Fatalf("m1: se esperaba ErrProcesoNoListo, se obtuvo %v", err1)
+	}
+	if strings.Contains(err1.Error(), "revision 0") {
+		t.Fatalf("m1: el mensaje no puede decir 'revision 0': %v", err1)
+	}
+	if !strings.Contains(err1.Error(), "distribucion y contabilidad") {
+		t.Fatalf("m1: el mensaje tiene que nombrar ambos roles: %v", err1)
+	}
+
+	// Revision 3 con firma de distribucion en revision 1: debe nombrar revision 1 y contabilidad
+	m3 := MetaProceso{
+		ID: "proc-1", Etapa: reparto.EtapaLiquidacionFinal, Revision: 3,
+		Firmas: []reparto.Firma{{Rol: "distribucion", SobreRev: 1}},
+	}
+	err3 := m3.ExigirListoParaLiquidar()
+	if !errors.Is(err3, ErrProcesoNoListo) {
+		t.Fatalf("m3: se esperaba ErrProcesoNoListo, se obtuvo %v", err3)
+	}
+	if !strings.Contains(err3.Error(), "revision 1") || !strings.Contains(err3.Error(), "contabilidad") {
+		t.Fatalf("m3: el mensaje tiene que nombrar revision 1 y contabilidad: %v", err3)
+	}
+	if strings.Contains(err3.Error(), "revision 2") {
+		t.Fatalf("m3: el mensaje no puede culpar a la revision 2 sin firmas: %v", err3)
 	}
 }
 

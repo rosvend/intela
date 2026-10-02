@@ -3762,10 +3762,16 @@ paths:
             salir de `deducciones`: se resuelven en `/alertas`.
 
             Y 409 si la liquidacion del periodo no deja mover la corrida
-            (ADR 0024): al salir de `liquidacion_final` alguna corrida hermana
-            todavia no llega a esa etapa; al entrar, el periodo ya se liquido
-            sin esta corrida, o dos corridas reparten la misma bolsa. El
-            mensaje nombra las corridas implicadas.
+            (ADR 0024):
+            - al salir de `liquidacion_final` hacia `pago_registro`: alguna
+              corrida hermana del mismo periodo todavia no llega a esa etapa
+              (`ErrLiquidacionEnEspera`).
+            - al entrar o al salir de `liquidacion_final`: el periodo y
+              circuito ya se liquidaron sin esta corrida
+              (`ErrPeriodoYaLiquidado`), o dos corridas listas del periodo
+              reparten la misma bolsa (`ErrBolsaRepetida`).
+
+            El mensaje nombra las corridas implicadas.
           content:
             application/json:
               schema:
@@ -3774,9 +3780,16 @@ paths:
                 error: "avanzar etapa de \"proc-rcn-2026-01-1\": liquidar \"proc-rcn-2026-01-1\": la liquidacion del periodo espera a otras corridas: 2026-01/nacional no se liquida hasta que lleguen a \"liquidacion_final\": proc-caracol-2026-01-1 (verificacion)"
         "500":
           description: |
-            Fallo del servidor. Incluye la falta de un `smmlv` vigente en
-            `parametros` al entrar a `liquidacion_final`: sin el no se evalua
-            `R-11` y la corrida no avanza (ADR 0004).
+            Fallo del servidor. Incluye:
+            - la falta de un `smmlv` vigente en `parametros` al entrar a
+              `liquidacion_final`: sin el no se evalua `R-11` y la corrida no
+              avanza (ADR 0004).
+            - inconsistencias de datos en la liquidacion (`ErrCorridaNoCuadra`
+              o `ErrInconsistenciaLiquidacion`): totales que no cuadran
+              (deducciones mayores al bruto o distribuido mayor al neto),
+              corridas hermanas sin resultados de proceso, corridas en etapas
+              posteriores sin firmas de verificacion en base de datos, o
+              disparador ausente entre las corridas del periodo.
           content:
             application/json:
               schema:

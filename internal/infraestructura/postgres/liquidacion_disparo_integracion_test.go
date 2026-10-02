@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
@@ -22,11 +25,11 @@ import (
 // el periodo espera a todas sus corridas (ADR 0024), y que el aviso queda en
 // `notificaciones` con la orden.
 
-// comprobarLiquidacionEmitida mira lo que ve cada lector de la emision: el
-// listado de administracion (`GET /liquidaciones`), el del titular
-// (`GET /mis-liquidaciones`), el aviso de portal y el libro. Hay UNA orden del
-// titular con el neto dado, UN aviso, UN asiento de emision que lleva el acuse
-// de ese aviso, y UN asiento de lote.
+// comprobarLiquidacionEmitida comprueba el estado persistido por la emision a
+// traves de los casos de uso de aplicacion ([aplicacion.Liquidaciones.Listar] y
+// [aplicacion.Liquidaciones.DeTitular]), el aviso de portal y el libro. Hay UNA
+// orden del titular con el neto dado, UN aviso, UN asiento de emision que lleva
+// el acuse de ese aviso, y UN asiento de lote.
 func comprobarLiquidacionEmitida(
 	t *testing.T, s *Store, pool *pgxpool.Pool, procesoID, titularID string, neto decimal.Decimal,
 ) {
@@ -38,10 +41,10 @@ func comprobarLiquidacionEmitida(
 
 	admin, err := liq.Listar(ctx, aplicacion.Usuario{Rol: aplicacion.RolAdministrador})
 	if err != nil {
-		t.Fatalf("GET /liquidaciones: %v", err)
+		t.Fatalf("Listar liquidaciones: %v", err)
 	}
 	if len(admin) != 1 || admin[0].Orden.TitularID != titularID {
-		t.Fatalf("GET /liquidaciones = %+v, se esperaba una orden de %s", admin, titularID)
+		t.Fatalf("Listar liquidaciones = %+v, se esperaba una orden de %s", admin, titularID)
 	}
 	orden := admin[0].Orden
 	if !orden.Neto.Equal(neto) {
@@ -53,21 +56,24 @@ func comprobarLiquidacionEmitida(
 
 	suyas, err := liq.DeTitular(ctx, aplicacion.Usuario{Rol: aplicacion.RolTitular, TitularID: titularID})
 	if err != nil {
-		t.Fatalf("GET /mis-liquidaciones: %v", err)
+		t.Fatalf("DeTitular liquidaciones: %v", err)
 	}
 	if len(suyas) != 1 || suyas[0].Orden.ID != orden.ID {
-		t.Fatalf("GET /mis-liquidaciones = %+v, se esperaba %s", suyas, orden.ID)
+		t.Fatalf("DeTitular liquidaciones = %+v, se esperaba %s", suyas, orden.ID)
 	}
 
 	var avisos int
-	var acuse, destino string
+	var acuse, destino, procesoAviso string
 	if err := pool.QueryRow(ctx,
-		`SELECT count(*) OVER (), acuse, destino FROM notificaciones
-		  WHERE titular_id = $1 AND via = 'portal'`, titularID).Scan(&avisos, &acuse, &destino); err != nil {
+		`SELECT count(*) OVER (), acuse, destino, proceso_id FROM notificaciones
+		  WHERE titular_id = $1 AND via = 'portal'`, titularID).Scan(&avisos, &acuse, &destino, &procesoAviso); err != nil {
 		t.Fatalf("leer el aviso de portal: %v", err)
 	}
 	if avisos != 1 || destino != destinoPortal {
 		t.Fatalf("avisos = %d, destino = %q; se esperaba uno en %s", avisos, destino, destinoPortal)
+	}
+	if procesoAviso != orden.ProcesoID {
+		t.Fatalf("proceso en aviso = %q, se esperaba %q (la corrida de referencia del titular)", procesoAviso, orden.ProcesoID)
 	}
 
 	emision, err := s.De(ctx, aplicacion.RefOrdenDePago, orden.ID)
@@ -105,6 +111,10 @@ func comprobarLiquidacionEmitida(
 // las dos firmas de la revision 1 -- lista para salir -- y su resultado: una
 // sola linea de Ana por importe. Cada corrida con su propia bolsa (ADR 0019).
 func sembrarCorridaEnVerificacion(t *testing.T, pool *pgxpool.Pool, procesoID, bolsaID, periodo, importe string) {
+	sembrarCorridaEnVerificacionTitular(t, pool, procesoID, bolsaID, periodo, importe, titularAna)
+}
+
+func sembrarCorridaEnVerificacionTitular(t *testing.T, pool *pgxpool.Pool, procesoID, bolsaID, periodo, importe, titularID string) {
 	t.Helper()
 	ejecutar := ejecutorDePruebas(t, pool)
 	sembrarBolsa(t, pool, bolsaID, periodo, "nacional")
@@ -117,7 +127,7 @@ func sembrarCorridaEnVerificacion(t *testing.T, pool *pgxpool.Pool, procesoID, b
 	ejecutar(`INSERT INTO resultados_obra (proceso_id, obra_id, puntos, importe, retenida)
 	          VALUES ($1, $2, 10, $3, FALSE)`, procesoID, obraCompleta, pgDec(importe))
 	ejecutar(`INSERT INTO resultados_titular (proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
-	          VALUES ($1, $2, $3, 'IPI-00000001', 100, $4)`, procesoID, obraCompleta, titularAna, pgDec(importe))
+	          VALUES ($1, $2, $3, 'IPI-00000001', 100, $4)`, procesoID, obraCompleta, titularID, pgDec(importe))
 }
 
 // procesosConLiquidacion es el flujo de aprobaciones con la liquidacion
@@ -370,5 +380,163 @@ func TestCorridasDePeriodoDevuelveTodasConSusFirmas(t *testing.T) {
 	vacio, err := s.CorridasDePeriodo(t.Context(), "2030-01", reparto.Nacional)
 	if err != nil || vacio == nil || len(vacio) != 0 {
 		t.Fatalf("periodo sin corridas = %v, %v; se esperaba una lista vacia", vacio, err)
+	}
+}
+
+// TestLaLiquidacionEmiteAvisosConLaCorridaQueAportaSoloAlTitular comprueba el
+// escenario de #196: prc-a aporta solo a Ana y prc-b aporta solo a Beto.
+// Cuando ambas corridas se liquidan, la fila de `notificaciones` de Beto debe
+// apuntar a prc-b (y no a prc-a, que es la primera lexicografica del periodo pero
+// no le aporta nada).
+func TestLaLiquidacionEmiteAvisosConLaCorridaQueAportaSoloAlTitular(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+	sembrarFirmantes(t, pool)
+	sembrarSMMLV(t, pool)
+	sembrarCorridaEnVerificacionTitular(t, pool, "prc-a", "bolsa-a", "2026-01", "30000", titularAna)
+	sembrarCorridaEnVerificacionTitular(t, pool, "prc-b", "bolsa-b", "2026-01", "20000", titularBeto)
+	uc := procesosConLiquidacion(s, s)
+
+	if _, err := uc.AvanzarEtapa(ctx, "prc-a", usuarioDistribucion); err != nil {
+		t.Fatalf("A entra a liquidacion_final: %v", err)
+	}
+	if _, err := uc.AvanzarEtapa(ctx, "prc-b", usuarioDistribucion); err != nil {
+		t.Fatalf("B entra a liquidacion_final: %v", err)
+	}
+
+	// Ana solo estuvo en prc-a: su orden y su aviso deben ser prc-a
+	var avisoAnaProceso string
+	if err := pool.QueryRow(ctx,
+		`SELECT proceso_id FROM notificaciones WHERE titular_id = $1 AND via = 'portal'`, titularAna).Scan(&avisoAnaProceso); err != nil {
+		t.Fatalf("aviso Ana: %v", err)
+	}
+	if avisoAnaProceso != "prc-a" {
+		t.Fatalf("aviso Ana apunto a %q, se esperaba prc-a", avisoAnaProceso)
+	}
+
+	// Beto solo estuvo en prc-b: su orden y su aviso deben ser prc-b
+	var avisoBetoProceso string
+	if err := pool.QueryRow(ctx,
+		`SELECT proceso_id FROM notificaciones WHERE titular_id = $1 AND via = 'portal'`, titularBeto).Scan(&avisoBetoProceso); err != nil {
+		t.Fatalf("aviso Beto: %v", err)
+	}
+	if avisoBetoProceso != "prc-b" {
+		t.Fatalf("aviso Beto apunto a %q, se esperaba prc-b (la corrida que le aporto)", avisoBetoProceso)
+	}
+}
+
+type authPrueba struct {
+	usuarios map[string]aplicacion.Usuario
+}
+
+func (a authPrueba) IniciarSesion(context.Context, string, string) (aplicacion.Sesion, error) {
+	return aplicacion.Sesion{}, nil
+}
+func (a authPrueba) ResolverSesion(_ context.Context, token string) (aplicacion.Usuario, error) {
+	u, hay := a.usuarios[token]
+	if !hay {
+		return aplicacion.Usuario{}, aplicacion.ErrCredenciales
+	}
+	return u, nil
+}
+func (a authPrueba) CerrarSesion(context.Context, string) error { return nil }
+
+// TestAvanzarEtapaDisparaLiquidacionPuntaAPuntaHTTP comprueba por HTTP de punta a
+// punta: avanzar etapas de corridas hasta liquidacion_final, y consultar
+// GET /liquidaciones (administrador) y GET /mis-liquidaciones (titular) sobre el
+// servidor HTTP real cableado contra Postgres real.
+func TestAvanzarEtapaDisparaLiquidacionPuntaAPuntaHTTP(t *testing.T) {
+	s, pool := sembrar(t)
+	sembrarFirmantes(t, pool)
+	sembrarSMMLV(t, pool)
+	sembrarCorridaEnVerificacion(t, pool, "prc-a", "bolsa-a", "2026-01", "30000")
+	sembrarCorridaEnVerificacion(t, pool, "prc-b", "bolsa-b", "2026-01", "20000")
+
+	liq := aplicacion.Liquidaciones{
+		Ordenes: s, Reloj: reloj.Sistema{}, Notificador: s.AvisoPortal(), Bitacora: s, Unidad: s,
+	}
+	proc := procesosConLiquidacion(s, s)
+
+	auth := authPrueba{
+		usuarios: map[string]aplicacion.Usuario{
+			"tok-admin": {ID: usuarioAdmin, Rol: aplicacion.RolAdministrador},
+			"tok-ana":   {ID: usuarioTitular, Rol: aplicacion.RolTitular, TitularID: titularAna},
+		},
+	}
+
+	api := httpapi.Nueva(httpapi.Casos{
+		Auth:     auth,
+		Procesos: proc,
+		Ordenes:  liq,
+	}, httpapi.Opciones{})
+	router := api.Router()
+
+	// 1. POST /procesos/prc-a/avanzar como admin
+	reqA := httptest.NewRequest(http.MethodPost, "/procesos/prc-a/avanzar", nil)
+	reqA.Header.Set("Authorization", "Bearer tok-admin")
+	recA := httptest.NewRecorder()
+	router.ServeHTTP(recA, reqA)
+	if recA.Code != http.StatusOK {
+		t.Fatalf("POST /procesos/prc-a/avanzar = %d; cuerpo: %s", recA.Code, recA.Body)
+	}
+
+	// 2. POST /procesos/prc-b/avanzar como admin -> entra a liquidacion_final y emite el periodo
+	reqB := httptest.NewRequest(http.MethodPost, "/procesos/prc-b/avanzar", nil)
+	reqB.Header.Set("Authorization", "Bearer tok-admin")
+	recB := httptest.NewRecorder()
+	router.ServeHTTP(recB, reqB)
+	if recB.Code != http.StatusOK {
+		t.Fatalf("POST /procesos/prc-b/avanzar = %d; cuerpo: %s", recB.Code, recB.Body)
+	}
+
+	// 3. GET /liquidaciones como admin
+	reqLiq := httptest.NewRequest(http.MethodGet, "/liquidaciones", nil)
+	reqLiq.Header.Set("Authorization", "Bearer tok-admin")
+	recLiq := httptest.NewRecorder()
+	router.ServeHTTP(recLiq, reqLiq)
+	if recLiq.Code != http.StatusOK {
+		t.Fatalf("GET /liquidaciones = %d; cuerpo: %s", recLiq.Code, recLiq.Body)
+	}
+
+	var listadoAdmin struct {
+		Liquidaciones []struct {
+			ID        string   `json:"id"`
+			TitularID string   `json:"titular_id"`
+			Neto      string   `json:"neto"`
+			Procesos  []string `json:"procesos"`
+		} `json:"liquidaciones"`
+	}
+	if err := json.Unmarshal(recLiq.Body.Bytes(), &listadoAdmin); err != nil {
+		t.Fatalf("deserializar GET /liquidaciones: %v", err)
+	}
+	if len(listadoAdmin.Liquidaciones) != 1 {
+		t.Fatalf("GET /liquidaciones: se esperaba 1 orden, llegaron %d", len(listadoAdmin.Liquidaciones))
+	}
+	ord := listadoAdmin.Liquidaciones[0]
+	if ord.TitularID != titularAna || ord.Neto != "50000.00" {
+		t.Fatalf("GET /liquidaciones = %+v, se esperaba Ana con 50000.00", ord)
+	}
+
+	// 4. GET /mis-liquidaciones como Ana
+	reqMis := httptest.NewRequest(http.MethodGet, "/mis-liquidaciones", nil)
+	reqMis.Header.Set("Authorization", "Bearer tok-ana")
+	recMis := httptest.NewRecorder()
+	router.ServeHTTP(recMis, reqMis)
+	if recMis.Code != http.StatusOK {
+		t.Fatalf("GET /mis-liquidaciones = %d; cuerpo: %s", recMis.Code, recMis.Body)
+	}
+
+	var listadoTitular struct {
+		Liquidaciones []struct {
+			ID        string `json:"id"`
+			TitularID string `json:"titular_id"`
+			Neto      string `json:"neto"`
+		} `json:"liquidaciones"`
+	}
+	if err := json.Unmarshal(recMis.Body.Bytes(), &listadoTitular); err != nil {
+		t.Fatalf("deserializar GET /mis-liquidaciones: %v", err)
+	}
+	if len(listadoTitular.Liquidaciones) != 1 || listadoTitular.Liquidaciones[0].ID != ord.ID {
+		t.Fatalf("GET /mis-liquidaciones = %+v, se esperaba la orden %s", listadoTitular, ord.ID)
 	}
 }

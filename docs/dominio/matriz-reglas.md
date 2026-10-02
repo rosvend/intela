@@ -50,7 +50,7 @@ pasando (`go test ./...`).
 | R-07 Reserva por errores técnicos (≤5% nacional) | `RD 14.1`, `RD 14.5.1`, `RD 14.5.2`, `RD 14.5.4` | Parámetros sembrados (`reserva.errores_tecnicos`); circuito nacional | `TestParametrosSinteticosVanEtiquetados` | blocked-on-client-data |
 | R-08 Destino del remanente de la reserva | `RD 14.4` | Previsto en `prescripcion` / `reparto` | — | partial |
 | R-09 Frecuencia mínima de distribución | `RD 12` | `calendario`; `cmd/scheduler`; ADR 0004 | — | partial |
-| R-10 Liquidación aceptada por silencio (15 días) | `RD 13.2` | Esquema `notificaciones`; reloj de dominio | — | partial |
+| R-10 Liquidación aceptada por silencio (15 días) | `RD 13.2` | Emisión al entrar a `liquidacion_final` con aviso de portal en `notificaciones` (ADR 0024, #193); reloj de dominio | `TestLaLiquidacionDelPeriodoEsperaALaUltimaCorrida`; `TestAvanzarEtapaDisparaLiquidacionPuntaAPuntaHTTP` | partial |
 | R-11 Distribuciones de menor cuantía (2% SMMLV) | `RD 13.3` | ADR 0004 (SMMLV); `liquidacion` (andamiaje) | — | blocked-on-client-data |
 | R-12 Documentos para cobrar (RUT, cert. bancaria) | `RD 13.1.6` | Skill afiliación; sin dominio de documentos aún | — | partial |
 | R-13 Conservación de registros (≥10 años) | `RD 13.2`, `RD 13.4` | Bitácora append-only (ADR 0006) | — | partial |

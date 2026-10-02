@@ -78,7 +78,9 @@ como notificacion la puesta a disposicion en la pagina web. `postgres.AvisoPorta
 escribe la fila de `notificaciones` (`via = 'portal'`, destino `/mis-liquidaciones`)
 dentro de la unidad que emite la orden, y se niega a escribir fuera de una: el aviso
 existe si y solo si la orden existe. El acuse es la huella del contenido anunciado,
-recalculable anos despues (ADR 0006). Se retira el adaptador de log.
+recalculable anos despues (ADR 0006). Se retira el adaptador de log
+(`internal/infraestructura/notificaciones`), redefiniendo el alcance de #55 para que
+el acuse de portal exista desde la emision y no dependa de la visita posterior del titular.
 
 ## Alternativas consideradas
 
@@ -109,11 +111,19 @@ A cambio:
 - Una corrida abandonada en una etapa temprana deja el periodo esperando: no hay hoy
   una operacion para cancelar una corrida. El 409 de salida nombra la que falta.
 - Un reproceso de la misma bolsa (`proc-<bolsa>-2`) bloquea el periodo con
-  `ErrCorridaNoCuadra` hasta que exista la forma de descartar una de las dos.
+  `ErrBolsaRepetida` hasta que exista la forma de descartar una de las dos.
 - Entrar a `liquidacion_final` exige un `smmlv` vigente en `parametros`; sin el falla
   con `ErrParametroAusente` (ADR 0004). El seed siembra uno sintetico.
 - Las corridas que ya pasaron `liquidacion_final` antes de este cambio no reciben
   ordenes de forma retroactiva. Se incorporan si una corrida hermana del mismo periodo
   llega despues; si no, su emision es una operacion aparte.
-- El correo de `RD 13.2` sigue pendiente (#55): cuando llegue, escribe su propia fila
-  con `via = 'email'`.
+- Reajuste explícito de alcance respecto a #55: la propuesta inicial de #55 preveía
+  mantener un adaptador dummy de log y registrar el acuse de portal cuando el titular
+  iniciara sesión e interactuara con el proyecto. Este cambio retira el adaptador de log
+  falso (`internal/infraestructura/notificaciones/log.go`), ya que emitir un acuse sin
+  efecto en base ni portal corría los plazos de `R-10` y `R-20` sin notificación real.
+  La puesta a disposición en portal (`RD 13.8.8`) queda satisfecha al emitir las órdenes
+  transaccionalmente en `/mis-liquidaciones`. El alcance restante de #55 cubre:
+  1. El adaptador de correo electrónico (`via = 'email'`) cuando se configure.
+  2. El centro de notificaciones en administración para auditoría de envíos y acuses.
+  3. El reloj diferenciado de aviso de recaudo para `RD 13.1.3` (`fecha_informe_recaudo`).

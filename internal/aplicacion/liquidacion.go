@@ -301,12 +301,14 @@ func (l Liquidaciones) yaEmitido(ctx context.Context, meta MetaProceso) ([]liqui
 // primeras ordenadas. Es la regla del ADR 0024, y vive aqui y no en el SQL para
 // que se pruebe sin base de datos.
 //
-// Falla cerrado en tres casos, y en ninguno escribe nada:
+// Falla cerrado en cuatro casos, y en ninguno escribe nada:
 //
 //   - alguna corrida sigue antes de `liquidacion_final`: [ErrLiquidacionEnEspera];
-//   - alguna llego sin las firmas de la compuerta: [ErrProcesoNoListo] (la
+//   - alguna llego sin las firmas de la compuerta: [ErrInconsistenciaLiquidacion] (la
 //     maquina de estados no lo permite, asi que es una base inconsistente);
-//   - dos corridas listas reparten la misma bolsa: [ErrCorridaNoCuadra].
+//   - dos corridas listas reparten la misma bolsa: [ErrBolsaRepetida];
+//   - el disparador paso la compuerta pero no aparece entre las corridas del
+//     periodo: [ErrInconsistenciaLiquidacion] (el adaptador y el gate no ven lo mismo).
 func corridasALiquidar(meta MetaProceso, corridas []MetaProceso) ([]string, error) {
 	listas := make([]string, 0, len(corridas))
 	pendientes := []string{}
@@ -318,11 +320,11 @@ func corridasALiquidar(meta MetaProceso, corridas []MetaProceso) ([]string, erro
 		}
 		if !c.CerroLaVerificacion() {
 			return nil, fmt.Errorf("%w: %s esta en %q sin las firmas de distribucion y contabilidad de la compuerta de verificacion",
-				ErrProcesoNoListo, c.ID, c.Etapa)
+				ErrInconsistenciaLiquidacion, c.ID, c.Etapa)
 		}
 		if otra, repetida := porBolsa[c.BolsaID]; repetida {
 			return nil, fmt.Errorf("%w: %s y %s reparten la misma bolsa %s en %s",
-				ErrCorridaNoCuadra, otra, c.ID, c.BolsaID, meta.donde())
+				ErrBolsaRepetida, otra, c.ID, c.BolsaID, meta.donde())
 		}
 		porBolsa[c.BolsaID] = c.ID
 		listas = append(listas, c.ID)
@@ -338,7 +340,7 @@ func corridasALiquidar(meta MetaProceso, corridas []MetaProceso) ([]string, erro
 	if !slices.Contains(listas, meta.ID) {
 		return nil, fmt.Errorf(
 			"%w: %s paso la compuerta pero no aparece entre las corridas de %s",
-			ErrCorridaNoCuadra, meta.ID, meta.donde())
+			ErrInconsistenciaLiquidacion, meta.ID, meta.donde())
 	}
 	slices.Sort(listas)
 	return listas, nil
@@ -360,6 +362,10 @@ type agregado struct {
 	// PorTitular es el neto de cada titular, ya sumado sobre obras y corridas.
 	PorTitular map[string]decimal.Decimal
 
+	// ProcesosPorTitular son las corridas que aportaron lineas a cada titular,
+	// en orden lexicografico.
+	ProcesosPorTitular map[string][]string
+
 	// Distribuido es la suma de las lineas. Puede ser MENOR que el neto de la
 	// corrida -- eso es el retenido -- pero nunca mayor; ver
 	// [ErrCorridaNoCuadra].
@@ -374,17 +380,22 @@ func (a agregado) Neto() decimal.Decimal {
 
 func (l Liquidaciones) agregar(ctx context.Context, procesos []string) (agregado, error) {
 	ag := agregado{
-		Procesos:    procesos,
-		Bruto:       decimal.Zero,
-		Admin:       decimal.Zero,
-		Social:      decimal.Zero,
-		Reserva:     decimal.Zero,
-		PorTitular:  map[string]decimal.Decimal{},
-		Distribuido: decimal.Zero,
+		Procesos:           procesos,
+		Bruto:              decimal.Zero,
+		Admin:              decimal.Zero,
+		Social:             decimal.Zero,
+		Reserva:            decimal.Zero,
+		PorTitular:         map[string]decimal.Decimal{},
+		ProcesosPorTitular: map[string][]string{},
+		Distribuido:        decimal.Zero,
 	}
 	for _, procesoID := range procesos {
 		insumo, err := l.Ordenes.InsumoDeProceso(ctx, procesoID)
 		if err != nil {
+			if errors.Is(err, ErrNoEncontrado) {
+				return agregado{}, fmt.Errorf("%w: la corrida %s no tiene resultados de proceso registrados",
+					ErrInconsistenciaLiquidacion, procesoID)
+			}
 			return agregado{}, fmt.Errorf("insumo del proceso %s: %w", procesoID, err)
 		}
 		ag.Bruto = ag.Bruto.Add(insumo.Bruto)
@@ -394,6 +405,9 @@ func (l Liquidaciones) agregar(ctx context.Context, procesos []string) (agregado
 		for _, linea := range insumo.Titulares {
 			ag.PorTitular[linea.TitularID] = ag.PorTitular[linea.TitularID].Add(linea.Importe)
 			ag.Distribuido = ag.Distribuido.Add(linea.Importe)
+			if !slices.Contains(ag.ProcesosPorTitular[linea.TitularID], procesoID) {
+				ag.ProcesosPorTitular[linea.TitularID] = append(ag.ProcesosPorTitular[linea.TitularID], procesoID)
+			}
 		}
 	}
 
@@ -445,10 +459,20 @@ func (l Liquidaciones) emitir(
 
 		id := idOrden(meta.Periodo, meta.Circuito, titularID)
 
+		// Usa las corridas que aportaron lineas a este titular en orden
+		// lexicografico. La primera es la corrida de referencia de la orden y
+		// de la notificacion, para que el aviso (titular, corrida) apunte a una
+		// corrida donde el titular de verdad tiene participacion (R-20, #55).
+		procesosTitular := ag.ProcesosPorTitular[titularID]
+		if len(procesosTitular) == 0 {
+			procesosTitular = ag.Procesos
+		}
+		procesoRef := procesosTitular[0]
+
 		o, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
 			ID:          id,
-			ProcesoID:   ag.Procesos[0],
-			Procesos:    ag.Procesos,
+			ProcesoID:   procesoRef,
+			Procesos:    procesosTitular,
 			TitularID:   titularID,
 			Periodo:     meta.Periodo,
 			Circuito:    string(meta.Circuito),
@@ -760,8 +784,19 @@ func (m MetaProceso) ExigirListoParaLiquidar() error {
 			ErrProcesoNoListo, m.ID, m.Etapa, reparto.EtapaLiquidacionFinal)
 	}
 	if !m.CerroLaVerificacion() {
-		return fmt.Errorf("%w: a %s le faltan las firmas de %s de la compuerta de verificacion (revision %d)",
-			ErrProcesoNoListo, m.ID, strings.Join(m.rolesSinFirma(m.Revision-1), " y "), m.Revision-1)
+		ultimaConFirma := 0
+		for rev := m.Revision - 1; rev >= 1; rev-- {
+			if len(m.rolesSinFirma(rev)) < 2 {
+				ultimaConFirma = rev
+				break
+			}
+		}
+		if ultimaConFirma > 0 {
+			return fmt.Errorf("%w: a %s le faltan las firmas de %s de la compuerta de verificacion (revision %d)",
+				ErrProcesoNoListo, m.ID, strings.Join(m.rolesSinFirma(ultimaConFirma), " y "), ultimaConFirma)
+		}
+		return fmt.Errorf("%w: a %s le faltan las firmas de distribucion y contabilidad de la compuerta de verificacion",
+			ErrProcesoNoListo, m.ID)
 	}
 	return nil
 }

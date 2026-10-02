@@ -346,13 +346,21 @@ var (
 	// aqui significa que se esta agregando lo que no se puede agregar. Se
 	// falla en vez de recortar: recortar reparte de menos a alguien sin
 	// decirlo, y eso no se ve mirando la orden.
-	//
-	// La tercera forma es de alcance y no de totales: dos corridas listas del
-	// mismo periodo que reparten la MISMA bolsa. Sumarlas pagaria dos veces el
-	// mismo recaudo (ADR 0019: una corrida es una bolsa), y elegir una de las
-	// dos en silencio decidiria por el operador cual de los dos resultados
-	// vale.
 	ErrCorridaNoCuadra = errors.New("la corrida no cuadra")
+
+	// ErrBolsaRepetida: dos corridas listas del mismo periodo y circuito
+	// reparten la misma bolsa.
+	//
+	// Sumarlas pagaria dos veces el mismo recaudo (ADR 0019: una corrida es una
+	// bolsa), y elegir una de las dos en silencio decidiria por el operador cual
+	// de los dos resultados vale.
+	ErrBolsaRepetida = errors.New("bolsa repetida en el periodo")
+
+	// ErrInconsistenciaLiquidacion: los datos de la liquidacion o el estado
+	// de las corridas en la base son inconsistentes. No es un conflicto que
+	// el operador pueda resolver avanzando etapas: es un fallo de integridad
+	// de datos del servidor (500).
+	ErrInconsistenciaLiquidacion = errors.New("inconsistencia en los datos de liquidacion")
 
 	// ErrLiquidacionEnEspera: la liquidacion final de un periodo y circuito
 	// todavia no se puede emitir porque alguna de sus corridas no ha dejado

@@ -264,22 +264,71 @@ func TestAvanzarEtapaConCriticasAbiertasEs409(t *testing.T) {
 // no un fallo del servidor, y el mensaje tiene que llegar entero: nombra las
 // corridas que el operador tiene que ir a mirar.
 func TestAvanzarEtapaBloqueadoPorLaLiquidacionEs409(t *testing.T) {
-	casos := []error{
-		aplicacion.ErrLiquidacionEnEspera,
-		aplicacion.ErrPeriodoYaLiquidado,
-		aplicacion.ErrProcesoNoListo,
-		aplicacion.ErrCorridaNoCuadra,
+	casos := []struct {
+		err      error
+		esperado string
+	}{
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: 2026-01/nacional no se liquida hasta que lleguen a \"liquidacion_final\": proc-2 (verificacion)", aplicacion.ErrLiquidacionEnEspera),
+			esperado: "proc-2 (verificacion)",
+		},
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: 2026-01/nacional se liquido con proc-2 y proc-1 no estaba entre ellas", aplicacion.ErrPeriodoYaLiquidado),
+			esperado: "se liquido con proc-2",
+		},
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-1 y proc-2 reparten la misma bolsa bolsa-x en 2026-01/nacional", aplicacion.ErrBolsaRepetida),
+			esperado: "reparten la misma bolsa bolsa-x",
+		},
 	}
-	for _, causa := range casos {
-		err := fmt.Errorf("avanzar etapa de %q: liquidar %q: %w: faltan proc-b (verificacion)", "proc-1", "proc-1", causa)
-		h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+	for _, c := range casos {
+		h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
 		rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
 		if rec.Code != http.StatusConflict {
-			t.Fatalf("%v: codigo = %d, se esperaba 409. Cuerpo: %s", causa, rec.Code, rec.Body)
+			t.Fatalf("%v: codigo = %d, se esperaba 409. Cuerpo: %s", c.err, rec.Code, rec.Body)
 		}
-		if !strings.Contains(rec.Body.String(), "proc-b (verificacion)") {
-			t.Fatalf("%v: el cuerpo tiene que nombrar la corrida que falta: %s", causa, rec.Body)
+		if !strings.Contains(rec.Body.String(), c.esperado) {
+			t.Fatalf("%v: el cuerpo tiene que contener %q: %s", c.err, c.esperado, rec.Body)
 		}
+	}
+}
+
+// TestAvanzarEtapaInconsistenciasDeLiquidacionEs500ConLog: fallos de integridad
+// que el operador no puede resolver moviendo corridas (descuadre de dinero,
+// corrida sin resultados, base inconsistente) se registran en el log y responden 500.
+func TestAvanzarEtapaInconsistenciasDeLiquidacionEs500ConLog(t *testing.T) {
+	casos := []struct {
+		nombre string
+		err    error
+	}{
+		{
+			nombre: "descuadre de dinero",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: las corridas [proc-1] reparten 200 sobre un neto de 100", aplicacion.ErrCorridaNoCuadra),
+		},
+		{
+			nombre: "corrida sin resultados de proceso",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: la corrida proc-2 no tiene resultados de proceso registrados", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+		{
+			nombre: "hermana sin firmas en etapa posterior",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-2 esta en \"auditoria\" sin las firmas de distribucion y contabilidad", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+		{
+			nombre: "disparador no aparece entre las corridas",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-1 paso la compuerta pero no aparece entre las corridas de 2026-01/nacional", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
+			rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("%s: codigo = %d, se esperaba 500. Cuerpo: %s", c.nombre, rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), "inconsistencia en los datos de liquidacion") {
+				t.Fatalf("%s: el cuerpo tiene que decir 'inconsistencia en los datos de liquidacion': %s", c.nombre, rec.Body)
+			}
+		})
 	}
 }
 
