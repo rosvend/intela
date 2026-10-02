@@ -1362,9 +1362,10 @@ func TestGenerarLiquidacionAvisoUsaCorridaQueAportaSoloAlTitular(t *testing.T) {
 
 	var ordenAna, ordenCarlos liquidacion.OrdenDePago
 	for _, v := range vistas {
-		if v.Orden.TitularID == "tit-ana" {
+		switch v.Orden.TitularID {
+		case "tit-ana":
 			ordenAna = v.Orden
-		} else if v.Orden.TitularID == "tit-carlos" {
+		case "tit-carlos":
 			ordenCarlos = v.Orden
 		}
 	}
@@ -1378,9 +1379,10 @@ func TestGenerarLiquidacionAvisoUsaCorridaQueAportaSoloAlTitular(t *testing.T) {
 
 	var avisoAna, avisoCarlos avisoEnviado
 	for _, av := range e.avisos.enviados {
-		if av.Dest == "tit-ana" {
+		switch av.Dest {
+		case "tit-ana":
 			avisoAna = av
-		} else if av.Dest == "tit-carlos" {
+		case "tit-carlos":
 			avisoCarlos = av
 		}
 	}
