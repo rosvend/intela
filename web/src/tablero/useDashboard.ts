@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { api, esErrorDeApi } from "../api";
+import {
+  api,
+  esErrorDeApi,
+  esRespuestaSinJson,
+  MENSAJE_RESPUESTA_SIN_JSON,
+} from "../api";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
 import {
@@ -95,7 +100,16 @@ export function useRecurso<T>(
 
     (api(path) as Promise<T>)
       .then((datos) => {
-        if (vigente) setRecurso({ tipo: "listo", datos });
+        if (!vigente) return;
+        // El mismo corte que `useApi`: un 2xx sin JSON llega como `Response`
+        // crudo, y entregarlo como `datos` es lo que tumbaba el tablero del
+        // titular (`datos.obras.length` sobre un `Response`). `T` no se
+        // comprueba; esta frontera si distingue la respuesta sin leer.
+        if (esRespuestaSinJson(datos)) {
+          setRecurso({ tipo: "error", mensaje: MENSAJE_RESPUESTA_SIN_JSON });
+          return;
+        }
+        setRecurso({ tipo: "listo", datos });
       })
       .catch((error: unknown) => {
         if (!vigente) return;
