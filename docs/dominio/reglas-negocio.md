@@ -323,7 +323,7 @@ Implementacion: `internal/dominio/anomalias/correccion.go`;
 `internal/infraestructura/postgres/correcciones.go`; `POST /alertas/{id}/resolver`. Asientos
 `alerta.resuelta` (sobre la alerta), `correccion.uso_excluido` y `correccion.tipo_obra_asignado`
 (sobre el uso) y `correccion.entrega_excluida` (sobre la entrega). Migracion
-`00025_correccion_de_anomalias.sql`. Pruebas: `TestUnaCriticaSinAccionNoSeCierra`,
+`00026_correccion_de_anomalias.sql`. Pruebas: `TestUnaCriticaSinAccionNoSeCierra`,
 `TestExcluirUnUsoQueYaNoAplica`, `TestExcluirUnaEntregaApagaElDuplicadoDeHuella` (dominio);
 `TestResolverUnaCriticaSinAccionNoLaCierra`,
 `TestResolverExcluyeLaCopiaDuplicadaYAsientaLosDosHechos`,

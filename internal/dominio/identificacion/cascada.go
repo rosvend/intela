@@ -29,7 +29,7 @@ import (
 // volver a la cascada: reprocesable devuelve false para los dos.
 //
 // EscalonDuplicado es la correccion de una anomalia critica de duplicado
-// (#164, migracion 00025): una persona decidio que la fila repite un hecho que
+// (#164, migracion 00026): una persona decidio que la fila repite un hecho que
 // ya cuenta otra, o que su entrega entera repite los bytes de otra. Sin obra y
 // con oni=false, firmada y con nota, y tampoco vuelve a la cascada: si
 // volviera, se identificaria otra vez y el doble conteo reapareceria solo.

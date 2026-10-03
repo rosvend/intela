@@ -93,13 +93,17 @@ func (g *gestionDeclaracionesFalsa) VigentesDeObras(_ context.Context, _ []strin
 }
 
 type usosDeRepartoFalso struct {
-	usos []UsoDeReparto
+	usos     []UsoDeReparto
+	resumen  ResumenUsosDeCanal
+	sinCanal int
 }
 
 func (u *usosDeRepartoFalso) UsosDeCanal(_ context.Context, _, _ string, _ int) ([]UsoDeReparto, ResumenUsosDeCanal, error) {
-	return u.usos, ResumenUsosDeCanal{}, nil
+	return u.usos, u.resumen, nil
 }
-func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) { return 0, nil }
+func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) {
+	return u.sinCanal, nil
+}
 
 type repositorioResultadosFalso struct {
 	procesoID string
@@ -559,6 +563,148 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 	}
 	if resultados.guardado.SnapshotID != "snap-1" {
 		t.Fatalf("SnapshotID del resultado = %q, se esperaba el snapshot congelado del proceso", resultados.guardado.SnapshotID)
+	}
+}
+
+// procesoNacionalListoParaValorizar deja proc-1 en deducciones contra una
+// bolsa del usuario "procinal", con obra-1 declarada al 100%.
+func procesoNacionalListoParaValorizar(t *testing.T, snap reparto.Snapshot, usos *usosDeRepartoFalso) (Procesos, *repositorioProcesosFalso) {
+	t.Helper()
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2025-01", reparto.Nacional, "bolsa-procinal", "snp1-viejo", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = reparto.EtapaDeducciones
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	decl, err := repertorio.NuevaDeclaracion("obra-1", []repertorio.Parte{
+		{TitularID: "titular-1", IPI: "IPI-1", Porcentaje: d("100")},
+	})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	uc := conBitacora(Procesos{
+		Repo:       repo,
+		Parametros: &parametrosNormativosFalso{snap: snap},
+		Bolsas: &repositorioRecaudoFalso{bolsa: BolsaPersistida{
+			ID: "bolsa-procinal", UsuarioID: "procinal", Periodo: "2025-01", Circuito: recaudo.Nacional, Bruto: d("1000000"),
+		}},
+		Declaraciones: &gestionDeclaracionesFalsa{porObra: map[string]VersionDeclaracion{"obra-1": {Declaracion: decl}}},
+		Usos:          usos,
+		Resultados:    &repositorioResultadosFalso{},
+	})
+	return uc, repo
+}
+
+// TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer es el criterio de
+// #194: una bolsa sin usos que la ponderen responde con un error que nombra
+// la bolsa, el canal y el periodo, y distingue "falta el reporte" de "faltan
+// identificar las filas". El motor ya rechazaba la lista vacia, pero con "no
+// hay usos" a secas.
+func TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre     string
+		resumen    ResumenUsosDeCanal
+		sinCanal   int
+		fragmentos []string
+		noDice     string
+	}{
+		{"ninguna fila del canal", ResumenUsosDeCanal{}, 0,
+			[]string{"cargue el reporte", "si ya esta cargado, corrija el canal_id"}, "cola"},
+		{"reporte cargado con usos sin canal", ResumenUsosDeCanal{}, 3,
+			[]string{"3 usos del periodo no traen canal", "corrija la atribucion del canal"}, "cargue el reporte"},
+		{"filas del canal sin identificar", ResumenUsosDeCanal{Pendientes: 1, ONI: 2}, 0,
+			[]string{"1 pendientes, 2 ONI", "cola de identificacion"}, "cargue el reporte"},
+		{"filas del canal solo excluidas o descartadas", ResumenUsosDeCanal{Excluidos: 5, Descartados: 1}, 0,
+			[]string{"5 excluidos", "1 descartados", "R-27", "ninguno pondera"}, "identifique"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			uc, repo := procesoNacionalListoParaValorizar(t, snapshotDePrueba(),
+				&usosDeRepartoFalso{resumen: c.resumen, sinCanal: c.sinCanal})
+
+			_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+			if !errors.Is(err, ErrBolsaSinUsos) {
+				t.Fatalf("se esperaba ErrBolsaSinUsos, dio: %v", err)
+			}
+			var sinUsos *ErrorBolsaSinUsos
+			if !errors.As(err, &sinUsos) {
+				t.Fatalf("se esperaba *ErrorBolsaSinUsos, dio: %T", err)
+			}
+			if sinUsos.BolsaID != "bolsa-procinal" || sinUsos.CanalID != "procinal" || sinUsos.Periodo != "2025-01" {
+				t.Errorf("error = %+v, se esperaba bolsa-procinal/procinal/2025-01", *sinUsos)
+			}
+			for _, f := range append([]string{`"bolsa-procinal"`, `"procinal"`, "2025-01"}, c.fragmentos...) {
+				if !strings.Contains(err.Error(), f) {
+					t.Errorf("el mensaje %q no dice %s", err, f)
+				}
+			}
+			if strings.Contains(err.Error(), c.noDice) {
+				t.Errorf("el mensaje %q no deberia decir %s", err, c.noDice)
+			}
+			if sinUsos.UsosSinCanal != c.sinCanal {
+				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, c.sinCanal)
+			}
+			// La corrida no sale de deducciones y no persiste un resultado vacio.
+			v, _ := repo.ProcesoPorID(t.Context(), "proc-1")
+			if v.Etapa != reparto.EtapaDeducciones {
+				t.Errorf("etapa = %q, la corrida no puede avanzar sin usos", v.Etapa)
+			}
+			if uc.Resultados.(*repositorioResultadosFalso).procesoID != "" {
+				t.Error("se guardo un resultado sin usos")
+			}
+		})
+	}
+}
+
+// Una corrida de cine abierta con un snapshot que no trae la base de P-18 -la
+// de Procinal de #194, congelada con la version 1 de las clausulas- no se
+// arregla cargando la fila: el snapshot no se vuelve a resolver (ADR 0005).
+// El error lo dice, en vez de sugerir un reintento que fallaria igual.
+func TestAvanzarEtapaConSnapshotSinBaseCineDiceQueAbraOtraCorrida(t *testing.T) {
+	t.Parallel()
+
+	snap := snapshotDePrueba()
+	snap.BaseCineTeatro = ""
+	uc, _ := procesoNacionalListoParaValorizar(t, snap,
+		&usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("procinal", reparto.Cine, "")}})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+	if !errors.Is(err, reparto.ErrParametroAusente) {
+		t.Fatalf("se esperaba reparto.ErrParametroAusente, dio: %v", err)
+	}
+	for _, f := range []string{"base_cine_teatro", "cine_teatro.base", `"snp1-viejo"`, "abra una corrida nueva", `"bolsa-procinal"`} {
+		if !strings.Contains(err.Error(), f) {
+			t.Errorf("el mensaje %q no dice %s", err, f)
+		}
+	}
+}
+
+// Con la base en el snapshot, la corrida de cine valoriza: es el otro lado de
+// la prueba de arriba, sin Postgres.
+func TestAvanzarEtapaValorizaCineConLaBaseDelSnapshot(t *testing.T) {
+	t.Parallel()
+
+	snap := snapshotDePrueba()
+	snap.BaseCineTeatro = reparto.BaseTaquilla
+	uc, _ := procesoNacionalListoParaValorizar(t, snap,
+		&usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("procinal", reparto.Cine, "")}})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaImporteObra {
+		t.Fatalf("etapa = %q, se esperaba importe_obra", v.Etapa)
+	}
+	res := uc.Resultados.(*repositorioResultadosFalso).guardado
+	if len(res.Obras) != 1 || res.Obras[0].ObraID != "obra-1" {
+		t.Fatalf("resultado.Obras = %+v, se esperaba una linea de obra-1", res.Obras)
 	}
 }
 
