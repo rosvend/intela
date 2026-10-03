@@ -382,6 +382,15 @@ export interface paths {
          *     Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
          *     cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
          *
+         *     `sugerencia` es una propuesta del rankeador (#53): un orden y una
+         *     accion (`asignar`, `descartar` o `ninguna`) que la persona confirma o
+         *     cambia. No resuelve el caso. `aceptada` es `null` mientras este
+         *     pendiente y, una vez resuelto, dice si la persona confirmo esa
+         *     propuesta. `sello` ata la propuesta a este caso: quien confirma lo
+         *     devuelve para que la aceptacion se mida contra lo que vio, no contra
+         *     un rankeo posterior. `candidatos` sigue en el orden de la cascada;
+         *     `sugerencia.orden` es el orden propuesto.
+         *
          *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
          *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
          *     contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
@@ -432,7 +441,10 @@ export interface paths {
          *     reparte entre las obras que si ponderan.
          *
          *     La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
-         *     Se puede resolver aunque el periodo este en reparto o ya distribuido:
+         *     `sello`, si viene, es el de `sugerencia.sello` del listado: la
+         *     aceptacion se mide contra esa propuesta. Un sello que no verifica
+         *     responde 400. Se puede resolver aunque el periodo este en reparto o ya
+         *     distribuido:
          *     la operacion se serializa con el cerrojo de periodo que comparten la
          *     compuerta de anomalias, la ingesta y la valorizacion.
          *
@@ -2744,6 +2756,52 @@ export interface components {
              *     `null` mientras el caso este pendiente.
              */
             nota: string | null;
+            sugerencia: components["schemas"]["SugerenciaIdentificacion"];
+        };
+        /**
+         * @description Lo que el rankeador propone para un caso de la cola (#53). Es una
+         *     sugerencia: la persona la confirma o elige otra. Ningun caso se
+         *     resuelve solo (ADR 0007).
+         *
+         *     `orden` son los ids de obra de mejor a peor ajuste. `candidatos` no se
+         *     reordena: sigue siendo la evidencia de la cascada.
+         *
+         *     `sello` es la propuesta verificable que se mostro. El cliente lo
+         *     devuelve al resolver. `null` en un caso ya resuelto: ahi la propuesta
+         *     guardada es la que se midio.
+         */
+        SugerenciaIdentificacion: {
+            /**
+             * @description `asignar` propone `obra_id`. `descartar` propone dejar el caso
+             *     fuera del repertorio. `ninguna` es que no hay con que proponer.
+             * @enum {string}
+             */
+            decision: "asignar" | "descartar" | "ninguna";
+            /** @description Obra propuesta cuando `decision` es `asignar`. `null` en los otros dos. */
+            obra_id: string | null;
+            /** @description Titulo de catalogo de `obra_id`, para mostrarlo sin otro cruce. `null` si no hay obra. */
+            titulo: string | null;
+            /**
+             * @description Ajuste entre la similitud del escalon difuso y las resoluciones
+             *     anteriores del mismo titulo. No es una probabilidad ni un porcentaje
+             *     de reparto.
+             */
+            confianza: number;
+            /** @description Por que se propuso eso, en una frase. */
+            motivo: string;
+            /** @description Ids de obra en el orden sugerido. Lista vacia si no hay candidatas. */
+            orden: string[];
+            /**
+             * @description `null` mientras el caso esta pendiente. Tras resolver, `true` si la
+             *     persona confirmo la sugerencia y `false` si la cambio.
+             */
+            aceptada: boolean | null;
+            /**
+             * @description Sello de la propuesta mostrada para este caso. Quien confirma lo
+             *     devuelve en el cuerpo de la resolucion. `null` si no hay una
+             *     propuesta verificable que devolver (un caso ya resuelto).
+             */
+            sello: string | null;
         };
         /**
          * @description La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
@@ -2774,6 +2832,13 @@ export interface components {
              * @example coincide la ficha tecnica con la declaracion
              */
             nota: string;
+            /**
+             * @description El `sugerencia.sello` del listado. Si viene, la aceptacion se mide
+             *     contra esa propuesta aunque el historial haya cambiado. Si no
+             *     verifica, la peticion es un 400 y no se escribe nada.
+             * @example eyJ1c28iOiJ1c28tMSJ9.firma
+             */
+            sello?: string;
         };
         CandidatoIdentificacion: {
             obra_id: string;
@@ -4058,7 +4123,19 @@ export interface operations {
                      *           "resuelto_por": null,
                      *           "resuelto_en": null,
                      *           "ultima_actualizacion": "2025-02-01T10:00:00Z",
-                     *           "nota": null
+                     *           "nota": null,
+                     *           "sugerencia": {
+                     *             "decision": "asignar",
+                     *             "obra_id": "obra-12",
+                     *             "titulo": "La Casa de las Dos Palmas",
+                     *             "confianza": 0.43,
+                     *             "motivo": "sin resoluciones anteriores de este titulo",
+                     *             "orden": [
+                     *               "obra-12"
+                     *             ],
+                     *             "aceptada": null,
+                     *             "sello": "eyJ1c28iOiJ1c28tMSJ9.firma"
+                     *           }
                      *         }
                      *       ]
                      *     }
@@ -4159,8 +4236,8 @@ export interface operations {
             /**
              * @description El cuerpo no es un JSON valido, la nota falta o pasa de 300
              *     caracteres, la decision no es `asignar` ni `descartar`, `asignar`
-             *     viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
-             *     catalogo.
+             *     viene sin `obra_id` (o `descartar` con el), la obra no esta en el
+             *     catalogo, o `sello` no es el de la propuesta mostrada para ese caso.
              */
             400: {
                 headers: {
