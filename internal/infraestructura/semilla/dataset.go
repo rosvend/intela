@@ -188,9 +188,13 @@ type Reporte struct {
 	Usos    []aplicacion.UsoPersistido
 }
 
+// Parametro es una fila de `parametros`. Lleva Valor (una cifra) o
+// ValorTexto (una eleccion, como la base de cine de P-18), nunca los dos: es
+// el mismo CHECK de la migracion 00025.
 type Parametro struct {
 	Clave        string
 	Valor        decimal.Decimal
+	ValorTexto   string
 	VigenteDesde string
 	Organo       string
 	Reglamento   string
@@ -534,6 +538,9 @@ func (d *Dataset) parametros() {
 	sintetico := func(clave, valor string) Parametro {
 		return Parametro{Clave: clave, Valor: n(valor), VigenteDesde: desde, Organo: OrganoSintetico, Reglamento: ReglamentoSintetico}
 	}
+	sinteticoTexto := func(clave, valor string) Parametro {
+		return Parametro{Clave: clave, ValorTexto: valor, VigenteDesde: desde, Organo: OrganoSintetico, Reglamento: ReglamentoSintetico}
+	}
 
 	d.Parametros = []Parametro{
 		// Las cuatro ponderaciones son lo UNICO que aqui esta publicado de
@@ -602,6 +609,13 @@ func (d *Dataset) parametros() {
 		// de 2024, abierto hacia adelante para que la demo liquide en cualquier
 		// fecha, y por eso va como sintetico y no como el decreto vigente.
 		sintetico("smmlv", "1300000"),
+
+		// Base de ponderacion de cine y teatro (RD 9.2, RD 9.3). El cuerpo
+		// del articulo dice taquilla y su ejemplo calcula sobre espectadores:
+		// es P-18, abierta, y por eso va sintetica. Taquilla porque es lo que
+		// prescribe el texto y la unica medida que MapaCine exige. Es la
+		// misma fila que la migracion 00025 anade a una base ya sembrada.
+		sinteticoTexto(reparto.ClaveBaseCineTeatro, reparto.BaseTaquilla),
 	}
 }
 

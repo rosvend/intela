@@ -2,6 +2,7 @@ package reparto_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -486,5 +487,20 @@ func TestReparto_DeduccionAusente(t *testing.T) {
 	_, err := reparto.Reparto(bolsa("100"), usos, snap, nil, reparto.Opciones{})
 	if !errors.Is(err, reparto.ErrParametroAusente) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// Sin base de cine el motor falla nombrando la clave de `parametros` que la
+// llena, no solo el campo interno: es la que el operador reconoce (#194).
+func TestReparto_CineSinBaseNombraLaClave(t *testing.T) {
+	snap := snapBase()
+	snap.BaseCineTeatro = ""
+	usos := []reparto.Uso{{ObraID: "x", Modalidad: reparto.Cine, Espectadores: d("1")}}
+	_, err := reparto.Reparto(bolsa("100"), usos, snap, nil, optSinDed())
+	if !errors.Is(err, reparto.ErrParametroAusente) {
+		t.Fatalf("err=%v, se esperaba ErrParametroAusente", err)
+	}
+	if !strings.Contains(err.Error(), reparto.ClaveBaseCineTeatro) {
+		t.Errorf("el error %q no nombra la clave %s", err, reparto.ClaveBaseCineTeatro)
 	}
 }

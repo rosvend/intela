@@ -15,8 +15,9 @@ import (
 // El peso de cada linea es su Importe ORIGINAL, no su Porcentaje: el
 // porcentaje es relativo a su propia obra, y lo que RD 14.4 pide es la
 // proporcion en que se distribuyo el recaudo completo del que salio la
-// reserva. Porcentaje se conserva intacto en la salida por trazabilidad
-// (RD 16): dice de que declaracion vino la linea, no cuanto le toca ahora.
+// reserva. Porcentaje y DeclaracionVersion se conservan intactos en la salida
+// por trazabilidad (RD 16): dicen de que declaracion vino la linea, no cuanto
+// le toca ahora. Una redistribucion no relee la vigente de hoy.
 //
 // El residuo de redondeo es explicito (ADR 0005), igual que en el motor: no
 // se absorbe en la ultima linea.
@@ -41,11 +42,12 @@ func DistribuirSobreProporciones(monto decimal.Decimal, originales []LineaTitula
 	for i, clave := range claves {
 		base := porClave[clave]
 		nuevas[i] = LineaTitular{
-			ObraID:     base.ObraID,
-			TitularID:  base.TitularID,
-			IPI:        base.IPI,
-			Porcentaje: base.Porcentaje,
-			Importe:    importes[clave],
+			ObraID:             base.ObraID,
+			TitularID:          base.TitularID,
+			IPI:                base.IPI,
+			Porcentaje:         base.Porcentaje,
+			Importe:            importes[clave],
+			DeclaracionVersion: base.DeclaracionVersion,
 		}
 	}
 	return nuevas, residuo, nil

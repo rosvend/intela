@@ -246,6 +246,47 @@ func TestBrutoYDeduccionesUsaElMismoVectorQueElExport(t *testing.T) {
 	}
 }
 
+func TestSplitPrefiereLaVersionSelladaEnLaLinea(t *testing.T) {
+	t.Parallel()
+	deLaLinea := 4
+	s, importe, err := splitDe(TitularAsentado{
+		TitularID: "titular-1", IPI: "IPI-1", Porcentaje: "60", Importe: "10.00",
+		DeclaracionVersion: &deLaLinea,
+	}, &DeclaracionAsentada{Version: 3})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if s.Version == nil || *s.Version != 4 || !importe.Equal(d("10.00")) {
+		t.Fatalf("split = %+v, se esperaba la v4 de la linea y no la v3 del asiento de la obra", s)
+	}
+}
+
+func TestSplitDeUnAsientoViejoLeeLaVersionDeLaObra(t *testing.T) {
+	t.Parallel()
+	s, _, err := splitDe(TitularAsentado{
+		TitularID: "titular-1", IPI: "IPI-1", Porcentaje: "60", Importe: "10.00",
+	}, &DeclaracionAsentada{Version: 3})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if s.Version == nil || *s.Version != 3 {
+		t.Fatalf("split = %+v, un asiento sin version por linea conserva la de la obra", s)
+	}
+}
+
+func TestSplitSinVersionQuedaEnNil(t *testing.T) {
+	t.Parallel()
+	s, _, err := splitDe(TitularAsentado{
+		TitularID: "titular-1", IPI: "IPI-1", Porcentaje: "60", Importe: "10.00",
+	}, nil)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if s.Version != nil {
+		t.Fatalf("version = %d, no se inventa una version que la corrida no guardo", *s.Version)
+	}
+}
+
 func TestBrutoYDeduccionesCifraCeroNoInventaPorcentajes(t *testing.T) {
 	t.Parallel()
 	c := AsientoValorizacion{

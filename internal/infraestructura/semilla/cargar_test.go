@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
@@ -66,7 +67,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	// y los dos coeficientes de duracion (80% artistica, 48 min/hora). Las
 	// deducciones, la reserva y los dos umbrales de matching son techos del
 	// reglamento o decisiones de ingenieria, y ninguna Asamblea las resolvio
-	// (ADR 0004).
+	// (ADR 0004). La base de cine (P-18) y el SMMLV (#193) tambien son sinteticos: el reglamento
+	// se contradice y REDES no ha respondido.
 	var nSinteticos, nPublicados int
 	if err := pool.QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE reglamento =  $1),
@@ -75,8 +77,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	).Scan(&nSinteticos, &nPublicados); err != nil {
 		t.Fatalf("contar parametros por procedencia: %v", err)
 	}
-	if nSinteticos != 17 {
-		t.Fatalf("parametros con %s: %d, se esperaban 17", ReglamentoSintetico, nSinteticos)
+	if nSinteticos != 18 {
+		t.Fatalf("parametros con %s: %d, se esperaban 18", ReglamentoSintetico, nSinteticos)
 	}
 	if nPublicados != 6 {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
@@ -499,6 +501,208 @@ func TestCadaBolsaNacionalTieneUsosAtribuidos(t *testing.T) {
 			t.Errorf("el pagador %q no tiene ningun uso atribuido: su bolsa quedaria "+
 				"sin nada que ponderar (UsosDeCanal devolveria vacio)", pagador)
 		}
+	}
+}
+
+// TestCadaBolsaNacionalDelSeedValoriza es la regresion de #194 contra Postgres
+// real: la corrida de Procinal 2025-01 no salia de deducciones con un 500.
+//
+// Abre una corrida por cada bolsa nacional del dataset y la lleva de recaudo a
+// importe_obra con [aplicacion.Procesos] cableado como en cmd/api. Antes del
+// arreglo la de Procinal fallaba con "parametro normativo ausente:
+// base_cine_teatro": ninguna clausula del snapshot llenaba la base de cine.
+//
+// De paso fija el mapeo usuario <-> fuente de cine, que era la hipotesis de
+// la issue: el reporte lo entrega la fuente "cine", pero sus usos ponderan la
+// bolsa del PAGADOR "procinal" porque su canal_id es el usuario de recaudo
+// (ADR 0018, ADR 0019), no porque la fuente coincida.
+func TestCadaBolsaNacionalDelSeedValoriza(t *testing.T) {
+	store, pool := abrir(t)
+	ctx := t.Context()
+	if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+		t.Fatalf("Cargar: %v", err)
+	}
+
+	var fuentes []string
+	filas, err := pool.Query(ctx, `SELECT DISTINCT fuente FROM usos WHERE canal_id = $1 ORDER BY fuente`, PagadorCine)
+	if err != nil {
+		t.Fatalf("fuentes de los usos de %q: %v", PagadorCine, err)
+	}
+	for filas.Next() {
+		var f string
+		if err := filas.Scan(&f); err != nil {
+			t.Fatalf("escanear fuente: %v", err)
+		}
+		fuentes = append(fuentes, f)
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("fuentes de los usos de %q: %v", PagadorCine, err)
+	}
+	if len(fuentes) != 1 || fuentes[0] != FuenteCine {
+		t.Fatalf("los usos con canal_id %q vienen de %v, se esperaba solo la fuente %q",
+			PagadorCine, fuentes, FuenteCine)
+	}
+
+	uc := procesosComoEnCmdAPI(store)
+	d := Construir()
+	for _, b := range d.Bolsas {
+		if b.Circuito != recaudo.Nacional {
+			continue
+		}
+		t.Run(b.UsuarioID, func(t *testing.T) {
+			id := "proc-" + b.ID
+			if _, err := uc.IniciarProceso(ctx, id, b.Periodo, b.Circuito, b.ID, UsuarioDistribucion); err != nil {
+				t.Fatalf("abrir la corrida de %q: %v", b.ID, err)
+			}
+			for _, etapa := range []reparto.Etapa{reparto.EtapaDeducciones, reparto.EtapaImporteObra} {
+				v, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion)
+				if err != nil {
+					t.Fatalf("avanzar %q a %s: %v", id, etapa, err)
+				}
+				if v.Etapa != etapa {
+					t.Fatalf("etapa = %q, se esperaba %q", v.Etapa, etapa)
+				}
+			}
+			res, err := store.ResultadoPorProceso(ctx, id)
+			if err != nil {
+				t.Fatalf("leer el resultado de %q: %v", id, err)
+			}
+			if len(res.Obras) == 0 {
+				t.Fatalf("la corrida de %q valorizo sin ninguna linea de obra", b.ID)
+			}
+			if b.UsuarioID == PagadorCine && res.Obras[0].ObraID != ObraCine {
+				t.Errorf("la bolsa de %q pondero %q, se esperaba la obra del reporte de cine %q",
+					PagadorCine, res.Obras[0].ObraID, ObraCine)
+			}
+		})
+	}
+}
+
+// procesosComoEnCmdAPI cablea [aplicacion.Procesos] contra el Store real, con
+// las mismas dependencias que cmd/api.
+func procesosComoEnCmdAPI(store *postgres.Store) aplicacion.Procesos {
+	return aplicacion.Procesos{
+		Repo: store, Parametros: store, Bolsas: store, Declaraciones: store, Usos: store,
+		Resultados: store, Unidad: store, Bitacora: store, Reloj: reloj.Sistema{}, Origen: store,
+		Anomalias: aplicacion.Anomalias{
+			Entregas: store, Declaraciones: store, Coautores: store, Alertas: store,
+			Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+		},
+	}
+}
+
+// TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos es el criterio 2 de #194
+// contra Postgres real: el resumen y el conteo de usos sin canal que
+// distinguen los mensajes de [aplicacion.ErrorBolsaSinUsos] salen de
+// Store.UsosDeCanal y Store.UsosSinCanal, no de un doble.
+//
+// Cada caso parte del dataset sembrado y deja a una bolsa nacional sin nada
+// que la pondere de una forma distinta.
+func TestBolsaNacionalSinUsosDelSeedEsErrorBolsaSinUsos(t *testing.T) {
+	bolsaCine := "bolsa-procinal-" + Periodo + "-nacional"
+	casos := []struct {
+		nombre   string
+		preparar string
+		bolsaID  string
+		canalID  string
+		resumen  func(nCine int) aplicacion.ResumenUsosDeCanal
+		sinCanal func(nCine int) int
+		dice     string
+	}{
+		{
+			nombre: "usuario de recaudo sin reporte",
+			preparar: `INSERT INTO usuarios_recaudo (id, nombre, categoria)
+			             VALUES ('cine-sin-reporte', 'Cine sin reporte (prueba)', 'cine');
+			           INSERT INTO bolsas (id, usuario_id, periodo, circuito, bruto)
+			             VALUES ('bolsa-cine-sin-reporte', 'cine-sin-reporte', '` + Periodo + `', 'nacional', 1000)`,
+			bolsaID:  "bolsa-cine-sin-reporte",
+			canalID:  "cine-sin-reporte",
+			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
+			sinCanal: func(int) int { return 0 },
+			dice:     "cargue el reporte",
+		},
+		{
+			nombre: "usos del pagador sin identificar",
+			preparar: `UPDATE usos SET obra_id = NULL, oni = true, escalon = 'pendiente', evidencia = '', puntaje = 0
+			            WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(n int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{Pendientes: n} },
+			sinCanal: func(int) int { return 0 },
+			dice:     "cola de identificacion",
+		},
+		{
+			nombre:   "usos del pagador sin canal",
+			preparar: `UPDATE usos SET canal_id = '' WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{} },
+			sinCanal: func(n int) int { return n },
+			dice:     "corrija la atribucion del canal",
+		},
+		{
+			nombre: "usos del pagador todos excluidos",
+			preparar: `UPDATE usos SET obra_id = NULL, oni = false, escalon = 'excluido', evidencia = '', puntaje = 0
+			            WHERE canal_id = '` + PagadorCine + `'`,
+			bolsaID:  bolsaCine,
+			canalID:  PagadorCine,
+			resumen:  func(n int) aplicacion.ResumenUsosDeCanal { return aplicacion.ResumenUsosDeCanal{Excluidos: n} },
+			sinCanal: func(int) int { return 0 },
+			dice:     "ninguno pondera",
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			store, pool := abrir(t)
+			ctx := t.Context()
+			if err := Cargar(ctx, store, disco(t), hasher(), clavesPrueba(), false, silencio()); err != nil {
+				t.Fatalf("Cargar: %v", err)
+			}
+			var nCine int
+			if err := pool.QueryRow(ctx,
+				`SELECT COUNT(*) FROM usos WHERE canal_id = $1`, PagadorCine).Scan(&nCine); err != nil {
+				t.Fatalf("contar usos de %q: %v", PagadorCine, err)
+			}
+			if nCine == 0 {
+				t.Fatalf("el dataset no siembra usos de %q: la prueba no distinguiria nada", PagadorCine)
+			}
+			if _, err := pool.Exec(ctx, c.preparar); err != nil {
+				t.Fatalf("preparar el caso: %v", err)
+			}
+
+			uc := procesosComoEnCmdAPI(store)
+			id := "proc-" + c.bolsaID
+			if _, err := uc.IniciarProceso(ctx, id, Periodo, recaudo.Nacional, c.bolsaID, UsuarioDistribucion); err != nil {
+				t.Fatalf("abrir la corrida de %q: %v", c.bolsaID, err)
+			}
+			if _, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion); err != nil {
+				t.Fatalf("avanzar %q a deducciones: %v", id, err)
+			}
+			_, err := uc.AvanzarEtapa(ctx, id, UsuarioDistribucion)
+			var sinUsos *aplicacion.ErrorBolsaSinUsos
+			if !errors.As(err, &sinUsos) {
+				t.Fatalf("se esperaba *aplicacion.ErrorBolsaSinUsos, dio: %v", err)
+			}
+			if sinUsos.BolsaID != c.bolsaID || sinUsos.CanalID != c.canalID || sinUsos.Periodo != Periodo {
+				t.Errorf("error = %+v, se esperaba %s/%s/%s", *sinUsos, c.bolsaID, c.canalID, Periodo)
+			}
+			if quiero := c.resumen(nCine); sinUsos.Resumen != quiero {
+				t.Errorf("Resumen = %+v, se esperaba %+v", sinUsos.Resumen, quiero)
+			}
+			if quiero := c.sinCanal(nCine); sinUsos.UsosSinCanal != quiero {
+				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, quiero)
+			}
+			if !strings.Contains(err.Error(), c.dice) {
+				t.Errorf("el mensaje %q no dice %q", err, c.dice)
+			}
+			v, err := store.ProcesoPorID(ctx, id)
+			if err != nil {
+				t.Fatalf("releer %q: %v", id, err)
+			}
+			if v.Etapa != reparto.EtapaDeducciones {
+				t.Errorf("etapa = %q, una bolsa sin usos no sale de deducciones", v.Etapa)
+			}
+		})
 	}
 }
 
