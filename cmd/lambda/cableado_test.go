@@ -86,6 +86,18 @@ func TestAmbosBinariosCableanLaCompuertaDeAnomalias(t *testing.T) {
 	}
 }
 
+// TestAmbosBinariosCableanLasCorreccionesDeAnomalias: sin `Correcciones` en
+// Anomalias, cerrar una critica falla cerrado (#164). Compila y arranca igual,
+// asi que solo este test lo ve antes de produccion.
+func TestAmbosBinariosCableanLasCorreccionesDeAnomalias(t *testing.T) {
+	for _, ruta := range []string{"../api/main.go", "main.go"} {
+		campos := camposDeLiteral(t, ruta, ruta, "aplicacion", "Anomalias")
+		if !slices.Contains(campos, "Correcciones") {
+			t.Errorf("%s: aplicacion.Anomalias{...} no cablea Correcciones (#164); campos: %v", ruta, campos)
+		}
+	}
+}
+
 // camposDeLiteral devuelve los nombres de campo del literal `paquete.Tipo{...}` de un main.
 func camposDeLiteral(t *testing.T, nombreLogico, ruta, paqueteBuscado, tipoBuscado string) []string {
 	t.Helper()

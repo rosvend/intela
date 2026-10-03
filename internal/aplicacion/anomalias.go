@@ -101,9 +101,11 @@ type Anomalias struct {
 	Declaraciones LectorDeDeclaraciones
 	Coautores     LectorDeCoautores
 	Alertas       RepositorioAlertas
-	Bitacora      BitacoraAuditoria
-	Unidad        UnidadDeTrabajo
-	Reloj         Reloj
+	// Correcciones es lo que escribe sobre el dato al cerrar una critica (#164).
+	Correcciones CorreccionDeDatos
+	Bitacora     BitacoraAuditoria
+	Unidad       UnidadDeTrabajo
+	Reloj        Reloj
 }
 
 // ResumenEvaluacion es lo que devuelve una pasada.
@@ -126,6 +128,11 @@ type ResumenEvaluacion struct {
 	// CriticasAbiertas son las alertas sin resolver del periodo cuyo tipo
 	// bloquea la distribucion. Es lo que lee la compuerta ([Anomalias.Bloqueantes]).
 	CriticasAbiertas int
+
+	// CriticasAceptadas son las criticas del periodo que una persona cerro
+	// aceptandolas tal cual, sin corregir el dato (#164). No bloquean; se
+	// cuentan aparte para que "cero abiertas" no se lea como "cero anomalias".
+	CriticasAceptadas int
 
 	// Autocerradas son las abiertas que esta pasada ya no detecto y el sistema cerro.
 	Autocerradas int
@@ -270,7 +277,14 @@ func (a Anomalias) Evaluar(ctx context.Context, periodo, actorID string) (Resume
 		}
 		// Se cuenta dentro del cerrojo: otra pasada no puede cambiar la bandeja entre guardar y contar.
 		resumen.CriticasAbiertas, err = a.CriticasAbiertas(ctx, periodo)
-		return err
+		if err != nil {
+			return err
+		}
+		resumen.CriticasAceptadas, err = a.Alertas.ContarAlertasConAccion(ctx, periodo, anomalias.AccionAceptarTalCual)
+		if err != nil {
+			return fmt.Errorf("contar criticas aceptadas tal cual de %q: %w", periodo, err)
+		}
+		return nil
 	})
 	if err != nil {
 		return ResumenEvaluacion{}, err
@@ -329,31 +343,10 @@ func (a Anomalias) armarPeriodo(ctx context.Context, periodo string) (anomalias.
 		Entregas: make([]anomalias.Entrega, 0, len(cargas)),
 	}
 	for _, u := range usos {
-		armado.Usos = append(armado.Usos, anomalias.Uso{
-			ID:        u.ID,
-			ReporteID: u.ReporteID,
-			Fuente:    u.Fuente,
-			Titulo:    u.Titulo,
-			Escalon:   u.Escalon,
-			ObraID:    u.ObraID,
-			TipoObra:  u.TipoObra,
-			// El dominio de anomalias no puede importar `reparto` (ADR 0003),
-			// asi que la modalidad cruza la frontera como string. La necesita
-			// para no avisar de `tipo_obra` en una corrida que no lo lee.
-			Modalidad: string(u.Modalidad),
-			// La clave logica se deriva AQUI y no en el dominio: el
-			// vocabulario de ids_fuente es del ADR 0018 y vive en
-			// idsfuente.go, que el dominio no puede importar (ADR 0002).
-			ClaveRegistro: ClaveDeRegistro(u.Fuente, u.IDsFuente, u.Fecha, u.Hora),
-		})
+		armado.Usos = append(armado.Usos, usoDeDominio(u))
 	}
 	for _, c := range cargas {
-		armado.Entregas = append(armado.Entregas, anomalias.Entrega{
-			ID:      c.ID,
-			Fuente:  c.Fuente,
-			Periodo: c.Periodo,
-			SHA256:  c.SHA256,
-		})
+		armado.Entregas = append(armado.Entregas, entregaDeDominio(c))
 	}
 
 	armado.Obras, err = a.obrasDelPeriodo(ctx, armado.Usos)
@@ -361,6 +354,40 @@ func (a Anomalias) armarPeriodo(ctx context.Context, periodo string) (anomalias.
 		return anomalias.Periodo{}, err
 	}
 	return armado, nil
+}
+
+// usoDeDominio proyecta una fila persistida en lo que miran los detectores.
+// Una sola traduccion para la evaluacion y para la correccion (#164): la
+// exclusion se valida contra la MISMA clave de registro que levanto la alerta.
+func usoDeDominio(u UsoPersistido) anomalias.Uso {
+	return anomalias.Uso{
+		ID:        u.ID,
+		ReporteID: u.ReporteID,
+		Fuente:    u.Fuente,
+		Titulo:    u.Titulo,
+		Escalon:   u.Escalon,
+		ObraID:    u.ObraID,
+		TipoObra:  u.TipoObra,
+		// El dominio de anomalias no puede importar `reparto` (ADR 0003),
+		// asi que la modalidad cruza la frontera como string. La necesita
+		// para no avisar de `tipo_obra` en una corrida que no lo lee.
+		Modalidad: string(u.Modalidad),
+		// La clave logica se deriva AQUI y no en el dominio: el
+		// vocabulario de ids_fuente es del ADR 0018 y vive en
+		// idsfuente.go, que el dominio no puede importar (ADR 0002).
+		ClaveRegistro: ClaveDeRegistro(u.Fuente, u.IDsFuente, u.Fecha, u.Hora),
+	}
+}
+
+// entregaDeDominio proyecta el acuse de una entrega en lo que mira el detector de huella.
+func entregaDeDominio(c EntregaRecibida) anomalias.Entrega {
+	return anomalias.Entrega{
+		ID:       c.ID,
+		Fuente:   c.Fuente,
+		Periodo:  c.Periodo,
+		SHA256:   c.SHA256,
+		Excluida: c.Excluida,
+	}
 }
 
 // obrasDelPeriodo reune las obras que el periodo pondera, con sus coautores y
@@ -478,67 +505,139 @@ func (a Anomalias) Listar(ctx context.Context, f FiltroAlertas) ([]Alerta, error
 	return alertas, nil
 }
 
-// Resolver cierra una alerta a nombre de quien la cierra.
+// SolicitudCierreAlerta es lo que llega para cerrar una alerta. El actor NO
+// viaja aqui: sale de la sesion (ADR 0006), igual que en
+// [SolicitudResolucion].
+type SolicitudCierreAlerta struct {
+	Nota string
+	// ActorRol es el rol de la sesion de quien cierra. Se guarda en la alerta y
+	// en el asiento tal como estaba al cerrar: el rol de una cuenta cambia, y la
+	// pregunta de la auditoria es con que rol se tomo ESTA decision.
+	ActorRol string
+	// Correccion es la accion sobre el dato (#164). Obligatoria en las criticas.
+	Correccion anomalias.PedidoDeCorreccion
+}
+
+// Resolver cierra una alerta a nombre de quien la cierra y, si es critica,
+// corrige el dato en la misma unidad (#164).
 //
-// # El actor se exige ANTES de escribir nada
+// # El actor, la nota y la forma del pedido se exigen ANTES de escribir nada
 //
 // Es una decision humana sobre una anomalia que afecta a quien cobra, que es
 // exactamente el caso en el que el ADR 0006 pide saber quien la tomo. Un
 // actorID vacio dejaria un asiento sin firmar -- valido para la base, invalido
-// para el ADR --, y el UPDATE ya estaria hecho cuando eso se notara.
+// para el ADR --, y el UPDATE ya estaria hecho cuando eso se notara. La forma
+// del pedido ([anomalias.ValidarForma]) tambien va antes: no se toma el
+// cerrojo de un periodo por un cuerpo que se va a rechazar igual.
 //
-// # El UPDATE y su asiento van en la misma unidad
+// # Una critica no se cierra sin tocar el dato
+//
+// Hasta #164 cerrar una critica solo dejaba una nota, y la fila duplicada
+// seguia ponderando: la compuerta se abria y el doble conteo se pagaba igual.
+// Ahora cerrar una critica exige una accion ([anomalias.AccionesDe]): excluir
+// la copia que no manda, excluir la entrega repetida, asignar el tipo de obra,
+// o -- solo en los duplicados -- aceptarla tal cual, que la compuerta deja
+// pasar pero cuenta aparte ([EstadoCompuerta]).
+//
+// La accion corre con el cerrojo del periodo tomado, el mismo de la
+// evaluacion, la ingesta y la valorizacion (#171): no puede colarse entre la
+// compuerta y el calculo de una corrida. La foto contra la que se valida (los
+// usos del periodo, las entregas) se lee DESPUES del cerrojo.
+//
+// # El cierre, la correccion y sus asientos van en la misma unidad
 //
 // Por lo mismo que en [Catalogo.RegistrarObra]: una alerta cerrada cuyo
-// asiento fallo no esta cerrada. Y el asiento guarda el estado ANTERIOR ademas
-// del nuevo, porque `alertas` se sobreescribe: si no queda en el payload, no
-// queda en ningun sitio.
+// asiento fallo no esta cerrada, y una fila excluida sin su asiento es un
+// cambio de reparto que nadie puede explicar. Son dos asientos: el cierre
+// (`alerta.resuelta`, sobre la alerta) y la correccion (`correccion.*`, sobre
+// el registro que cambio), para que el historial de una fila o de una entrega
+// cuente por que dejo de ponderar sin pasar por la bandeja.
 //
-// La nota es obligatoria (ErrNotaObligatoria) en todas, no solo en las criticas.
-//
-// Resolver NO toca el registro ofensor. Asignar la obra de un ONI o descartar
-// una fila es #39, con su propio caso de uso y su propio asiento; esto solo
-// dice que alguien se hizo cargo.
-func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Alerta, error) {
+// Una no critica se cierra solo con la nota, como antes: su dato se corrige en
+// otro sitio (la declaracion en el catalogo, el ONI en la bandeja de
+// identificacion) y la evaluacion la autocierra cuando deja de verla.
+func (a Anomalias) Resolver(ctx context.Context, id, actorID string, s SolicitudCierreAlerta) (Alerta, error) {
 	id = strings.TrimSpace(id)
 	if err := exigirActor(actorID, fmt.Sprintf("resolver la alerta %q", id)); err != nil {
 		return Alerta{}, err
 	}
-	nota = strings.TrimSpace(nota)
+	nota := strings.TrimSpace(s.Nota)
 	if nota == "" {
 		return Alerta{}, fmt.Errorf("resolver la alerta %q: %w", id, ErrNotaObligatoria)
+	}
+	pedido, err := anomalias.ValidarForma(s.Correccion)
+	if err != nil {
+		return Alerta{}, fmt.Errorf("resolver la alerta %q: %w", id, err)
 	}
 	if id == "" {
 		return Alerta{}, fmt.Errorf("resolver una alerta: %w", ErrNoEncontrado)
 	}
-	if err := a.cableado(); err != nil {
+	if err := a.cableadoParaResolver(); err != nil {
 		return Alerta{}, err
 	}
-
-	ahora := a.Reloj.Ahora()
+	rol := strings.TrimSpace(s.ActorRol)
 
 	var resuelta Alerta
-	err := a.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
-		var err error
-		resuelta, err = a.Alertas.ResolverAlerta(ctx, id, actorID, nota, ahora)
+	err = a.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		alerta, err := a.Alertas.AlertaPorID(ctx, id)
 		if err != nil {
-			// Sin envolver: quien llama distingue ErrNoEncontrado y
-			// ErrAlertaYaResuelta con errors.Is, y el adaptador ya puso su
-			// contexto.
+			// Sin envolver: quien llama distingue ErrNoEncontrado con errors.Is.
 			return err
 		}
+		if alerta.Resuelta {
+			return fmt.Errorf("resolver la alerta %q: %w", id, ErrAlertaYaResuelta)
+		}
+		correccion, err := anomalias.CorreccionPara(alerta.Tipo, alerta.RefID, pedido)
+		if err != nil {
+			return fmt.Errorf("resolver la alerta %q: %w", id, err)
+		}
+		if err := anomalias.ValidarNota(correccion, nota); err != nil {
+			return fmt.Errorf("resolver la alerta %q: %w", id, err)
+		}
+		if correccion.Accion == anomalias.AccionAceptarTalCual && rol == "" {
+			return fmt.Errorf("resolver la alerta %q: aceptarla tal cual exige el rol de quien firma: %w", id, ErrActorAusente)
+		}
+
+		if correccion.Accion != "" {
+			// El cerrojo antes de leer la foto y antes del reloj, igual que Evaluar:
+			// la correccion y su instante quedan dentro de la pasada serializada.
+			if err := a.Alertas.BloquearAlertasDePeriodo(ctx, alerta.Periodo); err != nil {
+				return fmt.Errorf("serializar la correccion de la alerta %q: %w", id, err)
+			}
+		}
+		ahora := a.Reloj.Ahora()
+
+		// El UPDATE lleva `AND NOT resuelta`: si otra persona la cerro entre la
+		// lectura y aqui, sale ErrAlertaYaResuelta y la unidad revierte todo.
+		resuelta, err = a.Alertas.ResolverAlerta(ctx, id, CierreDeAlerta{
+			ActorID: actorID, ActorRol: rol, Nota: nota,
+			Accion: correccion.Accion, AccionObjetivo: correccion.Objetivo, Cuando: ahora,
+		})
+		if err != nil {
+			return err
+		}
+
+		corregida, err := a.corregir(ctx, alerta, correccion, actorID, rol, nota, ahora)
+		if err != nil {
+			return err
+		}
+
 		payload, err := json.Marshal(struct {
-			Tipo       string `json:"tipo"`
-			Periodo    string `json:"periodo"`
-			RefTipo    string `json:"ref_tipo"`
-			RefID      string `json:"ref_id"`
-			RefTitular string `json:"ref_titular,omitempty"`
-			Detalle    string `json:"detalle"`
-			Nota       string `json:"nota"`
+			Tipo           string `json:"tipo"`
+			Periodo        string `json:"periodo"`
+			RefTipo        string `json:"ref_tipo"`
+			RefID          string `json:"ref_id"`
+			RefTitular     string `json:"ref_titular,omitempty"`
+			Detalle        string `json:"detalle"`
+			Nota           string `json:"nota"`
+			ActorRol       string `json:"actor_rol,omitempty"`
+			Accion         string `json:"accion,omitempty"`
+			AccionObjetivo string `json:"accion_objetivo,omitempty"`
 		}{
 			Tipo: resuelta.Tipo, Periodo: resuelta.Periodo,
 			RefTipo: resuelta.RefTipo, RefID: resuelta.RefID, RefTitular: resuelta.RefTitular,
-			Detalle: resuelta.Detalle, Nota: nota,
+			Detalle: resuelta.Detalle, Nota: nota, ActorRol: rol,
+			Accion: correccion.Accion, AccionObjetivo: correccion.Objetivo,
 		})
 		if err != nil {
 			return fmt.Errorf("serializar el asiento de la alerta %q: %w", id, err)
@@ -553,6 +652,12 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 		}); err != nil {
 			return fmt.Errorf("asentar la resolucion de la alerta %q: %w", id, err)
 		}
+		if corregida != nil {
+			corregida.ActorID, corregida.Cuando = actorID, ahora
+			if err := a.Bitacora.Asentar(ctx, *corregida); err != nil {
+				return fmt.Errorf("asentar la correccion de la alerta %q: %w", id, err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -562,13 +667,24 @@ func (a Anomalias) Resolver(ctx context.Context, id, actorID, nota string) (Aler
 	return resuelta, nil
 }
 
-// Bloqueantes implementa [CompuertaAnomalias]: evalua el periodo AHORA y luego cuenta las criticas abiertas.
-func (a Anomalias) Bloqueantes(ctx context.Context, periodo string) (int, error) {
+// EstadoCompuerta es lo que la compuerta de #34 lee de un periodo tras evaluarlo.
+//
+// Abiertas bloquea. AceptadasTalCual NO bloquea -- una persona firmo que el
+// duplicado es un falso positivo -- pero se cuenta aparte y viaja al asiento
+// de la transicion: la corrida tiene que poder decir con cuantas criticas
+// aceptadas sin corregir se calculo (#164).
+type EstadoCompuerta struct {
+	Abiertas         int
+	AceptadasTalCual int
+}
+
+// Bloqueantes implementa [CompuertaAnomalias]: evalua el periodo AHORA y luego cuenta las criticas abiertas y las aceptadas.
+func (a Anomalias) Bloqueantes(ctx context.Context, periodo string) (EstadoCompuerta, error) {
 	resumen, err := a.Evaluar(ctx, periodo, actorSistema)
 	if err != nil {
-		return 0, fmt.Errorf("compuerta de anomalias de %q: %w", periodo, err)
+		return EstadoCompuerta{}, fmt.Errorf("compuerta de anomalias de %q: %w", periodo, err)
 	}
-	return resumen.CriticasAbiertas, nil
+	return EstadoCompuerta{Abiertas: resumen.CriticasAbiertas, AceptadasTalCual: resumen.CriticasAceptadas}, nil
 }
 
 // CriticasAbiertas cuenta las alertas guardadas sin resolver de tipo critico ([anomalias.EsCritica]); no evalua.
@@ -599,6 +715,21 @@ func conteoVacioPorTipo() map[string]int {
 		out[t] = 0
 	}
 	return out
+}
+
+// cableadoParaResolver es [Anomalias.cableado] mas lo que solo usa el cierre:
+// la foto del periodo para validar una exclusion y el puerto que corrige el dato.
+func (a Anomalias) cableadoParaResolver() error {
+	if err := a.cableado(); err != nil {
+		return err
+	}
+	switch {
+	case a.Entregas == nil:
+		return errors.New("anomalias mal cableadas: falta LecturaDeEntregas")
+	case a.Correcciones == nil:
+		return errors.New("anomalias mal cableadas: falta CorreccionDeDatos")
+	}
+	return nil
 }
 
 // cableado comprueba las dependencias de los caminos de ESCRITURA antes de

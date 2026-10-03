@@ -24,10 +24,10 @@ var _ aplicacion.RepositorioUsosDeReparto = (*Store)(nil)
 //
 // `obra_id IS NOT NULL` es la unica condicion que hace falta para excluir lo
 // que no tiene obra: el CHECK `uso_resuelto_tiene_obra` (00001, ampliado en
-// 00007) garantiza que esa columna es NULL en pendiente, oni Y excluido, y no
-// NULL en cualquier escalon resuelto. Sin este filtro, COALESCE(obra_id, ”)
-// de columnasUso convierte esas tres en una obra fantasma de id "" que suma
-// puntos e importe de verdad.
+// 00007, 00022 y 00024) garantiza que esa columna es NULL en pendiente, oni,
+// excluido, descartado Y duplicado, y no NULL en cualquier escalon resuelto.
+// Sin este filtro, COALESCE(obra_id, ”) de columnasUso convierte esas filas en
+// una obra fantasma de id "" que suma puntos e importe de verdad.
 func (s *Store) UsosDeCanal(
 	ctx context.Context, periodo, canalID string, anioClasificacion int,
 ) ([]aplicacion.UsoDeReparto, aplicacion.ResumenUsosDeCanal, error) {
@@ -66,7 +66,7 @@ func (s *Store) UsosDeCanal(
 }
 
 // resumenExclusiones cuenta, en el mismo (periodo, canal), las filas sin obra
-// por cada motivo. Los cuatro son mutuamente excluyentes por el CHECK de la
+// por cada motivo. Los cinco son mutuamente excluyentes por el CHECK de la
 // tabla: una fila esta en un escalon exactamente.
 func (s *Store) resumenExclusiones(ctx context.Context, periodo, canalID string) (aplicacion.ResumenUsosDeCanal, error) {
 	var r aplicacion.ResumenUsosDeCanal
@@ -74,13 +74,14 @@ func (s *Store) resumenExclusiones(ctx context.Context, periodo, canalID string)
 		`SELECT COUNT(*) FILTER (WHERE escalon = 'pendiente'),
 		        COUNT(*) FILTER (WHERE escalon = 'oni'),
 		        COUNT(*) FILTER (WHERE escalon = 'excluido'),
-		        COUNT(*) FILTER (WHERE escalon = 'descartado')
+		        COUNT(*) FILTER (WHERE escalon = 'descartado'),
+		        COUNT(*) FILTER (WHERE escalon = 'duplicado')
 		   FROM usos
 		  WHERE reporte_id IN (SELECT id FROM reportes WHERE periodo = $1)
 		    AND canal_id = $2
 		    AND obra_id IS NULL`,
 		periodo, canalID,
-	).Scan(&r.Pendientes, &r.ONI, &r.Excluidos, &r.Descartados)
+	).Scan(&r.Pendientes, &r.ONI, &r.Excluidos, &r.Descartados, &r.Duplicados)
 	if err != nil {
 		return aplicacion.ResumenUsosDeCanal{}, traducirError(err,
 			"resumen de exclusiones del canal %q en %q", canalID, periodo)

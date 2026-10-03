@@ -70,6 +70,15 @@ SGC**: ni se le asigna obra ni cuenta como ONI. No pondera, no sale en el listad
 R-27; la diferencia es que la decide una persona caso por caso, no la configuracion de
 fuentes. `RD 7.1`, `RD 9.5`, R-36
 
+**Duplicado (escalon)** — Uso que una persona saco del reparto al cerrar una anomalia critica
+de duplicado: repite un hecho que ya cuenta otra fila, o viene en una entrega que repite los
+bytes de otra. Sin obra, no es ONI, no pondera y la cascada no lo vuelve a tocar. Su obra
+anterior queda en la evidencia de la fila y en el asiento `correccion.*`. R-37
+
+**Aceptada tal cual** — Cierre de una anomalia critica de duplicado que NO corrige el dato: una
+persona firma, con rol y nota, que es un falso positivo. La compuerta del periodo la deja pasar
+y la cuenta aparte. R-37
+
 **Nota de resolucion** — Justificacion escrita de una decision manual sobre un caso de
 identificacion: obligatoria, de hasta 300 caracteres, y viaja con el asiento `identificacion.*`
 junto al nombre de quien la tomo (ADR 0006). R-36

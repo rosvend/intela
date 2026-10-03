@@ -25,11 +25,12 @@ type anomaliasFalsas struct {
 	errEvaluar  error
 	errResolver error
 
-	filtroRecibido  aplicacion.FiltroAlertas
-	periodoRecibido string
-	idRecibido      string
-	actorRecibido   string
-	notaRecibida    string
+	filtroRecibido    aplicacion.FiltroAlertas
+	periodoRecibido   string
+	idRecibido        string
+	actorRecibido     string
+	notaRecibida      string
+	solicitudRecibida aplicacion.SolicitudCierreAlerta
 }
 
 func (a *anomaliasFalsas) Evaluar(
@@ -47,9 +48,9 @@ func (a *anomaliasFalsas) Listar(
 }
 
 func (a *anomaliasFalsas) Resolver(
-	_ context.Context, id, actorID, nota string,
+	_ context.Context, id, actorID string, s aplicacion.SolicitudCierreAlerta,
 ) (aplicacion.Alerta, error) {
-	a.idRecibido, a.actorRecibido, a.notaRecibida = id, actorID, nota
+	a.idRecibido, a.actorRecibido, a.notaRecibida, a.solicitudRecibida = id, actorID, s.Nota, s
 	return a.alerta, a.errResolver
 }
 
@@ -346,6 +347,11 @@ func TestResolverAlertaTraduceLosCentinelas(t *testing.T) {
 		// Llegar segundo no es un fallo del servidor ni un exito: quien pulso
 		// el boton tiene que saber que la firma escrita no es la suya.
 		{"ya resuelta", aplicacion.ErrAlertaYaResuelta, http.StatusConflict},
+		// #164: una critica sin accion, o una accion que no cuadra, es un cuerpo mal formado.
+		{"accion invalida", fmt.Errorf("resolver: %w", anomalias.ErrAccionInvalida), http.StatusBadRequest},
+		{"nota larga con accion", fmt.Errorf("resolver: %w", anomalias.ErrNotaDemasiadoLarga), http.StatusBadRequest},
+		// El dato ya no esta como la alerta lo describe: reevaluar y mirar otra vez.
+		{"accion que ya no aplica", fmt.Errorf("resolver: %w", anomalias.ErrAccionNoAplica), http.StatusConflict},
 		{"cualquier otro fallo", fmt.Errorf("base caida"), http.StatusInternalServerError},
 	}
 	for _, c := range casos {
@@ -362,6 +368,67 @@ func TestResolverAlertaTraduceLosCentinelas(t *testing.T) {
 				t.Fatalf("content-type = %q", ct)
 			}
 		})
+	}
+}
+
+// La accion y su objetivo viajan del cuerpo al caso de uso tal cual, y el rol
+// sale de la SESION, no del cuerpo: un rol que llegara por JSON firmaria una
+// aceptacion tal cual a nombre de un rol que la cuenta no tiene (#164).
+func TestResolverAlertaPasaLaAccionYElRolDeLaSesion(t *testing.T) {
+	falso := &anomaliasFalsas{alerta: alertaDeEjemplo()}
+	h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
+
+	cuerpo := `{"nota":"la otra entrega manda","accion":"excluir_uso","uso_id":"u-dup1",` +
+		`"reporte_id":"","tipo_obra":"","resuelta_rol":"administrador"}`
+	rec := pedir(t, h, http.MethodPost, "/alertas/"+idAlertaHTTP+"/resolver", cuerpo, "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	quiero := aplicacion.SolicitudCierreAlerta{
+		Nota:     "la otra entrega manda",
+		ActorRol: string(aplicacion.RolDistribucion),
+		Correccion: anomalias.PedidoDeCorreccion{
+			Accion: anomalias.AccionExcluirUso,
+			UsoID:  "u-dup1",
+		},
+	}
+	if falso.solicitudRecibida != quiero {
+		t.Fatalf("solicitud recibida = %+v, se esperaba %+v", falso.solicitudRecibida, quiero)
+	}
+}
+
+// La alerta cerrada con correccion devuelve la accion, su objetivo y el rol.
+func TestResolverAlertaDevuelveLaCorreccion(t *testing.T) {
+	cerrada := alertaDeEjemplo()
+	cerrada.Tipo = anomalias.TipoDuplicadoRegistro
+	cerrada.RefTipo, cerrada.RefID, cerrada.RefTitular = anomalias.RefUso, "u-dup2", ""
+	cerrada.Critica = true
+	cerrada.Resuelta, cerrada.ResueltaPor, cerrada.ResueltaEn = true, "usr-1", &instanteAlertaHTTP
+	cerrada.Nota = "reenvio"
+	cerrada.ResueltaRol = string(aplicacion.RolDistribucion)
+	cerrada.Accion, cerrada.AccionObjetivo = anomalias.AccionExcluirUso, "u-dup2"
+
+	falso := &anomaliasFalsas{alerta: cerrada}
+	h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
+
+	rec := pedir(t, h, http.MethodPost, "/alertas/"+idAlertaHTTP+"/resolver",
+		`{"nota":"reenvio","accion":"excluir_uso"}`, "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var crudo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &crudo); err != nil {
+		t.Fatalf("respuesta: %v", err)
+	}
+	quiero := map[string]any{
+		"accion":          "excluir_uso",
+		"accion_objetivo": "u-dup2",
+		"resuelta_rol":    "distribucion",
+	}
+	for campo, esperado := range quiero {
+		if got := crudo[campo]; got != esperado {
+			t.Errorf("%q = %#v, se esperaba %#v", campo, got, esperado)
+		}
 	}
 }
 

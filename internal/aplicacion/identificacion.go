@@ -201,7 +201,8 @@ func (r ResolverUsos) ResolverUsos(ctx context.Context, periodo string) (int, er
 }
 
 // reprocesable dice si una fila entra en esta corrida. Las ONI si entran: el
-// catalogo crece. 'manual' ni 'descartado' nunca: una decision humana no se pisa.
+// catalogo crece. 'manual', 'descartado' y 'duplicado' nunca: una decision
+// humana no se pisa.
 //
 // Un escalon que no esta en la tabla es un ERROR y no un "no": saltarlo en
 // silencio dejaria una fila sin decidir sin que nada lo cuente, y el dia que el
@@ -212,7 +213,8 @@ func reprocesable(escalon string) (bool, error) {
 	case identificacion.EscalonPendiente, identificacion.EscalonExcluido, identificacion.EscalonONI:
 		return true, nil
 	case identificacion.EscalonAlias, identificacion.EscalonIDGlobal,
-		identificacion.EscalonDifuso, identificacion.EscalonManual, identificacion.EscalonDescartado:
+		identificacion.EscalonDifuso, identificacion.EscalonManual, identificacion.EscalonDescartado,
+		identificacion.EscalonDuplicado:
 		return false, nil
 	default:
 		return false, fmt.Errorf("escalon desconocido %q", escalon)
