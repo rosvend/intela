@@ -232,12 +232,13 @@ export interface paths {
         put?: never;
         /**
          * Publicar el listado ONI de un periodo
-         * @description Congela la cola viva de ONI del periodo como listado publico, registra
-         *     la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
-         *     asiento en la bitacora.
+         * @description Congela los usos ONI pendientes del periodo como listado publico,
+         *     registra la fecha del proceso (ancla de R-19 para esos usos), las dos
+         *     direcciones, y deja un asiento en la bitacora. Permite publicaciones
+         *     complementarias si entran usos ONI tardios.
          *
-         *     Solo `administrador` y `distribucion`. Republicar el mismo periodo
-         *     responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+         *     Solo `administrador` y `distribucion`. Republicar sin nuevos usos
+         *     pendientes responde 409.
          */
         post: operations["publicarListadoONI"];
         delete?: never;
@@ -3655,7 +3656,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Ese periodo ya tiene listado publicado. */
+            /** @description Ese periodo ya fue publicado y no tiene usos ONI pendientes sin publicar. */
             409: {
                 headers: {
                     [name: string]: unknown;
