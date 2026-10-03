@@ -67,7 +67,7 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	// y los dos coeficientes de duracion (80% artistica, 48 min/hora). Las
 	// deducciones, la reserva y los dos umbrales de matching son techos del
 	// reglamento o decisiones de ingenieria, y ninguna Asamblea las resolvio
-	// (ADR 0004). La base de cine (P-18) tambien es sintetica: el reglamento
+	// (ADR 0004). La base de cine (P-18) y el SMMLV (#193) tambien son sinteticos: el reglamento
 	// se contradice y REDES no ha respondido.
 	var nSinteticos, nPublicados int
 	if err := pool.QueryRow(ctx,
@@ -77,8 +77,8 @@ func TestCargarSiembraElJuegoCompleto(t *testing.T) {
 	).Scan(&nSinteticos, &nPublicados); err != nil {
 		t.Fatalf("contar parametros por procedencia: %v", err)
 	}
-	if nSinteticos != 17 {
-		t.Fatalf("parametros con %s: %d, se esperaban 17", ReglamentoSintetico, nSinteticos)
+	if nSinteticos != 18 {
+		t.Fatalf("parametros con %s: %d, se esperaban 18", ReglamentoSintetico, nSinteticos)
 	}
 	if nPublicados != 6 {
 		t.Fatalf("parametros presentados como aprobados: %d, se esperaban 6 (ponderacion.* y duracion.* de RD 9.1.1)", nPublicados)
