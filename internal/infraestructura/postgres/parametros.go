@@ -57,7 +57,11 @@ const (
 // Las dos tablas la comparten porque las dos lecturas producen lo mismo -- un
 // [parametroResuelto] -- y la de un snapshot congelado tiene que devolver
 // exactamente lo que devolvio la resolucion que lo congelo.
-const columnasParametro = `clave, valor, organo, reglamento, vigente_desde`
+//
+// `valor` y `valor_texto` son excluyentes (CHECK de la migracion 00025): una
+// cifra va en la primera y una eleccion entre opciones -la base de cine de
+// P-18- en la segunda.
+const columnasParametro = `clave, valor, valor_texto, organo, reglamento, vigente_desde`
 
 // escalaValor dice si `parametros.valor` ya esta en la unidad que
 // [reparto.Snapshot] exige, o si hay que convertirlo al armar el snapshot.
@@ -83,14 +87,32 @@ const (
 
 // clausula es una clave de `parametros` con el hueco de [reparto.Snapshot] que
 // llena.
+//
+// Una clausula es numerica (`en`, lee `valor`) o textual (`enTexto`, lee
+// `valor_texto`), nunca las dos: se construye con [numerica] o con [textual].
+// Una fila del tipo contrario es un error y no un cero -- una cifra en una
+// clausula textual no elige nada, y un texto en una numerica no pondera --.
 type clausula struct {
 	clave  string
 	escala escalaValor
 	en     func(*reparto.Snapshot, decimal.Decimal)
+	// enTexto valida y asigna el valor; un valor que el dominio no admite es
+	// error al CONGELAR, no al valorizar meses despues.
+	enTexto func(*reparto.Snapshot, string) error
 }
 
-// clausulasDelSnapshot es el contrato entre la tabla y el tipo del dominio:
-// las claves que un snapshot EXIGE, y donde va cada una.
+func numerica(clave string, escala escalaValor, en func(*reparto.Snapshot, decimal.Decimal)) clausula {
+	return clausula{clave: clave, escala: escala, en: en}
+}
+
+func textual(clave string, en func(*reparto.Snapshot, string) error) clausula {
+	return clausula{clave: clave, enTexto: en}
+}
+
+// clausulasDelSnapshotV1 es el contrato entre la tabla y el tipo del dominio
+// con el que se congelaron los snapshots `snp1-`: las claves que un snapshot
+// EXIGE, y donde va cada una. Congelado desde #194 (ver
+// [clausulasDelSnapshot], la version 2): no se edita, se reconstruye con el.
 //
 // Que sea una lista y no un switch dentro del bucle de escaneo es lo que
 // permite responder "cuales faltan" nombrandolas todas: un switch solo sabe
@@ -105,7 +127,7 @@ type clausula struct {
 // Las tasas `cambio.*` NO estan aqui: son una familia de tamano variable y
 // entran por [prefijoTasa]. Pero entran en el id igual que estas, porque
 // cambian el resultado igual que estas.
-var clausulasDelSnapshot = []clausula{
+var clausulasDelSnapshotV1 = []clausula{
 	// R-06 (Ley 44/1993 Art. 21) y R-07 (RD 14.5.1). El sembrador las escribe
 	// como fraccion 0-1 ("0.20"); el Snapshot las exige en 0-100
 	// (tipos.go:125-129) porque asi las consume pctDe en el motor
@@ -113,33 +135,33 @@ var clausulasDelSnapshot = []clausula{
 	// -- donde tipos.go dice que tiene que pasar -- y no en el setter, donde
 	// no protestaba ni exigirPositivo ni ninguna prueba (bloqueante 1, PR
 	// #134).
-	{"deduccion.administrativa", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.AdminPct = v }},
-	{"deduccion.social", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.SocialPct = v }},
-	{"reserva.errores_tecnicos", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.ReservaPct = v }},
+	numerica("deduccion.administrativa", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.AdminPct = v }),
+	numerica("deduccion.social", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.SocialPct = v }),
+	numerica("reserva.errores_tecnicos", escalaFraccionAPorcentaje, func(s *reparto.Snapshot, v decimal.Decimal) { s.ReservaPct = v }),
 
 	// Ponderacion por tipo de obra, RD 9.1.1. Multiplicadores crudos: no se
 	// escalan.
-	{"ponderacion.cinematografica", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondCine = v }},
-	{"ponderacion.unitario", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondUnitario = v }},
-	{"ponderacion.serie", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSerie = v }},
-	{"ponderacion.sketches", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSketch = v }},
+	numerica("ponderacion.cinematografica", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondCine = v }),
+	numerica("ponderacion.unitario", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondUnitario = v }),
+	numerica("ponderacion.serie", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSerie = v }),
+	numerica("ponderacion.sketches", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.PondSketch = v }),
 
 	// Coeficientes de la formula OTT, RD 9.7. Sin publicar (P-10). Tambien
 	// multiplicadores crudos.
-	{"ott.wa", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wa = v }},
-	{"ott.wb", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wb = v }},
-	{"ott.wc", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wc = v }},
+	numerica("ott.wa", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wa = v }),
+	numerica("ott.wb", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wb = v }),
+	numerica("ott.wc", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.Wc = v }),
 
 	// Umbral de similitud de la cascada, ADR 0007. No es normativo, pero
 	// cambia el resultado de una corrida y por eso entra en el snapshot: sin
 	// congelarlo, recalibrarlo reidentificaria obras de un reparto cerrado.
-	{"matching.umbral", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.UmbralMatch = v }},
+	numerica("matching.umbral", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.UmbralMatch = v }),
 
 	// RD 9.1.1(c): 80% artistico y hora televisiva de 48 minutos. Los aplica
 	// normalizacion al canonizar la fila (duracion.go), multiplicando
 	// directo -- no pasan por pctDe --, asi que van directas.
-	{"duracion.artistica_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.DuracionArtisticaPct = v }},
-	{"duracion.minutos_hora_tv", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.MinutosHoraTV = v }},
+	numerica("duracion.artistica_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.DuracionArtisticaPct = v }),
+	numerica("duracion.minutos_hora_tv", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.MinutosHoraTV = v }),
 
 	// Porcentajes de grupo de canal (RD 9.5) y asignacion a plataformas de
 	// terceros (RD 9.7). #126 anadio estos seis campos a Snapshot
@@ -149,26 +171,48 @@ var clausulasDelSnapshot = []clausula{
 	// claves sencillamente no existian (bloqueante 3, PR #134). El sembrador
 	// ya las sirve en 0-100 -- la misma unidad que exige el motor --, asi que
 	// van con escalaDirecta.
-	{"grupo.privados_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPrivadosPct = v }},
-	{"grupo.regionales_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoRegionalesPct = v }},
-	{"grupo.premium_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPremiumPct = v }},
-	{"grupo.lideres_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoLideresPct = v }},
-	{"grupo.estandar_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoEstandarPct = v }},
-	{"asignacion.terceros_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.AsignacionTercerosPct = v }},
+	numerica("grupo.privados_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPrivadosPct = v }),
+	numerica("grupo.regionales_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoRegionalesPct = v }),
+	numerica("grupo.premium_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoPremiumPct = v }),
+	numerica("grupo.lideres_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoLideresPct = v }),
+	numerica("grupo.estandar_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.GrupoEstandarPct = v }),
+	numerica("asignacion.terceros_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.AsignacionTercerosPct = v }),
 }
+
+// clausulasDelSnapshot es el conjunto que ESTE binario congela: la version 1
+// mas la base de ponderacion de cine y teatro (P-18, #194).
+//
+// La version 1 nunca cableo `Snapshot.BaseCineTeatro`, y el motor la exige
+// para cine y teatro (puntosCineTeatro): toda corrida de cine fallaba al
+// valorizar con "parametro normativo ausente: base_cine_teatro". Es la primera
+// clausula textual -una eleccion entre `taquilla` y `espectadores`, no una
+// cifra- y por eso lee `valor_texto` (migracion 00025).
+//
+// Se construye sobre la V1 y no copiandola: las diecinueve primeras son las
+// mismas clausulas, y una copia a mano podria divergir sin que nada lo note.
+// slices.Clip obliga a que append copie y no escriba sobre la V1.
+var clausulasDelSnapshot = append(slices.Clip(clausulasDelSnapshotV1),
+	textual(reparto.ClaveBaseCineTeatro, func(s *reparto.Snapshot, v string) error {
+		base, err := reparto.ParseBaseCineTeatro(v)
+		s.BaseCineTeatro = base
+		return err
+	}),
+)
 
 // versionClausulasActual es la version del conjunto [clausulasDelSnapshot]
 // que ESTE BINARIO congela. Vive en el prefijo de todo id nuevo (ver
 // prefijoSnapshot) porque anadir o quitar una clausula es un cambio de
 // FORMATO del snapshot, no solo de contenido -- el bloqueante 3 de PR #134
-// (seis clausulas nuevas) es exactamente ese cambio, y paso "gratis" solo
-// porque hoy no hay ningun snapshot ya congelado. La proxima vez que pase, no
-// sera gratis sin esto. Ver ADR 0005, "La identidad del snapshot esta
-// versionada".
-const versionClausulasActual = 1
+// (seis clausulas nuevas) fue ese cambio, y paso sin version solo porque
+// entonces no habia ningun snapshot congelado. Ver ADR 0005, "La identidad
+// del snapshot esta versionada".
+//
+// Es 2 desde #194, que anadio `cine_teatro.base` con snapshots `snp1-` ya
+// congelados: esos se siguen releyendo con [clausulasDelSnapshotV1].
+const versionClausulasActual = 2
 
 // prefijoSnapshot marca el id como lo que es y con que version del conjunto
-// de clausulas se congelo: "snp1-", no "snp-". El resto son los 64 hex del
+// de clausulas se congelo: "snp2-" hoy, no "snp-". El resto son los 64 hex del
 // sha256; el CHECK de `snapshots_parametros` (migracion 00012) exige la forma
 // general `snp[0-9]+-[0-9a-f]{64}`, no una version fija, porque tiene que
 // seguir aceptando ids mas viejos que dejen de ser "la version actual".
@@ -177,19 +221,17 @@ var prefijoSnapshot = fmt.Sprintf("snp%d-", versionClausulasActual)
 // clausulasPorVersion es el registro de conjuntos de clausulas: uno por cada
 // version que un id de snapshot puede nombrar en su prefijo.
 //
-// Politica de mantenimiento (ADR 0005): el dia que una clausula se anada, se
-// quite o cambie de escala, [clausulasDelSnapshot] NO se edita in situ. Antes
+// Politica de mantenimiento (ADR 0005): cuando una clausula se anade, se
+// quita o cambia de escala, [clausulasDelSnapshot] NO se edita in situ. Antes
 // de tocarlo, el conjunto vigente HASTA ESE MOMENTO se copia a una constante
-// nueva nombrada por su version (p.ej. `clausulasDelSnapshotV1` el dia que
-// exista una V2) y esa copia se registra aqui bajo su numero. Solo entonces
-// `clausulasDelSnapshot` pasa a apuntar al conjunto NUEVO y
-// `versionClausulasActual` sube en uno. Hoy solo hay una version: la entrada
-// de este mapa y la variable `clausulasDelSnapshot` son el mismo slice, y no
-// hace falta el sufijo "V1" hasta que haya un V2 del que distinguirse. La
-// entrada vieja, cuando exista, no se borra: se queda mientras dure la
-// ventana de retencion de RD 13.2/13.4 (diez anos) o hasta que un cambio
-// explicito -citando esta politica, no un descuido de refactor- decida
-// retirarla.
+// nueva nombrada por su version y esa copia se registra aqui bajo su numero.
+// Solo entonces `clausulasDelSnapshot` pasa a apuntar al conjunto NUEVO y
+// `versionClausulasActual` sube en uno. Asi entro la version 2 (#194): la 1
+// vive en `clausulasDelSnapshotV1`; la proxima vez, la 2 pasa a
+// `clausulasDelSnapshotV2`. La entrada vieja no se borra: se queda mientras
+// dure la ventana de retencion de RD 13.2/13.4 (diez anos) o hasta que un
+// cambio explicito -citando esta politica, no un descuido de refactor-
+// decida retirarla.
 //
 // SnapshotEnFecha siempre congela bajo `versionClausulasActual`.
 // SnapshotPorID nunca reconstruye contra "la version actual": reconstruye
@@ -199,6 +241,7 @@ var prefijoSnapshot = fmt.Sprintf("snp%d-", versionClausulasActual)
 // snapshotDesdeTablaCongelada), en vez de reinterpretarse en silencio con el
 // conjunto de clausulas equivocado.
 var clausulasPorVersion = map[int][]clausula{
+	1:                      clausulasDelSnapshotV1,
 	versionClausulasActual: clausulasDelSnapshot,
 }
 
@@ -241,16 +284,33 @@ func versionDeID(id string) (version int, ok bool) {
 
 // parametroResuelto es una fila de vigencia ya elegida para una fecha, con su
 // valor en forma canonica.
+//
+// valorTexto no vacio es una fila textual (`valor_texto`, migracion 00025) y
+// entonces valor no significa nada; vacio, la fila es numerica. El CHECK de
+// la tabla garantiza que nunca llegan los dos.
 type parametroResuelto struct {
 	clave        string
 	valor        decimal.Decimal
+	valorTexto   string
 	organo       string
 	reglamento   string
 	vigenteDesde time.Time
 }
 
+// esTexto dice si la fila trae `valor_texto` en vez de `valor`.
+func (p parametroResuelto) esTexto() bool { return p.valorTexto != "" }
+
 // texto es la forma canonica del valor: la que se hashea y la que se congela.
-func (p parametroResuelto) texto() string { return p.valor.StringFixed(escalaParametro) }
+//
+// Un valor textual va tal cual: el CHECK de la columna lo limita a
+// `[a-z][a-z0-9_]*`, que ya es canonico y no puede contener el '=' ni el
+// salto de linea con que [idDeSnapshot] separa los pares.
+func (p parametroResuelto) texto() string {
+	if p.esTexto() {
+		return p.valorTexto
+	}
+	return p.valor.StringFixed(escalaParametro)
+}
 
 // SnapshotEnFecha resuelve cada clausula a la fila que rige en esa fecha y
 // congela el conjunto. Devuelve el id direccionado por contenido y el snapshot.
@@ -442,7 +502,7 @@ func (s *Store) Vigentes(ctx context.Context, ahora time.Time) ([]aplicacion.Fil
 	contexto := fmt.Sprintf("parametros vigentes en %s", dia)
 
 	filas, err := s.ejecutorDe(ctx).Query(ctx,
-		`SELECT clave, valor, vigente_desde, vigente_hasta, organo, reglamento
+		`SELECT clave, valor, valor_texto, vigente_desde, vigente_hasta, organo, reglamento
 		   FROM parametros
 		  WHERE vigente_desde <= $1::date
 		    AND (vigente_hasta IS NULL OR vigente_hasta > $1::date)
@@ -455,14 +515,16 @@ func (s *Store) Vigentes(ctx context.Context, ahora time.Time) ([]aplicacion.Fil
 	var out []aplicacion.FilaParametro
 	for filas.Next() {
 		var (
-			f     aplicacion.FilaParametro
-			valor decimal.Decimal
+			f          aplicacion.FilaParametro
+			valor      decimal.NullDecimal
+			valorTexto *string
 		)
-		if err := filas.Scan(&f.Clave, &valor, &f.VigenteDesde, &f.VigenteHasta,
+		if err := filas.Scan(&f.Clave, &valor, &valorTexto, &f.VigenteDesde, &f.VigenteHasta,
 			&f.OrganoAprobador, &f.Reglamento); err != nil {
 			return nil, traducirError(err, "escanear parametro vigente")
 		}
-		f.Valor = valor.StringFixed(escalaParametro)
+		// La misma forma que entra en el id, texto incluido (ver texto()).
+		f.Valor = parametroResuelto{valor: valor.Decimal, valorTexto: deref(valorTexto)}.texto()
 		out = append(out, f)
 	}
 	// No es opcional: un fallo a mitad de stream sale solo por aqui, y sin
@@ -484,10 +546,15 @@ func leerParametros(ctx context.Context, ej ejecutor, sql, contexto string, args
 
 	var out []parametroResuelto
 	for filas.Next() {
-		var p parametroResuelto
-		if err := filas.Scan(&p.clave, &p.valor, &p.organo, &p.reglamento, &p.vigenteDesde); err != nil {
+		var (
+			p          parametroResuelto
+			valor      decimal.NullDecimal
+			valorTexto *string
+		)
+		if err := filas.Scan(&p.clave, &valor, &valorTexto, &p.organo, &p.reglamento, &p.vigenteDesde); err != nil {
 			return nil, traducirError(err, "escanear parametro")
 		}
+		p.valor, p.valorTexto = valor.Decimal, deref(valorTexto)
 		out = append(out, p)
 	}
 	if err := filas.Err(); err != nil {
@@ -507,16 +574,22 @@ func leerParametros(ctx context.Context, ej ejecutor, sql, contexto string, args
 //
 // Los valores viajan como texto y se convierten en el SELECT en vez de ir como
 // []decimal.Decimal: el texto es la forma canonica que ya se hasheo, asi que
-// lo que se guarda es exactamente lo que el id promete.
+// lo que se guarda es exactamente lo que el id promete. Cada fila llena una
+// sola de las dos columnas de valor; la otra va vacia y NULLIF la deja NULL.
 func congelar(ctx context.Context, tx pgx.Tx, id string, pares []parametroResuelto) error {
 	claves := make([]string, len(pares))
 	valores := make([]string, len(pares))
+	textos := make([]string, len(pares))
 	organos := make([]string, len(pares))
 	reglamentos := make([]string, len(pares))
 	desdes := make([]string, len(pares))
 	for i, p := range pares {
 		claves[i] = p.clave
-		valores[i] = p.texto()
+		if p.esTexto() {
+			textos[i] = p.texto()
+		} else {
+			valores[i] = p.texto()
+		}
 		organos[i] = p.organo
 		reglamentos[i] = p.reglamento
 		desdes[i] = texto(p.vigenteDesde)
@@ -524,11 +597,12 @@ func congelar(ctx context.Context, tx pgx.Tx, id string, pares []parametroResuel
 
 	tag, err := tx.Exec(ctx,
 		`INSERT INTO snapshots_parametros (snapshot_id, `+columnasParametro+`)
-		 SELECT $1, u.clave, u.valor::numeric, u.organo, u.reglamento, u.vigente_desde::date
-		   FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
-		     AS u(clave, valor, organo, reglamento, vigente_desde)
+		 SELECT $1, u.clave, NULLIF(u.valor, '')::numeric, NULLIF(u.valor_texto, ''),
+		        u.organo, u.reglamento, u.vigente_desde::date
+		   FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+		     AS u(clave, valor, valor_texto, organo, reglamento, vigente_desde)
 		 ON CONFLICT (snapshot_id, clave) DO NOTHING`,
-		id, claves, valores, organos, reglamentos, desdes)
+		id, claves, valores, textos, organos, reglamentos, desdes)
 	if err != nil {
 		return traducirError(err, "congelar el snapshot %q", id)
 	}
@@ -622,9 +696,11 @@ func loConsume(clave string, clausulas []clausula) bool {
 //
 // El error de retorno es distinto de "faltan": es que DOS claves entran en
 // conflicto entre si (hoy, dos tasas `cambio.*` que normalizan al mismo
-// codigo ISO). No es "falta cargar algo" ni "el conjunto esta corrupto", asi
-// que no cabe en `faltan` sin que un `errors.Is(err, ErrParametroAusente)`
-// aguas abajo lo confunda con lo otro.
+// codigo ISO), o que una fila no es del tipo de su clausula o trae un valor
+// que el dominio no admite ([aplicacion.ErrParametroInvalido]). No es "falta
+// cargar algo" ni "el conjunto esta corrupto", asi que no cabe en `faltan`
+// sin que un `errors.Is(err, ErrParametroAusente)` aguas abajo lo confunda
+// con lo otro.
 //
 // `clausulas` y `prefijo` son explicitos por la misma razon que en
 // [consumidos]: armar una resolucion fresca siempre usa la version actual
@@ -649,11 +725,9 @@ func armarSnapshot(pares []parametroResuelto, clausulas []clausula, prefijo stri
 			faltan = append(faltan, c.clave)
 			continue
 		}
-		v := p.valor
-		if c.escala == escalaFraccionAPorcentaje {
-			v = v.Mul(decimal.NewFromInt(100))
+		if err := llenar(&snap, c, p); err != nil {
+			return "", reparto.Snapshot{}, nil, err
 		}
-		c.en(&snap, v)
 	}
 	// Se devuelven TODAS las que falten, no la primera: enterarse de una por
 	// intento son tantos viajes como parametros sin cargar.
@@ -668,6 +742,12 @@ func armarSnapshot(pares []parametroResuelto, clausulas []clausula, prefijo stri
 	isoDeClave := make(map[string]string, len(pares))
 	for _, p := range pares {
 		if codigo, esTasa := strings.CutPrefix(p.clave, prefijoTasa); esTasa {
+			// Una tasa es un factor: en texto no convierte nada, y dejarla
+			// pasar la volveria un cero en Tasas.
+			if p.esTexto() {
+				return "", reparto.Snapshot{}, nil, fmt.Errorf("parametro %q: %w: una tasa de cambio es una cifra, llego el texto %q",
+					p.clave, aplicacion.ErrParametroInvalido, p.valorTexto)
+			}
 			iso := strings.ToUpper(codigo)
 			// cambio.USD y cambio.usd son DOS filas de `parametros` -el
 			// esquema no las distingue de dos monedas legitimas- que colapsan
@@ -697,6 +777,41 @@ func armarSnapshot(pares []parametroResuelto, clausulas []clausula, prefijo stri
 	snap.Reglamento = strings.Join(reglamentos, "+")
 
 	return idDeSnapshot(pares, monedaBase, prefijo), snap, nil, nil
+}
+
+// llenar pone el valor de la fila en el hueco de la clausula, exigiendo que la
+// fila sea del tipo de la clausula: una cifra donde se espera texto -o al
+// reves- no se convierte en un cero ni en una cadena vacia, es un parametro
+// mal cargado y se nombra.
+func llenar(snap *reparto.Snapshot, c clausula, p parametroResuelto) error {
+	if c.enTexto != nil {
+		if !p.esTexto() {
+			return fmt.Errorf("parametro %q: %w: se esperaba un valor textual (valor_texto) y llego la cifra %s",
+				c.clave, aplicacion.ErrParametroInvalido, p.texto())
+		}
+		if err := c.enTexto(snap, p.valorTexto); err != nil {
+			return fmt.Errorf("parametro %q: %w: %w", c.clave, aplicacion.ErrParametroInvalido, err)
+		}
+		return nil
+	}
+	if p.esTexto() {
+		return fmt.Errorf("parametro %q: %w: se esperaba una cifra (valor) y llego el texto %q",
+			c.clave, aplicacion.ErrParametroInvalido, p.valorTexto)
+	}
+	v := p.valor
+	if c.escala == escalaFraccionAPorcentaje {
+		v = v.Mul(decimal.NewFromInt(100))
+	}
+	c.en(snap, v)
+	return nil
+}
+
+// deref devuelve la cadena de una columna TEXT que admite NULL; NULL es "".
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // claveMetaMonedaBase es la clave RESERVADA bajo la que [idDeSnapshot] mete la
@@ -787,7 +902,7 @@ var ErrParametroSinVigencia = errors.New("parametro sin vigencia en la fecha")
 func (s *Store) ParametroVigente(ctx context.Context, clave string, fecha time.Time) (decimal.Decimal, error) {
 	dia := texto(enDia(fecha))
 
-	var valor decimal.Decimal
+	var valor decimal.NullDecimal
 	err := s.ejecutorDe(ctx).QueryRow(ctx, `
 		SELECT valor FROM parametros
 		 WHERE clave = $1
@@ -801,5 +916,11 @@ func (s *Store) ParametroVigente(ctx context.Context, clave string, fecha time.T
 	if err != nil {
 		return decimal.Zero, traducirError(err, "leer el parametro %q", clave)
 	}
-	return valor, nil
+	// Valor NULL es una fila textual (migracion 00025): quien pide una cifra
+	// no puede recibir un cero en su lugar.
+	if !valor.Valid {
+		return decimal.Zero, fmt.Errorf("%q en %s: %w: es un parametro textual, no una cifra",
+			clave, dia, aplicacion.ErrParametroInvalido)
+	}
+	return valor.Decimal, nil
 }

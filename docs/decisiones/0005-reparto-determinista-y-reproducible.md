@@ -51,24 +51,30 @@ acceso al puerto de parametros.
 **La identidad del snapshot esta versionada.** El id es un hash direccionado por contenido sobre los
 pares (clave, valor) que el snapshot consume, pero EL CONJUNTO DE CLAVES QUE CUENTA no es un dato
 fijo para siempre: `#118` fijo trece, `#126` (posterior) obligo a anadir seis mas -- los porcentajes
-de grupo de canal y la asignacion a terceros --, diecinueve en total hoy (`clausulasDelSnapshot`, en
-`postgres/parametros.go`), y nada impide que un issue futuro anada otra. Si el id
-no dijera CONTRA QUE CONJUNTO se calculo, anadir una clave seria un cambio de FORMATO disfrazado de
-cambio de contenido: releer un snapshot viejo con el conjunto de hoy reportaria "le falta
-`grupo.privados_pct`" -que suena a corrupcion- cuando lo que pasa es que esa clave todavia no existia
-el dia que se congelo. Peor: si el nombre de una clave se reutilizara alguna vez con otro significado,
-dos conjuntos distintos podrian, en principio, converger al mismo hash bajo una definicion de "que
-cuenta" que cambio entre medias.
+de grupo de canal y la asignacion a terceros --, diecinueve en la version 1, y `#194` anadio la
+vigesima -la base de ponderacion de cine y teatro, `cine_teatro.base`, la primera textual- en la
+version 2 (`clausulasDelSnapshot`, en `postgres/parametros.go`). Nada impide que un issue futuro
+anada otra. Si el id no dijera CONTRA QUE CONJUNTO se calculo, anadir una clave seria un cambio de
+FORMATO disfrazado de cambio de contenido: releer un snapshot viejo con el conjunto de hoy
+reportaria "le falta `grupo.privados_pct`" -que suena a corrupcion- cuando lo que pasa es que esa
+clave todavia no existia el dia que se congelo. Peor: si el nombre de una clave se reutilizara
+alguna vez con otro significado, dos conjuntos distintos podrian, en principio, converger al mismo
+hash bajo una definicion de "que cuenta" que cambio entre medias.
 
 La forma del id es `snp<version>-<sha256>` (`postgres/parametros.go`, `versionClausulasActual`). La
 version identifica CONTRA QUE conjunto de clausulas se calculo el hash, no el reglamento ni la
-procedencia -esos ya viajan aparte, ver mas arriba-. Politica de mantenimiento, para cuando haga
-falta una version 2:
+procedencia -esos ya viajan aparte, ver mas arriba-. Hoy hay dos versiones: la 1, congelada, y la
+2, que es la que el binario escribe (prefijo `snp2-`). Politica de mantenimiento cada vez que cambia
+el conjunto:
 
 1. El conjunto de clausulas vigente NO se edita in situ. Antes de tocarlo se copia a una constante
-   nueva, nombrada por su version (`clausulasDelSnapshotV1` el dia que exista una V2), y esa copia se
-   registra en `clausulasPorVersion` bajo su numero. La copia vieja no se toca nunca mas. Hoy solo
-   existe la version 1 y no hace falta el sufijo hasta que haya una segunda de la que distinguirse.
+   nueva, nombrada por su version, y esa copia se registra en `clausulasPorVersion` bajo su numero.
+   La copia vieja no se toca nunca mas. Asi entro la version 2 (`#194`): la version 1 vive en
+   `clausulasDelSnapshotV1`, congelada, y los snapshots `snp1-` ya escritos -los de corridas
+   abiertas antes- se siguen releyendo con ella. La proxima vez, la version 2 pasa a
+   `clausulasDelSnapshotV2`. Releer no es valorizar: una corrida de cine abierta con la version 1
+   no trae `cine_teatro.base` y no sale de `deducciones`; se abre una corrida nueva de la bolsa
+   ([runbook](../runbooks/corrida-con-snapshot-sin-base-cine.md)).
 2. `clausulasDelSnapshot` (el conjunto que el binario CONGELA) pasa a apuntar al conjunto nuevo, y
    `versionClausulasActual` sube en uno. Toda resolucion fresca a partir de ahi congela bajo la
    version nueva.
