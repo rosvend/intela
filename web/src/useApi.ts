@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, esErrorDeApi } from "./api";
+import {
+  api,
+  esErrorDeApi,
+  esRespuestaSinJson,
+  MENSAJE_RESPUESTA_SIN_JSON,
+} from "./api";
 
 export type EstadoDeApi<T> =
   | { datos: null; cargando: true; error: null }
   | { datos: T; cargando: false; error: null }
   | { datos: null; cargando: false; error: Error };
-
-// Lo que se dice cuando un 2xx no trae JSON. `api()` devuelve entonces el
-// `Response` crudo, y eso no es el dato: es la respuesta sin leer.
-const MENSAJE_SIN_JSON = "la respuesta no vino en JSON";
 
 /**
  * Hook minimo sobre `api()` para un GET por pantalla.
@@ -52,11 +53,11 @@ export function useApi<T>(path: string): EstadoDeApi<T> {
         // con un 2xx basta-. `T` es una promesa, no una comprobacion, asi que
         // la unica frontera donde se puede notar es esta, que es la que conoce
         // la diferencia. Se trata como lo que es: un fallo, no un dato.
-        if (datos instanceof Response) {
+        if (esRespuestaSinJson(datos)) {
           setEstado({
             datos: null,
             cargando: false,
-            error: new Error(MENSAJE_SIN_JSON),
+            error: new Error(MENSAJE_RESPUESTA_SIN_JSON),
           });
           return;
         }
