@@ -11,12 +11,12 @@
 -- Sin columnas de dinero: identificar no toca dinero (ADR 0007).
 --
 -- COORDINACION DE NUMERO: este archivo nacio como 00024, pero 00024 ya lo
--- tomo 00024_resultados_titular_declaracion_version.sql (#198), que entro a
--- main antes. Numero: 00025, primero libre por encima de 00024. Nunca un hueco
--- por debajo de la version ya aplicada (goose allowMissing=false; ver 00006).
--- #195 y #197 tambien pedian 00024 y siguen abiertos; si alguno entra antes
--- de este, hay que volver a tomar el primero libre por encima del ultimo en
--- main al momento de mergear.
+-- tomo 00024_resultados_titular_declaracion_version.sql (#198) y 00025 lo
+-- tomo 00025_parametros_textuales.sql; los dos estan en main. Numero: 00026,
+-- primero libre por encima de 00025. Nunca un hueco por debajo de la version
+-- ya aplicada (goose allowMissing=false; ver 00006). #197 tambien pide 00026
+-- y sigue abierto; si entra antes de este, hay que volver a tomar el primero
+-- libre por encima del ultimo en main al momento de mergear.
 
 -- +goose Up
 -- +goose StatementBegin
