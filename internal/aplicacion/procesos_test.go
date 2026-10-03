@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1109,4 +1111,194 @@ func TestElAsientoDeLaTransicionCuentaLasCriticasAceptadasTalCual(t *testing.T) 
 			t.Fatal("una transicion que no pasa por la compuerta no puede afirmar cuantas aceptadas habia")
 		}
 	})
+}
+
+// emisionFalsa es el doble de [EmisionLiquidacion]. Apunta en que etapa estaba
+// la corrida en el repositorio en el momento de la llamada: es lo que prueba
+// que al ENTRAR se emite despues de guardar la etapa y al SALIR antes.
+type emisionFalsa struct {
+	repo   *repositorioProcesosFalso
+	err    error
+	vistas []reparto.Etapa
+	ids    []string
+}
+
+func (e *emisionFalsa) GenerarLiquidacion(_ context.Context, procesoID string) ([]OrdenVista, error) {
+	e.ids = append(e.ids, procesoID)
+	e.vistas = append(e.vistas, e.repo.procesos[procesoID].Etapa)
+	return nil, e.err
+}
+
+// procesoEnEtapa guarda proc-1 en la etapa y revision dadas, con las firmas de
+// la compuerta sobre esa misma revision cuando la etapa es una compuerta.
+func procesoEnEtapa(t *testing.T, circuito reparto.Circuito, etapa reparto.Etapa, revision int) *repositorioProcesosFalso {
+	t.Helper()
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", circuito, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = etapa
+	p.Revision = revision
+	if etapa == reparto.EtapaVerificacion {
+		p.Firmas = []reparto.Firma{
+			{Rol: string(reparto.RolDistribucion), ActorID: "actor-dist", SobreRev: revision},
+			{Rol: string(reparto.RolContabilidad), ActorID: "actor-conta", SobreRev: revision},
+		}
+	}
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	repo.guardados = nil
+	return repo
+}
+
+// TestAvanzarEtapaEmiteLaLiquidacionAlEntrarALiquidacionFinal es #193: salir de
+// verificacion hacia liquidacion_final emite las ordenes del periodo en la
+// misma unidad, DESPUES de guardar la etapa -- la liquidacion lee la etapa
+// nueva dentro de la transaccion.
+func TestAvanzarEtapaEmiteLaLiquidacionAlEntrarALiquidacionFinal(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	emision := &emisionFalsa{repo: repo}
+	libro := &bitacoraFalsa{}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision, Bitacora: libro})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaLiquidacionFinal || v.Revision != 2 {
+		t.Fatalf("etapa/revision = %q/%d, se esperaba liquidacion_final/2", v.Etapa, v.Revision)
+	}
+	if !slices.Equal(emision.ids, []string{"proc-1"}) {
+		t.Fatalf("GenerarLiquidacion = %v, se esperaba una llamada con proc-1", emision.ids)
+	}
+	if emision.vistas[0] != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("al emitir la corrida estaba en %q; la etapa se guarda antes", emision.vistas[0])
+	}
+	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoProcesoEtapaAvanzada {
+		t.Fatalf("asientos = %+v, se esperaba el de la etapa avanzada", libro.asientos)
+	}
+}
+
+// TestAvanzarEtapaToleraLaEsperaDelPeriodoAlEntrar: la corrida que llega antes
+// que sus hermanas entra igual a liquidacion_final (ADR 0024).
+func TestAvanzarEtapaToleraLaEsperaDelPeriodoAlEntrar(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	emision := &emisionFalsa{repo: repo, err: fmt.Errorf("%w: faltan prc-b", ErrLiquidacionEnEspera)}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("esperar a las hermanas no es un fallo al entrar: %v", err)
+	}
+	if v.Etapa != reparto.EtapaLiquidacionFinal || repo.procesos["proc-1"].Etapa != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("etapa = %q, se esperaba liquidacion_final", v.Etapa)
+	}
+}
+
+// TestAvanzarEtapaNoEntraSiLaEmisionFalla: cualquier otro fallo de la
+// liquidacion revierte la transicion, para que avanzar y emitir sean un solo
+// hecho.
+func TestAvanzarEtapaNoEntraSiLaEmisionFalla(t *testing.T) {
+	t.Parallel()
+
+	for _, causa := range []error{ErrPeriodoYaLiquidado, ErrCorridaNoCuadra, ErrParametroAusente} {
+		repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+		emision := &emisionFalsa{repo: repo, err: causa}
+		unidad := &unidadFalsa{}
+		libro := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision, Unidad: unidad, Bitacora: libro})
+
+		_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+		if !errors.Is(err, causa) {
+			t.Fatalf("err = %v, se esperaba %v", err, causa)
+		}
+		if unidad.confirmo {
+			t.Fatalf("%v: la unidad no puede confirmar una etapa cuya emision fallo", causa)
+		}
+		if len(libro.asientos) != 0 {
+			t.Fatalf("%v: asientos = %+v; sin emision no hay etapa avanzada", causa, libro.asientos)
+		}
+	}
+}
+
+// TestAvanzarEtapaNoSaleDeLiquidacionFinalSinLiquidar: salir hacia
+// pago_registro vuelve a pedir la liquidacion ANTES de guardar, y si el
+// periodo sigue esperando la corrida no se mueve: no se paga lo que no se
+// liquido.
+func TestAvanzarEtapaNoSaleDeLiquidacionFinalSinLiquidar(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaLiquidacionFinal, 2)
+	emision := &emisionFalsa{repo: repo, err: fmt.Errorf("%w: faltan prc-b", ErrLiquidacionEnEspera)}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if !errors.Is(err, ErrLiquidacionEnEspera) {
+		t.Fatalf("err = %v, se esperaba ErrLiquidacionEnEspera", err)
+	}
+	if len(repo.guardados) != 0 {
+		t.Fatalf("guardados = %+v; la corrida no sale de liquidacion_final", repo.guardados)
+	}
+	if emision.vistas[0] != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("al pedir la liquidacion la corrida estaba en %q; se pide antes de guardar", emision.vistas[0])
+	}
+
+	emision.err = nil
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("con el periodo liquidado sale: %v", err)
+	}
+	if v.Etapa != reparto.EtapaPagoRegistro {
+		t.Fatalf("etapa = %q, se esperaba pago_registro", v.Etapa)
+	}
+}
+
+// TestAvanzarEtapaSoloLiquidaEnLaFronteraDeLiquidacionFinalNacional: ninguna
+// otra transicion llama a la liquidacion, y el internacional tampoco -- no
+// valoriza (RD 7.4), asi que no tiene lineas de titular de las que emitir.
+func TestAvanzarEtapaSoloLiquidaEnLaFronteraDeLiquidacionFinalNacional(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		circuito reparto.Circuito
+		etapa    reparto.Etapa
+		revision int
+	}{
+		{reparto.Internacional, reparto.EtapaVerificacion, 1},
+		{reparto.Internacional, reparto.EtapaLiquidacionFinal, 2},
+		{reparto.Nacional, reparto.EtapaImporteTitular, 1},
+		{reparto.Nacional, reparto.EtapaLiquidacionParcial, 1},
+	}
+	for _, c := range casos {
+		repo := procesoEnEtapa(t, c.circuito, c.etapa, c.revision)
+		emision := &emisionFalsa{repo: repo}
+		uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin"); err != nil {
+			t.Fatalf("%s desde %s: %v", c.circuito, c.etapa, err)
+		}
+		if len(emision.ids) != 0 {
+			t.Fatalf("%s desde %s: GenerarLiquidacion = %v, no debio llamarse", c.circuito, c.etapa, emision.ids)
+		}
+	}
+}
+
+// TestAvanzarEtapaSinLiquidacionFallaClaro: un Procesos cableado sin la
+// liquidacion no puede dejar entrar una corrida a liquidacion_final como si
+// nada: seria el defecto de #193 otra vez, sin ningun aviso.
+func TestAvanzarEtapaSinLiquidacionFallaClaro(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	uc := conBitacora(Procesos{Repo: repo})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err == nil || !strings.Contains(err.Error(), "falta Liquidacion") {
+		t.Fatalf("err = %v, se esperaba un error de cableado que nombre Liquidacion", err)
+	}
 }

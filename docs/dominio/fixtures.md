@@ -44,6 +44,7 @@ es lo que permite decir "esta cifra es de demo" sin tener que leer el codigo.
 | Recaudo / bolsa | Si | n/a | El formato real del reporte (P-08) |
 | Usuarios de recaudo | Si | n/a | La categoria real de cada pagador |
 | Coeficientes OTT `Wa/Wb/Wc` | Si | Si | El valor real (P-04) |
+| SMMLV (umbral de `R-11`) | Si | Si | El decreto de cada ano con su vigencia; el seed deja el de 2024 abierto hacia adelante para que la demo liquide (#193) |
 | Base de ponderacion de cine/teatro `cine_teatro.base` | Si | Si | La respuesta de REDES (P-18) |
 | Rating por franja | **Parcial** | **No** | La tabla y la marca |
 | Mapeo de generos | **No existe** | -- | Todo |

@@ -227,6 +227,28 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 	case errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas):
 		// 409: el periodo tiene criticas abiertas; se resuelven en /alertas (#37, ADR 0021).
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrLiquidacionEnEspera),
+		errors.Is(err, aplicacion.ErrPeriodoYaLiquidado),
+		errors.Is(err, aplicacion.ErrBolsaRepetida):
+		// 409: la liquidacion del periodo no deja mover la corrida (#193,
+		// ADR 0024) -- faltan corridas hermanas por verificar, el periodo ya se
+		// liquido sin esta, o dos corridas del periodo reparten la misma bolsa --.
+		// El mensaje nombra las corridas implicadas.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrInconsistenciaLiquidacion),
+		errors.Is(err, aplicacion.ErrCorridaNoCuadra):
+		// 500: fallo de integridad que el operador no puede arreglar
+		// moviendo corridas (descuadre de dinero, corrida sin resultados,
+		// corrida en etapa posterior sin firmas o disparador ausente).
+		// Se registra en el log para que deje rastro en el servidor.
+		log.ErrorContext(r.Context(), "inconsistencia en liquidacion al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "inconsistencia en los datos de liquidacion")
+	case errors.Is(err, aplicacion.ErrParametroAusente) && !esParametroTipado(err):
+		// Sin SMMLV vigente la liquidacion no puede evaluar R-11 (ADR 0004:
+		// se falla, no se inventa). Es configuracion del servidor, no del
+		// proceso: 500, igual que en /liquidaciones, pero nombrandolo.
+		log.ErrorContext(r.Context(), "parametro normativo ausente al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "parametro normativo ausente")
 	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
 		// 409 tambien, pero es control de concurrencia optimista, no un
 		// conflicto de negocio: otra transicion escribio primero. El mensaje
@@ -265,4 +287,11 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		escribirError(w, http.StatusInternalServerError, "no se pudo "+accion)
 	}
 	return err
+}
+
+// esParametroTipado distingue el parametro ausente que nombra claves y fecha
+// (409 al abrir, #194) del que la liquidacion encuentra sin SMMLV (500).
+func esParametroTipado(err error) bool {
+	var e *aplicacion.ErrorParametroAusente
+	return errors.As(err, &e)
 }

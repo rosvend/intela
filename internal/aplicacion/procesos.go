@@ -44,6 +44,11 @@ type Procesos struct {
 	Reloj    Reloj
 	// Origen da el archivo exacto y la identificacion de cada uso que pondero.
 	Origen RepositorioOrigenDeUsos
+
+	// Liquidacion emite las ordenes de pago del periodo al entrar a
+	// liquidacion_final y es la guarda al salir de ella (#193, ADR 0024). Solo
+	// la usa el circuito nacional; abrir, firmar o rechazar no la tocan.
+	Liquidacion EmisionLiquidacion
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -218,8 +223,9 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 		aceptadas = &n
 	}
 
-	// Valorizar, guardar la etapa y asentar son un solo hecho: sin la unidad,
-	// un reintento tras un fallo parcial valorizaria dos veces el mismo dinero.
+	// Valorizar, liquidar, guardar la etapa y asentar son un solo hecho: sin
+	// la unidad, un reintento tras un fallo parcial valorizaria o emitiria dos
+	// veces el mismo dinero.
 	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
 		var asientos []pendiente
 		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
@@ -228,8 +234,22 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 				return nil, err
 			}
 		}
+		// Salir: ANTES de guardar, porque la liquidacion exige que la
+		// corrida siga en liquidacion_final.
+		if p.Circuito == reparto.Nacional && v.Etapa == reparto.EtapaLiquidacionFinal {
+			if err := uc.liquidar(ctx, procesoID, false); err != nil {
+				return nil, err
+			}
+		}
 		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 			return nil, err
+		}
+		// Entrar: DESPUES de guardar, porque la liquidacion lee la etapa y la
+		// revision nuevas dentro de esta misma unidad.
+		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaLiquidacionFinal {
+			if err := uc.liquidar(ctx, procesoID, true); err != nil {
+				return nil, err
+			}
 		}
 		asiento := asientoProceso(p, v.Etapa)
 		asiento.CriticasAceptadasTalCual = aceptadas
@@ -239,6 +259,32 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// liquidar emite las ordenes del periodo de la corrida (RD 13.5, #193) dentro
+// de la unidad de la transicion.
+//
+// Al entrar a liquidacion_final (entrando == true) un periodo incompleto no es
+// un fallo: la corrida queda en la etapa esperando a sus hermanas, y la ultima
+// en llegar emite por todas (ADR 0024). Al salir hacia pago_registro si lo es:
+// no se paga lo que no se liquido, asi que [ErrLiquidacionEnEspera] revierte la
+// transicion y la corrida se queda donde esta.
+//
+// Solo el circuito nacional: el internacional no valoriza (RD 7.4), asi que no
+// tiene resultado del que salgan lineas de titular, y su reparto por la
+// proporcion de la sociedad hermana no esta modelado todavia.
+func (uc Procesos) liquidar(ctx context.Context, procesoID string, entrando bool) error {
+	if uc.Liquidacion == nil {
+		return errors.New("procesos mal cableado: falta Liquidacion")
+	}
+	_, err := uc.Liquidacion.GenerarLiquidacion(ctx, procesoID)
+	if entrando && errors.Is(err, ErrLiquidacionEnEspera) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("liquidar %q: %w", procesoID, err)
+	}
+	return nil
 }
 
 // valorizarBajoCompuerta evalua el periodo y, si no hay criticas abiertas,

@@ -93,20 +93,17 @@ func sembrarProcesoNacionalEn(t *testing.T, pool *pgxpool.Pool) *Store {
 	}
 
 	sembrarParametros(t, pool, "2026-01-01")
+	// La liquidacion evalua R-11 contra el 2% del SMMLV vigente al emitir
+	// (#193): sin el, entrar a liquidacion_final falla, que es lo correcto.
+	sembrarSMMLV(t, pool)
 	return s
 }
 
-// TestProcesoNacionalDePuntaAPunta es la prueba de verificacion manual del
-// plan de #34: abre una corrida Nacional contra Postgres real, la avanza
-// hasta que el motor de #33 valoriza de verdad y el resultado queda en
-// resultados_*, la firma en su compuerta con los dos roles, y confirma que
-// llega a Auditoria. No usa ningun doble: [aplicacion.Procesos] entero,
-// resuelto contra *Store, igual que lo cablea cmd/api.
-func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
-	s, _ := sembrarProcesoNacionalListoParaValorizar(t)
-	ctx := t.Context()
-
-	uc := aplicacion.Procesos{
+// procesosComoCmdAPI cablea [aplicacion.Procesos] como cmd/api: el mismo
+// *Store detras de cada puerto, la compuerta de anomalias, y la liquidacion
+// con el aviso de portal, que emite al entrar a liquidacion_final (#193).
+func procesosComoCmdAPI(s *Store) aplicacion.Procesos {
+	return aplicacion.Procesos{
 		Repo:          s,
 		Parametros:    s,
 		Bolsas:        s,
@@ -118,7 +115,27 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		Bitacora:      s,
 		Reloj:         reloj.Sistema{},
 		Origen:        s,
+		Liquidacion: aplicacion.Liquidaciones{
+			Ordenes:     s,
+			Reloj:       reloj.Sistema{},
+			Notificador: s.AvisoPortal(),
+			Bitacora:    s,
+			Unidad:      s,
+		},
 	}
+}
+
+// TestProcesoNacionalDePuntaAPunta es la prueba de verificacion manual del
+// plan de #34: abre una corrida Nacional contra Postgres real, la avanza
+// hasta que el motor de #33 valoriza de verdad y el resultado queda en
+// resultados_*, la firma en su compuerta con los dos roles, y confirma que
+// llega a Auditoria. No usa ningun doble: [aplicacion.Procesos] entero,
+// resuelto contra *Store, igual que lo cablea cmd/api.
+func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
+	s, pool := sembrarProcesoNacionalListoParaValorizar(t)
+	ctx := t.Context()
+
+	uc := procesosComoCmdAPI(s)
 
 	p, err := uc.IniciarProceso(ctx, "proc-y", "2026-01", reparto.Nacional, "bolsa-1", "actor-dist")
 	if err != nil {
@@ -182,13 +199,21 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 		t.Fatalf("firmar contabilidad: %v", err)
 	}
 
-	// liquidacion_final -> pago_registro (otra compuerta).
+	// verificacion -> liquidacion_final: aqui se emiten las ordenes (#193).
 	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
 		t.Fatalf("avanzar a liquidacion_final: %v", err)
 	}
 	if p.Etapa != reparto.EtapaLiquidacionFinal {
 		t.Fatalf("etapa = %q, se esperaba liquidacion_final", p.Etapa)
+	}
+	comprobarLiquidacionEmitida(t, s, pool, "proc-y", "titular-y", resultado.Titulares[0].Importe)
+
+	// Reintentar la emision no emite dos veces (criterio 2 de #193): ni una
+	// llamada directa ni la guarda de salida hacia pago_registro.
+	liq := uc.Liquidacion
+	if _, err := liq.GenerarLiquidacion(ctx, "proc-y"); err != nil {
+		t.Fatalf("reintentar la emision: %v", err)
 	}
 	p, err = uc.AvanzarEtapa(ctx, "proc-y", "actor-dist")
 	if err != nil {
@@ -197,6 +222,7 @@ func TestProcesoNacionalDePuntaAPunta(t *testing.T) {
 	if p.Etapa != reparto.EtapaPagoRegistro {
 		t.Fatalf("etapa = %q, se esperaba pago_registro", p.Etapa)
 	}
+	comprobarLiquidacionEmitida(t, s, pool, "proc-y", "titular-y", resultado.Titulares[0].Importe)
 
 	// Las firmas de la compuerta de verificacion no cuentan para esta:
 	// avanzar en la revision actual tiene que fallar hasta firmar de nuevo.
