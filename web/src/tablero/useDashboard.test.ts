@@ -40,6 +40,23 @@ describe("useRecurso", () => {
     await waitFor(() => expect(result.current.tipo).toBe("ausente"));
   });
 
+  it("un 2xx que no trae JSON queda en error, nunca en listo", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("<html>sin API</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    const { result } = renderHook(() => useRecurso("/api/x"));
+
+    await waitFor(() => expect(result.current.tipo).toBe("error"));
+    expect(result.current).toEqual({
+      tipo: "error",
+      mensaje: "la respuesta no vino en JSON",
+    });
+  });
+
   it("un 500 termina en error con el mensaje de la API", async () => {
     vi.mocked(fetch).mockResolvedValue(
       json({ error: "la base esta caida" }, 500),
