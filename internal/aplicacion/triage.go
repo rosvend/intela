@@ -59,6 +59,11 @@ type EjemploGuardado struct {
 
 // SugerenciaCaso es lo que la bandeja muestra. Aceptada es nil mientras el
 // caso sigue pendiente: todavia no hay con que medirla.
+//
+// Sello ata esta propuesta al caso. Quien confirma lo devuelve, y la
+// medicion usa esta propuesta aunque el historial haya cambiado despues
+// del listado. Vacio en un caso ya resuelto: ahi la propuesta guardada es
+// la que se midio, y no hace falta volver a sellarla.
 type SugerenciaCaso struct {
 	Decision  string
 	ObraID    string
@@ -67,6 +72,7 @@ type SugerenciaCaso struct {
 	Motivo    string
 	Orden     []string
 	Aceptada  *bool
+	Sello     string
 }
 
 func sugerenciaNinguna() *SugerenciaCaso {

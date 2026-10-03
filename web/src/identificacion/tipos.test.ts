@@ -106,6 +106,11 @@ describe("esCaso", () => {
     expect(esCaso(sinSugerencia)).toBe(false);
   });
 
+  it("rechaza una sugerencia sin `sello`: ausente no es null", () => {
+    const { sello: _sello, ...sinSello } = pendiente.sugerencia;
+    expect(esCaso({ ...pendiente, sugerencia: sinSello })).toBe(false);
+  });
+
   it("rechaza un caso sin `nota`: ausente no es lo mismo que null", () => {
     const { nota: _nota, ...sinNota } = pendiente;
     expect(esCaso(sinNota)).toBe(false);

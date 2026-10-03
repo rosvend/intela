@@ -72,6 +72,12 @@ type SolicitudResolucion struct {
 	Decision string
 	ObraID   string
 	Nota     string
+
+	// Sello es la propuesta que la bandeja mostro para este caso. Si viene,
+	// la aceptacion se mide contra esa propuesta aunque el historial haya
+	// cambiado desde el listado. Vacio: no hubo propuesta verificable y se
+	// rankea con el historial de este momento.
+	Sello string
 }
 
 // ResolucionIdentificacion resuelve un caso de la cola manual: le asigna una
@@ -107,6 +113,10 @@ type ResolucionIdentificacion struct {
 	// lo que se escribe es lo que pidio la persona.
 	Ejemplos  RepositorioEjemplosResolucion
 	Rankeador PuertoRankeadorDeResoluciones
+
+	// ClaveSello abre el sello que puso CasosIdentificacion en la propuesta
+	// mostrada. Tiene que ser la misma clave; si no, el sello no verifica.
+	ClaveSello []byte
 }
 
 // Resolver aplica la decision sobre el caso y devuelve el caso ya resuelto.
@@ -137,9 +147,20 @@ func (r ResolucionIdentificacion) Resolver(ctx context.Context, s SolicitudResol
 		return CasoIdentificacion{}, err
 	}
 
+	// El sello se abre antes de la unidad: es un dato del cuerpo, y un sello
+	// que no verifica no tiene por que tomar el cerrojo del periodo.
+	var mostrada *identificacion.Sugerencia
+	if sello := strings.TrimSpace(s.Sello); sello != "" {
+		vista, err := abrirPropuesta(r.ClaveSello, usoID, sello)
+		if err != nil {
+			return CasoIdentificacion{}, fmt.Errorf("resolver el caso %q: %w", usoID, ErrPropuestaInvalida)
+		}
+		mostrada = &vista
+	}
+
 	var resuelto CasoIdentificacion
 	err = r.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
-		caso, err := r.resolverEnUnidad(ctx, usoID, decision, obraID, nota, actorID, actorNombre)
+		caso, err := r.resolverEnUnidad(ctx, usoID, decision, obraID, nota, actorID, actorNombre, mostrada)
 		if err != nil {
 			return err
 		}
@@ -156,7 +177,8 @@ func (r ResolucionIdentificacion) Resolver(ctx context.Context, s SolicitudResol
 // llaman con el ctx que recibe fn -- no con el de fuera --: uno llamado con el
 // ctx exterior escribiria fuera de la transaccion y se confirmaria aparte.
 func (r ResolucionIdentificacion) resolverEnUnidad(ctx context.Context, usoID string,
-	decision identificacion.Decision, obraID, nota, actorID, actorNombre string) (CasoIdentificacion, error) {
+	decision identificacion.Decision, obraID, nota, actorID, actorNombre string,
+	mostrada *identificacion.Sugerencia) (CasoIdentificacion, error) {
 
 	// El cerrojo va antes de bloquear la fila, el mismo orden que la
 	// valorizacion y la ingesta: siempre la misma clave, siempre el mismo
@@ -203,14 +225,22 @@ func (r ResolucionIdentificacion) resolverEnUnidad(ctx context.Context, usoID st
 		return CasoIdentificacion{}, err
 	}
 
-	// La sugerencia se calcula ANTES de guardar el ejemplo, para que este
-	// caso no se cuente a si mismo. Sirve para medir si la persona la
-	// confirmo. No cambia `res`: eso es lo que pidio la persona, y un
-	// rankeador no puede resolver el caso (ADR 0007).
+	// Si la persona trae el sello de la bandeja, la aceptacion se mide contra
+	// ESA propuesta. Recalcular aqui leeria el historial de este momento, que
+	// puede haber cambiado desde el listado, y el ejemplo y el asiento
+	// dirian que rechazo una obra que nunca vio. Sin sello no hay propuesta
+	// que conservar: se rankea ahora, antes de guardar el ejemplo, para que
+	// este caso no se cuente a si mismo. Ni el sello ni el rankeo cambian
+	// `res`: eso es lo que pidio la persona (ADR 0007).
 	clave := identificacion.ClaveDeTitulo(caso.Uso.Titulo, caso.Uso.TituloOrig)
-	sug, err := r.sugerir(ctx, clave, caso.Candidatos)
-	if err != nil {
-		return CasoIdentificacion{}, err
+	var sug identificacion.Sugerencia
+	if mostrada != nil {
+		sug = *mostrada
+	} else {
+		sug, err = r.sugerir(ctx, clave, caso.Candidatos)
+		if err != nil {
+			return CasoIdentificacion{}, err
+		}
 	}
 	aceptada := sug.AceptadaPor(decision, obraID)
 

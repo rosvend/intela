@@ -108,10 +108,15 @@ type PaginaCasos struct {
 // sigue listando y la sugerencia queda en "ninguna". La escritura de una
 // resolucion si los exige, porque ahi es donde el ejemplo tiene que quedar
 // guardado (#53).
+//
+// ClaveSello firma la propuesta que ve la persona. La resolucion tiene que
+// usar la misma clave para medir la aceptacion contra esa propuesta y no
+// contra un rankeo posterior. Vacia usa la clave compartida del paquete.
 type CasosIdentificacion struct {
-	Repo      RepositorioCasosIdentificacion
-	Ejemplos  RepositorioEjemplosResolucion
-	Rankeador PuertoRankeadorDeResoluciones
+	Repo       RepositorioCasosIdentificacion
+	Ejemplos   RepositorioEjemplosResolucion
+	Rankeador  PuertoRankeadorDeResoluciones
+	ClaveSello []byte
 }
 
 // Listar valida el filtro, lo traduce a escalones y completa estado y ultima actualizacion de cada caso.
@@ -218,7 +223,9 @@ func (c CasosIdentificacion) conSugerencias(ctx context.Context, casos []CasoIde
 			Candidatos: candidatosDeRanking(caso.Candidatos),
 			Historia:   historia,
 		})
-		casos[i].Sugerencia = sugerenciaVisible(sug, caso.Candidatos, nil)
+		visible := sugerenciaVisible(sug, caso.Candidatos, nil)
+		visible.Sello = sellarPropuesta(c.ClaveSello, caso.UsoID, sug)
+		casos[i].Sugerencia = visible
 	}
 	return casos, nil
 }

@@ -66,6 +66,7 @@ const casoUno = {
     motivo: "sin resoluciones anteriores de este titulo",
     orden: ["obra-1", "obra-2"],
     aceptada: null,
+    sello: "sello-mostrado",
   },
 } satisfies CasoIdentificacion;
 
@@ -229,6 +230,7 @@ describe("BandejaIdentificacion", () => {
         decision: "asignar",
         obra_id: "obra-1",
         nota: "coincide la ficha tecnica",
+        sello: "sello-mostrado",
       },
     });
   });
@@ -286,6 +288,7 @@ describe("BandejaIdentificacion", () => {
         decision: "asignar",
         obra_id: "obra-9",
         nota: "obra correcta del catálogo",
+        sello: "sello-mostrado",
       },
     });
   });
@@ -315,7 +318,11 @@ describe("BandejaIdentificacion", () => {
     await waitFor(() => expect(capturado).not.toBeNull());
     expect(capturado).toEqual({
       id: "caso-1",
-      cuerpo: { decision: "descartar", nota: "no es del repertorio" },
+      cuerpo: {
+        decision: "descartar",
+        nota: "no es del repertorio",
+        sello: "sello-mostrado",
+      },
     });
   });
 

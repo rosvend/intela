@@ -98,6 +98,7 @@ export function sugerenciaNinguna(): SugerenciaIdentificacion {
     motivo: "",
     orden: [],
     aceptada: null,
+    sello: null,
   };
 }
 
@@ -192,6 +193,7 @@ function esSugerencia(valor: unknown): valor is SugerenciaIdentificacion {
     Array.isArray(valor["orden"]) &&
     valor["orden"].every(esTexto) &&
     (aceptada === null || typeof aceptada === "boolean") &&
+    (valor["sello"] === null || esTexto(valor["sello"])) &&
     (decision !== "asignar" ||
       (esTexto(valor["obra_id"]) && valor["obra_id"] !== ""))
   );
@@ -212,6 +214,8 @@ function esSugerencia(valor: unknown): valor is SugerenciaIdentificacion {
  *   los trae -el de un backend sin #175- se rechaza, no se lee como pendiente.
  * - `sugerencia`: la propuesta del rankeador (#53). Ausente no es "ninguna":
  *   un backend que no la manda no se pinta como si no hubiera propuesto nada.
+ *   `sello` viaja siempre: `null` es "no hay propuesta verificable", no la
+ *   falta del campo.
  */
 export function esCaso(valor: unknown): valor is CasoIdentificacion {
   if (!esObjeto(valor)) return false;

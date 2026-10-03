@@ -382,8 +382,10 @@ export interface paths {
          *     accion (`asignar`, `descartar` o `ninguna`) que la persona confirma o
          *     cambia. No resuelve el caso. `aceptada` es `null` mientras este
          *     pendiente y, una vez resuelto, dice si la persona confirmo esa
-         *     propuesta. `candidatos` sigue en el orden de la cascada; `sugerencia.orden`
-         *     es el orden propuesto.
+         *     propuesta. `sello` ata la propuesta a este caso: quien confirma lo
+         *     devuelve para que la aceptacion se mida contra lo que vio, no contra
+         *     un rankeo posterior. `candidatos` sigue en el orden de la cascada;
+         *     `sugerencia.orden` es el orden propuesto.
          *
          *     `pendientes` cuenta los casos pendientes bajo los mismos filtros de
          *     `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
@@ -435,7 +437,10 @@ export interface paths {
          *     reparte entre las obras que si ponderan.
          *
          *     La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
-         *     Se puede resolver aunque el periodo este en reparto o ya distribuido:
+         *     `sello`, si viene, es el de `sugerencia.sello` del listado: la
+         *     aceptacion se mide contra esa propuesta. Un sello que no verifica
+         *     responde 400. Se puede resolver aunque el periodo este en reparto o ya
+         *     distribuido:
          *     la operacion se serializa con el cerrojo de periodo que comparten la
          *     compuerta de anomalias, la ingesta y la valorizacion.
          *
@@ -2745,6 +2750,10 @@ export interface components {
          *
          *     `orden` son los ids de obra de mejor a peor ajuste. `candidatos` no se
          *     reordena: sigue siendo la evidencia de la cascada.
+         *
+         *     `sello` es la propuesta verificable que se mostro. El cliente lo
+         *     devuelve al resolver. `null` en un caso ya resuelto: ahi la propuesta
+         *     guardada es la que se midio.
          */
         SugerenciaIdentificacion: {
             /**
@@ -2772,6 +2781,12 @@ export interface components {
              *     persona confirmo la sugerencia y `false` si la cambio.
              */
             aceptada: boolean | null;
+            /**
+             * @description Sello de la propuesta mostrada para este caso. Quien confirma lo
+             *     devuelve en el cuerpo de la resolucion. `null` si no hay una
+             *     propuesta verificable que devolver (un caso ya resuelto).
+             */
+            sello: string | null;
         };
         /**
          * @description La decision sobre un caso ONI. Quien resuelve y cuando lo pone el
@@ -2802,6 +2817,13 @@ export interface components {
              * @example coincide la ficha tecnica con la declaracion
              */
             nota: string;
+            /**
+             * @description El `sugerencia.sello` del listado. Si viene, la aceptacion se mide
+             *     contra esa propuesta aunque el historial haya cambiado. Si no
+             *     verifica, la peticion es un 400 y no se escribe nada.
+             * @example eyJ1c28iOiJ1c28tMSJ9.firma
+             */
+            sello?: string;
         };
         CandidatoIdentificacion: {
             obra_id: string;
@@ -4096,7 +4118,8 @@ export interface operations {
                      *             "orden": [
                      *               "obra-12"
                      *             ],
-                     *             "aceptada": null
+                     *             "aceptada": null,
+                     *             "sello": "eyJ1c28iOiJ1c28tMSJ9.firma"
                      *           }
                      *         }
                      *       ]
@@ -4198,8 +4221,8 @@ export interface operations {
             /**
              * @description El cuerpo no es un JSON valido, la nota falta o pasa de 300
              *     caracteres, la decision no es `asignar` ni `descartar`, `asignar`
-             *     viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
-             *     catalogo.
+             *     viene sin `obra_id` (o `descartar` con el), la obra no esta en el
+             *     catalogo, o `sello` no es el de la propuesta mostrada para ese caso.
              */
             400: {
                 headers: {

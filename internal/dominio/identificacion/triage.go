@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/shopspring/decimal"
+	"golang.org/x/text/unicode/norm"
 )
 
 // SugerenciaNinguna es la accion cuando no hay con que proponer: ni candidatas
@@ -87,6 +89,10 @@ func (s Sugerencia) AceptadaPor(d Decision, obraID string) bool {
 // a un espacio. Se prefiere el titulo emitido; el original solo entra si el
 // emitido viene vacio.
 //
+// NFC y NFD del mismo titulo dan la misma clave. Una marca combinante no es
+// un separador: si lo fuera, "Niña" y "Nin\u0303a" irian a historiales distintos
+// y el rankeo cambiaria segun como venga codificado el reporte.
+//
 // No es titulo_normalizado() de Postgres (eso indexa el catalogo). Esta clave
 // la calcula el nucleo para que el mismo titulo agrupen igual el caso de uso
 // y la prueba, sin una base en el medio.
@@ -99,10 +105,16 @@ func ClaveDeTitulo(titulo, tituloOriginal string) string {
 }
 
 func normalizarTitulo(s string) string {
+	// NFD primero: la tilde precompuesta y la combinante quedan en la misma
+	// secuencia, y la marca se descarta en vez de abrir un espacio.
+	s = norm.NFD.String(strings.ToLower(s))
 	var b strings.Builder
 	b.Grow(len(s))
 	espacio := true
-	for _, r := range strings.ToLower(s) {
+	for _, r := range s {
+		if unicode.Is(unicode.M, r) {
+			continue
+		}
 		r = sinAcento(r)
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)

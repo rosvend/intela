@@ -2,6 +2,8 @@ package aplicacion
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -138,5 +140,94 @@ func TestResolverGuardaElEjemploYNoAplicaLaSugerencia(t *testing.T) {
 	}
 	if p["sugerencia_decision"] != "asignar" || p["sugerencia_obra_id"] != "obra-40" || p["sugerencia_aceptada"] != false {
 		t.Fatalf("el asiento no mide la sugerencia: %v", p)
+	}
+}
+
+// La persona vio obra-12. Entre el listado y la confirmacion otra resolucion
+// del mismo titulo mueve el rankeo a obra-40. Confirmar obra-12 tiene que
+// contar como aceptar LO QUE VIO, no como rechazar la propuesta nueva.
+func TestResolverConservaLaPropuestaMostradaSiCambiaElHistorial(t *testing.T) {
+	repo, libro := repoDePrueba(), &bitacoraFalsa{}
+	clave := []byte("sello-de-prueba")
+	pag, err := CasosIdentificacion{
+		Repo: &casosFalsos{pagina: PaginaCasos{Pendientes: 1, Casos: []CasoIdentificacion{{
+			UsoID: usoDePrueba, Titulo: "La Nina T3 E12",
+			Escalon: identificacion.EscalonONI, ReporteCreado: instanteDePrueba,
+			Candidatos: []CandidatoCaso{
+				{ObraID: "obra-12", Titulo: "La Nina T3", Puntaje: decimal.RequireFromString("0.52941")},
+				{ObraID: "obra-40", Titulo: "Otra obra", Puntaje: decimal.RequireFromString("0.41000")},
+			},
+		}}}},
+		Ejemplos: repo, Rankeador: rankeadorDeDominio{}, ClaveSello: clave,
+	}.Listar(t.Context(), FiltroCasos{Estado: EstadoCasoPendiente})
+	if err != nil {
+		t.Fatalf("Listar: %v", err)
+	}
+	mostrada := pag.Casos[0].Sugerencia
+	if mostrada == nil || mostrada.ObraID != "obra-12" || mostrada.Sello == "" {
+		t.Fatalf("la bandeja no mostro obra-12 con sello: %+v", mostrada)
+	}
+
+	repo.ejemplos["uso-otro"] = EjemploResolucion{
+		UsoID: "uso-otro", Clave: identificacion.ClaveDeTitulo("La Nina T3 E12", ""),
+		Decision: identificacion.DecisionAsignar, ObraElegida: "obra-40",
+	}
+
+	svc, _ := servicioDeResolucion(repo, libro, &relojEspia{instante: instanteDePrueba})
+	svc.ClaveSello = clave
+	pedido := solicitudAsignar("obra-12")
+	pedido.Sello = mostrada.Sello
+	caso, err := svc.Resolver(t.Context(), pedido, actorResolucion, nombreActor)
+	if err != nil {
+		t.Fatalf("Resolver: %v", err)
+	}
+
+	ejemplo := repo.ejemplos[usoDePrueba]
+	if ejemplo.SugerenciaObraID != "obra-12" || !ejemplo.Aceptada {
+		t.Fatalf("se midio el historial nuevo, no la propuesta mostrada: %+v", ejemplo)
+	}
+	if ejemplo.ObraElegida != "obra-12" {
+		t.Fatalf("la decision de la persona no quedo: %+v", ejemplo)
+	}
+	if !strings.Contains(ejemplo.Motivo, "sin resoluciones anteriores") {
+		t.Fatalf("el motivo se recalculo con el historial nuevo: %q", ejemplo.Motivo)
+	}
+	if caso.Sugerencia == nil || caso.Sugerencia.Aceptada == nil || !*caso.Sugerencia.Aceptada ||
+		caso.Sugerencia.ObraID != "obra-12" {
+		t.Fatalf("la respuesta no dice que se confirmo lo mostrado: %+v", caso.Sugerencia)
+	}
+
+	p := payloadDe(t, libro)
+	if p["sugerencia_decision"] != "asignar" || p["sugerencia_obra_id"] != "obra-12" || p["sugerencia_aceptada"] != true {
+		t.Fatalf("el asiento no conserva la propuesta mostrada: %v", p)
+	}
+	if p["decision"] != "asignar" || p["obra_id"] != "obra-12" {
+		t.Fatalf("el asiento dejo de ser la decision de la persona: %v", p)
+	}
+}
+
+func TestResolverRechazaUnaPropuestaQueNoVerifica(t *testing.T) {
+	repo, libro := repoDePrueba(), &bitacoraFalsa{}
+	clave := []byte("sello-de-prueba")
+	svc, unidad := servicioDeResolucion(repo, libro, &relojEspia{instante: instanteDePrueba})
+	svc.ClaveSello = clave
+	pedido := solicitudAsignar("obra-12")
+	pedido.Sello = "no-es-un-sello"
+
+	_, err := svc.Resolver(t.Context(), pedido, actorResolucion, nombreActor)
+	if !errors.Is(err, ErrPropuestaInvalida) {
+		t.Fatalf("err = %v, quiere ErrPropuestaInvalida", err)
+	}
+	if unidad.entradas != 0 {
+		t.Fatal("un sello que no verifica no debe abrir la unidad")
+	}
+	if len(libro.asientos) != 0 {
+		t.Fatal("un sello que no verifica dejo evidencia en la bitacora")
+	}
+	if _, hay := repo.ejemplos[usoDePrueba]; hay {
+		t.Fatal("un sello que no verifica guardo el ejemplo")
+	}
+	if repo.usos[usoDePrueba].Uso.Escalon != identificacion.EscalonONI {
+		t.Fatal("un sello que no verifica resolvio el caso")
 	}
 }

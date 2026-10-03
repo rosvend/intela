@@ -407,6 +407,12 @@ var (
 	// senala una entidad inexistente es un 400, no un 5xx.
 	ErrObraInexistente = errors.New("esa obra no esta en el catalogo")
 
+	// ErrPropuestaInvalida: el sello que viaja con la resolucion no es el de
+	// la propuesta que esta bandeja mostro para ese caso. Medir la aceptacion
+	// contra un rankeo inventado por el cliente falsearia el ejemplo y el
+	// asiento. No es un 404: el caso puede existir; el dato del cuerpo no verifica.
+	ErrPropuestaInvalida = errors.New("la propuesta mostrada no se puede verificar")
+
 	// ErrAliasEnConflicto: el par canonico (fuente, tipo, valor) del uso ya
 	// tiene alias hacia OTRA obra (#175, D6).
 	//

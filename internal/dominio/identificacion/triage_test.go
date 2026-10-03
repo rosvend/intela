@@ -21,6 +21,8 @@ func TestClaveDeTitulo(t *testing.T) {
 		{"", "La Casa de Papel", "la casa de papel"},
 		{"", "", ""},
 		{"Niño", "", "nino"},
+		{"La Niña", "", "la nina"},
+		{"La Nin\u0303a", "", "la nina"},
 	}
 	for _, c := range casos {
 		t.Run(c.quiere, func(t *testing.T) {
@@ -28,6 +30,28 @@ func TestClaveDeTitulo(t *testing.T) {
 				t.Fatalf("ClaveDeTitulo(%q, %q) = %q, quiere %q", c.titulo, c.original, got, c.quiere)
 			}
 		})
+	}
+}
+
+// La Niña en NFC y "La Nin" + tilde combinante son el mismo titulo. Si la
+// marca abriera un espacio, el historial de una no contaria para la otra y
+// el rankeo cambiaria segun la codificacion del reporte.
+func TestClaveDeTituloAgrupaNFCyNFD(t *testing.T) {
+	nfc := ClaveDeTitulo("La Niña", "")
+	nfd := ClaveDeTitulo("La Nin\u0303a", "")
+	if nfc != "la nina" || nfd != nfc {
+		t.Fatalf("ClaveDeTitulo NFC = %q, NFD = %q, quieren la misma clave %q", nfc, nfd, "la nina")
+	}
+
+	sug := Rankear(PedidoTriage{
+		Clave:      nfd,
+		Candidatos: []Candidato{cand("obra-alta", "0.80"), cand("obra-baja", "0.62")},
+		Historia: []EjemploEtiquetado{
+			{Clave: nfc, Decision: DecisionAsignar, ObraID: "obra-baja"},
+		},
+	})
+	if sug.Decision != string(DecisionAsignar) || sug.ObraID != "obra-baja" {
+		t.Fatalf("el historial NFC no ajusto el caso NFD: %+v", sug)
 	}
 }
 

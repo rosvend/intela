@@ -75,6 +75,9 @@ type sugerenciaJSON struct {
 	Motivo    string                `json:"motivo"`
 	Orden     []string              `json:"orden"`
 	Aceptada  *bool                 `json:"aceptada"`
+	// Sello es null cuando no hay propuesta verificable que devolver al
+	// confirmar: un caso ya resuelto, o una bandeja sin sello.
+	Sello *string `json:"sello"`
 }
 
 func (a *API) listarCasosIdentificacion(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +168,10 @@ func aSugerenciaJSON(s *aplicacion.SugerenciaCaso) sugerenciaJSON {
 	if s.Titulo != "" {
 		titulo := s.Titulo
 		out.Titulo = &titulo
+	}
+	if s.Sello != "" {
+		sello := s.Sello
+		out.Sello = &sello
 	}
 	return out
 }
