@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -136,8 +137,16 @@ func TestLiberarSaldoReservaNoPersisteSiFnFalla(t *testing.T) {
 // B1: N liberaciones concurrentes sobre la MISMA reserva nunca deben
 // repartir mas de lo que habia. Sin el FOR UPDATE de LiberarSaldoReserva,
 // las N goroutines leerian el mismo saldo de 50 y las N lo consumirian.
+//
+// El pool pide una conexion por goroutine. [testhelp.Pool] deja MaxConns=1,
+// y con ese techo las transacciones se serializan en el pool aunque se quite
+// el FOR UPDATE: la prueba seguiria en verde y no mediria el cerrojo (#156,
+// B10). La pausa dentro de fn abre la ventana: sin el cerrojo las N leen 50
+// antes de que ninguna escriba; con el, cada una espera a que la anterior
+// confirme.
 func TestLiberarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
-	s := sembrarCorridaBase(t)
+	const goroutines = 4
+	s := sembrarCorridaSobre(t, poolDePrueba(t, goroutines))
 	ctx := t.Context()
 
 	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
@@ -148,7 +157,6 @@ func TestLiberarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 		t.Fatalf("crear reserva: %v", err)
 	}
 
-	const goroutines = 4
 	var listas sync.WaitGroup
 	arranca := make(chan struct{})
 	saldosVistos := make([]decimal.Decimal, goroutines)
@@ -164,6 +172,7 @@ func TestLiberarSaldoReservaEsAtomicoBajoConcurrencia(t *testing.T) {
 				// Consume todo lo que ve: si dos goroutines ven 50, las dos
 				// intentan dejar el saldo en cero y el total repartido
 				// (fuera de este test, en BolsasAccesorias) se duplicaria.
+				time.Sleep(50 * time.Millisecond)
 				return decimal.Zero, nil, nil
 			})
 		}(i)
@@ -354,5 +363,103 @@ func TestLiberarSaldoReservaDescuentaRendimientoAtomicamenteBajoConcurrencia(t *
 	}
 	if !leido.Monto.IsZero() {
 		t.Fatalf("monto de rendimiento tras la unica liberacion exitosa = %s, se esperaba cero", leido.Monto)
+	}
+}
+
+// TestLiberarSaldoReservaDejaRastroDelRendimientoConsumido es B9 (#156).
+// Consumir un rendimiento al liberar la reserva baja rendimientos.monto y
+// deja en rendimientos_distribuciones la parte que salio de ese ledger. Sin
+// ese rastro, sum(reservas_liberaciones.importe) puede superar
+// reservas.monto_inicial y nadie explica la diferencia.
+func TestLiberarSaldoReservaDejaRastroDelRendimientoConsumido(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", dec("20.00")); err != nil {
+		t.Fatalf("acrecer rendimiento: %v", err)
+	}
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("50.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	// 28+42 = 70, que es saldo 50 mas rendimiento 20. Las proporciones 40/60
+	// parten el rendimiento en 8 y 12, sin residuo.
+	lineas := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("40"), Importe: dec("28.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("60"), Importe: dec("42.00")},
+	}
+	err = s.LiberarSaldoReserva(ctx, "proceso-1", "2026", dec("20.00"),
+		func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			return decimal.Zero, lineas, nil
+		})
+	if err != nil {
+		t.Fatalf("liberar saldo: %v", err)
+	}
+
+	rendimiento, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !rendimiento.Monto.IsZero() {
+		t.Fatalf("monto = %s, se esperaba 0 (20.00 consumidos)", rendimiento.Monto)
+	}
+
+	var liberado decimal.Decimal
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(importe), 0) FROM reservas_liberaciones WHERE proceso_id = 'proceso-1'`,
+	).Scan(&liberado); err != nil {
+		t.Fatalf("sumar liberaciones: %v", err)
+	}
+	if !liberado.Equal(dec("70.00")) {
+		t.Fatalf("liberado = %s, se esperaba 70.00", liberado)
+	}
+	if !liberado.GreaterThan(dec("50.00")) {
+		t.Fatal("la liberacion no supero monto_inicial: el rastro del rendimiento no tendria que explicar nada")
+	}
+
+	esperadas, residuo, err := reparto.DistribuirSobreProporciones(dec("20.00"), lineas)
+	if err != nil {
+		t.Fatalf("partir el rendimiento: %v", err)
+	}
+	if !residuo.IsZero() {
+		t.Fatalf("residuo = %s, este caso parte exacto", residuo)
+	}
+
+	filas, err := s.pool.Query(ctx,
+		`SELECT obra_id, titular_id, importe FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'
+		  ORDER BY titular_id`)
+	if err != nil {
+		t.Fatalf("leer rendimientos_distribuciones: %v", err)
+	}
+	defer filas.Close()
+
+	var vistas int
+	var distribuido decimal.Decimal
+	for filas.Next() {
+		var obraID, titularID string
+		var importe decimal.Decimal
+		if err := filas.Scan(&obraID, &titularID, &importe); err != nil {
+			t.Fatalf("escanear fila: %v", err)
+		}
+		if vistas >= len(esperadas) || obraID != esperadas[vistas].ObraID || titularID != esperadas[vistas].TitularID ||
+			!importe.Equal(esperadas[vistas].Importe) {
+			t.Fatalf("fila %d = %s/%s %s, se esperaba %+v", vistas, obraID, titularID, importe, esperadas)
+		}
+		distribuido = distribuido.Add(importe)
+		vistas++
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("leer rendimientos_distribuciones: %v", err)
+	}
+	if vistas != len(esperadas) {
+		t.Fatalf("se persistieron %d filas, se esperaban %d", vistas, len(esperadas))
+	}
+	if !distribuido.Equal(dec("20.00")) {
+		t.Fatalf("distribuido = %s, se esperaba 20.00: es lo que bajo rendimientos.monto", distribuido)
 	}
 }

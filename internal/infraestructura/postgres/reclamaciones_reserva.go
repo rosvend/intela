@@ -15,14 +15,27 @@ var _ aplicacion.RepositorioReclamacionesReserva = (*Store)(nil)
 // GuardarReclamacion crea/actualiza, bloquea la fila, inserta avales nuevos, recalcula estado desde lo persistido (B4), y debita reservas.saldo una sola vez al pasar a 'resuelta' (B3).
 func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error {
 	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
-		// DO NOTHING y no DO UPDATE: detalle y monto_solicitado son el reclamo
-		// declarado, inmutable una vez abierto -- FirmarReclamacion solo avala.
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO reclamaciones (id, titular_id, proceso_id, detalle, estado, monto_solicitado)
-			 VALUES ($1,$2,$3,$4,'abierta',$5)
-			 ON CONFLICT (id) DO NOTHING`,
-			r.ID, r.TitularID, r.ProcesoOrigenID, r.Detalle, r.MontoSolicitado,
-		); err != nil {
+		// detalle y monto_solicitado son el reclamo declarado, inmutable una vez
+		// abierto: FirmarReclamacion solo avala, y por eso el alta repetida de
+		// una firma usa ON CONFLICT DO NOTHING.
+		//
+		// Una apertura (sin avales) no puede hacer lo mismo. ON CONFLICT
+		// tragaba la clave duplicada y AbrirReclamacion devolvía el struct en
+		// memoria, con un monto_solicitado que la fila no tiene: es el campo
+		// que despues se debita. La apertura choca contra la primaria y se
+		// traduce como ErrReclamacionYaRegistrada, el mismo criterio que
+		// CrearReserva (esClaveDuplicada, no un SELECT previo).
+		insertar := `INSERT INTO reclamaciones (id, titular_id, proceso_id, detalle, estado, monto_solicitado)
+			 VALUES ($1,$2,$3,$4,'abierta',$5)`
+		args := []any{r.ID, r.TitularID, r.ProcesoOrigenID, r.Detalle, r.MontoSolicitado}
+		if len(r.Avales) == 0 {
+			if _, err := tx.Exec(ctx, insertar, args...); err != nil {
+				if esClaveDuplicada(err) {
+					return fmt.Errorf("abrir reclamacion %q: %w", r.ID, aplicacion.ErrReclamacionYaRegistrada)
+				}
+				return traducirError(err, "crear reclamacion %q", r.ID)
+			}
+		} else if _, err := tx.Exec(ctx, insertar+` ON CONFLICT (id) DO NOTHING`, args...); err != nil {
 			return traducirError(err, "crear reclamacion %q", r.ID)
 		}
 
