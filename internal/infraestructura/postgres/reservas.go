@@ -83,6 +83,28 @@ func (s *Store) LiberarSaldoReserva(
 				vigenciaRendimiento, rendimientoAUsar); err != nil {
 				return traducirError(err, "descontar rendimiento nacional/%s", vigenciaRendimiento)
 			}
+			// Las lineas de fn mezclan el saldo de la reserva y el rendimiento.
+			// reservas_liberaciones guarda ese total; rendimientos_distribuciones
+			// guarda solo la parte del rendimiento, con el mismo peso (el
+			// Importe de cada linea) que usa DistribuirSobreProporciones. Asi
+			// rendimientos.monto reconcilia contra lo distribuido, y un
+			// sum(reservas_liberaciones.importe) por encima de monto_inicial
+			// tiene el registro que explica la diferencia. El residuo de
+			// redondeo queda explicito: no se absorbe en la ultima linea.
+			partes, _, err := reparto.DistribuirSobreProporciones(rendimientoAUsar, lineas)
+			if err != nil {
+				return err
+			}
+			for _, l := range partes {
+				if _, err := tx.Exec(ctx,
+					`INSERT INTO rendimientos_distribuciones
+					   (circuito, vigencia, proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
+					 VALUES ('nacional', $1, $2, $3, $4, $5, $6, $7)`,
+					vigenciaRendimiento, procesoID, l.ObraID, l.TitularID, l.IPI, l.Porcentaje, l.Importe,
+				); err != nil {
+					return traducirError(err, "guardar distribucion del rendimiento nacional/%s", vigenciaRendimiento)
+				}
+			}
 		}
 
 		for _, l := range lineas {
