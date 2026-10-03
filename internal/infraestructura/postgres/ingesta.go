@@ -679,9 +679,16 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 // necesita para aplicar RD 9.1.1 y las tasas de cambio. No es el
 // SnapshotEnFecha completo del proceso de reparto: solo lo que #26 cablea.
 //
-// MonedaBase es COP porque las claves cambio.* se siembran como factor a
-// pesos. La lista de monedas NO vive en Go: solo se convierten las que
-// tengan fila cambio.<ISO>.
+// MonedaBase es [monedaBase]: las claves cambio.* se siembran como factor a
+// pesos, y la misma constante entra en el digest de un snapshot de reparto.
+// Un literal distinto aqui reinterpretaria las tasas contra otra moneda. La
+// lista de monedas NO vive en Go: solo se convierten las que tengan fila
+// cambio.<ISO>.
+//
+// cambio.USD y cambio.usd son claves distintas para el EXCLUDE y para
+// `vistos`, pero las dos caen en Tasas["USD"]. La segunda no pisa a la
+// primera: es el mismo [aplicacion.ErrorTasaAmbigua] que ya devuelve
+// [armarSnapshot].
 func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT clave, valor FROM parametros
@@ -694,10 +701,14 @@ func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, er
 	defer filas.Close()
 
 	snap := reparto.Snapshot{
-		MonedaBase: "COP",
+		MonedaBase: monedaBase,
 		Tasas:      map[string]decimal.Decimal{},
 	}
 	vistos := map[string]bool{}
+	// isoDeClave recuerda, por codigo ISO ya normalizado, cual clave original
+	// lo fijo primero. El ORDER BY de arriba hace el resultado independiente
+	// del orden en que la base devuelva las filas.
+	isoDeClave := map[string]string{}
 	for filas.Next() {
 		var clave string
 		var valor decimal.Decimal
@@ -714,8 +725,16 @@ func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, er
 		case "duracion.minutos_hora_tv":
 			snap.MinutosHoraTV = valor
 		default:
-			if codigo, ok := strings.CutPrefix(clave, "cambio."); ok && codigo != "" {
-				snap.Tasas[strings.ToUpper(codigo)] = valor
+			if codigo, ok := strings.CutPrefix(clave, prefijoTasa); ok && codigo != "" {
+				iso := strings.ToUpper(codigo)
+				if otra, ya := isoDeClave[iso]; ya {
+					return reparto.Snapshot{}, &aplicacion.ErrorTasaAmbigua{
+						Codigo: iso,
+						Claves: []string{otra, clave},
+					}
+				}
+				isoDeClave[iso] = clave
+				snap.Tasas[iso] = valor
 			}
 		}
 	}
