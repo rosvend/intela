@@ -706,6 +706,63 @@ func (a Anomalias) CriticasAbiertas(ctx context.Context, periodo string) (int, e
 	return n, nil
 }
 
+// ConteoDeTipo es lo abierto de un tipo y si ese tipo bloquea la corrida.
+type ConteoDeTipo struct {
+	Abiertas int
+	Critica  bool
+}
+
+// ResumenAlertas es la foto de lectura de un periodo para el tablero y la compuerta:
+// cuenta en la base (no sobre una pagina) y no evalua.
+type ResumenAlertas struct {
+	Periodo           string
+	Abiertas          int
+	CriticasAbiertas  int
+	CriticasAceptadas int
+	PorTipo           map[string]ConteoDeTipo
+	// UltimaEvaluacion es nil si nadie evaluo el periodo: "sin evaluar" no es "limpio".
+	UltimaEvaluacion *time.Time
+}
+
+// Resumen cuenta lo abierto del periodo por tipo y dice cuando se evaluo por ultima vez; no evalua ni escribe.
+func (a Anomalias) Resumen(ctx context.Context, periodo string) (ResumenAlertas, error) {
+	periodo, err := recaudo.ValidarPeriodo(periodo)
+	if err != nil {
+		return ResumenAlertas{}, err
+	}
+	if a.Alertas == nil || a.Bitacora == nil {
+		return ResumenAlertas{}, errors.New("anomalias mal cableadas: faltan Alertas o Bitacora")
+	}
+	r := ResumenAlertas{Periodo: periodo, PorTipo: make(map[string]ConteoDeTipo, len(anomalias.Tipos()))}
+	for _, t := range anomalias.Tipos() {
+		n, err := a.Alertas.ContarAlertasSinResolver(ctx, periodo, []string{t})
+		if err != nil {
+			return ResumenAlertas{}, fmt.Errorf("contar alertas abiertas de %q tipo %q: %w", periodo, t, err)
+		}
+		critica := anomalias.EsCritica(t)
+		r.PorTipo[t] = ConteoDeTipo{Abiertas: n, Critica: critica}
+		r.Abiertas += n
+		if critica {
+			r.CriticasAbiertas += n
+		}
+	}
+	r.CriticasAceptadas, err = a.Alertas.ContarAlertasConAccion(ctx, periodo, anomalias.AccionAceptarTalCual)
+	if err != nil {
+		return ResumenAlertas{}, fmt.Errorf("contar criticas aceptadas de %q: %w", periodo, err)
+	}
+	asientos, err := a.Bitacora.De(ctx, RefPeriodo, periodo)
+	if err != nil {
+		return ResumenAlertas{}, fmt.Errorf("leer la bitacora de %q: %w", periodo, err)
+	}
+	for _, as := range asientos {
+		if as.Hecho == HechoAnomaliasEvaluadas && (r.UltimaEvaluacion == nil || as.Cuando.After(*r.UltimaEvaluacion)) {
+			c := as.Cuando
+			r.UltimaEvaluacion = &c
+		}
+	}
+	return r, nil
+}
+
 // conteoVacioPorTipo devuelve los seis tipos en cero. Un cero explicito y no
 // una clave ausente: el tablero pinta una tarjeta por tipo, y una clave que
 // falta se distingue mal de un cero cuando el JSON llega al otro lado.
