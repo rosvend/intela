@@ -104,6 +104,21 @@ export function esErrorDeApi(
   );
 }
 
+/**
+ * Lo que se dice cuando un 2xx no trae JSON.
+ *
+ * `api()` devuelve entonces el `Response` crudo: la respuesta sin leer.
+ * `useApi` y `useRecurso` lo convierten en error con este mismo texto. `T` es
+ * una promesa y no una comprobacion; esta es la diferencia que la frontera si
+ * puede notar. Sin el corte, el tablero entregaba el `Response` como `datos`
+ * y el widget reventaba en `datos.obras.length`.
+ */
+export const MENSAJE_RESPUESTA_SIN_JSON = "la respuesta no vino en JSON";
+
+export function esRespuestaSinJson(datos: unknown): datos is Response {
+  return datos instanceof Response;
+}
+
 // Sustituible para que un 401 navegue con el router en vez de recargar la
 // pagina entera y perder el estado en memoria. Sin registrar ninguno, el
 // comportamiento es el de siempre: window.location.href.
