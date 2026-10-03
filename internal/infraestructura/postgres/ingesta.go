@@ -692,8 +692,10 @@ func (s *Store) UsosPorIDs(ctx context.Context, ids []string) (map[string]aplica
 func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT clave, valor FROM parametros
-		 WHERE vigente_hasta IS NULL
-		    OR vigente_hasta > CURRENT_DATE
+		 WHERE (vigente_hasta IS NULL OR vigente_hasta > CURRENT_DATE)
+		   -- Las filas textuales (00025, p.ej. cine_teatro.base) no son
+		   -- coeficientes de normalizacion, y su valor NULL no cabe en el Scan.
+		   AND valor IS NOT NULL
 		 ORDER BY clave, vigente_desde DESC`)
 	if err != nil {
 		return reparto.Snapshot{}, traducirError(err, "leer parametros de normalizacion")

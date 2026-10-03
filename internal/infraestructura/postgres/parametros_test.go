@@ -35,8 +35,9 @@ const (
 // el sembrador.
 var vigenciaBase = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// juegoCompleto son las diecinueve clausulas que [clausulasDelSnapshot] exige,
-// mas las dos tasas del sembrador.
+// juegoCompleto son las veinte clausulas que [clausulasDelSnapshot] exige
+// -diecinueve cifras y la base de cine, textual-, mas las dos tasas del
+// sembrador.
 //
 // En orden deliberadamente revuelto: el id no puede depender de como lleguen.
 func juegoCompleto() []parametroResuelto {
@@ -70,6 +71,8 @@ func juegoCompleto() []parametroResuelto {
 		sint("grupo.lideres_pct", "10"),
 		sint("grupo.estandar_pct", "10"),
 		sint("asignacion.terceros_pct", "5"),
+		// Base de cine/teatro (P-18, #194): la unica clausula textual.
+		unParametroTexto("cine_teatro.base", reparto.BaseTaquilla, organoSintetic, reglamentoSintetico),
 	}
 }
 
@@ -81,6 +84,13 @@ func unParametro(clave, valor, organo, reglamento string) parametroResuelto {
 		reglamento:   reglamento,
 		vigenteDesde: vigenciaBase,
 	}
+}
+
+// unParametroTexto es [unParametro] para una fila de `valor_texto`.
+func unParametroTexto(clave, valor, organo, reglamento string) parametroResuelto {
+	p := unParametro(clave, "0", organo, reglamento)
+	p.valor, p.valorTexto = decimal.Decimal{}, valor
+	return p
 }
 
 // sin devuelve el juego completo menos una clausula.
@@ -158,6 +168,11 @@ func TestArmarSnapshotConElJuegoCompletoLlenaTodosLosHuecos(t *testing.T) {
 
 	if snap.MonedaBase != monedaBase {
 		t.Errorf("MonedaBase = %q, se esperaba %q", snap.MonedaBase, monedaBase)
+	}
+	// La clausula textual tambien llena su hueco (#194): sin ella toda
+	// corrida de cine fallaba al valorizar.
+	if snap.BaseCineTeatro != reparto.BaseTaquilla {
+		t.Errorf("BaseCineTeatro = %q, se esperaba %q", snap.BaseCineTeatro, reparto.BaseTaquilla)
 	}
 	// Solo se convierte lo que tiene fila (ADR 0004, B4).
 	if len(snap.Tasas) != 2 || !snap.Tasas["USD"].Equal(decimal.NewFromInt(4000)) ||
@@ -326,6 +341,9 @@ func TestClausulasDelSnapshotCubrenTodosLosCamposDecimal(t *testing.T) {
 
 	tocados := make(map[string]bool)
 	for _, c := range clausulasDelSnapshot {
+		if c.en == nil {
+			continue // textual: la cubre TestLaClausulaTextualLlenaLaBaseDeCine
+		}
 		var s reparto.Snapshot
 		c.en(&s, marca)
 
@@ -432,10 +450,6 @@ func TestArmarSnapshotEscalaLasDeduccionesParaElMotor(t *testing.T) {
 	if len(faltan) > 0 {
 		t.Fatalf("faltan clausulas: %v", faltan)
 	}
-	// BaseCineTeatro queda fuera de clausulasDelSnapshot (es texto, no
-	// decimal.Decimal; #34 lo cablea) pero puntosCineTeatro lo exige.
-	snap.BaseCineTeatro = reparto.BaseEspectadores
-
 	bruto := decimal.RequireFromString("1000000000") // mil millones de pesos
 	bolsa, err := recaudo.NuevaBolsa("canal-z", "2024-01", recaudo.Nacional, bruto)
 	if err != nil {
@@ -480,12 +494,36 @@ func sembrarParametros(t *testing.T, pool *pgxpool.Pool, desde string) {
 	t.Helper()
 
 	for _, p := range juegoCompleto() {
+		valor, valorTexto := columnasDeValor(p)
 		if _, err := pool.Exec(t.Context(),
-			`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
-			 VALUES ($1, $2, $3::date, $4, $5)`,
-			p.clave, p.valor, desde, p.organo, p.reglamento); err != nil {
+			`INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			 VALUES ($1, $2, $3, $4::date, $5, $6)`,
+			p.clave, valor, valorTexto, desde, p.organo, p.reglamento); err != nil {
 			t.Fatalf("sembrar el parametro %s: %v", p.clave, err)
 		}
+	}
+}
+
+// columnasDeValor reparte el valor en las dos columnas excluyentes de la
+// migracion 00025: la que no aplica va NULL.
+func columnasDeValor(p parametroResuelto) (valor, valorTexto any) {
+	if p.esTexto() {
+		return nil, p.valorTexto
+	}
+	return p.texto(), nil
+}
+
+// plantarCongelada escribe una fila en `snapshots_parametros` por fuera del
+// adaptador, para dejar la tabla en estados que congelar() no produce.
+func plantarCongelada(t *testing.T, pool *pgxpool.Pool, id string, p parametroResuelto) {
+	t.Helper()
+	valor, valorTexto := columnasDeValor(p)
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO snapshots_parametros
+		   (snapshot_id, clave, valor, valor_texto, organo, reglamento, vigente_desde)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::date)`,
+		id, p.clave, valor, valorTexto, p.organo, p.reglamento, texto(p.vigenteDesde)); err != nil {
+		t.Fatalf("plantar la fila %s bajo %s: %v", p.clave, id, err)
 	}
 }
 
@@ -569,9 +607,11 @@ func TestSnapshotEnFechaEscalaLasDeduccionesParaElMotorIntegracion(t *testing.T)
 
 	for nombre, snap := range map[string]reparto.Snapshot{"recien resuelto": congelado, "releido por id": releido} {
 		t.Run(nombre, func(t *testing.T) {
-			// BaseCineTeatro queda fuera de clausulasDelSnapshot (es texto, no
-			// decimal.Decimal; #34 lo cablea) pero puntosCineTeatro lo exige.
-			snap.BaseCineTeatro = reparto.BaseEspectadores
+			// La base de cine viaja congelada y releida como las cifras
+			// (#194): ya no hace falta fijarla a mano para usar el snapshot.
+			if snap.BaseCineTeatro != reparto.BaseTaquilla {
+				t.Errorf("BaseCineTeatro = %q, se esperaba %q", snap.BaseCineTeatro, reparto.BaseTaquilla)
+			}
 
 			r, err := reparto.Reparto(bolsa, usos, snap, decls, reparto.Opciones{})
 			if err != nil {
@@ -832,12 +872,7 @@ func TestUnaEscrituraParcialPreviaSeRechazaYNoDejaFilasNuevas(t *testing.T) {
 	// INSERT es una sola sentencia atomica.
 	parcial := pares[:3]
 	for _, p := range parcial {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO snapshots_parametros (snapshot_id, clave, valor, organo, reglamento, vigente_desde)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			id, p.clave, p.valor, p.organo, p.reglamento, texto(p.vigenteDesde)); err != nil {
-			t.Fatalf("sembrar la fila parcial %s: %v", p.clave, err)
-		}
+		plantarCongelada(t, pool, id, p)
 	}
 
 	// La resolucion real choca con esas filas: ON CONFLICT DO NOTHING las
@@ -994,8 +1029,9 @@ func TestSnapshotPorIDReconstruyeConLasClausulasDeSuPropiaVersionYNoConLasActual
 	ctx := t.Context()
 
 	const versionVieja = 99
-	faltante := clausulasDelSnapshot[len(clausulasDelSnapshot)-1]
-	clausulasViejas := slices.Clone(clausulasDelSnapshot[:len(clausulasDelSnapshot)-1])
+	i := slices.IndexFunc(clausulasDelSnapshot, func(c clausula) bool { return c.clave == "asignacion.terceros_pct" })
+	faltante := clausulasDelSnapshot[i]
+	clausulasViejas := slices.Delete(slices.Clone(clausulasDelSnapshot), i, i+1)
 
 	// Registro temporal: cualquier prueba que corra despues no puede heredar
 	// esta version fantasma.
@@ -1010,13 +1046,7 @@ func TestSnapshotPorIDReconstruyeConLasClausulasDeSuPropiaVersionYNoConLasActual
 	id := idDeSnapshot(pares, monedaBase, prefijoViejo)
 
 	for _, p := range pares {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO snapshots_parametros
-			   (snapshot_id, clave, valor, organo, reglamento, vigente_desde)
-			 VALUES ($1, $2, $3, $4, $5, $6::date)`,
-			id, p.clave, p.texto(), p.organo, p.reglamento, texto(p.vigenteDesde)); err != nil {
-			t.Fatalf("plantar la fila %s bajo la version vieja: %v", p.clave, err)
-		}
+		plantarCongelada(t, pool, id, p)
 	}
 
 	snap, err := store.SnapshotPorID(ctx, id)
@@ -1041,13 +1071,7 @@ func TestSnapshotPorIDRechazaFilasQueNoHasheanASuID(t *testing.T) {
 
 	falso := prefijoSnapshot + strings.Repeat("0", 64)
 	for _, p := range consumidos(juegoCompleto(), clausulasDelSnapshot) {
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO snapshots_parametros
-			   (snapshot_id, clave, valor, organo, reglamento, vigente_desde)
-			 VALUES ($1, $2, $3, $4, $5, $6::date)`,
-			falso, p.clave, p.texto(), p.organo, p.reglamento, texto(p.vigenteDesde)); err != nil {
-			t.Fatalf("plantar la fila %s: %v", p.clave, err)
-		}
+		plantarCongelada(t, pool, falso, p)
 	}
 
 	_, err := store.SnapshotPorID(ctx, falso)
@@ -1189,6 +1213,12 @@ func TestVigentesDevuelveLoQueRigeConSuProcedencia(t *testing.T) {
 		t.Errorf("VigenteDesde = %v, se esperaba 2025-01-01", viva.VigenteDesde)
 	}
 
+	// Una fila textual sale con su texto, la misma forma que se congela.
+	k := slices.IndexFunc(filas, func(f aplicacion.FilaParametro) bool { return f.Clave == "cine_teatro.base" })
+	if k < 0 || filas[k].Valor != reparto.BaseTaquilla {
+		t.Errorf("cine_teatro.base en Vigentes = %+v, se esperaba el valor %q", filas, reparto.BaseTaquilla)
+	}
+
 	// Un tramo cerrado si lo lleva, y esa es la mitad que dice hasta cuando
 	// valio lo anterior.
 	antes, err := store.Vigentes(t.Context(), fecha(t, "2024-06-30"))
@@ -1234,6 +1264,9 @@ func compararSnapshots(t *testing.T, quiero, tengo reparto.Snapshot) {
 	if tengo.Reglamento != quiero.Reglamento {
 		t.Errorf("Reglamento = %q, se esperaba %q", tengo.Reglamento, quiero.Reglamento)
 	}
+	if tengo.BaseCineTeatro != quiero.BaseCineTeatro {
+		t.Errorf("BaseCineTeatro = %q, se esperaba %q", tengo.BaseCineTeatro, quiero.BaseCineTeatro)
+	}
 	if tengo.MonedaBase != quiero.MonedaBase {
 		t.Errorf("MonedaBase = %q, se esperaba %q", tengo.MonedaBase, quiero.MonedaBase)
 	}
@@ -1243,6 +1276,235 @@ func compararSnapshots(t *testing.T, quiero, tengo reparto.Snapshot) {
 	for iso, v := range quiero.Tasas {
 		if tengo.Tasas[iso].String() != v.String() {
 			t.Errorf("Tasas[%s] = %s, se esperaba %s", iso, tengo.Tasas[iso], v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// La base de cine/teatro como clausula textual (#194, P-18)
+// ---------------------------------------------------------------------------
+
+// Toda clausula es numerica o textual, nunca las dos ni ninguna; y la unica
+// textual es la que llena Snapshot.BaseCineTeatro.
+func TestLaClausulaTextualLlenaLaBaseDeCine(t *testing.T) {
+	var textuales []string
+	for _, c := range clausulasDelSnapshot {
+		if (c.en == nil) == (c.enTexto == nil) {
+			t.Fatalf("la clausula %q tiene que ser numerica o textual, exactamente una", c.clave)
+		}
+		if c.enTexto == nil {
+			continue
+		}
+		textuales = append(textuales, c.clave)
+		var s reparto.Snapshot
+		if err := c.enTexto(&s, reparto.BaseEspectadores); err != nil {
+			t.Fatalf("%s: %v", c.clave, err)
+		}
+		if s.BaseCineTeatro != reparto.BaseEspectadores {
+			t.Errorf("%s no escribio BaseCineTeatro: %+v", c.clave, s)
+		}
+	}
+	if !slices.Equal(textuales, []string{"cine_teatro.base"}) {
+		t.Fatalf("clausulas textuales = %v, se esperaba solo cine_teatro.base", textuales)
+	}
+}
+
+// Una fila del tipo contrario a su clausula no se convierte en un cero ni en
+// una cadena vacia: es un parametro mal cargado y se nombra.
+func TestArmarSnapshotRechazaUnaFilaDelTipoContrario(t *testing.T) {
+	reemplazar := func(p parametroResuelto) []parametroResuelto {
+		return append(sin(p.clave), p)
+	}
+	casos := map[string][]parametroResuelto{
+		"cifra en la clausula textual":   reemplazar(unParametro("cine_teatro.base", "1", organoSintetic, reglamentoSintetico)),
+		"texto en una clausula numerica": reemplazar(unParametroTexto("ott.wa", "alto", organoSintetic, reglamentoSintetico)),
+		"texto en una tasa de cambio":    reemplazar(unParametroTexto("cambio.USD", "cuatro_mil", organoSintetic, reglamentoSintetico)),
+		"base de cine desconocida":       reemplazar(unParametroTexto("cine_teatro.base", "boletas", organoSintetic, reglamentoSintetico)),
+	}
+	for nombre, juego := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			id, _, faltan, err := armarSnapshot(consumidos(juego, clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+			if !errors.Is(err, aplicacion.ErrParametroInvalido) {
+				t.Fatalf("se esperaba ErrParametroInvalido, dio: err=%v faltan=%v", err, faltan)
+			}
+			if errors.Is(err, aplicacion.ErrParametroAusente) {
+				t.Errorf("un valor mal cargado no es un parametro ausente: %v", err)
+			}
+			if id != "" {
+				t.Errorf("con un parametro invalido no hay snapshot, dio id %q", id)
+			}
+		})
+	}
+
+	// La base desconocida conserva la causa del dominio.
+	_, _, _, err := armarSnapshot(consumidos(casos["base de cine desconocida"], clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	if !errors.Is(err, reparto.ErrBaseCineTeatroDesconocida) || !strings.Contains(err.Error(), "boletas") {
+		t.Errorf("el error tiene que nombrar la base y su causa de dominio, dio: %v", err)
+	}
+}
+
+// Cambiar la base de cine es otro snapshot: repartir la misma bolsa por
+// taquilla o por espectadores da cifras distintas.
+func TestElIDCambiaSiCambiaLaBaseDeCine(t *testing.T) {
+	// Las dos llamadas se comprueban: si la primera no armara, taquilla
+	// quedaria vacio y la comparacion de abajo pasaria sin comparar dos ids.
+	taquilla, _, faltan, err := armarSnapshot(consumidos(juegoCompleto(), clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("armarSnapshot con taquilla: err=%v faltan=%v", err, faltan)
+	}
+	juego := append(sin("cine_teatro.base"),
+		unParametroTexto("cine_teatro.base", reparto.BaseEspectadores, organoSintetic, reglamentoSintetico))
+	espectadores, snap, faltan, err := armarSnapshot(consumidos(juego, clausulasDelSnapshot), clausulasDelSnapshot, prefijoSnapshot)
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("armarSnapshot con espectadores: err=%v faltan=%v", err, faltan)
+	}
+	if !strings.HasPrefix(taquilla, prefijoSnapshot) || !strings.HasPrefix(espectadores, prefijoSnapshot) {
+		t.Fatalf("ids = %q, %q; se esperaban dos ids %s validos", taquilla, espectadores, prefijoSnapshot)
+	}
+	if taquilla == espectadores {
+		t.Fatal("cambiar la base de cine tiene que cambiar el id")
+	}
+	if snap.BaseCineTeatro != reparto.BaseEspectadores {
+		t.Errorf("BaseCineTeatro = %q, se esperaba %q", snap.BaseCineTeatro, reparto.BaseEspectadores)
+	}
+}
+
+// El id de un snapshot V1 no depende de que la V2 exista: la V1 no consume la
+// base de cine, asi que una fila de cine_teatro.base no entra en su hash.
+func TestLaVersion1NoConsumeLaBaseDeCine(t *testing.T) {
+	sinBase, _, faltan, err := armarSnapshot(consumidos(sin("cine_teatro.base"), clausulasDelSnapshotV1), clausulasDelSnapshotV1, "snp1-")
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("la V1 tiene que armarse sin la base de cine: err=%v faltan=%v", err, faltan)
+	}
+	conBase, snap, _, _ := armarSnapshot(consumidos(juegoCompleto(), clausulasDelSnapshotV1), clausulasDelSnapshotV1, "snp1-")
+	if sinBase != conBase {
+		t.Fatalf("una fila que la V1 no consume cambio su id: %q vs %q", sinBase, conBase)
+	}
+	if snap.BaseCineTeatro != "" {
+		t.Errorf("la V1 nunca cableo la base de cine y la lleno con %q", snap.BaseCineTeatro)
+	}
+}
+
+// Integracion: la base congela en `valor_texto` (con `valor` NULL), se relee
+// por id y el motor valoriza cine con ella. Es el camino que la corrida de
+// Procinal de #194 no podia recorrer.
+func TestSnapshotEnFechaCongelaLaBaseDeCineYElMotorValorizaCine(t *testing.T) {
+	store, pool := colaVacia(t)
+	sembrarParametros(t, pool, "2024-01-01")
+	ctx := t.Context()
+
+	id, congelado, err := store.SnapshotEnFecha(ctx, fecha(t, "2025-01-01"))
+	if err != nil {
+		t.Fatalf("SnapshotEnFecha: %v", err)
+	}
+	if !strings.HasPrefix(id, "snp2-") {
+		t.Fatalf("id = %q, una resolucion fresca congela bajo la version 2", id)
+	}
+
+	var valorNulo bool
+	var valorTexto string
+	if err := pool.QueryRow(ctx,
+		`SELECT valor IS NULL, valor_texto FROM snapshots_parametros
+		  WHERE snapshot_id = $1 AND clave = 'cine_teatro.base'`, id).Scan(&valorNulo, &valorTexto); err != nil {
+		t.Fatalf("leer la base congelada: %v", err)
+	}
+	if !valorNulo || valorTexto != reparto.BaseTaquilla {
+		t.Fatalf("congelado valor NULL=%v valor_texto=%q, se esperaba NULL y %q", valorNulo, valorTexto, reparto.BaseTaquilla)
+	}
+
+	releido, err := store.SnapshotPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("SnapshotPorID: %v", err)
+	}
+	compararSnapshots(t, congelado, releido)
+
+	bolsa, err := recaudo.NuevaBolsa("procinal", "2025-01", recaudo.Nacional, decimal.RequireFromString("1000000"))
+	if err != nil {
+		t.Fatalf("NuevaBolsa: %v", err)
+	}
+	// Taquilla 3:1 contra espectadores 1:3: la base decide el orden.
+	usos := []reparto.Uso{
+		{ObraID: "x", Modalidad: reparto.Cine, Taquilla: decimal.NewFromInt(300), Espectadores: decimal.NewFromInt(10)},
+		{ObraID: "y", Modalidad: reparto.Cine, Taquilla: decimal.NewFromInt(100), Espectadores: decimal.NewFromInt(30)},
+	}
+	decls := []repertorio.Declaracion{
+		{ObraID: "x", Partes: []repertorio.Parte{{TitularID: "t", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(100)}}},
+		{ObraID: "y", Partes: []repertorio.Parte{{TitularID: "t", IPI: "IPI-1", Porcentaje: decimal.NewFromInt(100)}}},
+	}
+	r, err := reparto.Reparto(bolsa, usos, releido, decls, reparto.Opciones{SnapshotID: id})
+	if err != nil {
+		t.Fatalf("Reparto de cine con el snapshot releido: %v", err)
+	}
+	importe := map[string]decimal.Decimal{}
+	for _, o := range r.Obras {
+		importe[o.ObraID] = o.Importe
+	}
+	if !importe["x"].GreaterThan(importe["y"]) {
+		t.Fatalf("con base taquilla x (300) tiene que recibir mas que y (100): %v", importe)
+	}
+}
+
+// Una corrida abierta antes de #194 lleva un snapshot `snp1-`. El binario con
+// la version 2 lo sigue releyendo con las clausulas de la V1 -sin exigir la
+// base de cine- en vez de declararlo corrupto (ADR 0005).
+func TestUnSnapshotV1YaCongeladoSeSigueReleyendo(t *testing.T) {
+	store, pool := colaVacia(t)
+	ctx := t.Context()
+
+	pares := consumidos(sin("cine_teatro.base"), clausulasDelSnapshotV1)
+	id, quiero, faltan, err := armarSnapshot(pares, clausulasDelSnapshotV1, "snp1-")
+	if err != nil || len(faltan) > 0 {
+		t.Fatalf("armar la V1: err=%v faltan=%v", err, faltan)
+	}
+	for _, p := range pares {
+		plantarCongelada(t, pool, id, p)
+	}
+
+	releido, err := store.SnapshotPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("un snapshot V1 tiene que seguir releyendose: %v", err)
+	}
+	compararSnapshots(t, quiero, releido)
+	if releido.BaseCineTeatro != "" {
+		t.Errorf("BaseCineTeatro = %q: la V1 no la congelo y no se puede inventar", releido.BaseCineTeatro)
+	}
+}
+
+// Las dos columnas de valor son excluyentes y el texto tiene charset: es lo
+// que impide que un valor fabrique la preimagen "clave=valor\n" de otro
+// conjunto (migracion 00025). Se prueba en las dos tablas: la de
+// `snapshots_parametros` es la que protege la preimagen que se recalcula al
+// releer un snapshot congelado.
+func TestLaBaseExigeUnSoloValorYTextoCanonico(t *testing.T) {
+	_, pool := colaVacia(t)
+	ctx := t.Context()
+
+	casos := map[string]struct {
+		valor, texto any
+		restriccion  string
+	}{
+		"los dos":          {"1", "taquilla", "_un_solo_valor"},
+		"ninguno":          {nil, nil, "_un_solo_valor"},
+		"texto con igual":  {nil, "taquilla=1", "_valor_texto_charset"},
+		"texto con salto":  {nil, "taquilla\nott.wa", "_valor_texto_charset"},
+		"texto mayusculas": {nil, "Taquilla", "_valor_texto_charset"},
+		"texto vacio":      {nil, "", "_valor_texto_charset"},
+	}
+	tablas := map[string]string{
+		"parametros": `INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			VALUES ('cine_teatro.base', $1, $2, DATE '2024-01-01', $3, $4)`,
+		"snapshots_parametros": `INSERT INTO snapshots_parametros
+			(snapshot_id, clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			VALUES ('snp2-` + strings.Repeat("b", 64) + `', 'cine_teatro.base', $1, $2, DATE '2024-01-01', $3, $4)`,
+	}
+	for tabla, insert := range tablas {
+		for nombre, c := range casos {
+			t.Run(tabla+"/"+nombre, func(t *testing.T) {
+				_, err := pool.Exec(ctx, insert, c.valor, c.texto, organoSintetic, reglamentoSintetico)
+				if err == nil || !strings.Contains(err.Error(), tabla+c.restriccion) {
+					t.Fatalf("se esperaba el rechazo de %s%s, dio: %v", tabla, c.restriccion, err)
+				}
+			})
 		}
 	}
 }
