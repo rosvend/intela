@@ -637,6 +637,7 @@ type RepositorioCasosIdentificacion interface {
 // ancla (publicado_en) se escribe una sola vez; reescribirla resetearia
 // los tres anos de RD 13.8.7.
 type RepositorioPublicacionONI interface {
+	BloquearPeriodoONI(ctx context.Context, periodo string) error
 	PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.DatosIdentificatorios, error)
 	GuardarPublicacion(ctx context.Context, p PublicacionONI) (PublicacionONI, error)
 	AnclarPrescripcion(ctx context.Context, usoIDs []string, cuando time.Time) error

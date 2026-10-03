@@ -50,31 +50,46 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 		return PublicacionONI{}, err
 	}
 
-	pendientes, err := c.ONI.PendientesDePeriodo(ctx, periodo)
-	if err != nil {
-		return PublicacionONI{}, fmt.Errorf("listar ONI del periodo %q: %w", periodo, err)
-	}
-
-	obras := make([]oni.ProyeccionPublica, 0, len(pendientes))
-	usoIDs := make([]string, 0, len(pendientes))
-	for _, d := range pendientes {
-		p, err := oni.Proyectar(d)
-		if err != nil {
-			return PublicacionONI{}, fmt.Errorf("proyectar uso %q: %w", d.ID, err)
+	var pub PublicacionONI
+	err := c.Tx.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := c.ONI.BloquearPeriodoONI(ctx, periodo); err != nil {
+			return err
 		}
-		obras = append(obras, p)
-		usoIDs = append(usoIDs, p.ID)
-	}
 
-	pub := PublicacionONI{
-		Periodo:              periodo,
-		FechaProceso:         ahora,
-		DireccionFisica:      strings.TrimSpace(c.Fisica),
-		DireccionElectronica: strings.TrimSpace(c.Electronica),
-		Obras:                obras,
-	}
+		pendientes, err := c.ONI.PendientesDePeriodo(ctx, periodo)
+		if err != nil {
+			return fmt.Errorf("listar ONI del periodo %q: %w", periodo, err)
+		}
 
-	err = c.Tx.EnUnidad(ctx, func(ctx context.Context) error {
+		if len(pendientes) == 0 {
+			_, err := c.ONI.PublicacionDePeriodo(ctx, periodo)
+			if err == nil {
+				return ErrYaPublicado
+			}
+			if !errors.Is(err, ErrNoEncontrado) {
+				return fmt.Errorf("verificar publicacion previa del periodo %q: %w", periodo, err)
+			}
+		}
+
+		obras := make([]oni.ProyeccionPublica, 0, len(pendientes))
+		usoIDs := make([]string, 0, len(pendientes))
+		for _, d := range pendientes {
+			p, err := oni.Proyectar(d)
+			if err != nil {
+				return fmt.Errorf("proyectar uso %q: %w", d.ID, err)
+			}
+			obras = append(obras, p)
+			usoIDs = append(usoIDs, p.ID)
+		}
+
+		pub = PublicacionONI{
+			Periodo:              periodo,
+			FechaProceso:         ahora,
+			DireccionFisica:      strings.TrimSpace(c.Fisica),
+			DireccionElectronica: strings.TrimSpace(c.Electronica),
+			Obras:                obras,
+		}
+
 		guardada, err := c.ONI.GuardarPublicacion(ctx, pub)
 		if err != nil {
 			return err
@@ -87,6 +102,7 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 
 		payload, err := json.Marshal(payloadPublicacion{
 			Periodo:              pub.Periodo,
+			Secuencia:            pub.Secuencia,
 			FechaProceso:         pub.FechaProceso.UTC().Format(time.RFC3339),
 			NObras:               len(pub.Obras),
 			UsoIDs:               usoIDs,
@@ -117,6 +133,7 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 // retenido vive en otros asientos del reparto.
 type payloadPublicacion struct {
 	Periodo              string   `json:"periodo"`
+	Secuencia            int      `json:"secuencia,omitempty"`
 	FechaProceso         string   `json:"fecha_proceso"`
 	NObras               int      `json:"n_obras"`
 	UsoIDs               []string `json:"uso_ids"`

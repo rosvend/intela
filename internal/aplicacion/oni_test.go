@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,32 +13,60 @@ import (
 )
 
 type repoPublicacionMem struct {
-	pendientes    []oni.DatosIdentificatorios
-	errPendientes error
-	guardadas     []PublicacionONI
-	errGuardar    error
-	anclados      map[string]time.Time
-	errAnclar     error
-	siguienteID   string
+	pendientes      []oni.DatosIdentificatorios
+	errPendientes   error
+	guardadas       []PublicacionONI
+	errGuardar      error
+	anclados        map[string]time.Time
+	errAnclar       error
+	siguienteID     string
+	bloqueosPeriodo []string
+	errBloquear     error
 }
 
-func (r *repoPublicacionMem) PendientesDePeriodo(_ context.Context, _ string) ([]oni.DatosIdentificatorios, error) {
-	return r.pendientes, r.errPendientes
+func (r *repoPublicacionMem) BloquearPeriodoONI(_ context.Context, periodo string) error {
+	if r.errBloquear != nil {
+		return r.errBloquear
+	}
+	r.bloqueosPeriodo = append(r.bloqueosPeriodo, periodo)
+	return nil
+}
+
+func (r *repoPublicacionMem) PendientesDePeriodo(_ context.Context, periodo string) ([]oni.DatosIdentificatorios, error) {
+	if r.errPendientes != nil {
+		return nil, r.errPendientes
+	}
+	var out []oni.DatosIdentificatorios
+	for _, d := range r.pendientes {
+		if d.Periodo != "" && d.Periodo != periodo {
+			continue
+		}
+		if _, anclado := r.anclados[d.ID]; anclado {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func (r *repoPublicacionMem) GuardarPublicacion(_ context.Context, p PublicacionONI) (PublicacionONI, error) {
 	if r.errGuardar != nil {
 		return PublicacionONI{}, r.errGuardar
 	}
+	secuencia := 1
 	for _, g := range r.guardadas {
 		if g.Periodo == p.Periodo {
-			return PublicacionONI{}, ErrYaPublicado
+			if len(p.Obras) == 0 {
+				return PublicacionONI{}, ErrYaPublicado
+			}
+			secuencia++
 		}
 	}
+	p.Secuencia = secuencia
 	if p.ID == "" {
 		p.ID = r.siguienteID
 		if p.ID == "" {
-			p.ID = "pub-1"
+			p.ID = fmt.Sprintf("pub-%d", len(r.guardadas)+1)
 		}
 	}
 	if p.Obras == nil {
@@ -62,20 +91,30 @@ func (r *repoPublicacionMem) AnclarPrescripcion(_ context.Context, usoIDs []stri
 	return nil
 }
 
-func (r *repoPublicacionMem) PublicacionVigente(_ context.Context) (PublicacionONI, error) {
+func (r *repoPublicacionMem) PublicacionVigente(ctx context.Context) (PublicacionONI, error) {
 	if len(r.guardadas) == 0 {
 		return PublicacionONI{}, ErrNoEncontrado
 	}
-	return r.guardadas[len(r.guardadas)-1], nil
+	ultima := r.guardadas[len(r.guardadas)-1]
+	return r.PublicacionDePeriodo(ctx, ultima.Periodo)
 }
 
 func (r *repoPublicacionMem) PublicacionDePeriodo(_ context.Context, periodo string) (PublicacionONI, error) {
-	for _, g := range r.guardadas {
+	var encontrada *PublicacionONI
+	var todasObras []oni.ProyeccionPublica
+	for i := range r.guardadas {
+		g := &r.guardadas[i]
 		if g.Periodo == periodo {
-			return g, nil
+			encontrada = g
+			todasObras = append(todasObras, g.Obras...)
 		}
 	}
-	return PublicacionONI{}, ErrNoEncontrado
+	if encontrada == nil {
+		return PublicacionONI{}, ErrNoEncontrado
+	}
+	res := *encontrada
+	res.Obras = todasObras
+	return res, nil
 }
 
 type bitacoraMem struct {
@@ -314,5 +353,130 @@ func TestAnclaDePrescripcionNoSeReescribe(t *testing.T) {
 	}
 	if !repo.anclados["uso-1"].Equal(momento) {
 		t.Fatal("reescribir el ancla resetearia R-19")
+	}
+}
+
+func TestPublicacionComplementariaONITardio(t *testing.T) {
+	repo := &repoPublicacionMem{
+		pendientes: []oni.DatosIdentificatorios{
+			{ID: "uso-1", Titulo: "Serie X", Fuente: "caracol", Modalidad: "tv", Periodo: "2026-01"},
+		},
+		siguienteID: "pub-1",
+	}
+	bit := &bitacoraMem{}
+	t1 := momento
+	uc1 := PublicarListadoONI{
+		ONI:         repo,
+		Bitacora:    bit,
+		Reloj:       relojFijo{instante: t1},
+		Tx:          txPassthrough{},
+		Fisica:      "Calle 74 #7-35, Bogota",
+		Electronica: "oni@redescritores.com",
+	}
+
+	pub1, err := uc1.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if err != nil {
+		t.Fatalf("primera publicacion: %v", err)
+	}
+	if pub1.Secuencia != 1 {
+		t.Fatalf("Secuencia primera = %d, se esperaba 1", pub1.Secuencia)
+	}
+	if len(pub1.Obras) != 1 || pub1.Obras[0].ID != "uso-1" {
+		t.Fatalf("obras primera = %v", pub1.Obras)
+	}
+	if !repo.anclados["uso-1"].Equal(t1) {
+		t.Fatalf("ancla uso-1 = %v, se esperaba %v", repo.anclados["uso-1"], t1)
+	}
+
+	// Republicar sin nuevos pendientes falla con ErrYaPublicado.
+	_, err = uc1.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if !errors.Is(err, ErrYaPublicado) {
+		t.Fatalf("se esperaba ErrYaPublicado, se obtuvo %v", err)
+	}
+
+	// Llega un reporte tardio con un nuevo uso ONI.
+	t2 := momento.Add(24 * time.Hour)
+	repo.pendientes = append(repo.pendientes, oni.DatosIdentificatorios{
+		ID:        "uso-tardio",
+		Titulo:    "Capitulo Olvidado",
+		Fuente:    "caracol",
+		Modalidad: "tv",
+		Periodo:   "2026-01",
+	})
+	repo.siguienteID = "pub-2"
+
+	uc2 := PublicarListadoONI{
+		ONI:         repo,
+		Bitacora:    bit,
+		Reloj:       relojFijo{instante: t2},
+		Tx:          txPassthrough{},
+		Fisica:      "Calle 74 #7-35, Bogota",
+		Electronica: "oni@redescritores.com",
+	}
+
+	pub2, err := uc2.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if err != nil {
+		t.Fatalf("publicacion complementaria: %v", err)
+	}
+	if pub2.Secuencia != 2 {
+		t.Fatalf("Secuencia complementaria = %d, se esperaba 2", pub2.Secuencia)
+	}
+	if len(pub2.Obras) != 1 || pub2.Obras[0].ID != "uso-tardio" {
+		t.Fatalf("obras complementaria = %v, se esperaba solo el tardio", pub2.Obras)
+	}
+	if !repo.anclados["uso-tardio"].Equal(t2) {
+		t.Fatalf("ancla uso-tardio = %v, se esperaba %v", repo.anclados["uso-tardio"], t2)
+	}
+	// El ancla del uso anterior no se reseteo.
+	if !repo.anclados["uso-1"].Equal(t1) {
+		t.Fatalf("ancla uso-1 cambio a %v", repo.anclados["uso-1"])
+	}
+
+	// Bitacora tiene 2 asientos.
+	if len(bit.asientos) != 2 {
+		t.Fatalf("asientos = %d, se esperaban 2", len(bit.asientos))
+	}
+	if bit.asientos[1].RefID != "pub-2" {
+		t.Fatalf("asiento complementario ref = %s", bit.asientos[1].RefID)
+	}
+
+	// Consultar el listado del periodo consolida ambos.
+	consultar := ConsultarListadoONI{ONI: repo}
+	consolidada, err := consultar.Ejecutar(context.Background(), "2026-01")
+	if err != nil {
+		t.Fatalf("consultar: %v", err)
+	}
+	if len(consolidada.Obras) != 2 {
+		t.Fatalf("obras consolidadas = %d, se esperaban 2", len(consolidada.Obras))
+	}
+
+	// Intentar publicar de nuevo sin mas pendientes falla.
+	_, err = uc2.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if !errors.Is(err, ErrYaPublicado) {
+		t.Fatalf("republicar sin pendientes: se esperaba ErrYaPublicado, se obtuvo %v", err)
+	}
+}
+
+func TestPublicarTomaCerrojoDePeriodo(t *testing.T) {
+	repo := &repoPublicacionMem{
+		pendientes: []oni.DatosIdentificatorios{
+			{ID: "uso-1", Titulo: "Serie X", Fuente: "caracol", Modalidad: "tv", Periodo: "2026-01"},
+		},
+	}
+	uc := PublicarListadoONI{
+		ONI:         repo,
+		Bitacora:    &bitacoraMem{},
+		Reloj:       relojFijo{instante: momento},
+		Tx:          txPassthrough{},
+		Fisica:      "Calle 74 #7-35, Bogota",
+		Electronica: "oni@redescritores.com",
+	}
+
+	_, err := uc.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if err != nil {
+		t.Fatalf("publicar: %v", err)
+	}
+	if len(repo.bloqueosPeriodo) != 1 || repo.bloqueosPeriodo[0] != "2026-01" {
+		t.Fatalf("se esperaba bloqueo de '2026-01', se obtuvo %v", repo.bloqueosPeriodo)
 	}
 }

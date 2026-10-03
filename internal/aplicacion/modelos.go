@@ -515,6 +515,7 @@ type Anticipo struct {
 type PublicacionONI struct {
 	ID                   string
 	Periodo              string
+	Secuencia            int
 	FechaProceso         time.Time
 	DireccionFisica      string
 	DireccionElectronica string
