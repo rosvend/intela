@@ -278,3 +278,34 @@ func TestAbrirProcesoRechazaCircuitoDesconocido(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrProcesoInvalido: un circuito desconocido es un dato mal formado", err)
 	}
 }
+
+// TestAlcanzoEtapaSigueElRecorridoDeCadaCircuito es la regla con la que la
+// liquidacion del periodo separa las corridas que ya dejaron atras la
+// verificacion de las que todavia no (ADR 0024).
+func TestAlcanzoEtapaSigueElRecorridoDeCadaCircuito(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		circuito reparto.Circuito
+		actual   reparto.Etapa
+		objetivo reparto.Etapa
+		quiere   bool
+	}{
+		{"la misma etapa ya se alcanzo", reparto.Nacional, reparto.EtapaLiquidacionFinal, reparto.EtapaLiquidacionFinal, true},
+		{"una etapa posterior la deja atras", reparto.Nacional, reparto.EtapaAuditoria, reparto.EtapaLiquidacionFinal, true},
+		{"pago_registro la deja atras", reparto.Nacional, reparto.EtapaPagoRegistro, reparto.EtapaLiquidacionFinal, true},
+		{"verificacion todavia no llega", reparto.Nacional, reparto.EtapaVerificacion, reparto.EtapaLiquidacionFinal, false},
+		{"recaudo todavia no llega", reparto.Nacional, reparto.EtapaRecaudo, reparto.EtapaLiquidacionFinal, false},
+		{"fees_in_error la deja atras en el internacional", reparto.Internacional, reparto.EtapaFeesInError, reparto.EtapaLiquidacionFinal, true},
+		{"fees_in_error no existe en el nacional", reparto.Nacional, reparto.EtapaFeesInError, reparto.EtapaLiquidacionFinal, false},
+		{"importe_obra no existe en el internacional", reparto.Internacional, reparto.EtapaImporteObra, reparto.EtapaRecaudo, false},
+		{"un objetivo fuera del recorrido no se alcanza", reparto.Internacional, reparto.EtapaAuditoria, reparto.EtapaImporteTitular, false},
+	}
+	for _, tt := range casos {
+		t.Run(tt.nombre, func(t *testing.T) {
+			if got := reparto.AlcanzoEtapa(tt.circuito, tt.actual, tt.objetivo); got != tt.quiere {
+				t.Fatalf("reparto.AlcanzoEtapa(%s, %s, %s) = %v, se esperaba %v",
+					tt.circuito, tt.actual, tt.objetivo, got, tt.quiere)
+			}
+		})
+	}
+}

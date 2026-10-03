@@ -56,8 +56,34 @@ type AlmacenObjetos interface {
 	Borrar(ctx context.Context, clave string) error
 }
 
+// Notificador pone un aviso a disposicion de un titular y devuelve el acuse:
+// la prueba de que el aviso existio, que es lo que arranca el plazo de R-10
+// (RD 13.2) y el de prescripcion de RD 15.1.
+//
+// Recibe el proceso y no solo el titular porque el acuse es de un (titular,
+// corrida): `notificaciones` lleva la corrida en su clave, y un aviso que no
+// dice de que corrida es no sirve para contar ningun plazo.
+//
+// Un adaptador que escriba en la base DEBE escribir dentro de la unidad de
+// trabajo que viaje en ctx: si la unidad se revierte, el aviso tampoco existio.
 type Notificador interface {
-	Notificar(ctx context.Context, dest, asunto, cuerpo string) (acuse string, err error)
+	Notificar(ctx context.Context, aviso Aviso) (acuse string, err error)
+}
+
+// EmisionLiquidacion es lo que [Procesos] necesita de la liquidacion: emitir
+// las ordenes de pago del periodo de una corrida (RD 13.5, #193). La satisface
+// [Liquidaciones]; el puerto existe para que el flujo de aprobaciones no
+// arrastre los cinco puertos de la liquidacion ni se pruebe con ellos.
+type EmisionLiquidacion interface {
+	GenerarLiquidacion(ctx context.Context, procesoID string) ([]OrdenVista, error)
+}
+
+// Aviso es lo que [Notificador] pone a disposicion del titular.
+type Aviso struct {
+	TitularID string
+	ProcesoID string
+	Asunto    string
+	Cuerpo    string
 }
 
 // Similitud propone obras candidatas para un titulo, puntuadas 0-1 y de mas a
@@ -924,15 +950,19 @@ type RepositorioLiquidacion interface {
 	// sobre que revision. Ver [MetaProceso].
 	MetaDeProceso(ctx context.Context, procesoID string) (MetaProceso, error)
 
-	// ProcesosListos devuelve los ids de las corridas de ese periodo y
-	// circuito que YA pasaron la compuerta del RD 13.5 -- etapa
-	// `liquidacion_final` y las dos firmas sobre la revision vigente --,
-	// ordenados lexicograficamente.
+	// CorridasDePeriodo devuelve la cabecera de TODAS las corridas de ese
+	// periodo y circuito, en cualquier etapa y con todas sus firmas,
+	// ordenadas por id.
 	//
-	// El orden es parte del contrato: el primero es el que queda como
+	// Todas y no solo las listas: decidir cuales ya dejaron atras la compuerta
+	// de verificacion y cuales la liquidacion tiene que esperar es la regla
+	// ([MetaProceso.CerroLaVerificacion] y [reparto.AlcanzoEtapa], ADR 0024),
+	// y una regla en el SQL no se prueba sin base de datos.
+	//
+	// El orden es parte del contrato: la primera lista es la que queda como
 	// [liquidacion.OrdenDePago.ProcesoID] de referencia, y el ADR 0005 exige
 	// que generar dos veces lo mismo de lo mismo.
-	ProcesosListos(ctx context.Context, periodo string, circuito reparto.Circuito) ([]string, error)
+	CorridasDePeriodo(ctx context.Context, periodo string, circuito reparto.Circuito) ([]MetaProceso, error)
 
 	InsumoDeProceso(ctx context.Context, procesoID string) (InsumoLiquidacion, error)
 	SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error)
@@ -949,8 +979,15 @@ type MetaProceso struct {
 	Circuito reparto.Circuito
 	Etapa    reparto.Etapa
 
-	// Revision es la vigente. Las firmas de revisiones anteriores no cuentan:
-	// un rechazo sube la revision (ver la PK de `firmas`, migracion 00001).
+	// BolsaID es la bolsa que reparte la corrida. Una corrida es una bolsa
+	// (ADR 0019): dos corridas listas sobre la misma bolsa son el mismo
+	// dinero dos veces, y la liquidacion lo rechaza en vez de sumarlo.
+	BolsaID string
+
+	// Revision es la vigente. Tanto un rechazo como salir de una compuerta
+	// la suben (ver [reparto.ProcesoDeReparto.AvanzarEtapa] y la PK de
+	// `firmas`, migracion 00001): las firmas de la compuerta que la corrida
+	// ya dejo atras quedan en una revision ANTERIOR a esta.
 	Revision int
 
 	// Firmas son las de la corrida, de CUALQUIER revision. Filtrar por

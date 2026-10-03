@@ -2,6 +2,7 @@ package reparto
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -37,6 +38,19 @@ func secuenciaEtapas(c Circuito) []Etapa {
 		EtapaLiquidacionParcial, EtapaVerificacion, EtapaLiquidacionFinal,
 		EtapaPagoRegistro, EtapaAuditoria,
 	}
+}
+
+// AlcanzoEtapa dice si una corrida del circuito c que esta en actual ya llego
+// a objetivo o la dejo atras. Una etapa que no pertenece al recorrido del
+// circuito no alcanza nada: el internacional nunca "pasa" por importe_obra.
+//
+// Es la pregunta que hace la liquidacion del periodo (ADR 0024): que corridas
+// ya dejaron atras la compuerta de verificacion y cuales todavia no.
+func AlcanzoEtapa(c Circuito, actual, objetivo Etapa) bool {
+	secuencia := secuenciaEtapas(c)
+	iActual := slices.Index(secuencia, actual)
+	iObjetivo := slices.Index(secuencia, objetivo)
+	return iActual >= 0 && iObjetivo >= 0 && iActual >= iObjetivo
 }
 
 // RolAcompuerta son los roles que firman una compuerta de RD 13.5.
