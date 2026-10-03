@@ -15,3 +15,15 @@ export async function firmarProceso(
     body: JSON.stringify(pedido),
   });
 }
+
+/**
+ * Dispara la pasada de deteccion de un periodo (`POST /alertas/evaluacion`).
+ * El resultado no se usa: quien llama vuelve a pedir el resumen, que es la
+ * fuente de lo que quedo abierto.
+ */
+export async function evaluarPeriodo(periodo: string): Promise<void> {
+  await api(RUTAS_REPARTO.evaluarAlertas, {
+    method: "POST",
+    body: JSON.stringify({ periodo }),
+  });
+}
