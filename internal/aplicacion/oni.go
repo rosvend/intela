@@ -50,41 +50,46 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 		return PublicacionONI{}, err
 	}
 
-	pendientes, err := c.ONI.PendientesDePeriodo(ctx, periodo)
-	if err != nil {
-		return PublicacionONI{}, fmt.Errorf("listar ONI del periodo %q: %w", periodo, err)
-	}
-
-	if len(pendientes) == 0 {
-		_, err := c.ONI.PublicacionDePeriodo(ctx, periodo)
-		if err == nil {
-			return PublicacionONI{}, ErrYaPublicado
+	var pub PublicacionONI
+	err := c.Tx.EnUnidad(ctx, func(ctx context.Context) error {
+		if err := c.ONI.BloquearPeriodoONI(ctx, periodo); err != nil {
+			return err
 		}
-		if !errors.Is(err, ErrNoEncontrado) {
-			return PublicacionONI{}, fmt.Errorf("verificar publicacion previa del periodo %q: %w", periodo, err)
-		}
-	}
 
-	obras := make([]oni.ProyeccionPublica, 0, len(pendientes))
-	usoIDs := make([]string, 0, len(pendientes))
-	for _, d := range pendientes {
-		p, err := oni.Proyectar(d)
+		pendientes, err := c.ONI.PendientesDePeriodo(ctx, periodo)
 		if err != nil {
-			return PublicacionONI{}, fmt.Errorf("proyectar uso %q: %w", d.ID, err)
+			return fmt.Errorf("listar ONI del periodo %q: %w", periodo, err)
 		}
-		obras = append(obras, p)
-		usoIDs = append(usoIDs, p.ID)
-	}
 
-	pub := PublicacionONI{
-		Periodo:              periodo,
-		FechaProceso:         ahora,
-		DireccionFisica:      strings.TrimSpace(c.Fisica),
-		DireccionElectronica: strings.TrimSpace(c.Electronica),
-		Obras:                obras,
-	}
+		if len(pendientes) == 0 {
+			_, err := c.ONI.PublicacionDePeriodo(ctx, periodo)
+			if err == nil {
+				return ErrYaPublicado
+			}
+			if !errors.Is(err, ErrNoEncontrado) {
+				return fmt.Errorf("verificar publicacion previa del periodo %q: %w", periodo, err)
+			}
+		}
 
-	err = c.Tx.EnUnidad(ctx, func(ctx context.Context) error {
+		obras := make([]oni.ProyeccionPublica, 0, len(pendientes))
+		usoIDs := make([]string, 0, len(pendientes))
+		for _, d := range pendientes {
+			p, err := oni.Proyectar(d)
+			if err != nil {
+				return fmt.Errorf("proyectar uso %q: %w", d.ID, err)
+			}
+			obras = append(obras, p)
+			usoIDs = append(usoIDs, p.ID)
+		}
+
+		pub = PublicacionONI{
+			Periodo:              periodo,
+			FechaProceso:         ahora,
+			DireccionFisica:      strings.TrimSpace(c.Fisica),
+			DireccionElectronica: strings.TrimSpace(c.Electronica),
+			Obras:                obras,
+		}
+
 		guardada, err := c.ONI.GuardarPublicacion(ctx, pub)
 		if err != nil {
 			return err

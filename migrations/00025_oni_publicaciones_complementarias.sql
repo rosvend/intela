@@ -43,7 +43,25 @@ CREATE INDEX IF NOT EXISTS usos_oni_pendientes_publicar
   ON usos (reporte_id) WHERE escalon = 'oni' AND publicado_en IS NULL;
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+DROP INDEX IF EXISTS oni_publicacion_items_uso;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE UNIQUE INDEX IF NOT EXISTS oni_publicacion_items_uso
+  ON oni_publicacion_items (uso_id);
+-- +goose StatementEnd
+
 -- +goose Down
+
+-- +goose StatementBegin
+DROP INDEX IF EXISTS oni_publicacion_items_uso;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE INDEX IF NOT EXISTS oni_publicacion_items_uso
+  ON oni_publicacion_items (uso_id);
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 DROP INDEX IF EXISTS usos_oni_pendientes_publicar;

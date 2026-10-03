@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -13,7 +14,28 @@ var _ aplicacion.RepositorioPublicacionONI = (*Store)(nil)
 
 const columnasPublicacion = `id::text, periodo, fecha_proceso, direccion_fisica, direccion_electronica, secuencia`
 
-const columnasItemPublico = `uso_id, titulo, fuente, ids_fuente, modalidad`
+const columnasItemPublico = `i.uso_id, i.titulo, i.fuente, i.ids_fuente, i.modalidad`
+
+// BloquearPeriodoONI toma el cerrojo de aviso de la publicacion ONI del
+// periodo hasta que la transaccion en curso termine.
+//
+// Es de aviso -- `pg_advisory_xact_lock` -- y no de fila porque lo que hay que
+// serializar es la publicacion entera (lectura de pendientes, insercion de la
+// publicacion con su secuencia, e insercion de items), evitando que dos
+// publicaciones concurrentes del mismo periodo lean los mismos pendientes y
+// dupliquen items.
+func (s *Store) BloquearPeriodoONI(ctx context.Context, periodo string) error {
+	tx, hay := txDe(ctx)
+	if !hay {
+		return fmt.Errorf("bloquear periodo ONI %s: %w", periodo, errFueraDeUnidad)
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("oni_publicacion\x00" + periodo))
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(h.Sum64())); err != nil {
+		return traducirError(err, "bloquear periodo ONI %s", periodo)
+	}
+	return nil
+}
 
 // PendientesDePeriodo lee la cola viva, no el listado publicado. Resolver un
 // ONI despues no tiene que cambiar lo que ya se congelo.
@@ -143,7 +165,7 @@ func (s *Store) escanearPublicacion(ctx context.Context, sql, que string, args .
 
 func (s *Store) conItemsDePeriodo(ctx context.Context, p aplicacion.PublicacionONI) (aplicacion.PublicacionONI, error) {
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
-		SELECT i.uso_id, i.titulo, i.fuente, i.ids_fuente, i.modalidad
+		SELECT `+columnasItemPublico+`
 		  FROM oni_publicacion_items i
 		  JOIN oni_publicaciones pub ON pub.id = i.publicacion_id
 		 WHERE pub.periodo = $1

@@ -13,13 +13,23 @@ import (
 )
 
 type repoPublicacionMem struct {
-	pendientes    []oni.DatosIdentificatorios
-	errPendientes error
-	guardadas     []PublicacionONI
-	errGuardar    error
-	anclados      map[string]time.Time
-	errAnclar     error
-	siguienteID   string
+	pendientes      []oni.DatosIdentificatorios
+	errPendientes   error
+	guardadas       []PublicacionONI
+	errGuardar      error
+	anclados        map[string]time.Time
+	errAnclar       error
+	siguienteID     string
+	bloqueosPeriodo []string
+	errBloquear     error
+}
+
+func (r *repoPublicacionMem) BloquearPeriodoONI(_ context.Context, periodo string) error {
+	if r.errBloquear != nil {
+		return r.errBloquear
+	}
+	r.bloqueosPeriodo = append(r.bloqueosPeriodo, periodo)
+	return nil
 }
 
 func (r *repoPublicacionMem) PendientesDePeriodo(_ context.Context, periodo string) ([]oni.DatosIdentificatorios, error) {
@@ -444,5 +454,29 @@ func TestPublicacionComplementariaONITardio(t *testing.T) {
 	_, err = uc2.Ejecutar(context.Background(), "2026-01", "usr-admin")
 	if !errors.Is(err, ErrYaPublicado) {
 		t.Fatalf("republicar sin pendientes: se esperaba ErrYaPublicado, se obtuvo %v", err)
+	}
+}
+
+func TestPublicarTomaCerrojoDePeriodo(t *testing.T) {
+	repo := &repoPublicacionMem{
+		pendientes: []oni.DatosIdentificatorios{
+			{ID: "uso-1", Titulo: "Serie X", Fuente: "caracol", Modalidad: "tv", Periodo: "2026-01"},
+		},
+	}
+	uc := PublicarListadoONI{
+		ONI:         repo,
+		Bitacora:    &bitacoraMem{},
+		Reloj:       relojFijo{instante: momento},
+		Tx:          txPassthrough{},
+		Fisica:      "Calle 74 #7-35, Bogota",
+		Electronica: "oni@redescritores.com",
+	}
+
+	_, err := uc.Ejecutar(context.Background(), "2026-01", "usr-admin")
+	if err != nil {
+		t.Fatalf("publicar: %v", err)
+	}
+	if len(repo.bloqueosPeriodo) != 1 || repo.bloqueosPeriodo[0] != "2026-01" {
+		t.Fatalf("se esperaba bloqueo de '2026-01', se obtuvo %v", repo.bloqueosPeriodo)
 	}
 }
