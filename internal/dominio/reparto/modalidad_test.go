@@ -40,3 +40,21 @@ func TestParseModalidad(t *testing.T) {
 		t.Fatalf("err=%v, want ErrModalidadDesconocida", err)
 	}
 }
+
+// La base de P-18 llega como texto de un parametro: solo las dos medidas que
+// puntosCineTeatro sabe usar pasan, y lo demas es un error tipado al congelar
+// el snapshot, no una corrida de cine que falla al valorizar (#194).
+func TestParseBaseCineTeatro(t *testing.T) {
+	t.Parallel()
+	for _, ok := range []string{reparto.BaseTaquilla, reparto.BaseEspectadores} {
+		got, err := reparto.ParseBaseCineTeatro(ok)
+		if err != nil || got != ok {
+			t.Errorf("ParseBaseCineTeatro(%q) = %q, %v", ok, got, err)
+		}
+	}
+	for _, malo := range []string{"", "Taquilla", "boletas", " taquilla"} {
+		if _, err := reparto.ParseBaseCineTeatro(malo); !errors.Is(err, reparto.ErrBaseCineTeatroDesconocida) {
+			t.Errorf("ParseBaseCineTeatro(%q): se esperaba ErrBaseCineTeatroDesconocida, dio %v", malo, err)
+		}
+	}
+}

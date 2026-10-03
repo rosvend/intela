@@ -582,10 +582,17 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	}
 
 	for _, p := range d.Parametros {
+		// Una sola de las dos columnas de valor (CHECK de 00025): la cifra va
+		// NULL en una fila textual.
+		var valor any = p.Valor
+		var valorTexto any
+		if p.ValorTexto != "" {
+			valor, valorTexto = nil, p.ValorTexto
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
-			VALUES ($1, $2, $3, $4, $5)`,
-			p.Clave, p.Valor, p.VigenteDesde, p.Organo, p.Reglamento); err != nil {
+			INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			p.Clave, valor, valorTexto, p.VigenteDesde, p.Organo, p.Reglamento); err != nil {
 			return fmt.Errorf("insertar parametro %s: %w", p.Clave, err)
 		}
 	}
