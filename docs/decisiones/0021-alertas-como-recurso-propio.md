@@ -221,7 +221,7 @@ adaptadores para que no puedan separarse.
   `duplicado`) y el de huella deja de contar las entregas excluidas, asi que la siguiente pasada
   autocierra lo que la correccion apago -incluidas las alertas de la otra pata del par-.
 
-  Las criticas que una persona cerro **antes** de la migracion 00024 quedan marcadas como
+  Las criticas que una persona cerro **antes** de la migracion 00025 quedan marcadas como
   `aceptar_tal_cual`: eso es lo que significaba cerrarlas entonces. Excluir una entrega de OTRO
   periodo desde esta alerta no se admite: el cerrojo que serializa la correccion es el del
   periodo de la alerta, y tocar otro mes se colaria entre su compuerta y su calculo.

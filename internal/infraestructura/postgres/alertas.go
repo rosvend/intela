@@ -262,7 +262,7 @@ func (s *Store) ListarAlertas(ctx context.Context, f aplicacion.FiltroAlertas) (
 // la que este UPDATE escribio.
 //
 // La accion y su objetivo (#164) se escriben en el mismo UPDATE: son parte del
-// cierre, y los CHECK de 00024 exigen que solo una persona cierre con accion.
+// cierre, y los CHECK de 00025 exigen que solo una persona cierre con accion.
 func (s *Store) ResolverAlerta(
 	ctx context.Context, id string, c aplicacion.CierreDeAlerta,
 ) (aplicacion.Alerta, error) {

@@ -2199,7 +2199,7 @@ export interface components {
             /**
              * @description Rol de la sesion de quien la cerro, tal como estaba al cerrarla
              *     (#164). Ausente si la autocerro el sistema o si se cerro antes de
-             *     la migracion 00024.
+             *     la migracion 00025.
              * @example distribucion
              */
             resuelta_rol?: string;
@@ -2221,7 +2221,7 @@ export interface components {
          *     entrega entera (escalon `duplicado`); `asignar_tipo_obra` pone la
          *     categoria de `RD 9.1.1`; `aceptar_tal_cual` cierra un duplicado sin
          *     tocar el dato, y la compuerta de `/procesos/{id}/avanzar` lo cuenta
-         *     aparte. Las criticas cerradas antes de la migracion 00024 figuran como
+         *     aparte. Las criticas cerradas antes de la migracion 00025 figuran como
          *     `aceptar_tal_cual`: eso es lo que significaba cerrarlas entonces.
          * @enum {string}
          */

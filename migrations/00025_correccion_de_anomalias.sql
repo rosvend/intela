@@ -47,8 +47,8 @@
 -- marcan asi, porque eso es lo que significaba "resuelta" entonces (ADR 0021,
 -- "Que significa resuelta para el dinero"): nadie corrigio el dato.
 --
--- COORDINACION DE NUMERO: 00024 es el primero libre por encima de lo aplicado
--- en `main` (`00023_oni_publicacion.sql`). Dos ficheros con la misma version
+-- COORDINACION DE NUMERO: 00025 es el primero libre por encima de lo aplicado
+-- en `main` (`00024_resultados_titular_declaracion_version.sql`). Dos ficheros con la misma version
 -- no chocan en git y hacen que goose entre en panic con "duplicate version";
 -- quien mergee segundo renumera. La guarda
 -- `internal/infraestructura/migraciones/numeracion` lo comprueba en CI.

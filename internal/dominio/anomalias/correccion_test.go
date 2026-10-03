@@ -54,7 +54,7 @@ func TestAccionesListaLasCuatro(t *testing.T) {
 	t.Parallel()
 	quiero := []string{"excluir_uso", "excluir_entrega", "asignar_tipo_obra", "aceptar_tal_cual"}
 	if got := Acciones(); !slices.Equal(got, quiero) {
-		t.Fatalf("Acciones() = %v, se esperaba %v (el CHECK alerta_accion_valida de 00024 los fija)", got, quiero)
+		t.Fatalf("Acciones() = %v, se esperaba %v (el CHECK alerta_accion_valida de 00025 los fija)", got, quiero)
 	}
 }
 

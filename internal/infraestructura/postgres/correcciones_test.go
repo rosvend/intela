@@ -16,7 +16,7 @@ import (
 )
 
 // Pruebas del cierre con correccion de una critica contra el esquema real
-// (#164, migracion 00024). Los CHECK de `usos` y `alertas` y el filtro
+// (#164, migracion 00025). Los CHECK de `usos` y `alertas` y el filtro
 // `obra_id IS NOT NULL` del reparto son lo que se prueba: un doble no los tiene.
 
 // criticaAbierta devuelve la unica alerta abierta de ese tipo en el periodo.
@@ -413,7 +413,7 @@ func TestExcluirUnUsoQueCambioNoLoToca(t *testing.T) {
 	}
 }
 
-// Los CHECK de 00024 son la ultima defensa si manana se escribe en `alertas`
+// Los CHECK de 00025 son la ultima defensa si manana se escribe en `alertas`
 // o en `usos` por otro camino que el caso de uso.
 func TestLosCheckDeLaCorreccionSostienenElCierre(t *testing.T) {
 	s, pool := sembrarPeriodoConAnomalias(t)

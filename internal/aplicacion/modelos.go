@@ -484,7 +484,7 @@ type Alerta struct {
 	Autocerrada bool
 
 	// ResueltaRol es el rol de quien la cerro, tal como estaba al cerrarla (#164).
-	// Vacio si la autocerro el sistema o si se cerro antes de la migracion 00024.
+	// Vacio si la autocerro el sistema o si se cerro antes de la migracion 00025.
 	ResueltaRol string
 
 	// Accion es la correccion que acompano el cierre ([anomalias.Acciones]) y

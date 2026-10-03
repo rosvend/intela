@@ -13,7 +13,7 @@ import (
 
 var _ aplicacion.CorreccionDeDatos = (*Store)(nil)
 
-// ExcluirUsoDuplicado pasa la fila a escalon 'duplicado' (#164, migracion 00024).
+// ExcluirUsoDuplicado pasa la fila a escalon 'duplicado' (#164, migracion 00025).
 //
 // Sin obra y con oni = FALSE: es lo que el CHECK `uso_resuelto_tiene_obra`
 // admite para 'duplicado', y lo que deja la fila fuera de UsosDeCanal
