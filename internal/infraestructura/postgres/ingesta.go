@@ -686,7 +686,7 @@ func (s *Store) SnapshotNormalizacion(ctx context.Context) (reparto.Snapshot, er
 	filas, err := s.ejecutorDe(ctx).Query(ctx, `
 		SELECT clave, valor FROM parametros
 		 WHERE (vigente_hasta IS NULL OR vigente_hasta > CURRENT_DATE)
-		   -- Las filas textuales (00024, p.ej. cine_teatro.base) no son
+		   -- Las filas textuales (00025, p.ej. cine_teatro.base) no son
 		   -- coeficientes de normalizacion, y su valor NULL no cabe en el Scan.
 		   AND valor IS NOT NULL
 		 ORDER BY clave, vigente_desde DESC`)

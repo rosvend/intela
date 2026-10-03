@@ -169,7 +169,7 @@ func TestParametroVigenteParticipaEnLaUnidad(t *testing.T) {
 	}
 }
 
-// Una clave textual (migracion 00024) no es una cifra: quien pide un valor
+// Una clave textual (migracion 00025) no es una cifra: quien pide un valor
 // numerico recibe un error que lo dice, no un cero ni un fallo de Scan (#194).
 // Y SnapshotNormalizacion, que recorre TODAS las filas vigentes, la salta en
 // vez de romper la ingesta entera.

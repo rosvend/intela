@@ -166,7 +166,7 @@ type Snapshot struct {
 	// BaseCineTeatro es "espectadores" o "taquilla" (P-18). Vacio es error.
 	// Es string a proposito: no cabe en parametros.valor NUMERIC(18,6); la
 	// resolucion del snapshot lo lee de la clave textual `cine_teatro.base`
-	// (columna `valor_texto`, migracion 00024, #194).
+	// (columna `valor_texto`, migracion 00025, #194).
 	BaseCineTeatro string
 
 	Reglamento string

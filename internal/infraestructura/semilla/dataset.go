@@ -190,7 +190,7 @@ type Reporte struct {
 
 // Parametro es una fila de `parametros`. Lleva Valor (una cifra) o
 // ValorTexto (una eleccion, como la base de cine de P-18), nunca los dos: es
-// el mismo CHECK de la migracion 00024.
+// el mismo CHECK de la migracion 00025.
 type Parametro struct {
 	Clave        string
 	Valor        decimal.Decimal
@@ -606,7 +606,7 @@ func (d *Dataset) parametros() {
 		// del articulo dice taquilla y su ejemplo calcula sobre espectadores:
 		// es P-18, abierta, y por eso va sintetica. Taquilla porque es lo que
 		// prescribe el texto y la unica medida que MapaCine exige. Es la
-		// misma fila que la migracion 00024 anade a una base ya sembrada.
+		// misma fila que la migracion 00025 anade a una base ya sembrada.
 		sinteticoTexto(reparto.ClaveBaseCineTeatro, reparto.BaseTaquilla),
 	}
 }

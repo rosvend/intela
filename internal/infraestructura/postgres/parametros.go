@@ -58,7 +58,7 @@ const (
 // [parametroResuelto] -- y la de un snapshot congelado tiene que devolver
 // exactamente lo que devolvio la resolucion que lo congelo.
 //
-// `valor` y `valor_texto` son excluyentes (CHECK de la migracion 00024): una
+// `valor` y `valor_texto` son excluyentes (CHECK de la migracion 00025): una
 // cifra va en la primera y una eleccion entre opciones -la base de cine de
 // P-18- en la segunda.
 const columnasParametro = `clave, valor, valor_texto, organo, reglamento, vigente_desde`
@@ -186,7 +186,7 @@ var clausulasDelSnapshotV1 = []clausula{
 // para cine y teatro (puntosCineTeatro): toda corrida de cine fallaba al
 // valorizar con "parametro normativo ausente: base_cine_teatro". Es la primera
 // clausula textual -una eleccion entre `taquilla` y `espectadores`, no una
-// cifra- y por eso lee `valor_texto` (migracion 00024).
+// cifra- y por eso lee `valor_texto` (migracion 00025).
 //
 // Se construye sobre la V1 y no copiandola: las diecinueve primeras son las
 // mismas clausulas, y una copia a mano podria divergir sin que nada lo note.
@@ -285,7 +285,7 @@ func versionDeID(id string) (version int, ok bool) {
 // parametroResuelto es una fila de vigencia ya elegida para una fecha, con su
 // valor en forma canonica.
 //
-// valorTexto no vacio es una fila textual (`valor_texto`, migracion 00024) y
+// valorTexto no vacio es una fila textual (`valor_texto`, migracion 00025) y
 // entonces valor no significa nada; vacio, la fila es numerica. El CHECK de
 // la tabla garantiza que nunca llegan los dos.
 type parametroResuelto struct {
@@ -916,7 +916,7 @@ func (s *Store) ParametroVigente(ctx context.Context, clave string, fecha time.T
 	if err != nil {
 		return decimal.Zero, traducirError(err, "leer el parametro %q", clave)
 	}
-	// Valor NULL es una fila textual (migracion 00024): quien pide una cifra
+	// Valor NULL es una fila textual (migracion 00025): quien pide una cifra
 	// no puede recibir un cero en su lugar.
 	if !valor.Valid {
 		return decimal.Zero, fmt.Errorf("%q en %s: %w: es un parametro textual, no una cifra",

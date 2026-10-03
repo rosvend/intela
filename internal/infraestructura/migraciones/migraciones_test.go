@@ -391,7 +391,7 @@ func TestParametrosTextualesSiembraLaBaseDeCineSoloEnUnaBaseSintetica(t *testing
 	}
 }
 
-// El down de 00024 no puede dejar un snapshot congelado sin su valor: se
+// El down de 00025 no puede dejar un snapshot congelado sin su valor: se
 // niega mientras haya uno textual (ADR 0005). Sin snapshots textuales baja y
 // vuelve a subir limpio: ver TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual.
 func TestDownDeParametrosTextualesNoDejaSnapshotsSinValor(t *testing.T) {
@@ -410,8 +410,8 @@ func TestDownDeParametrosTextualesNoDejaSnapshotsSinValor(t *testing.T) {
 	}
 }
 
-// Sin snapshots textuales el down de 00024 si baja: borra la fila textual de
-// `parametros` -no cabe en el esquema de 00023- y devuelve `valor` a NOT NULL.
+// Sin snapshots textuales el down de 00025 si baja: borra la fila textual de
+// `parametros` -no cabe en el esquema de 00024- y devuelve `valor` a NOT NULL.
 // Es el camino del DELETE y del SET NOT NULL, que la prueba de la negativa no
 // recorre. Despues vuelve a subir.
 func TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual(t *testing.T) {

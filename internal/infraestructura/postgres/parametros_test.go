@@ -505,7 +505,7 @@ func sembrarParametros(t *testing.T, pool *pgxpool.Pool, desde string) {
 }
 
 // columnasDeValor reparte el valor en las dos columnas excluyentes de la
-// migracion 00024: la que no aplica va NULL.
+// migracion 00025: la que no aplica va NULL.
 func columnasDeValor(p parametroResuelto) (valor, valorTexto any) {
 	if p.esTexto() {
 		return nil, p.valorTexto
@@ -1472,7 +1472,7 @@ func TestUnSnapshotV1YaCongeladoSeSigueReleyendo(t *testing.T) {
 
 // Las dos columnas de valor son excluyentes y el texto tiene charset: es lo
 // que impide que un valor fabrique la preimagen "clave=valor\n" de otro
-// conjunto (migracion 00024). Se prueba en las dos tablas: la de
+// conjunto (migracion 00025). Se prueba en las dos tablas: la de
 // `snapshots_parametros` es la que protege la preimagen que se recalcula al
 // releer un snapshot congelado.
 func TestLaBaseExigeUnSoloValorYTextoCanonico(t *testing.T) {

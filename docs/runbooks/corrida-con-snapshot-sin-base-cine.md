@@ -28,7 +28,7 @@ tampoco.
 ## Que hacer
 
 1. Confirmar que `cine_teatro.base` tiene vigencia en la fecha del periodo. En
-   una base sembrada con el dataset sintetico, la migracion 00024 la agrega con
+   una base sembrada con el dataset sintetico, la migracion 00025 la agrega con
    `taquilla` (provisional, P-18). En una base con parametros reales la carga
    el organo competente como una fila nueva de `parametros`.
 2. Abrir una corrida nueva de la misma bolsa con otro id, por ejemplo

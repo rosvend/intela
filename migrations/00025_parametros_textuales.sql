@@ -14,9 +14,9 @@
 -- que leerse igual en `parametros`, en el snapshot congelado y en el mensaje
 -- de un auditor, sin tabla de traduccion (ADR 0004, ADR 0006).
 --
--- COORDINACION DE NUMERO: 00024, primero libre por encima de lo que `main` ya
--- aplico (`00023_oni_publicacion.sql`). goose corre con allowMissing = false:
--- si otra PR toma el 00024 antes de mergear esta, esta sube al siguiente
+-- COORDINACION DE NUMERO: 00025, primero libre por encima de lo que `main` ya
+-- aplico (`00024_resultados_titular_declaracion_version.sql`). goose corre con allowMissing = false:
+-- si otra PR toma el 00025 antes de mergear esta, esta sube al siguiente
 -- libre, sin dejar huecos.
 
 -- +goose Up
@@ -71,7 +71,7 @@ HAVING COUNT(*) > 0
 
 -- +goose Down
 
--- Un snapshot congelado con un valor textual no cabe en el esquema de 00023 y
+-- Un snapshot congelado con un valor textual no cabe en el esquema de 00024 y
 -- no se puede borrar (ADR 0005): el down se niega en vez de dejar un snapshot
 -- que ya no hashea a su id.
 -- +goose StatementBegin
@@ -79,7 +79,7 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM snapshots_parametros WHERE valor_texto IS NOT NULL) THEN
     RAISE EXCEPTION
-      'ADR 0005: hay snapshots congelados con parametros textuales; revertir 00024 los dejaria sin su valor';
+      'ADR 0005: hay snapshots congelados con parametros textuales; revertir 00025 los dejaria sin su valor';
   END IF;
 END
 $$;

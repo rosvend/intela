@@ -270,7 +270,7 @@ espectadores mientras su prosa dice taquilla. La contradiccion es **P-18** y se 
 
 La eleccion misma es el parametro `cine_teatro.base`, sembrado como sintetico con `taquilla`: es lo
 que prescribe el cuerpo de `RD 9.2` y la unica medida de cine que `MapaCine` exige. Es el primer
-parametro **textual** (`parametros.valor_texto`, migracion 00024): una eleccion entre dos medidas no
+parametro **textual** (`parametros.valor_texto`, migracion 00025): una eleccion entre dos medidas no
 es una cifra. Entra en el snapshot de la corrida como cualquier otra clausula (version 2 del
 conjunto, #194), asi que cambiarla es cargar una vigencia nueva, no desplegar.
 

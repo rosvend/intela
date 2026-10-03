@@ -455,7 +455,7 @@ func (s *Store) SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal
 		}
 		return decimal.Zero, traducido
 	}
-	// NULL es una fila textual (migracion 00024): el SMMLV es una cifra.
+	// NULL es una fila textual (migracion 00025): el SMMLV es una cifra.
 	if !valor.Valid {
 		return decimal.Zero, fmt.Errorf("%w: %s es textual, se esperaba una cifra", aplicacion.ErrParametroInvalido, claveSMMLV)
 	}

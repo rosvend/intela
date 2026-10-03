@@ -209,7 +209,7 @@ Decision provisional mientras sigue abierta (#194): el sembrador carga el parame
 cine que `MapaCine` exige-, marcado `sintetico` como los coeficientes de P-04. El codigo no tiene
 valor por defecto: el motor lee `Snapshot.BaseCineTeatro`, que sale de esa clave congelada en el
 snapshot de cada corrida, y una instalacion sin la fila no abre corridas y nombra la clave que
-falta (ADR 0004). La migracion 00024 solo la agrega en una base sembrada con el dataset
+falta (ADR 0004). La migracion 00025 solo la agrega en una base sembrada con el dataset
 sintetico. La respuesta de REDES se carga como una vigencia nueva de la clave, sin tocar codigo.
 
 ### P-21 Clave de registro por fuente (detector `duplicado_registro`, #37)

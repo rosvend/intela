@@ -582,7 +582,7 @@ func insertarPadron(ctx context.Context, store *postgres.Store, d Dataset, hashe
 	}
 
 	for _, p := range d.Parametros {
-		// Una sola de las dos columnas de valor (CHECK de 00024): la cifra va
+		// Una sola de las dos columnas de valor (CHECK de 00025): la cifra va
 		// NULL en una fila textual.
 		var valor any = p.Valor
 		var valorTexto any
