@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
 import { ProveedorDeSesion } from "./sesion";
 // Autoalojada en vez de @import a fonts.googleapis.com: sin eso, cada carga
 // mandaba la IP de quien usa el sistema a un tercero, dependia de salida a
@@ -17,7 +18,9 @@ import "./styles.css";
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>
     <ProveedorDeSesion>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </ProveedorDeSesion>
   </BrowserRouter>,
 );
