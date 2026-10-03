@@ -33,7 +33,6 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
-	"github.com/rosvend/intela/internal/infraestructura/notificaciones"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -158,10 +157,14 @@ func construir() (http.Handler, error) {
 	// cada una y la notificacion que arranca el plazo de R-10, y las cuatro son
 	// UN hecho. El mismo *Store satisface el repositorio, la bitacora y la
 	// unidad de trabajo; el nucleo sigue viendo tres puertos distintos.
+	//
+	// El aviso va por el portal (RD 13.8.8) y en la misma transaccion que la
+	// orden: el titular la ve en /mis-liquidaciones desde el commit que la
+	// emite, y un aviso no puede sobrevivir a una orden revertida (#193).
 	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
-		Notificador: notificaciones.Bitacora{Log: registro},
+		Notificador: store.AvisoPortal(),
 		Bitacora:    store,
 		Unidad:      store,
 	}
@@ -247,6 +250,9 @@ func construir() (http.Handler, error) {
 		Bitacora:      store,
 		Reloj:         reloj.Sistema{},
 		Origen:        store,
+		// Al entrar a liquidacion_final del nacional emite las ordenes del
+		// periodo en la misma unidad que la etapa (#193, ADR 0024).
+		Liquidacion: ordenes,
 	}
 
 	// Mismo cableado que cmd/api, con la boveda en S3 (ADR 0023).

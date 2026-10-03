@@ -602,6 +602,14 @@ func (d *Dataset) parametros() {
 		sintetico("grupo.estandar_pct", "10"),
 		sintetico("asignacion.terceros_pct", "5"),
 
+		// SMMLV: sin el, la liquidacion no puede evaluar R-11 (el 2% de un
+		// SMMLV, RD 13.3) y entrar a liquidacion_final falla con
+		// ErrParametroAusente (#193, ADR 0004). El salario minimo lo fija un
+		// decreto anual del Gobierno Nacional, no el Consejo: este valor es el
+		// de 2024, abierto hacia adelante para que la demo liquide en cualquier
+		// fecha, y por eso va como sintetico y no como el decreto vigente.
+		sintetico("smmlv", "1300000"),
+
 		// Base de ponderacion de cine y teatro (RD 9.2, RD 9.3). El cuerpo
 		// del articulo dice taquilla y su ejemplo calcula sobre espectadores:
 		// es P-18, abierta, y por eso va sintetica. Taquilla porque es lo que

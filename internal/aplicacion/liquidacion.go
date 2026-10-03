@@ -105,22 +105,23 @@ type Liquidaciones struct {
 
 // GenerarLiquidacion emite las ordenes de pago de un periodo y circuito.
 //
-// # Quien la invoca en produccion
+// # Quien la invoca
 //
-// Este PR (#36) NO expone un POST HTTP: el contrato de la issue son las
-// lecturas (`GET /liquidaciones`, `GET /mis-liquidaciones`). El motor queda
-// cableado en `cmd/api` y `cmd/lambda` listo para que el orquestador de
-// corridas (#34 / ProcesoDeReparto) lo dispare al cerrar la compuerta del
-// RD 13.5. Sin ese disparador, `ordenes_pago` solo se poblaria desde tests o
-// una llamada directa al caso de uso — es deliberado, no un olvido.
+// [Procesos.AvanzarEtapa], en el circuito nacional y dentro de la MISMA unidad
+// de trabajo que mueve la etapa (#193, ADR 0024), para que avanzar y emitir
+// sean un solo hecho asentado:
 //
-// # Precondicion del disparador (#34 / #159)
+//   - Al entrar a `liquidacion_final`, que es donde RD 13.5 genera la
+//     liquidacion final que se remite para el pago. Si el periodo todavia no
+//     esta completo devuelve [ErrLiquidacionEnEspera] sin escribir nada, y la
+//     transicion lo tolera: la corrida queda esperando a sus hermanas.
+//   - Al salir de `liquidacion_final` hacia `pago_registro`, como guarda: la
+//     misma llamada, que por idempotente solo devuelve lo emitido. Aqui
+//     [ErrLiquidacionEnEspera] si revierte la transicion, porque no se paga lo
+//     que no se liquido.
 //
-// Hoy `cmd/api` y `cmd/lambda` cablean `notificaciones.Bitacora`, que solo
-// registra en el log y inventa un acuse. El PR que conecte este caso de uso
-// tiene que traer un adaptador que entregue de verdad (correo, SMS, portal)
-// o bloquear la emision: si no, el plazo de R-10 corre sin que el titular
-// haya recibido nada.
+// No hay un POST HTTP propio: la emision es consecuencia de la etapa, no una
+// accion aparte que alguien pueda olvidar o repetir.
 //
 // # Una orden por (titular, periodo, circuito), no por corrida
 //
@@ -133,33 +134,42 @@ type Liquidaciones struct {
 //
 // Asi que procesoID es el DISPARADOR, no el alcance: de el se sacan periodo y
 // circuito, y se agregan las lineas de TODAS las corridas de ese periodo y
-// circuito que ya pasaron la compuerta del RD 13.5.
+// circuito.
 //
-// # Decision abierta: las corridas que cierran tarde
+// # El periodo espera a todas sus corridas
 //
-// Una corrida del mismo periodo y circuito que pase la compuerta DESPUES de
-// que las ordenes ya se emitieron NO se incorpora a ellas, y hoy no emite
-// ordenes propias: la guarda de idempotencia ve que ya hay ordenes para ese
-// (periodo, circuito) y las devuelve tal cual. Es deliberado y es lo
-// conservador: doblar el bruto de una orden ya enviada reabriria un plazo de
-// R-10 que puede estar corriendo o ya vencido, y emitir una segunda orden del
-// mismo periodo choca con el UNIQUE (titular_id, periodo, circuito) que
-// sostiene todo lo de arriba.
+// Con un disparador automatico, emitir con "las corridas que ya estan listas"
+// haria que la primera corrida del periodo en llegar liquidara sola y que
+// las demas se quedaran sin orden. Por eso se emite solo cuando NINGUNA
+// corrida del periodo y circuito sigue antes de `liquidacion_final`
+// ([ErrLiquidacionEnEspera] nombra las que faltan). La ultima en llegar emite
+// por todas, incluidas las que ya hubieran seguido hacia pago y auditoria.
 //
-// Lo que queda sin resolver es como se paga ese dinero, y no se resuelve aqui
-// porque la respuesta es normativa y no tecnica: puede ser una corrida de
-// ajuste del periodo siguiente (el camino de R-11, que ya existe) o una
-// reapertura del periodo, y eso lo decide el Consejo Directivo. Mientras no
-// este decidido, el orden de operaciones es el control: no se liquida un
-// periodo hasta que sus corridas estan firmadas.
+// # Las corridas que llegan tarde
+//
+// Una corrida del mismo periodo y circuito que llega a la liquidacion
+// DESPUES de que las ordenes se emitieron -- una bolsa registrada tarde, un
+// reproceso -- no se incorpora a ellas: doblar el bruto de una orden ya
+// enviada reabriria un plazo de R-10 que puede estar corriendo o ya vencido, y
+// emitir una segunda orden del mismo periodo choca con el UNIQUE (titular_id,
+// periodo, circuito) que sostiene todo lo de arriba.
+//
+// Como se paga ese dinero no se resuelve aqui porque la respuesta es
+// normativa y no tecnica: puede ser una corrida de ajuste del periodo
+// siguiente (el camino de R-11, que ya existe) o una reapertura del periodo, y
+// eso lo decide el Consejo Directivo. Lo que si se resuelve es que no pase en
+// silencio: la llamada devuelve [ErrPeriodoYaLiquidado] y la corrida no avanza.
 //
 // # Idempotente
 //
 // Volver a llamarla sobre el mismo periodo y circuito NO regenera: devuelve lo
-// que hay, con el plazo reevaluado. Es lo que hace que un reintento -- de la
-// cola, de un operador, de dos peticiones a la vez -- no duplique dinero, y lo
-// que impide el defecto peor de todos: que una orden ya diferida se incorpore
-// a si misma como arrastre y aparezca acumulada de su propio neto.
+// que hay, con el plazo reevaluado. Es lo que hace que un reintento -- de un
+// operador, de dos peticiones a la vez, de la guarda de salida -- no duplique
+// dinero, y lo que impide el defecto peor de todos: que una orden ya diferida
+// se incorpore a si misma como arrastre y aparezca acumulada de su propio
+// neto. Lo que decide si el periodo ya se emitio es el asiento del lote, no
+// solo las ordenes: un periodo cuyo neto quedo entero retenido emite cero
+// ordenes, y sin el asiento cada reintento volveria a asentar su residuo.
 func (l Liquidaciones) GenerarLiquidacion(ctx context.Context, procesoID string) ([]OrdenVista, error) {
 	if err := l.cableadoParaEmitir(); err != nil {
 		return nil, err
@@ -189,31 +199,29 @@ func (l Liquidaciones) GenerarLiquidacion(ctx context.Context, procesoID string)
 		// Lo PRIMERO, y dentro de la unidad: todo lo que sigue es un
 		// leer-modificar-escribir sobre el mismo (periodo, circuito), y hasta
 		// que la primera orden exista no hay ninguna fila que sirva de cerrojo.
+		// Tambien es lo que hace segura la espera: dos corridas que entran a la
+		// vez se serializan aqui, y la segunda ya ve a la primera en
+		// `liquidacion_final` y emite por las dos.
 		if err := l.Ordenes.BloquearPeriodo(ctx, meta.Periodo, meta.Circuito); err != nil {
 			return fmt.Errorf("bloquear %s: %w", meta.donde(), err)
 		}
 
-		existentes, err := l.Ordenes.DePeriodoCircuito(ctx, meta.Periodo, meta.Circuito)
+		existentes, hecho, err := l.yaEmitido(ctx, meta)
 		if err != nil {
-			return fmt.Errorf("ordenes de %s: %w", meta.donde(), err)
+			return err
 		}
-		if len(existentes) > 0 {
+		if hecho {
 			emitidas = existentes
 			return nil
 		}
 
-		procesos, err := l.Ordenes.ProcesosListos(ctx, meta.Periodo, meta.Circuito)
+		corridas, err := l.Ordenes.CorridasDePeriodo(ctx, meta.Periodo, meta.Circuito)
 		if err != nil {
-			return fmt.Errorf("corridas listas de %s: %w", meta.donde(), err)
+			return fmt.Errorf("corridas de %s: %w", meta.donde(), err)
 		}
-		// El disparador acaba de pasar la compuerta, asi que tiene que estar en
-		// la lista. Si no esta, el adaptador y el gate no estan mirando lo
-		// mismo, y emitir con un alcance que no incluye la corrida que se pidio
-		// liquidar seria peor que no emitir.
-		if !slices.Contains(procesos, procesoID) {
-			return fmt.Errorf(
-				"%w: %s paso la compuerta pero no aparece entre las corridas listas de %s",
-				ErrCorridaNoCuadra, procesoID, meta.donde())
+		procesos, err := corridasALiquidar(meta, corridas)
+		if err != nil {
+			return err
 		}
 
 		ag, err := l.agregar(ctx, procesos)
@@ -236,6 +244,108 @@ func (l Liquidaciones) GenerarLiquidacion(ctx context.Context, procesoID string)
 	return l.conPlazoYDocumentos(ctx, emitidas)
 }
 
+// yaEmitido dice si el (periodo, circuito) de meta ya se liquido y, si es asi,
+// devuelve sus ordenes. Corre con el cerrojo del periodo tomado.
+//
+// Mira dos rastros y no uno. Las ordenes, porque son lo que se emitio. El
+// asiento del lote, porque un periodo con todo retenido emite CERO ordenes y
+// sin el la guarda lo veria como nunca emitido. Los dos llevan las corridas
+// que aportaron, y eso es lo que separa un reintento -- la corrida esta entre
+// ellas -- de una corrida que llego tarde, que es [ErrPeriodoYaLiquidado].
+func (l Liquidaciones) yaEmitido(ctx context.Context, meta MetaProceso) ([]liquidacion.OrdenDePago, bool, error) {
+	existentes, err := l.Ordenes.DePeriodoCircuito(ctx, meta.Periodo, meta.Circuito)
+	if err != nil {
+		return nil, false, fmt.Errorf("ordenes de %s: %w", meta.donde(), err)
+	}
+	lote, err := l.Bitacora.De(ctx, RefLiquidacionLote, refLote(meta))
+	if err != nil {
+		return nil, false, fmt.Errorf("asiento del lote %s: %w", meta.donde(), err)
+	}
+	if len(existentes) == 0 && len(lote) == 0 {
+		return nil, false, nil
+	}
+
+	incluidas := map[string]bool{}
+	for _, o := range existentes {
+		incluidas[o.ProcesoID] = true
+		for _, p := range o.Procesos {
+			incluidas[p] = true
+		}
+	}
+	for _, a := range lote {
+		if a.Hecho != HechoLiquidacionResiduoProrrateo {
+			continue
+		}
+		var r ResiduoProrrateoAsentado
+		if err := json.Unmarshal(a.Payload, &r); err != nil {
+			return nil, false, fmt.Errorf("leer el asiento del lote %s: %w", meta.donde(), err)
+		}
+		for _, p := range r.Procesos {
+			incluidas[p] = true
+		}
+	}
+	if !incluidas[meta.ID] {
+		aportaron := make([]string, 0, len(incluidas))
+		for p := range incluidas {
+			aportaron = append(aportaron, p)
+		}
+		slices.Sort(aportaron)
+		return nil, false, fmt.Errorf("%w: %s se liquido con %s y %s no estaba entre ellas",
+			ErrPeriodoYaLiquidado, meta.donde(), strings.Join(aportaron, ", "), meta.ID)
+	}
+	return existentes, true, nil
+}
+
+// corridasALiquidar separa las corridas del periodo en las que ya cerraron la
+// verificacion y las que la liquidacion tiene que esperar, y devuelve las
+// primeras ordenadas. Es la regla del ADR 0024, y vive aqui y no en el SQL para
+// que se pruebe sin base de datos.
+//
+// Falla cerrado en cuatro casos, y en ninguno escribe nada:
+//
+//   - alguna corrida sigue antes de `liquidacion_final`: [ErrLiquidacionEnEspera];
+//   - alguna llego sin las firmas de la compuerta: [ErrInconsistenciaLiquidacion] (la
+//     maquina de estados no lo permite, asi que es una base inconsistente);
+//   - dos corridas listas reparten la misma bolsa: [ErrBolsaRepetida];
+//   - el disparador paso la compuerta pero no aparece entre las corridas del
+//     periodo: [ErrInconsistenciaLiquidacion] (el adaptador y el gate no ven lo mismo).
+func corridasALiquidar(meta MetaProceso, corridas []MetaProceso) ([]string, error) {
+	listas := make([]string, 0, len(corridas))
+	pendientes := []string{}
+	porBolsa := map[string]string{}
+	for _, c := range corridas {
+		if !reparto.AlcanzoEtapa(c.Circuito, c.Etapa, reparto.EtapaLiquidacionFinal) {
+			pendientes = append(pendientes, fmt.Sprintf("%s (%s)", c.ID, c.Etapa))
+			continue
+		}
+		if !c.CerroLaVerificacion() {
+			return nil, fmt.Errorf("%w: %s esta en %q sin las firmas de distribucion y contabilidad de la compuerta de verificacion",
+				ErrInconsistenciaLiquidacion, c.ID, c.Etapa)
+		}
+		if otra, repetida := porBolsa[c.BolsaID]; repetida {
+			return nil, fmt.Errorf("%w: %s y %s reparten la misma bolsa %s en %s",
+				ErrBolsaRepetida, otra, c.ID, c.BolsaID, meta.donde())
+		}
+		porBolsa[c.BolsaID] = c.ID
+		listas = append(listas, c.ID)
+	}
+	if len(pendientes) > 0 {
+		return nil, fmt.Errorf("%w: %s no se liquida hasta que lleguen a %q: %s",
+			ErrLiquidacionEnEspera, meta.donde(), reparto.EtapaLiquidacionFinal, strings.Join(pendientes, ", "))
+	}
+	// El disparador acaba de pasar la compuerta, asi que tiene que estar en
+	// la lista. Si no esta, el adaptador y el gate no estan mirando lo
+	// mismo, y emitir con un alcance que no incluye la corrida que se pidio
+	// liquidar seria peor que no emitir.
+	if !slices.Contains(listas, meta.ID) {
+		return nil, fmt.Errorf(
+			"%w: %s paso la compuerta pero no aparece entre las corridas de %s",
+			ErrInconsistenciaLiquidacion, meta.ID, meta.donde())
+	}
+	slices.Sort(listas)
+	return listas, nil
+}
+
 // agregado es el insumo de TODAS las corridas listas de un periodo y circuito,
 // sumado. Es lo unico que ve el prorrateo: una orden agregada no tiene una
 // corrida a la que pertenecer.
@@ -252,6 +362,10 @@ type agregado struct {
 	// PorTitular es el neto de cada titular, ya sumado sobre obras y corridas.
 	PorTitular map[string]decimal.Decimal
 
+	// ProcesosPorTitular son las corridas que aportaron lineas a cada titular,
+	// en orden lexicografico.
+	ProcesosPorTitular map[string][]string
+
 	// Distribuido es la suma de las lineas. Puede ser MENOR que el neto de la
 	// corrida -- eso es el retenido -- pero nunca mayor; ver
 	// [ErrCorridaNoCuadra].
@@ -266,17 +380,22 @@ func (a agregado) Neto() decimal.Decimal {
 
 func (l Liquidaciones) agregar(ctx context.Context, procesos []string) (agregado, error) {
 	ag := agregado{
-		Procesos:    procesos,
-		Bruto:       decimal.Zero,
-		Admin:       decimal.Zero,
-		Social:      decimal.Zero,
-		Reserva:     decimal.Zero,
-		PorTitular:  map[string]decimal.Decimal{},
-		Distribuido: decimal.Zero,
+		Procesos:           procesos,
+		Bruto:              decimal.Zero,
+		Admin:              decimal.Zero,
+		Social:             decimal.Zero,
+		Reserva:            decimal.Zero,
+		PorTitular:         map[string]decimal.Decimal{},
+		ProcesosPorTitular: map[string][]string{},
+		Distribuido:        decimal.Zero,
 	}
 	for _, procesoID := range procesos {
 		insumo, err := l.Ordenes.InsumoDeProceso(ctx, procesoID)
 		if err != nil {
+			if errors.Is(err, ErrNoEncontrado) {
+				return agregado{}, fmt.Errorf("%w: la corrida %s no tiene resultados de proceso registrados",
+					ErrInconsistenciaLiquidacion, procesoID)
+			}
 			return agregado{}, fmt.Errorf("insumo del proceso %s: %w", procesoID, err)
 		}
 		ag.Bruto = ag.Bruto.Add(insumo.Bruto)
@@ -286,6 +405,9 @@ func (l Liquidaciones) agregar(ctx context.Context, procesos []string) (agregado
 		for _, linea := range insumo.Titulares {
 			ag.PorTitular[linea.TitularID] = ag.PorTitular[linea.TitularID].Add(linea.Importe)
 			ag.Distribuido = ag.Distribuido.Add(linea.Importe)
+			if !slices.Contains(ag.ProcesosPorTitular[linea.TitularID], procesoID) {
+				ag.ProcesosPorTitular[linea.TitularID] = append(ag.ProcesosPorTitular[linea.TitularID], procesoID)
+			}
 		}
 	}
 
@@ -337,10 +459,20 @@ func (l Liquidaciones) emitir(
 
 		id := idOrden(meta.Periodo, meta.Circuito, titularID)
 
+		// Usa las corridas que aportaron lineas a este titular en orden
+		// lexicografico. La primera es la corrida de referencia de la orden y
+		// de la notificacion, para que el aviso (titular, corrida) apunte a una
+		// corrida donde el titular de verdad tiene participacion (R-20, #55).
+		procesosTitular := ag.ProcesosPorTitular[titularID]
+		if len(procesosTitular) == 0 {
+			procesosTitular = ag.Procesos
+		}
+		procesoRef := procesosTitular[0]
+
 		o, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
 			ID:          id,
-			ProcesoID:   ag.Procesos[0],
-			Procesos:    ag.Procesos,
+			ProcesoID:   procesoRef,
+			Procesos:    procesosTitular,
 			TitularID:   titularID,
 			Periodo:     meta.Periodo,
 			Circuito:    string(meta.Circuito),
@@ -381,8 +513,12 @@ func (l Liquidaciones) emitir(
 		// NuevaOrden / DiferidasDeTitular reduce avisos huerfanos si esas
 		// lecturas fallan. El contrario, una orden sin aviso, es el que corre
 		// un plazo contra alguien que no sabe nada.
-		acuse, err := l.Notificador.Notificar(ctx, titularID,
-			asuntoLiquidacion(meta), cuerpoLiquidacion(meta, o, enviadaDia))
+		acuse, err := l.Notificador.Notificar(ctx, Aviso{
+			TitularID: titularID,
+			ProcesoID: o.ProcesoID,
+			Asunto:    asuntoLiquidacion(meta),
+			Cuerpo:    cuerpoLiquidacion(meta, o, enviadaDia),
+		})
 		if err != nil {
 			return fmt.Errorf("notificar la liquidacion %s: %w", id, err)
 		}
@@ -402,7 +538,7 @@ func (l Liquidaciones) emitir(
 	// Residuo del lote UNA sola vez (ref periodo+circuito), aunque no haya
 	// titulares con neto: si todo quedo retenido, el centavaje no puede
 	// desaparecer sin rastro (ADR 0005).
-	if err := l.asentarResiduoLote(ctx, meta, residuoProrrateo); err != nil {
+	if err := l.asentarResiduoLote(ctx, meta, residuoProrrateo, ag.Procesos); err != nil {
 		return err
 	}
 
@@ -574,14 +710,18 @@ func (l Liquidaciones) asentar(
 // asentarResiduoLote escribe UNA vez el residuo de [liquidacion.Prorratear]
 // del (periodo, circuito). No va en cada asiento de orden: con N titulares
 // el mismo centavo se contaria N veces.
+//
+// Lleva las corridas que aportaron porque es tambien la marca de que el lote
+// se emitio: [Liquidaciones.GenerarLiquidacion] la lee para no volver a emitir
+// un periodo sin ordenes y para reconocer una corrida que llega tarde.
 func (l Liquidaciones) asentarResiduoLote(
-	ctx context.Context, meta MetaProceso, r liquidacion.ResiduoProrrateo,
+	ctx context.Context, meta MetaProceso, r liquidacion.ResiduoProrrateo, procesos []string,
 ) error {
-	payload, err := json.Marshal(residuoAsentadoDe(r))
+	payload, err := json.Marshal(residuoAsentadoDe(r, procesos))
 	if err != nil {
 		return fmt.Errorf("serializar el residuo de %s/%s: %w", meta.Periodo, meta.Circuito, err)
 	}
-	refID := meta.Periodo + "-" + string(meta.Circuito)
+	refID := refLote(meta)
 	if err := l.Bitacora.Asentar(ctx, Asiento{
 		Hecho:   HechoLiquidacionResiduoProrrateo,
 		RefTipo: RefLiquidacionLote,
@@ -627,8 +767,8 @@ func (l Liquidaciones) cableadoParaEmitir() error {
 }
 
 // ExigirListoParaLiquidar es la compuerta del RD 13.5 sobre una corrida: etapa
-// `liquidacion_final` y las firmas de distribucion y contabilidad SOBRE LA
-// REVISION VIGENTE.
+// `liquidacion_final` y la compuerta de verificacion cerrada con las firmas de
+// distribucion y contabilidad ([MetaProceso.CerroLaVerificacion]).
 //
 // Las dos condiciones se comprueban aqui y no en el adaptador porque son la
 // regla, no una consulta: dejarlas en el SQL las volveria improbables sin una
@@ -643,21 +783,54 @@ func (m MetaProceso) ExigirListoParaLiquidar() error {
 		return fmt.Errorf("%w: %s esta en etapa %q y liquidar exige %q",
 			ErrProcesoNoListo, m.ID, m.Etapa, reparto.EtapaLiquidacionFinal)
 	}
-	faltan := m.rolesSinFirma()
-	if len(faltan) > 0 {
-		return fmt.Errorf("%w: a %s le faltan las firmas de %s sobre la revision %d",
-			ErrProcesoNoListo, m.ID, strings.Join(faltan, " y "), m.Revision)
+	if !m.CerroLaVerificacion() {
+		ultimaConFirma := 0
+		for rev := m.Revision - 1; rev >= 1; rev-- {
+			if len(m.rolesSinFirma(rev)) < 2 {
+				ultimaConFirma = rev
+				break
+			}
+		}
+		if ultimaConFirma > 0 {
+			return fmt.Errorf("%w: a %s le faltan las firmas de %s de la compuerta de verificacion (revision %d)",
+				ErrProcesoNoListo, m.ID, strings.Join(m.rolesSinFirma(ultimaConFirma), " y "), ultimaConFirma)
+		}
+		return fmt.Errorf("%w: a %s le faltan las firmas de distribucion y contabilidad de la compuerta de verificacion",
+			ErrProcesoNoListo, m.ID)
 	}
 	return nil
 }
 
-// rolesSinFirma son los roles de la compuerta que no han firmado la revision
-// vigente, en orden fijo. Vacio -- y no nil -- no se distingue aqui porque
-// quien llama solo mira la longitud.
-func (m MetaProceso) rolesSinFirma() []string {
+// CerroLaVerificacion es true si alguna revision ANTERIOR a la vigente lleva
+// las firmas de distribucion y contabilidad.
+//
+// Anterior y no la vigente: [reparto.ProcesoDeReparto.AvanzarEtapa] sube la
+// revision al salir de una compuerta, precisamente para que las firmas de
+// verificacion no cuenten tambien para pago y registro. Una corrida que acaba
+// de entrar a `liquidacion_final` tiene sus dos firmas en `Revision-1` y
+// ninguna en la vigente; pedirlas sobre la vigente era una compuerta que
+// ninguna corrida real cumplia (#193).
+//
+// Las firmas de una revision que un rechazo invalido siguen sin contar como
+// par a medias: lo que se pide es que los DOS roles firmaran la MISMA
+// revision, que es lo que hace `AvanzarEtapa` para dejar salir de una
+// compuerta.
+func (m MetaProceso) CerroLaVerificacion() bool {
+	for rev := 1; rev < m.Revision; rev++ {
+		if len(m.rolesSinFirma(rev)) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// rolesSinFirma son los roles de la compuerta que no firmaron la revision dada,
+// en orden fijo. Vacio -- y no nil -- no se distingue aqui porque quien llama
+// solo mira la longitud.
+func (m MetaProceso) rolesSinFirma(revision int) []string {
 	firmados := make(map[string]bool, len(m.Firmas))
 	for _, f := range m.Firmas {
-		if f.SobreRev == m.Revision {
+		if f.SobreRev == revision {
 			firmados[f.Rol] = true
 		}
 	}
@@ -668,6 +841,12 @@ func (m MetaProceso) rolesSinFirma() []string {
 		}
 	}
 	return faltan
+}
+
+// refLote es la referencia del asiento de lote: el (periodo, circuito) que se
+// liquida junto.
+func refLote(m MetaProceso) string {
+	return m.Periodo + "-" + string(m.Circuito)
 }
 
 // donde nombra el par (periodo, circuito) para los mensajes de error: es el
@@ -779,6 +958,11 @@ type ResiduoProrrateoAsentado struct {
 	Admin   string `json:"admin"`
 	Social  string `json:"social"`
 	Reserva string `json:"reserva"`
+
+	// Procesos son las corridas que se liquidaron juntas en el lote. Es la
+	// marca de que el lote ya se emitio, incluso cuando no produjo ninguna
+	// orden porque todo quedo retenido.
+	Procesos []string `json:"procesos"`
 }
 
 // DeduccionAsentada es un renglon del desglose en el libro.
@@ -789,11 +973,12 @@ type DeduccionAsentada struct {
 	Monto      string `json:"monto"`
 }
 
-func residuoAsentadoDe(r liquidacion.ResiduoProrrateo) ResiduoProrrateoAsentado {
+func residuoAsentadoDe(r liquidacion.ResiduoProrrateo, procesos []string) ResiduoProrrateoAsentado {
 	return ResiduoProrrateoAsentado{
-		Admin:   r.Admin.StringFixed(2),
-		Social:  r.Social.StringFixed(2),
-		Reserva: r.Reserva.StringFixed(2),
+		Admin:    r.Admin.StringFixed(2),
+		Social:   r.Social.StringFixed(2),
+		Reserva:  r.Reserva.StringFixed(2),
+		Procesos: procesos,
 	}
 }
 
