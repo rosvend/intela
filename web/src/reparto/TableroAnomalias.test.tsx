@@ -192,6 +192,7 @@ describe("TableroAnomalias", () => {
     await screen.findByText("Título no identificado");
     const pedidas = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain(RUTAS_REPARTO.alertas());
+    expect(pedidas).not.toContain(RUTAS_REPARTO.resumenAlertas(""));
   });
 
   it("sin backend de alertas muestra el vacio", async () => {
@@ -295,7 +296,7 @@ describe("TableroAnomalias", () => {
   it("un 503 del resumen es una caida, no 'Sin datos todavía'", async () => {
     servir({
       resumen: () => json({ error: "servicio no disponible" }, 503),
-      lista: () => json({ error: "servicio no disponible" }, 503),
+      lista: () => json([]),
     });
 
     montar();
@@ -304,6 +305,42 @@ describe("TableroAnomalias", () => {
       expect(screen.getAllByRole("alert").length).toBeGreaterThan(0),
     );
     expect(screen.queryByText("Sin datos todavía.")).toBeNull();
+    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+  });
+
+  it("no dice 'No hay alertas' mientras el resumen no ha llegado", async () => {
+    let resolver: (r: Response) => void = () => {};
+    servir({
+      resumen: () => new Promise<Response>((r) => (resolver = r)) as never,
+      lista: () => json([]),
+    });
+
+    montar();
+
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([u]) => String(u) === RUTAS_REPARTO.alertas("2025"),
+          ),
+      ).toBe(true),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+
+    resolver(json(resumenDePrueba({ periodo: "2025" })));
+    await screen.findByText("No hay alertas abiertas en este periodo.");
+  });
+
+  it("cuenta en singular una crítica aceptada sin corregir", async () => {
+    servir({
+      resumen: () => json(resumenDePrueba({ criticas_aceptadas: 1 })),
+    });
+
+    montar();
+
+    await screen.findByText(/1 aceptada sin corregir/);
   });
 
   it("un 502 de /procesos sin ?periodo es una caida, no 'Sin datos todavía'", async () => {

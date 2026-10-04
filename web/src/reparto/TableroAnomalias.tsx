@@ -100,7 +100,11 @@ export default function TableroAnomalias() {
               )}{" "}
               el reparto de este periodo.
               {resumen.datos.criticas_aceptadas > 0 &&
-                ` · ${formatearEntero(resumen.datos.criticas_aceptadas)} aceptadas sin corregir`}
+                ` · ${formatearEntero(resumen.datos.criticas_aceptadas)} ${plural(
+                  resumen.datos.criticas_aceptadas,
+                  "aceptada sin corregir",
+                  "aceptadas sin corregir",
+                )}`}
             </p>
           )}
         </div>
@@ -201,13 +205,12 @@ export default function TableroAnomalias() {
         {alertas.tipo === "listo" && sinEvaluar && (
           <p className="muted">Este periodo no se ha evaluado todavía.</p>
         )}
-        {alertas.tipo === "listo" && !sinEvaluar && lista.length === 0 && (
-          <p className="muted">
-            {periodo
-              ? "No hay alertas abiertas en este periodo."
-              : "No hay alertas abiertas."}
-          </p>
-        )}
+        {alertas.tipo === "listo" &&
+          resumen.tipo === "listo" &&
+          !sinEvaluar &&
+          lista.length === 0 && (
+            <p className="muted">No hay alertas abiertas en este periodo.</p>
+          )}
         {alertas.tipo === "listo" && !sinEvaluar && lista.length > 0 && (
           <>
             {resumen.tipo === "listo" &&
