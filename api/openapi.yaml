@@ -1831,12 +1831,24 @@ paths:
                   titulo: La Casa de las Dos Palmas
                   escalon: difuso
                   puntaje: "0.91"
+                  puntos: "5616"
                 identificacion:
                   - uso_id: uso-1
                     reporte_id: rep-caracol-2026-01
                     escalon: difuso
                     puntaje: "0.91"
                     evidencia: trgm sobre titulo normalizado
+                valorizacion:
+                  - uso_id: uso-1
+                    formula: RD 9.1.1
+                    puntos: "5616"
+                    terminos:
+                      - producto: "5616"
+                        factores:
+                          - {nombre: ponderacion, valor: "1.3", origen: parametro}
+                          - {nombre: duracion_min, valor: "48", origen: uso}
+                          - {nombre: rating, valor: "9", origen: uso}
+                          - {nombre: emisiones, valor: "10", origen: uso}
                 regla:
                   snapshot_id: snap-2026-01
                   reglamento: RD-IX
@@ -6049,7 +6061,7 @@ components:
 
     Explicacion:
       type: object
-      required: [ref, neto, bruto, retenida, corrida, bolsa, reporte, reportes, obra, identificacion, regla, split, deducciones, firmas, faltantes]
+      required: [ref, neto, bruto, retenida, corrida, bolsa, reporte, reportes, obra, identificacion, valorizacion, regla, split, deducciones, firmas, faltantes]
       description: |
         Linaje de una cifra (ADR 0006). Montos como cadena con dos decimales
         (ADR 0010); porcentajes como cadena en escala 0-100.
@@ -6107,13 +6119,14 @@ components:
             $ref: "#/components/schemas/ReporteDeLinaje"
         obra:
           type: object
-          required: [id, titulo, escalon, puntaje]
+          required: [id, titulo, escalon, puntaje, puntos]
           description: La obra, resumida por su identificacion menos cierta.
           properties:
             id: {type: string}
             titulo: {type: string, description: "De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos."}
             escalon: {type: string, enum: [alias, id_global, difuso, manual]}
-            puntaje: {type: string, description: "Vacio para alias e id global, que son exactos."}
+            puntaje: {type: string, description: "Puntaje del matching (ADR 0007), no puntos de reparto. Vacio para alias e id global, que son exactos."}
+            puntos: {type: string, example: "5616", description: "Puntos de reparto de la obra en la corrida (RD 9), redondeados a 8 decimales. No es `puntaje`."}
         identificacion:
           type: array
           description: Como se reconocio la obra en cada uso que peso (ADR 0007).
@@ -6128,6 +6141,14 @@ components:
               evidencia: {type: string}
               resuelto_por: {type: string, description: "Quien decidio, si fue manual."}
               resuelto_en: {type: string, format: date-time}
+        valorizacion:
+          type: array
+          description: |
+            Cuanto peso cada uso y la aritmetica que lo dio (#187), en el orden de
+            `identificacion`. Vacio en cifras valorizadas antes de #187: el
+            desglose no se reconstruye (ADR 0006); `obra.puntos` si esta.
+          items:
+            $ref: "#/components/schemas/ValorizacionDeUso"
         regla:
           type: object
           required: [snapshot_id, reglamento]
@@ -6190,6 +6211,47 @@ components:
         fuente: {type: string}
         sha256: {type: string}
         clave_objeto: {type: string}
+
+    ValorizacionDeUso:
+      type: object
+      required: [uso_id, formula, puntos, terminos]
+      description: |
+        Puntos de un uso como suma de productos: `puntos` = suma de los
+        `producto` de `terminos`; cada `producto` = multiplicacion de sus
+        `factores`. Decimales exactos como cadena, sin redondear.
+      properties:
+        uso_id: {type: string}
+        formula: {type: string, enum: ["RD 9.1.1", "RD 9.2", "RD 9.3", "RD 9.4", "RD 9.5", "RD 9.6", "RD 9.7"]}
+        puntos: {type: string, example: "5616"}
+        terminos:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TerminoDeValorizacion"
+
+    TerminoDeValorizacion:
+      type: object
+      required: [factores, producto]
+      properties:
+        factores:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FactorDeValorizacion"
+        producto: {type: string, example: "5616"}
+
+    FactorDeValorizacion:
+      type: object
+      required: [nombre, valor, origen]
+      properties:
+        nombre:
+          type: string
+          enum: [ponderacion, duracion_min, rating, emisiones, espectadores, taquilla, exhibiciones, pb, wa, minutos_vistos, wb, vistas, wc]
+        valor: {type: string, example: "1.3"}
+        origen:
+          type: string
+          enum: [parametro, uso]
+          description: "parametro: del snapshot congelado de la corrida. uso: de la fila canonica del reporte, ya normalizada (la duracion ya trae RD 9.1.1(c))."
 
     PaginaCasosIdentificacion:
       type: object
