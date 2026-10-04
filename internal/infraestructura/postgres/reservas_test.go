@@ -338,9 +338,15 @@ func TestLiberarSaldoReservaDescuentaRendimientoAtomicamenteBajoConcurrencia(t *
 		go func(i int) {
 			defer listas.Done()
 			<-arranca
+			// Sin lineas el rendimiento entero es residuo y el ledger no se
+			// mueve: las dos liberaciones saldrian bien. Una linea con el
+			// importe completo parte exacto y si descuenta los 50.00.
 			errs[i] = s.LiberarSaldoReserva(ctx, procesos[i], "2026", dec("50.00"),
 				func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
-					return decimal.Zero, nil, nil
+					return decimal.Zero, []reparto.LineaTitular{{
+						ObraID: "obra-1", TitularID: "titular-a", IPI: "111",
+						Porcentaje: dec("100"), Importe: dec("50.00"),
+					}}, nil
 				})
 		}(i)
 	}
@@ -461,5 +467,296 @@ func TestLiberarSaldoReservaDejaRastroDelRendimientoConsumido(t *testing.T) {
 	}
 	if !distribuido.Equal(dec("20.00")) {
 		t.Fatalf("distribuido = %s, se esperaba 20.00: es lo que bajo rendimientos.monto", distribuido)
+	}
+}
+
+// TestLiberarSaldoReservaReconciliaUnRepartoConResiduo es la prueba que B1
+// exige: un reparto que no parte exacto. Tres lineas iguales de 10 dejan
+// residuo 0.01; ese centavo se queda en el ledger y la suma distribuida
+// iguala lo que rendimientos.monto bajo.
+func TestLiberarSaldoReservaReconciliaUnRepartoConResiduo(t *testing.T) {
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+
+	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", dec("10.00")); err != nil {
+		t.Fatalf("acrecer rendimiento: %v", err)
+	}
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, dec("30.00"), dec("5"))
+	if err != nil {
+		t.Fatalf("construir pool: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+
+	lineas := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("10.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("100"), Importe: dec("10.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("10.00")},
+	}
+	_, residuo, err := reparto.DistribuirSobreProporciones(dec("10.00"), lineas)
+	if err != nil {
+		t.Fatalf("partir el rendimiento: %v", err)
+	}
+	if !residuo.Equal(dec("0.01")) {
+		t.Fatalf("precondicion: residuo = %s, se esperaba 0.01", residuo)
+	}
+
+	if err := s.LiberarSaldoReserva(ctx, "proceso-1", "2026", dec("10.00"),
+		func(decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+			return decimal.Zero, lineas, nil
+		}); err != nil {
+		t.Fatalf("liberar saldo: %v", err)
+	}
+
+	despues, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !despues.Monto.Equal(dec("0.01")) {
+		t.Fatalf("monto = %s, el residuo 0.01 tenia que quedarse en el ledger", despues.Monto)
+	}
+	distribuido := sumarImportes(t, s,
+		`SELECT COALESCE(SUM(importe), 0) FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'`)
+	if !distribuido.Equal(dec("10.00").Sub(despues.Monto)) {
+		t.Fatalf("distribuido = %s, el ledger bajo %s", distribuido, dec("10.00").Sub(despues.Monto))
+	}
+	if !distribuido.Equal(dec("9.99")) {
+		t.Fatalf("distribuido = %s, se esperaba 9.99", distribuido)
+	}
+
+	filas, err := s.pool.Query(ctx,
+		`SELECT importe FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'`)
+	if err != nil {
+		t.Fatalf("leer distribuciones: %v", err)
+	}
+	defer filas.Close()
+	var n int
+	for filas.Next() {
+		var importe decimal.Decimal
+		if err := filas.Scan(&importe); err != nil {
+			t.Fatalf("escanear importe: %v", err)
+		}
+		if !importe.Equal(dec("3.33")) {
+			t.Fatalf("importe = %s, el residuo no se absorbe en una linea", importe)
+		}
+		n++
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("leer distribuciones: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("se persistieron %d filas, se esperaban 3", n)
+	}
+}
+
+// TestLiberarReservaPrescritaRetieneElResiduoDelRendimiento recorre el caso
+// de uso: tres titulares iguales, reserva 30 y rendimiento 10. La segunda
+// particion deja 0.01 en el ledger y lo distribuido iguala esa baja.
+func TestLiberarReservaPrescritaRetieneElResiduoDelRendimiento(t *testing.T) {
+	s, saldo := liberarPrescrita(t, dec("30.00"), dec("10.00"), dec("10.00"), []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("100.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("100"), Importe: dec("100.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("100.00")},
+	})
+	ctx := t.Context()
+
+	rend, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !rend.Monto.Equal(dec("0.01")) {
+		t.Fatalf("monto = %s, se esperaba 0.01 en el ledger", rend.Monto)
+	}
+	if !saldo.IsZero() {
+		t.Fatalf("saldo devuelto = %s, se esperaba 0", saldo)
+	}
+	debeCuadrarLiberacion(t, s, dec("30.00"), dec("10.00"), saldo, rend.Monto)
+}
+
+// TestLiberarReservaPrescritaSinTitularesDejaElRendimientoEnElLedger es la
+// sonda de lineas vacias: DistribuirSobreProporciones devuelve el importe
+// entero como residuo. No sale del ledger y no entra en la reserva.
+func TestLiberarReservaPrescritaSinTitularesDejaElRendimientoEnElLedger(t *testing.T) {
+	s, saldo := liberarPrescrita(t, dec("50.00"), dec("20.00"), dec("20.00"), nil)
+	ctx := t.Context()
+
+	if !saldo.Equal(dec("50.00")) {
+		t.Fatalf("saldo = %s, la reserva no debio absorber el rendimiento", saldo)
+	}
+	rend, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !rend.Monto.Equal(dec("20.00")) {
+		t.Fatalf("monto = %s, los 20.00 tenian que seguir en el ledger", rend.Monto)
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'`,
+	).Scan(&n); err != nil {
+		t.Fatalf("contar distribuciones: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("se persistieron %d filas, se esperaban 0", n)
+	}
+	debeCuadrarLiberacion(t, s, dec("50.00"), dec("20.00"), saldo, rend.Monto)
+}
+
+// TestLiberarReservaPrescritaReconciliaCuandoElRepartoSePasa es la fixture
+// 160/240/300: repartir 100 redondea a 100.01. Si el ledger tiene el centavo,
+// sale de ahi y las lineas del dominio se guardan enteras.
+func TestLiberarReservaPrescritaReconciliaCuandoElRepartoSePasa(t *testing.T) {
+	titulares := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("40"), Importe: dec("160.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("60"), Importe: dec("240.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("300.00")},
+	}
+	s, saldo := liberarPrescrita(t, dec("600.00"), dec("200.00"), dec("100.00"), titulares)
+	ctx := t.Context()
+
+	rend, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !rend.Monto.Equal(dec("99.99")) {
+		t.Fatalf("monto = %s, se esperaba 99.99 (200.00 - 100.01)", rend.Monto)
+	}
+	if !saldo.Equal(dec("0.01")) {
+		t.Fatalf("saldo = %s, el centavo de mas no puede evaporarse", saldo)
+	}
+	debeCuadrarLiberacion(t, s, dec("600.00"), dec("200.00"), saldo, rend.Monto)
+
+	partes, residuo, err := reparto.DistribuirSobreProporciones(dec("100.00"), []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", Importe: dec("160.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", Importe: dec("240.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", Importe: dec("300.00")},
+	})
+	if err != nil {
+		t.Fatalf("partir: %v", err)
+	}
+	if !residuo.Equal(dec("-0.01")) {
+		t.Fatalf("precondicion: residuo = %s, se esperaba -0.01", residuo)
+	}
+	filas, err := s.pool.Query(ctx,
+		`SELECT importe FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'
+		  ORDER BY obra_id, titular_id`)
+	if err != nil {
+		t.Fatalf("leer distribuciones: %v", err)
+	}
+	defer filas.Close()
+	for i := 0; filas.Next(); i++ {
+		var importe decimal.Decimal
+		if err := filas.Scan(&importe); err != nil {
+			t.Fatalf("escanear: %v", err)
+		}
+		if i >= len(partes) || !importe.Equal(partes[i].Importe) {
+			t.Fatalf("fila %d = %s, se esperaba la linea del dominio", i, importe)
+		}
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("leer distribuciones: %v", err)
+	}
+}
+
+// TestLiberarReservaPrescritaNoAtribuyeElCentavoQueElLedgerNoTiene: la misma
+// fixture con el ledger justo en 100. El redondeo pide 100.01 y el CHECK
+// (monto >= 0) no deja escribirlo. El centavo no se atribuye; lo que baja
+// el ledger iguala la suma persistida.
+func TestLiberarReservaPrescritaNoAtribuyeElCentavoQueElLedgerNoTiene(t *testing.T) {
+	titulares := []reparto.LineaTitular{
+		{ObraID: "obra-1", TitularID: "titular-a", IPI: "111", Porcentaje: dec("40"), Importe: dec("160.00")},
+		{ObraID: "obra-1", TitularID: "titular-b", IPI: "222", Porcentaje: dec("60"), Importe: dec("240.00")},
+		{ObraID: "obra-2", TitularID: "titular-a", IPI: "111", Porcentaje: dec("100"), Importe: dec("300.00")},
+	}
+	s, saldo := liberarPrescrita(t, dec("600.00"), dec("100.00"), dec("100.00"), titulares)
+	ctx := t.Context()
+
+	rend, err := s.PorCircuitoYVigencia(ctx, reparto.Nacional, "2026")
+	if err != nil {
+		t.Fatalf("leer rendimiento: %v", err)
+	}
+	if !rend.Monto.IsZero() {
+		t.Fatalf("monto = %s, se esperaba 0", rend.Monto)
+	}
+	if !saldo.IsZero() {
+		t.Fatalf("saldo = %s, se esperaba 0", saldo)
+	}
+	distribuido := sumarImportes(t, s,
+		`SELECT COALESCE(SUM(importe), 0) FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'`)
+	if !distribuido.Equal(dec("100.00")) {
+		t.Fatalf("distribuido = %s, se esperaba 100.00", distribuido)
+	}
+	debeCuadrarLiberacion(t, s, dec("600.00"), dec("100.00"), saldo, rend.Monto)
+}
+
+func liberarPrescrita(t *testing.T, reserva, rendimientoEnLedger, rendimientoAUsar decimal.Decimal, titulares []reparto.LineaTitular) (*Store, decimal.Decimal) {
+	t.Helper()
+	s := sembrarCorridaBase(t)
+	ctx := t.Context()
+	obras := make([]reparto.LineaObra, 0, 2)
+	vistas := map[string]bool{}
+	for _, l := range titulares {
+		if vistas[l.ObraID] {
+			continue
+		}
+		vistas[l.ObraID] = true
+		obras = append(obras, reparto.LineaObra{ObraID: l.ObraID, Puntos: dec("1"), Importe: l.Importe})
+	}
+	if err := s.GuardarResultado(ctx, "proceso-1", reparto.Resultado{
+		Reserva:    reserva,
+		SnapshotID: "snap-1",
+		Reglamento: "IX",
+		Obras:      obras,
+		Titulares:  titulares,
+	}); err != nil {
+		t.Fatalf("guardar resultado: %v", err)
+	}
+	pool, err := reparto.NuevaPoolReserva("proceso-1", reparto.Nacional, reserva, dec("5"))
+	if err != nil {
+		t.Fatalf("construir reserva: %v", err)
+	}
+	if err := s.CrearReserva(ctx, pool); err != nil {
+		t.Fatalf("crear reserva: %v", err)
+	}
+	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", rendimientoEnLedger); err != nil {
+		t.Fatalf("acrecer rendimiento: %v", err)
+	}
+	b := aplicacion.BolsasAccesorias{Resultados: s, Reservas: s, Rendimientos: s}
+	_, saldo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "2026", rendimientoAUsar)
+	if err != nil {
+		t.Fatalf("liberar reserva: %v", err)
+	}
+	return s, saldo
+}
+
+func sumarImportes(t *testing.T, s *Store, query string, args ...any) decimal.Decimal {
+	t.Helper()
+	var v decimal.Decimal
+	if err := s.pool.QueryRow(t.Context(), query, args...).Scan(&v); err != nil {
+		t.Fatalf("sumar importes: %v", err)
+	}
+	return v
+}
+
+func debeCuadrarLiberacion(t *testing.T, s *Store, reservaAntes, rendimientoAntes, reservaDespues, rendimientoDespues decimal.Decimal) {
+	t.Helper()
+	liberado := sumarImportes(t, s, `SELECT COALESCE(SUM(importe), 0) FROM reservas_liberaciones WHERE proceso_id = 'proceso-1'`)
+	distribuido := sumarImportes(t, s,
+		`SELECT COALESCE(SUM(importe), 0) FROM rendimientos_distribuciones
+		  WHERE circuito = 'nacional' AND vigencia = '2026' AND proceso_id = 'proceso-1'`)
+	if !distribuido.Equal(rendimientoAntes.Sub(rendimientoDespues)) {
+		t.Fatalf("distribuido = %s, el ledger bajo %s", distribuido, rendimientoAntes.Sub(rendimientoDespues))
+	}
+	izquierda := reservaAntes.Add(rendimientoAntes)
+	derecha := reservaDespues.Add(rendimientoDespues).Add(liberado)
+	if !izquierda.Equal(derecha) {
+		t.Fatalf("conservacion: habia %s, quedo %s (reserva %s + rendimiento %s + liberado %s)",
+			izquierda, derecha, reservaDespues, rendimientoDespues, liberado)
 	}
 }
