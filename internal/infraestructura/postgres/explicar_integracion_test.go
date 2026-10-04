@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -96,6 +98,49 @@ func TestExplicarCifraDeUnaCorridaReal(t *testing.T) {
 	}
 	if x.Obra.Titulo != "Obra Y" || len(x.Faltantes) != 0 {
 		t.Fatalf("obra.titulo = %q, faltantes = %v: la cadena esta completa", x.Obra.Titulo, x.Faltantes)
+	}
+
+	// #187: el desglose sale de la bitacora y reproduce los puntos persistidos.
+	if len(x.Valorizacion) != 1 || x.Valorizacion[0].UsoID != "uso-y" || x.Valorizacion[0].Formula != "RD 9.1.1" {
+		t.Fatalf("valorizacion = %+v, se esperaba un uso uso-y por RD 9.1.1", x.Valorizacion)
+	}
+	val := x.Valorizacion[0]
+	if len(val.Terminos) != 1 {
+		t.Fatalf("terminos = %+v", val.Terminos)
+	}
+	nombres := []string{"ponderacion", "duracion_min", "rating", "emisiones"}
+	valores := []string{"1.3", "48", "9", "10"}
+	if len(val.Terminos[0].Factores) != len(nombres) {
+		t.Fatalf("factores = %+v", val.Terminos[0].Factores)
+	}
+	producto := decimal.NewFromInt(1)
+	for i, f := range val.Terminos[0].Factores {
+		got, err := decimal.NewFromString(f.Valor)
+		if err != nil {
+			t.Fatalf("factor %q: %v", f.Nombre, err)
+		}
+		if f.Nombre != nombres[i] || !got.Equal(decimal.RequireFromString(valores[i])) {
+			t.Errorf("factor %d = %s %s, se esperaba %s %s", i, f.Nombre, f.Valor, nombres[i], valores[i])
+		}
+		producto = producto.Mul(got)
+	}
+	puntosUso, err := decimal.NewFromString(val.Puntos)
+	if err != nil {
+		t.Fatalf("puntos del uso: %v", err)
+	}
+	productoAsentado, err := decimal.NewFromString(val.Terminos[0].Producto)
+	if err != nil {
+		t.Fatalf("producto: %v", err)
+	}
+	puntosObra, err := decimal.NewFromString(x.Obra.Puntos)
+	if err != nil {
+		t.Fatalf("obra.puntos: %v", err)
+	}
+	if !producto.Equal(productoAsentado) || !producto.Equal(puntosUso) {
+		t.Errorf("producto de factores %s != producto asentado %s / puntos %s", producto, productoAsentado, puntosUso)
+	}
+	if len(resultado.Obras) != 1 || !puntosUso.Round(8).Equal(resultado.Obras[0].Puntos) || !puntosUso.Round(8).Equal(puntosObra) {
+		t.Errorf("los factores dan %s, el resultado persistido %+v, obra.puntos %s", puntosUso.Round(8), resultado.Obras, puntosObra)
 	}
 
 	if _, err := (aplicacion.ExplicarCifra{Bitacora: s}).Explicar(ctx, auditor, "proc-y:obra-y:titular-otro"); !errors.Is(err, aplicacion.ErrNoEncontrado) {

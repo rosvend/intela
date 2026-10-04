@@ -50,6 +50,7 @@ type obraLinajeJSON struct {
 	Titulo  string `json:"titulo"`
 	Escalon string `json:"escalon"`
 	Puntaje string `json:"puntaje"`
+	Puntos  string `json:"puntos"`
 }
 
 type identificacionJSON struct {
@@ -60,6 +61,24 @@ type identificacionJSON struct {
 	Evidencia   string `json:"evidencia,omitempty"`
 	ResueltoPor string `json:"resuelto_por,omitempty"`
 	ResueltoEn  string `json:"resuelto_en,omitempty"`
+}
+
+type factorJSON struct {
+	Nombre string `json:"nombre"`
+	Valor  string `json:"valor"`
+	Origen string `json:"origen"`
+}
+
+type terminoJSON struct {
+	Factores []factorJSON `json:"factores"`
+	Producto string       `json:"producto"`
+}
+
+type valorizacionJSON struct {
+	UsoID    string        `json:"uso_id"`
+	Formula  string        `json:"formula"`
+	Puntos   string        `json:"puntos"`
+	Terminos []terminoJSON `json:"terminos"`
 }
 
 type reglaJSON struct {
@@ -102,6 +121,7 @@ type explicacionJSON struct {
 	Reportes       []reporteLinajeJSON   `json:"reportes"`
 	Obra           obraLinajeJSON        `json:"obra"`
 	Identificacion []identificacionJSON  `json:"identificacion"`
+	Valorizacion   []valorizacionJSON    `json:"valorizacion"`
 	Regla          reglaJSON             `json:"regla"`
 	Split          *splitJSON            `json:"split"`
 	Deducciones    []deduccionLinajeJSON `json:"deducciones"`
@@ -113,6 +133,18 @@ func aReporteLinajeJSON(r aplicacion.ReporteAsentado) reporteLinajeJSON {
 	return reporteLinajeJSON{ID: r.ID, Fuente: r.Fuente, SHA256: r.SHA256, ClaveObjeto: r.ClaveObjeto}
 }
 
+func aValorizacionJSON(v aplicacion.ValorizacionDeUso) valorizacionJSON {
+	out := valorizacionJSON{UsoID: v.UsoID, Formula: v.Formula, Puntos: v.Puntos, Terminos: make([]terminoJSON, 0, len(v.Terminos))}
+	for _, t := range v.Terminos {
+		tj := terminoJSON{Producto: t.Producto, Factores: make([]factorJSON, 0, len(t.Factores))}
+		for _, f := range t.Factores {
+			tj.Factores = append(tj.Factores, factorJSON{Nombre: f.Nombre, Valor: f.Valor, Origen: f.Origen})
+		}
+		out.Terminos = append(out.Terminos, tj)
+	}
+	return out
+}
+
 func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
 	out := explicacionJSON{
 		Ref: x.Ref, TitularID: x.TitularID,
@@ -121,11 +153,12 @@ func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
 		Corrida: corridaJSON{ProcesoID: x.Corrida.ProcesoID, Periodo: x.Corrida.Periodo, Circuito: x.Corrida.Circuito},
 		Bolsa:   bolsaLinajeJSON{ID: x.Bolsa.ID, UsuarioID: x.Bolsa.UsuarioID, Bruto: x.Bolsa.Bruto.StringFixed(2)},
 		Reporte: aReporteLinajeJSON(x.Reporte),
-		Obra:    obraLinajeJSON{ID: x.Obra.ID, Titulo: x.Obra.Titulo, Escalon: x.Obra.Escalon, Puntaje: x.Obra.Puntaje},
+		Obra:    obraLinajeJSON{ID: x.Obra.ID, Titulo: x.Obra.Titulo, Escalon: x.Obra.Escalon, Puntaje: x.Obra.Puntaje, Puntos: x.Obra.Puntos},
 		Regla:   reglaJSON{SnapshotID: x.Regla.SnapshotID, Reglamento: x.Regla.Reglamento},
 
 		Reportes:       make([]reporteLinajeJSON, 0, len(x.Reportes)),
 		Identificacion: make([]identificacionJSON, 0, len(x.Identificacion)),
+		Valorizacion:   make([]valorizacionJSON, 0, len(x.Valorizacion)),
 		Deducciones:    make([]deduccionLinajeJSON, 0, len(x.Deducciones)),
 		Firmas:         make([]firmaLinajeJSON, 0, len(x.Firmas)),
 		Faltantes:      append(make([]string, 0, len(x.Faltantes)), x.Faltantes...),
@@ -141,6 +174,9 @@ func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
 	}
 	for _, u := range x.Identificacion {
 		out.Identificacion = append(out.Identificacion, identificacionJSON(u))
+	}
+	for _, v := range x.Valorizacion {
+		out.Valorizacion = append(out.Valorizacion, aValorizacionJSON(v))
 	}
 	for _, d := range x.Deducciones {
 		out.Deducciones = append(out.Deducciones, deduccionLinajeJSON{Concepto: d.Concepto, Porcentaje: d.Porcentaje.String(), Monto: d.Monto.StringFixed(2)})
