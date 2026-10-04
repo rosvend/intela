@@ -24,7 +24,7 @@ const RefTipoPublicacionONI = "oni_publicacion"
 // del proceso de Distribucion en el que se incluyen los derechos de las ONI.
 // Vive aqui, no en el frontend, para que el contrato HTTP y la pagina
 // publica no divergjan.
-const ExplicacionListadoONI = "REDES SGC publica este listado de obras no identificadas (ONI) para que los titulares documenten su autoria y soliciten la remuneracion en el siguiente proceso de Distribucion (RD 13.8). Se publican titulos e informacion identificatoria, sin montos: la informacion economica se mantiene en reserva (RD 13.8.2-13.8.3). La prescripcion de estos recaudos es de tres anos contados desde esta publicacion (RD 13.8.7, R-19)."
+const ExplicacionListadoONI = "REDES SGC publica este listado de obras no identificadas (ONI) para que los titulares documenten su autoria y soliciten la remuneracion en el siguiente proceso de Distribucion (RD 13.8). Se publican titulos e informacion identificatoria, sin montos: la informacion economica se mantiene en reserva (RD 13.8.2-13.8.3). La prescripcion de cada recaudo es de tres anos contados desde la fecha de publicacion de esa obra (RD 13.8.7, R-19)."
 
 // Rol de un actor. La autorizacion de cada caso de uso se decide contra esto,
 // no contra la mera existencia de una sesion.

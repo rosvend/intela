@@ -56,9 +56,6 @@ func (r *repoPublicacionMem) GuardarPublicacion(_ context.Context, p Publicacion
 	secuencia := 1
 	for _, g := range r.guardadas {
 		if g.Periodo == p.Periodo {
-			if len(p.Obras) == 0 {
-				return PublicacionONI{}, ErrYaPublicado
-			}
 			secuencia++
 		}
 	}
@@ -448,6 +445,19 @@ func TestPublicacionComplementariaONITardio(t *testing.T) {
 	}
 	if len(consolidada.Obras) != 2 {
 		t.Fatalf("obras consolidadas = %d, se esperaban 2", len(consolidada.Obras))
+	}
+	anclaDe := map[string]string{}
+	for _, o := range consolidada.Obras {
+		anclaDe[o.ID] = o.FechaProceso
+	}
+	if anclaDe["uso-1"] != t1.UTC().Format(time.RFC3339) {
+		t.Fatalf("ancla publica de uso-1 = %q, se esperaba %s", anclaDe["uso-1"], t1.UTC().Format(time.RFC3339))
+	}
+	if anclaDe["uso-tardio"] != t2.UTC().Format(time.RFC3339) {
+		t.Fatalf("ancla publica de uso-tardio = %q, se esperaba %s", anclaDe["uso-tardio"], t2.UTC().Format(time.RFC3339))
+	}
+	if !consolidada.FechaProceso.Equal(t2) {
+		t.Fatalf("fecha de la cabecera = %v, se esperaba la complementaria %v", consolidada.FechaProceso, t2)
 	}
 
 	// Intentar publicar de nuevo sin mas pendientes falla.

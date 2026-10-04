@@ -14,16 +14,9 @@ var _ aplicacion.RepositorioPublicacionONI = (*Store)(nil)
 
 const columnasPublicacion = `id::text, periodo, fecha_proceso, direccion_fisica, direccion_electronica, secuencia`
 
-const columnasItemPublico = `i.uso_id, i.titulo, i.fuente, i.ids_fuente, i.modalidad`
+const columnasItemPublico = `i.uso_id, i.titulo, i.fuente, i.ids_fuente, i.modalidad, pub.fecha_proceso`
 
-// BloquearPeriodoONI toma el cerrojo de aviso de la publicacion ONI del
-// periodo hasta que la transaccion en curso termine.
-//
-// Es de aviso -- `pg_advisory_xact_lock` -- y no de fila porque lo que hay que
-// serializar es la publicacion entera (lectura de pendientes, insercion de la
-// publicacion con su secuencia, e insercion de items), evitando que dos
-// publicaciones concurrentes del mismo periodo lean los mismos pendientes y
-// dupliquen items.
+// BloquearPeriodoONI serializa la publicacion ONI del periodo hasta el fin de la transaccion.
 func (s *Store) BloquearPeriodoONI(ctx context.Context, periodo string) error {
 	tx, hay := txDe(ctx)
 	if !hay {
@@ -72,19 +65,6 @@ func (s *Store) PendientesDePeriodo(ctx context.Context, periodo string) ([]oni.
 }
 
 func (s *Store) GuardarPublicacion(ctx context.Context, p aplicacion.PublicacionONI) (aplicacion.PublicacionONI, error) {
-	if len(p.Obras) == 0 {
-		var yaExiste bool
-		err := s.ejecutorDe(ctx).QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM oni_publicaciones WHERE periodo = $1)`, p.Periodo).Scan(&yaExiste)
-		if err != nil {
-			return aplicacion.PublicacionONI{}, traducirError(err, "verificar publicaciones previas del periodo %q", p.Periodo)
-		}
-		if yaExiste {
-			return aplicacion.PublicacionONI{}, fmt.Errorf(
-				"publicar periodo %q: %w", p.Periodo, aplicacion.ErrYaPublicado)
-		}
-	}
-
 	err := s.ejecutorDe(ctx).QueryRow(ctx, `
 		INSERT INTO oni_publicaciones (periodo, fecha_proceso, direccion_fisica, direccion_electronica, secuencia)
 		VALUES (
@@ -178,10 +158,12 @@ func (s *Store) conItemsDePeriodo(ctx context.Context, p aplicacion.PublicacionO
 	p.Obras = []oni.ProyeccionPublica{}
 	for filas.Next() {
 		var o oni.ProyeccionPublica
-		if err := filas.Scan(&o.ID, &o.Titulo, &o.Fuente, &o.IDsFuente, &o.Modalidad); err != nil {
+		var ancla time.Time
+		if err := filas.Scan(&o.ID, &o.Titulo, &o.Fuente, &o.IDsFuente, &o.Modalidad, &ancla); err != nil {
 			return aplicacion.PublicacionONI{}, traducirError(err, "escanear item de publicacion del periodo %q", p.Periodo)
 		}
 		o.Periodo = p.Periodo
+		o.FechaProceso = ancla.UTC().Format(time.RFC3339)
 		p.Obras = append(p.Obras, o)
 	}
 	if err := filas.Err(); err != nil {

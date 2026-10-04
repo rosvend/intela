@@ -73,11 +73,13 @@ func (c PublicarListadoONI) Ejecutar(ctx context.Context, periodo, actorID strin
 
 		obras := make([]oni.ProyeccionPublica, 0, len(pendientes))
 		usoIDs := make([]string, 0, len(pendientes))
+		ancla := ahora.UTC().Format(time.RFC3339)
 		for _, d := range pendientes {
 			p, err := oni.Proyectar(d)
 			if err != nil {
 				return fmt.Errorf("proyectar uso %q: %w", d.ID, err)
 			}
+			p.FechaProceso = ancla
 			obras = append(obras, p)
 			usoIDs = append(usoIDs, p.ID)
 		}

@@ -33,6 +33,10 @@ type DatosIdentificatorios struct {
 	IDsFuente string
 	Modalidad string
 	Periodo   string
+	// FechaProceso queda vacio en la cola viva. Se escribe al publicar, en
+	// RFC 3339, y es el ancla de R-19 de esa obra, no la de una complementaria
+	// posterior del mismo periodo.
+	FechaProceso string
 }
 
 // ProyeccionPublica es lo que R-18 permite poner en la web: titulo e
@@ -47,6 +51,9 @@ type ProyeccionPublica struct {
 	IDsFuente string
 	Modalidad string
 	Periodo   string
+	// FechaProceso es el ancla de R-19 de la publicacion que incluyo esta
+	// obra, en RFC 3339. Una complementaria posterior no la reescribe.
+	FechaProceso string
 }
 
 // Proyectar recorta un uso en ONI a lo publicable.

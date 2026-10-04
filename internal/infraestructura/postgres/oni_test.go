@@ -382,6 +382,24 @@ func TestPublicacionComplementariaONITardio(t *testing.T) {
 	if len(periodoConsolidado.Obras) != 3 {
 		t.Fatalf("obras periodo = %d, se esperaban 3 (2 iniciales + 1 tardio)", len(periodoConsolidado.Obras))
 	}
+	if !periodoConsolidado.FechaProceso.Equal(t2) {
+		t.Fatalf("cabecera = %v, se esperaba la complementaria %v", periodoConsolidado.FechaProceso, t2)
+	}
+	anclaPublica := map[string]time.Time{}
+	for _, o := range periodoConsolidado.Obras {
+		got, err := time.Parse(time.RFC3339, o.FechaProceso)
+		if err != nil {
+			t.Fatalf("fecha publica de %s: %v", o.ID, err)
+		}
+		anclaPublica[o.ID] = got
+	}
+	if !anclaPublica[usoONI1].Equal(t1) || !anclaPublica[usoONI2].Equal(t1) {
+		t.Fatalf("las obras de la secuencia 1 muestran %v y %v, se esperaba %v",
+			anclaPublica[usoONI1], anclaPublica[usoONI2], t1)
+	}
+	if !anclaPublica[usoTardio].Equal(t2) {
+		t.Fatalf("el tardio muestra %v, se esperaba %v", anclaPublica[usoTardio], t2)
+	}
 
 	// 7. La vista publica oni_publico refleja las 3 obras para 2026-01.
 	var nVista int
@@ -390,6 +408,19 @@ func TestPublicacionComplementariaONITardio(t *testing.T) {
 	}
 	if nVista != 3 {
 		t.Fatalf("oni_publico = %d filas, se esperaban 3", nVista)
+	}
+	var fechaVista time.Time
+	if err := pool.QueryRow(ctx, `SELECT fecha_proceso FROM oni_publico WHERE id = $1`, usoONI1).Scan(&fechaVista); err != nil {
+		t.Fatalf("fecha en oni_publico de %s: %v", usoONI1, err)
+	}
+	if !fechaVista.Equal(t1) {
+		t.Fatalf("oni_publico.fecha_proceso de la secuencia 1 = %v, se esperaba %v", fechaVista, t1)
+	}
+	if err := pool.QueryRow(ctx, `SELECT fecha_proceso FROM oni_publico WHERE id = $1`, usoTardio).Scan(&fechaVista); err != nil {
+		t.Fatalf("fecha en oni_publico del tardio: %v", err)
+	}
+	if !fechaVista.Equal(t2) {
+		t.Fatalf("oni_publico.fecha_proceso del tardio = %v, se esperaba %v", fechaVista, t2)
 	}
 
 	// 8. Bitacora contiene 2 asientos de publicacion.

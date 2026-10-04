@@ -1,20 +1,4 @@
--- Publicaciones ONI complementarias (issue #184, R-18, R-19, RD 13.8.7).
---
--- 00023 tenia UNIQUE (periodo) en oni_publicaciones. Si un uso llegaba
--- despues de publicar el periodo (reporte tardio o uso reabierto) y quedaba
--- ONI, nunca se podia publicar porque republicar el periodo devolvia 409
--- (ErrYaPublicado), y su publicado_en quedaba NULL sin arrancar nunca el reloj
--- de prescripcion de R-19.
---
--- Esta migracion elimina UNIQUE (periodo), introduce la columna secuencia
--- (1 = publicacion inicial, 2+ = publicaciones complementarias) con
--- UNIQUE (periodo, secuencia), y permite publicaciones complementarias que
--- congelan y anclan unicamente los usos ONI con publicado_en NULL.
---
--- COORDINACION DE NUMERO: 00025 es el primer numero libre por encima de
--- 00024 (`00024_resultados_titular_declaracion_version.sql`). goose corre
--- con allowMissing = false; un numero libre por debajo de la version ya
--- aplicada aborta el despliegue.
+-- Publicaciones ONI complementarias (#184). Numero 00027, primero libre por encima de 00026 en main. Ver docs/planes/184-oni-tardios.md.
 
 -- +goose Up
 
