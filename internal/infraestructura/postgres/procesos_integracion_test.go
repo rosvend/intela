@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/anomalias"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
@@ -393,7 +394,7 @@ func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
 	insertarUsoDeAlertas(t, pool, "u-dup1", reporteEnero, "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
 	insertarUsoDeAlertas(t, pool, "u-dup2", "rep-caracol-enero-bis", "alias", "obra-y", "serie", "id_ficha=7", "2026-01-02", "20:00:00")
 
-	anomalias := servicioDeAnomalias(s, time.Now())
+	svcAnomalias := servicioDeAnomalias(s, time.Now())
 	uc := aplicacion.Procesos{
 		Repo:          s,
 		Parametros:    s,
@@ -402,7 +403,7 @@ func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
 		Usos:          s,
 		Resultados:    s,
 		Unidad:        s,
-		Anomalias:     anomalias,
+		Anomalias:     svcAnomalias,
 		Bitacora:      s,
 		Reloj:         reloj.Sistema{},
 		Origen:        s,
@@ -443,7 +444,7 @@ func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
 	}
 
 	sinResolver := false
-	criticas, err := anomalias.Listar(ctx, aplicacion.FiltroAlertas{Periodo: "2026-01", Resueltas: &sinResolver})
+	criticas, err := svcAnomalias.Listar(ctx, aplicacion.FiltroAlertas{Periodo: "2026-01", Resueltas: &sinResolver})
 	if err != nil {
 		t.Fatalf("listar abiertas: %v", err)
 	}
@@ -452,7 +453,13 @@ func TestLaCompuertaDeAnomaliasBloqueaLaSalidaDeDeducciones(t *testing.T) {
 		if !a.Critica {
 			continue
 		}
-		if _, err := anomalias.Resolver(ctx, a.ID, "actor-dist", "entrega bis es reenvio, se excluye en #39"); err != nil {
+		// Cerrar una critica exige corregir el dato (#164): la fila de la
+		// entrega bis sale del reparto con la misma firma que cierra la alerta.
+		if _, err := svcAnomalias.Resolver(ctx, a.ID, "actor-dist", aplicacion.SolicitudCierreAlerta{
+			Nota:       "entrega bis es reenvio de la misma parrilla",
+			ActorRol:   string(aplicacion.RolDistribucion),
+			Correccion: anomalias.PedidoDeCorreccion{Accion: anomalias.AccionExcluirUso},
+		}); err != nil {
 			t.Fatalf("resolver %s: %v", a.ID, err)
 		}
 		resueltas++

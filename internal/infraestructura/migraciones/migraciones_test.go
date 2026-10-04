@@ -456,3 +456,109 @@ func TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual(t *testing.T) {
 		t.Fatalf("volver a subir: %v", err)
 	}
 }
+
+// La migracion de #164 marca como `aceptar_tal_cual` las criticas que una
+// persona cerro antes de ella -- eso es lo que significaba "resuelta" entonces:
+// nadie corrigio el dato -- y deja sin accion las no criticas y las
+// autocerradas. Su Down devuelve a pendiente las filas 'duplicado', para que la
+// cascada las mire otra vez en vez de romper el CHECK del escalon.
+func TestCorreccionDeAnomaliasMarcaLasCriticasYaCerradas(t *testing.T) {
+	ctx := t.Context()
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	var version int64
+	for _, s := range p.ListSources() {
+		if strings.HasSuffix(s.Path, "_correccion_de_anomalias.sql") {
+			version = s.Version
+		}
+	}
+	if version == 0 {
+		t.Fatal("no se encontro la migracion *_correccion_de_anomalias.sql")
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar a %d: %v", version-1, err)
+	}
+
+	ejecutar := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	ejecutar(`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+	          VALUES ('usr-1', 'usr-1@redes.test', 'Uno', 'distribucion', 'hash-de-prueba-suficientemente-larga')`)
+	insertar := func(tipo, refID string, resuelta, autocerrada bool) {
+		t.Helper()
+		var por any
+		if resuelta && !autocerrada {
+			por = "usr-1"
+		}
+		var en any
+		nota := ""
+		if resuelta {
+			en, nota = "2026-01-10T00:00:00Z", "cerrada antes de #164"
+		}
+		ejecutar(`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, detalle, detectada,
+		                               resuelta, resuelta_por, resuelta_en, nota, autocerrada)
+		          VALUES ('2026-01', $1, 'uso', $2, 'detalle', now(), $3, $4, $5, $6, $7)`,
+			tipo, refID, resuelta, por, en, nota, autocerrada)
+	}
+	insertar("duplicado_registro", "u-cerrada", true, false)
+	insertar("tipo_obra_sin_mapear", "u-sintipo", true, false)
+	insertar("duplicado_registro", "u-auto", true, true)
+	insertar("duplicado_registro", "u-abierta", false, false)
+	insertar("oni", "u-oni", true, false)
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+
+	quiero := map[string]string{
+		"u-cerrada": "aceptar_tal_cual",
+		"u-sintipo": "aceptar_tal_cual",
+		"u-auto":    "",
+		"u-abierta": "",
+		"u-oni":     "",
+	}
+	for ref, accion := range quiero {
+		var got string
+		if err := db.QueryRowContext(ctx, `SELECT accion FROM alertas WHERE ref_id = $1`, ref).Scan(&got); err != nil {
+			t.Fatalf("leer %s: %v", ref, err)
+		}
+		if got != accion {
+			t.Errorf("%s: accion = %q, se esperaba %q", ref, got, accion)
+		}
+	}
+
+	// Una fila 'duplicado' no sobrevive al Down con ese escalon.
+	ejecutar(`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+	          VALUES ('rep-1', 'caracol', '2026-01', repeat('a', 64), 'reportes/a.csv', 1)`)
+	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, modalidad, escalon, oni,
+	                            resuelto_por, resuelto_en, nota_resolucion)
+	          VALUES ('u-dup', 'rep-1', 'caracol', 'Titulo', 'tv', 'duplicado', FALSE, 'usr-1', now(), 'reenvio')`)
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar con una fila duplicado: %v", err)
+	}
+	var escalon string
+	var oni bool
+	if err := db.QueryRowContext(ctx, `SELECT escalon, oni FROM usos WHERE id = 'u-dup'`).Scan(&escalon, &oni); err != nil {
+		t.Fatalf("leer la fila: %v", err)
+	}
+	if escalon != "pendiente" || !oni {
+		t.Fatalf("tras el down: escalon=%q oni=%v, se esperaba pendiente y ONI", escalon, oni)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir de nuevo: %v", err)
+	}
+}
