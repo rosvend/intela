@@ -181,3 +181,62 @@ func TestUnUsoPorAliasNoAsientaPuntaje(t *testing.T) {
 		t.Fatalf("puntaje = %q, un alias es exacto y no lleva puntaje", id.Puntaje)
 	}
 }
+
+func TestValorizarAsientaElDesglosePorFactor(t *testing.T) {
+	t.Parallel()
+	e, _ := entornoValorizacion(t)
+
+	if _, err := e.uc.AvanzarEtapa(t.Context(), "proc-1", "usr-admin"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	var obra AsientoObraValorizada
+	for _, a := range asientosDe(t, e.bitacora, HechoRepartoObraValorizada) {
+		if a.RefID != "obra-1" {
+			continue
+		}
+		if err := json.Unmarshal(a.Payload, &obra); err != nil {
+			t.Fatalf("payload: %v", err)
+		}
+	}
+	if len(obra.Valorizacion) != 1 {
+		t.Fatalf("valorizacion = %+v, se esperaba un uso", obra.Valorizacion)
+	}
+	v := obra.Valorizacion[0]
+	if v.UsoID != "u-1" || v.Formula != "RD 9.1.1" || len(v.Terminos) != 1 {
+		t.Fatalf("valorizacion = %+v", v)
+	}
+	nombres := []string{"ponderacion", "duracion_min", "rating", "emisiones"}
+	origenes := []string{"parametro", "uso", "uso", "uso"}
+	valores := []string{"1.3", "48", "9", "10"}
+	fs := v.Terminos[0].Factores
+	if len(fs) != len(nombres) {
+		t.Fatalf("factores = %+v", fs)
+	}
+	prod := decimal.NewFromInt(1)
+	for i, f := range fs {
+		if f.Nombre != nombres[i] || f.Origen != origenes[i] || !decimal.RequireFromString(f.Valor).Equal(decimal.RequireFromString(valores[i])) {
+			t.Errorf("factor %d = %+v, se esperaba %s=%s (%s)", i, f, nombres[i], valores[i], origenes[i])
+		}
+		prod = prod.Mul(decimal.RequireFromString(f.Valor))
+	}
+	if !prod.Equal(decimal.RequireFromString(v.Terminos[0].Producto)) || !prod.Equal(decimal.RequireFromString(v.Puntos)) {
+		t.Errorf("producto de factores %s != producto %s / puntos %s", prod, v.Terminos[0].Producto, v.Puntos)
+	}
+	if !decimal.RequireFromString(v.Puntos).Round(8).Equal(decimal.RequireFromString(obra.Puntos)) || obra.Puntos != "5616" {
+		t.Errorf("puntos del uso %s no reproducen los de la obra %s", v.Puntos, obra.Puntos)
+	}
+}
+
+func TestValorizarConUsosDelMotorDescuadradosNoAsienta(t *testing.T) {
+	t.Parallel()
+
+	_, err := asientosDeValorizacion(entradaValorizacion{
+		usos:   []UsoDeReparto{usoDeCanal("z", reparto.TV, "")},
+		motor:  nil,
+		origen: map[string]OrigenDeUso{"u-1": {UsoID: "u-1", ReporteID: "rep-1"}},
+	})
+	if !errors.Is(err, ErrLinajeIncompleto) {
+		t.Fatalf("error = %v, se esperaba ErrLinajeIncompleto", err)
+	}
+}

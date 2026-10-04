@@ -33,10 +33,13 @@ type Explicacion struct {
 	Reportes       []ReporteAsentado
 	Obra           ObraLinaje
 	Identificacion []IdentificacionDeUso
-	Regla          ReglaLinaje
-	Split          *SplitLinaje
-	Deducciones    []DeduccionLinaje
-	Firmas         []FirmaLinaje
+	// Valorizacion es el desglose por uso (#187): vacio, nunca nil, en
+	// asientos anteriores a #187.
+	Valorizacion []ValorizacionDeUso
+	Regla        ReglaLinaje
+	Split        *SplitLinaje
+	Deducciones  []DeduccionLinaje
+	Firmas       []FirmaLinaje
 	// Faltantes nombra los eslabones accesorios sin asiento; la cadena del dinero nunca falta.
 	Faltantes []string
 }
@@ -69,6 +72,9 @@ type ObraLinaje struct {
 	Titulo  string
 	Escalon string
 	Puntaje string
+	// Puntos son los puntos de reparto de la obra en la corrida; no es
+	// Puntaje, que es el del matching.
+	Puntos string
 }
 
 // ReglaLinaje es el snapshot normativo y el reglamento de la corrida.
@@ -163,6 +169,7 @@ func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) 
 		Corrida:        CorridaLinaje{ProcesoID: corrida.ProcesoID, Periodo: corrida.Periodo, Circuito: corrida.Circuito},
 		Regla:          ReglaLinaje{SnapshotID: corrida.SnapshotID, Reglamento: corrida.Reglamento},
 		Identificacion: obra.Usos,
+		Valorizacion:   append([]ValorizacionDeUso{}, obra.Valorizacion...),
 		Faltantes:      []string{},
 	}
 	cifra, err := decimal.NewFromString(obra.Importe)
@@ -194,6 +201,7 @@ func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) 
 	}
 	x.Neto = cifra
 	x.Obra, x.Faltantes = obraLinaje(obraID, obra.Usos, deLaObra, x.Faltantes)
+	x.Obra.Puntos = obra.Puntos
 	x.Reportes = reportesDeLaObra(obra.Usos, corrida.Reportes)
 	x.Reporte = reportePrincipal(obra.Usos, x.Reportes)
 	x.Firmas = firmasDe(delProceso)

@@ -303,3 +303,39 @@ func TestBrutoYDeduccionesCifraCeroNoInventaPorcentajes(t *testing.T) {
 		t.Fatalf("bruto=%s deducciones=%v, una cifra en cero no lleva porcentajes", bruto, ded)
 	}
 }
+
+func TestExplicarTraeElDesgloseYLosPuntosDeLaObra(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if len(x.Valorizacion) != 1 || x.Valorizacion[0].Puntos != "5616" {
+		t.Fatalf("valorizacion = %+v", x.Valorizacion)
+	}
+	if x.Obra.Puntos != "5616" || x.Obra.Puntaje != "0.91" {
+		t.Fatalf("obra = %+v, los puntos de reparto no son el puntaje del matching", x.Obra)
+	}
+}
+
+func TestExplicarUnAsientoAnteriorA187SigueExplicandose(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+	b.asientos = append(b.asientos, Asiento{
+		ID: "as-viejo", Hecho: HechoRepartoObraValorizada, RefTipo: RefObra, RefID: "obra-1",
+		Payload: []byte(`{"proceso_id":"proc-1","periodo":"2026-01","puntos":"5616","importe":"280000.00","retenida":false,"declaracion":{"version":3,"vigente_desde":"2025-12-01"},"titulares":[{"titular_id":"titular-1","ipi":"IPI-1","porcentaje":"100","importe":"280000.00"}],"usos":[{"uso_id":"u-1","reporte_id":"rep-1","escalon":"difuso","puntaje":"0.91"}]}`),
+	})
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, "proc-1:obra-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Valorizacion == nil || len(x.Valorizacion) != 0 {
+		t.Fatalf("valorizacion = %#v, se esperaba lista vacia no nil", x.Valorizacion)
+	}
+	if x.Obra.Puntos != "5616" || !x.Neto.Equal(d("280000")) {
+		t.Fatalf("obra.puntos = %q, neto = %s", x.Obra.Puntos, x.Neto)
+	}
+}

@@ -104,6 +104,10 @@ type AsientoObraValorizada struct {
 	Declaracion *DeclaracionAsentada  `json:"declaracion"`
 	Titulares   []TitularAsentado     `json:"titulares"`
 	Usos        []IdentificacionDeUso `json:"usos"`
+	// Valorizacion es la aritmetica de los puntos de cada uso (#187). Un
+	// asiento anterior a #187 no la trae y Explicar devuelve lista vacia: no
+	// se reconstruye (ADR 0006).
+	Valorizacion []ValorizacionDeUso `json:"valorizacion,omitempty"`
 }
 
 // DeclaracionAsentada es la version de la declaracion que fijo los porcentajes.
@@ -136,6 +140,29 @@ type IdentificacionDeUso struct {
 	ResueltoEn  string `json:"resuelto_en,omitempty"`
 }
 
+// ValorizacionDeUso es cuanto peso un uso y la aritmetica que lo dio (#187).
+// Decimales exactos como cadena: Puntos = suma de Producto, Producto =
+// multiplicacion de Valor. Un asiento anterior a #187 no la trae.
+type ValorizacionDeUso struct {
+	UsoID    string            `json:"uso_id"`
+	Formula  string            `json:"formula"`
+	Puntos   string            `json:"puntos"`
+	Terminos []TerminoAsentado `json:"terminos"`
+}
+
+// TerminoAsentado es un producto de factores del desglose.
+type TerminoAsentado struct {
+	Factores []FactorAsentado `json:"factores"`
+	Producto string           `json:"producto"`
+}
+
+// FactorAsentado es un multiplicando con su origen (parametro o uso).
+type FactorAsentado struct {
+	Nombre string `json:"nombre"`
+	Valor  string `json:"valor"`
+	Origen string `json:"origen"`
+}
+
 // entradaValorizacion reune lo que el motor recibio y devolvio en una corrida.
 type entradaValorizacion struct {
 	proceso   reparto.ProcesoDeReparto
@@ -144,18 +171,31 @@ type entradaValorizacion struct {
 	resultado reparto.Resultado
 	vigentes  map[string]VersionDeclaracion
 	usos      []UsoDeReparto
+	motor     []reparto.Uso // los usos que vio el motor, en el mismo orden que usos
 	origen    map[string]OrigenDeUso
 }
 
 // asientosDeValorizacion arma el asiento de la corrida y uno por obra; un uso sin origen aborta.
 func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
+	if len(e.motor) != len(e.usos) {
+		return nil, fmt.Errorf("usos del motor (%d) y filas (%d) no calzan: %w", len(e.motor), len(e.usos), ErrLinajeIncompleto)
+	}
 	usosPorObra := make(map[string][]IdentificacionDeUso)
+	valorizacionPorObra := make(map[string][]ValorizacionDeUso)
 	reportes := make(map[string]ReporteAsentado)
-	for _, u := range e.usos {
+	for i, u := range e.usos {
 		o, ok := e.origen[u.Uso.ID]
 		if !ok {
 			return nil, fmt.Errorf("uso %q: %w", u.Uso.ID, ErrLinajeIncompleto)
 		}
+		if e.motor[i].ObraID != u.Uso.ObraID {
+			return nil, fmt.Errorf("uso %q: obra del motor %q: %w", u.Uso.ID, e.motor[i].ObraID, ErrLinajeIncompleto)
+		}
+		dg, err := reparto.DesglosarUso(e.motor[i], e.snap)
+		if err != nil {
+			return nil, fmt.Errorf("uso %q: desglose: %w", u.Uso.ID, err)
+		}
+		valorizacionPorObra[u.Uso.ObraID] = append(valorizacionPorObra[u.Uso.ObraID], valorizacionDe(u.Uso.ID, dg))
 		usosPorObra[u.Uso.ObraID] = append(usosPorObra[u.Uso.ObraID], identificacionDe(o))
 		reportes[o.ReporteID] = ReporteAsentado{ID: o.ReporteID, Fuente: o.Fuente, SHA256: o.SHA256, ClaveObjeto: o.ClaveObjeto}
 	}
@@ -221,6 +261,7 @@ func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
 			Puntos: o.Puntos.String(), Importe: o.Importe.StringFixed(2),
 			Retenida: o.Retenida, Motivo: o.Motivo,
 			Titulares: titularesPorObra[o.ObraID], Usos: usosPorObra[o.ObraID],
+			Valorizacion: valorizacionPorObra[o.ObraID],
 		}
 		if obra.Titulares == nil {
 			obra.Titulares = []TitularAsentado{}
@@ -255,6 +296,23 @@ func copiarVersion(v *int) *int {
 	}
 	copia := *v
 	return &copia
+}
+
+// valorizacionDe asienta el desglose en decimal exacto: siempre String, nunca
+// redondeado, para que el recibo reproduzca los puntos.
+func valorizacionDe(usoID string, dg reparto.Desglose) ValorizacionDeUso {
+	v := ValorizacionDeUso{
+		UsoID: usoID, Formula: dg.Formula, Puntos: dg.Puntos.String(),
+		Terminos: make([]TerminoAsentado, 0, len(dg.Terminos)),
+	}
+	for _, t := range dg.Terminos {
+		ta := TerminoAsentado{Producto: t.Producto.String(), Factores: make([]FactorAsentado, 0, len(t.Factores))}
+		for _, f := range t.Factores {
+			ta.Factores = append(ta.Factores, FactorAsentado{Nombre: f.Nombre, Valor: f.Valor.String(), Origen: f.Origen})
+		}
+		v.Terminos = append(v.Terminos, ta)
+	}
+	return v
 }
 
 func identificacionDe(o OrigenDeUso) IdentificacionDeUso {
