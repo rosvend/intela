@@ -112,7 +112,7 @@ func (s *Store) PublicacionVigente(ctx context.Context) (aplicacion.PublicacionO
 	p, err := s.escanearPublicacion(ctx, `
 		SELECT `+columnasPublicacion+`
 		  FROM oni_publicaciones
-		 ORDER BY fecha_proceso DESC, periodo DESC, secuencia DESC
+		 ORDER BY periodo DESC, secuencia DESC
 		 LIMIT 1`, "publicacion ONI vigente")
 	if err != nil {
 		return aplicacion.PublicacionONI{}, err
