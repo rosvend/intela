@@ -13,6 +13,21 @@ describe("esAusente", () => {
     expect(esAusente(new ApiError(503, "service unavailable"))).toBe(true);
   });
 
+  it("en un endpoint ya cableado un 502 o 503 es una caida, no ausencia", () => {
+    const resumen = "/api/alertas/resumen?periodo=2025";
+    expect(esAusente(new ApiError(503, "caido"), resumen)).toBe(false);
+    expect(esAusente(new ApiError(502, "caido"), resumen)).toBe(false);
+    expect(esAusente(new ApiError(503, "caido"), "/api/procesos")).toBe(false);
+    expect(esAusente(new ApiError(503, "caido"), "/api/obras")).toBe(true);
+  });
+
+  it("en un endpoint cableado el 404 y el fallo de red siguen siendo ausencia", () => {
+    expect(esAusente(new ApiError(404, "no"), "/api/alertas")).toBe(true);
+    expect(esAusente(new ErrorDeRed(new TypeError("x")), "/api/alertas")).toBe(
+      true,
+    );
+  });
+
   it("un fallo de red no tumba la tarjeta: el backend esta ausente", () => {
     expect(esAusente(new ErrorDeRed(new TypeError("Failed to fetch")))).toBe(
       true,
