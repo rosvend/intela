@@ -46,8 +46,9 @@ const (
 	//
 	// Es un literal y no una fila de `parametros` por una razon de esquema y no
 	// de diseno: la columna `valor` es NUMERIC y un codigo ISO no es un numero.
-	// Mismo criterio -- y mismo valor -- que [Store.SnapshotNormalizacion]; el
-	// dia que haga falta que sea dato, hace falta una columna de texto antes.
+	// [Store.SnapshotNormalizacion] usa esta misma constante: un literal suelto
+	// en la ingesta leeria las tasas contra otra moneda. El dia que haga falta
+	// que sea dato, hace falta una columna de texto antes.
 	monedaBase = "COP"
 )
 
