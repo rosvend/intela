@@ -24,16 +24,19 @@ type ResolucionIdentificacion interface {
 
 var _ ResolucionIdentificacion = aplicacion.ResolucionIdentificacion{}
 
-// maxCuerpoResolucion acota el cuerpo, igual que los POST de /alertas: es un
-// objeto de tres campos y una nota de 300 caracteres, asi que 64 KiB sobra.
+// maxCuerpoResolucion acota el cuerpo, igual que los POST de /alertas: es la
+// decision, la obra, la nota y el sello de la propuesta mostrada, asi que
+// 64 KiB sobra.
 const maxCuerpoResolucion = 64 << 10
 
-// resolucionDeCasoJSON es el cuerpo: la decision, la obra cuando la hay, y la
-// nota. NO lleva actor: quien resolvio sale de la sesion (ADR 0006).
+// resolucionDeCasoJSON es el cuerpo: la decision, la obra cuando la hay, la
+// nota y, si la bandeja lo dio, el sello de la propuesta mostrada. NO lleva
+// actor: quien resolvio sale de la sesion (ADR 0006).
 type resolucionDeCasoJSON struct {
 	Decision string `json:"decision"`
 	ObraID   string `json:"obra_id"`
 	Nota     string `json:"nota"`
+	Sello    string `json:"sello"`
 }
 
 // resolverCasoIdentificacion resuelve un caso de la cola manual a nombre de
@@ -75,6 +78,7 @@ func (a *API) resolverCasoIdentificacion(w http.ResponseWriter, r *http.Request)
 		Decision: cuerpo.Decision,
 		ObraID:   cuerpo.ObraID,
 		Nota:     cuerpo.Nota,
+		Sello:    cuerpo.Sello,
 	}, usuario.ID, usuario.Nombre)
 
 	switch {
@@ -82,7 +86,8 @@ func (a *API) resolverCasoIdentificacion(w http.ResponseWriter, r *http.Request)
 	case errors.Is(err, identificacion.ErrNotaVacia),
 		errors.Is(err, identificacion.ErrNotaDemasiadoLarga),
 		errors.Is(err, identificacion.ErrDecisionInvalida),
-		errors.Is(err, aplicacion.ErrObraInexistente):
+		errors.Is(err, aplicacion.ErrObraInexistente),
+		errors.Is(err, aplicacion.ErrPropuestaInvalida):
 		escribirError(w, http.StatusBadRequest, err.Error())
 		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):

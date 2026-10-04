@@ -3169,6 +3169,21 @@ table button {
   flex-wrap: wrap;
 }
 
+.bandeja-sugerencia {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--acento-activo);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+
+.bandeja-sugerencia strong {
+  color: var(--acento-hondo);
+}
+
 .bandeja-sin-candidatas {
   background: var(--fondo);
   border-radius: var(--radio);
