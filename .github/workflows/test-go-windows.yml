@@ -6,7 +6,8 @@
 #
 #   -short   Windows runners do not run Linux containers, so testcontainers
 #            suites (Postgres) are skipped; they are covered by `test-go.yml`.
-#   no -race it needs cgo and a C toolchain the runner does not ship.
+#   no -race the race gate is `test-go.yml` on Linux; repeating it here would
+#            add minutes without testing anything Windows-specific.
 
 name: Test Go (Windows)
 

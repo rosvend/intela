@@ -210,8 +210,10 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
 
 `Test (Go, Windows)` corre en CI lo que sigue, y es lo mismo que se puede correr en local en nativo:
 
-- `go build ./...`, `go vet ./...` y `go test -short -count=1 ./...`. `-short` salta las suites con
-  testcontainers (`postgres`, `semilla`), porque los runners de Windows no ejecutan contenedores Linux.
+- `go vet ./...` y `go test -short -count=1 ./...` (en local tambien `go build ./...`, que CI cubre
+  en `Lint (Go)`). `-short` salta toda prueba que levanta un contenedor con testcontainers: las que
+  usan `testhelp.Pool` (Postgres: `postgres`, `semilla` y cualquier otra que lo pida) y `objetos/s3_test.go`
+  (MinIO). Los runners de Windows no ejecutan contenedores Linux.
 - La suite completa, con **Docker Desktop encendido**: `go test -count=1 -p 1 ./...`. Si sale
   `panic: rootless Docker is not supported on Windows`, es que Docker esta apagado, no un bug.
 
@@ -220,8 +222,11 @@ Lo que solo corre en Linux, y por que:
 - **`internal/infraestructura/objetos/disco_rlimit_test.go`** (`//go:build linux || darwin`) es el
   **unico test excluido en Windows**. Provoca el fallo de escritura con `RLIMIT_FSIZE`, un EFBIG real
   del nucleo sin equivalente en Windows. `Test (Go)` en Linux lo ejecuta.
-- `-race` necesita cgo y un compilador de C: el pre-push de `lefthook` (`go test -race`) no corre en
-  Windows nativo. Usar el contenedor de abajo.
+- `-race` necesita cgo y un compilador de C. En una maquina Windows sin `gcc`, `go test -race` sale
+  con codigo 2 y **bloquea** el pre-push de `lefthook`. Instala un `gcc` (p. ej. WinLibs), corre la
+  suite en el contenedor de abajo, o salta ese comando en tu `lefthook-local.yml` (no versionado; CI
+  corre la suite entera en Ubuntu y es la compuerta). `Test (Go, Windows)` no usa `-race` a proposito:
+  la compuerta de carreras es `Test (Go)`.
 - `Disco.sincronizarDir` es un no-op en Windows (`Access is denied` al hacer fsync de un directorio).
   Es el adaptador de desarrollo; produccion usa S3.
 
@@ -235,6 +240,11 @@ MSYS_NO_PATHCONV=1 docker run --rm --network host \
   -e GOPROXY=off -e TESTCONTAINERS_HOST_OVERRIDE=localhost \
   golang:1.24 go test -race -count=1 -p 1 ./...
 ```
+
+Los volumenes `glci-gomod` y `glci-gocache` tienen que estar **precargados** (una corrida previa sin
+`GOPROXY=off`, o `go mod download` dentro del contenedor): con volumenes nuevos y `GOPROXY=off` falla
+con `module lookup disabled by GOPROXY=off`. En esta red, ademas, `proxy.golang.org` puede fallar con
+`x509: certificate signed by unknown authority` por interceptacion TLS; por eso se usan los volumenes.
 
 `-p 1` evita `too many clients already` (53300) por varios Postgres en paralelo. Si el repo es un
 `git worktree` o esta bajo `/mnt/c`, comprueba con `cat` desde dentro del contenedor que ve tus
