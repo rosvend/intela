@@ -71,7 +71,9 @@ describe("lineaDeValorizacion", () => {
         },
       ],
     };
-    expect(lineaDeValorizacion(v)).toBe("RD 9.2: espectadores 250 = 250 puntos");
+    expect(lineaDeValorizacion(v)).toBe(
+      "RD 9.2: espectadores 250 = 250 puntos",
+    );
   });
 
   it("hay etiqueta para los 13 factores del contrato", () => {

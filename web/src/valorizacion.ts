@@ -1,6 +1,7 @@
 import type { ValorizacionDeUso } from "./ingresos";
 
-type NombreFactor = ValorizacionDeUso["terminos"][number]["factores"][number]["nombre"];
+type NombreFactor =
+  ValorizacionDeUso["terminos"][number]["factores"][number]["nombre"];
 
 /** Etiqueta llana de cada factor. Record exhaustivo: un factor nuevo en el contrato no compila sin etiqueta. */
 export const ETIQUETA_FACTOR: Record<NombreFactor, string> = {
@@ -29,7 +30,9 @@ export const USOS_VISIBLES = 5;
  */
 export function lineaDeValorizacion(v: ValorizacionDeUso): string {
   const terminos = v.terminos.map((t) =>
-    t.factores.map((f) => `${ETIQUETA_FACTOR[f.nombre]} ${f.valor}`).join(" × "),
+    t.factores
+      .map((f) => `${ETIQUETA_FACTOR[f.nombre]} ${f.valor}`)
+      .join(" × "),
   );
   const suma =
     terminos.length > 1
