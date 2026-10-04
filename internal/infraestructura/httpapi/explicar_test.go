@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,7 +72,7 @@ func TestExplicarDevuelveElLinajeConDineroComoCadena(t *testing.T) {
 	if cuerpo["neto"] != "650.00" || cuerpo["bruto"] != "1000.00" {
 		t.Fatalf("neto/bruto = %v / %v, el dinero viaja como cadena con dos decimales", cuerpo["neto"], cuerpo["bruto"])
 	}
-	for _, clave := range []string{"corrida", "bolsa", "reporte", "reportes", "obra", "identificacion", "regla", "split", "deducciones", "firmas", "faltantes"} {
+	for _, clave := range []string{"corrida", "bolsa", "reporte", "reportes", "obra", "identificacion", "valorizacion", "regla", "split", "deducciones", "firmas", "faltantes"} {
 		if _, ok := cuerpo[clave]; !ok {
 			t.Errorf("falta %q en la respuesta", clave)
 		}
@@ -83,6 +84,66 @@ func TestExplicarDevuelveElLinajeConDineroComoCadena(t *testing.T) {
 	ded := cuerpo["deducciones"].([]any)[0].(map[string]any)
 	if ded["porcentaje"] != "20" || ded["monto"] != "200.00" {
 		t.Fatalf("deduccion = %v", ded)
+	}
+}
+
+func TestExplicarExponeElDesglosePorFactor(t *testing.T) {
+	x := explicacionDeEjemplo()
+	x.Obra.Puntos = "5616"
+	x.Valorizacion = []aplicacion.ValorizacionDeUso{{
+		UsoID: "u-1", Formula: "RD 9.1.1", Puntos: "5616",
+		Terminos: []aplicacion.TerminoAsentado{{
+			Producto: "5616",
+			Factores: []aplicacion.FactorAsentado{
+				{Nombre: "ponderacion", Valor: "1.3", Origen: "parametro"},
+				{Nombre: "duracion_min", Valor: "48", Origen: "uso"},
+				{Nombre: "rating", Valor: "9", Origen: "uso"},
+				{Nombre: "emisiones", Valor: "10", Origen: "uso"},
+			},
+		}},
+	}}
+	titular := aplicacion.Usuario{ID: "usr-t1", Rol: aplicacion.RolTitular, TitularID: "titular-1"}
+
+	rec := pedir(t, servidorConExplicador(t, titular, &explicadorFalso{x: x}), http.MethodGet, "/explicar/proc-1:obra-1:titular-1", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var cuerpo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("cuerpo no es JSON: %v", err)
+	}
+	if cuerpo["obra"].(map[string]any)["puntos"] != "5616" {
+		t.Fatalf("obra = %v, se esperaba puntos 5616", cuerpo["obra"])
+	}
+	val := cuerpo["valorizacion"].([]any)
+	if len(val) != 1 {
+		t.Fatalf("valorizacion = %v", val)
+	}
+	v := val[0].(map[string]any)
+	if v["formula"] != "RD 9.1.1" || v["puntos"] != "5616" || v["uso_id"] != "u-1" {
+		t.Fatalf("valorizacion[0] = %v", v)
+	}
+	termino := v["terminos"].([]any)[0].(map[string]any)
+	if termino["producto"] != "5616" {
+		t.Fatalf("termino = %v", termino)
+	}
+	factor := termino["factores"].([]any)[0].(map[string]any)
+	if factor["nombre"] != "ponderacion" || factor["valor"] != "1.3" || factor["origen"] != "parametro" || len(factor) != 3 {
+		t.Fatalf("factor = %v", factor)
+	}
+}
+
+func TestExplicarSinDesgloseDevuelveListaVacia(t *testing.T) {
+	x := explicacionDeEjemplo()
+	x.Valorizacion = nil
+	titular := aplicacion.Usuario{ID: "usr-t1", Rol: aplicacion.RolTitular, TitularID: "titular-1"}
+
+	rec := pedir(t, servidorConExplicador(t, titular, &explicadorFalso{x: x}), http.MethodGet, "/explicar/proc-1:obra-1:titular-1", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `"valorizacion":[]`) {
+		t.Fatalf("el cuerpo no trae \"valorizacion\":[]: %s", rec.Body)
 	}
 }
 

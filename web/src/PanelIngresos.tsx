@@ -16,6 +16,7 @@ import {
   citaDeRetencion,
   nombreConcepto,
 } from "./reglamento";
+import { lineaDeValorizacion, USOS_VISIBLES } from "./valorizacion";
 
 /**
  * Panel del titular (OE-6): ingresos netos por obra, fuente y periodo.
@@ -357,14 +358,51 @@ export function PanelExplicacion({ cifra }: { cifra: Explicacion }) {
 /**
  * El "recibo": la misma Explicacion ya cargada, en prosa de bruto a neto y
  * con la cita de reglamento traducida (feedback del PO: nadie tiene el
- * reglamento memorizado). No pide datos nuevos -- ver web/src/reglamento.ts.
+ * reglamento memorizado). Tambien itemiza los puntos de cada uso (#187). No
+ * pide datos nuevos -- ver web/src/reglamento.ts.
  */
 function Recibo({ cifra }: { cifra: Explicacion }) {
+  const [todos, setTodos] = useState(false);
   const citasRegla = citarReglamento(cifra.regla.reglamento);
   const citaRetencion = citaDeRetencion();
   return (
     <div className="recibo" aria-label="Recibo en lenguaje sencillo">
       <h3>Recibo</h3>
+      <div className="recibo-puntos">
+        <h4>Puntos de la obra</h4>
+        {cifra.valorizacion.length === 0 ? (
+          <p className="muted">
+            Esta cifra se calculo antes de que se guardara el desglose por
+            factor; se conserva solo el total: {cifra.obra.puntos} puntos.
+          </p>
+        ) : (
+          <>
+            <ul>
+              {(todos
+                ? cifra.valorizacion
+                : cifra.valorizacion.slice(0, USOS_VISIBLES)
+              ).map((v) => (
+                <li key={v.uso_id}>{lineaDeValorizacion(v)}</li>
+              ))}
+            </ul>
+            {cifra.valorizacion.length > USOS_VISIBLES && (
+              <button
+                type="button"
+                className="boton-detalles"
+                aria-expanded={todos}
+                onClick={() => setTodos((t) => !t)}
+              >
+                {todos
+                  ? "Ver menos"
+                  : `Ver los ${cifra.valorizacion.length} usos`}
+              </button>
+            )}
+            <p>
+              Total de la obra: <strong>{cifra.obra.puntos} puntos</strong>
+            </p>
+          </>
+        )}
+      </div>
       <ol className="recibo-lineas">
         <li className="recibo-linea recibo-bruto">
           <span>Bruto</span>
