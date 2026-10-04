@@ -244,6 +244,15 @@ func TestAlertasSinCasoDeUsoEs503(t *testing.T) {
 	}
 }
 
+func TestResumenDeAlertasSinCasoDeUsoEs503(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolAdministrador}}
+	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
+
+	if rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2025-01", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /alertas
 

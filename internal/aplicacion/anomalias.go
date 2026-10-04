@@ -734,6 +734,19 @@ func (a Anomalias) Resumen(ctx context.Context, periodo string) (ResumenAlertas,
 		return ResumenAlertas{}, errors.New("anomalias mal cableadas: faltan Alertas o Bitacora")
 	}
 	r := ResumenAlertas{Periodo: periodo, PorTipo: make(map[string]ConteoDeTipo, len(anomalias.Tipos()))}
+	// La bitacora se lee ANTES que los conteos: si una evaluacion confirma a
+	// mitad de la lectura, lo peor que sale es "sin evaluar" con conteos nuevos
+	// (conservador), nunca "evaluado" con ceros de antes de evaluar.
+	asientos, err := a.Bitacora.De(ctx, RefPeriodo, periodo)
+	if err != nil {
+		return ResumenAlertas{}, fmt.Errorf("leer la bitacora de %q: %w", periodo, err)
+	}
+	for _, as := range asientos {
+		if as.Hecho == HechoAnomaliasEvaluadas && (r.UltimaEvaluacion == nil || as.Cuando.After(*r.UltimaEvaluacion)) {
+			c := as.Cuando
+			r.UltimaEvaluacion = &c
+		}
+	}
 	for _, t := range anomalias.Tipos() {
 		n, err := a.Alertas.ContarAlertasSinResolver(ctx, periodo, []string{t})
 		if err != nil {
@@ -749,16 +762,6 @@ func (a Anomalias) Resumen(ctx context.Context, periodo string) (ResumenAlertas,
 	r.CriticasAceptadas, err = a.Alertas.ContarAlertasConAccion(ctx, periodo, anomalias.AccionAceptarTalCual)
 	if err != nil {
 		return ResumenAlertas{}, fmt.Errorf("contar criticas aceptadas de %q: %w", periodo, err)
-	}
-	asientos, err := a.Bitacora.De(ctx, RefPeriodo, periodo)
-	if err != nil {
-		return ResumenAlertas{}, fmt.Errorf("leer la bitacora de %q: %w", periodo, err)
-	}
-	for _, as := range asientos {
-		if as.Hecho == HechoAnomaliasEvaluadas && (r.UltimaEvaluacion == nil || as.Cuando.After(*r.UltimaEvaluacion)) {
-			c := as.Cuando
-			r.UltimaEvaluacion = &c
-		}
 	}
 	return r, nil
 }

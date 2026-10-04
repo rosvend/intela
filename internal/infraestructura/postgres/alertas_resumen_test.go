@@ -117,3 +117,26 @@ func TestResumenSinEvaluarYDespuesDeEvaluar(t *testing.T) {
 		t.Fatal("el periodo sembrado con anomalias salio sin abiertas")
 	}
 }
+
+// La bitacora sale en orden ascendente: con dos evaluaciones, "la ultima" es la
+// de instante mayor, no la primera que devuelve la lectura.
+func TestResumenTomaLaUltimaDeVariasEvaluaciones(t *testing.T) {
+	s, _ := sembrarPeriodoConAnomalias(t)
+	segunda := instanteAlertas.Add(48 * time.Hour)
+
+	if _, err := servicioDeAnomalias(s, instanteAlertas).Evaluar(t.Context(), periodoAlertas, usuarioAdmin); err != nil {
+		t.Fatalf("primera evaluacion: %v", err)
+	}
+	svc := servicioDeAnomalias(s, segunda)
+	if _, err := svc.Evaluar(t.Context(), periodoAlertas, usuarioAdmin); err != nil {
+		t.Fatalf("segunda evaluacion: %v", err)
+	}
+
+	r, err := svc.Resumen(t.Context(), periodoAlertas)
+	if err != nil {
+		t.Fatalf("Resumen: %v", err)
+	}
+	if r.UltimaEvaluacion == nil || !r.UltimaEvaluacion.Equal(segunda) {
+		t.Fatalf("UltimaEvaluacion = %v, se esperaba %v", r.UltimaEvaluacion, segunda)
+	}
+}
