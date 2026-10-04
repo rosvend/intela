@@ -113,7 +113,7 @@ export function useRecurso<T>(
       })
       .catch((error: unknown) => {
         if (!vigente) return;
-        if (esAusente(error)) {
+        if (esAusente(error, path)) {
           setRecurso({ tipo: "ausente" });
           return;
         }
