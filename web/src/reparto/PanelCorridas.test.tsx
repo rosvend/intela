@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "../api";
 import { ProveedorDeSesion, Rol } from "../sesion";
 import PanelCorridas from "./PanelCorridas";
+import { resumenDePrueba } from "./resumenDePrueba";
 import { Proceso, RUTAS_REPARTO } from "./tipos";
 
 function json(cuerpo: unknown, status = 200) {
@@ -83,7 +84,7 @@ describe("PanelCorridas", () => {
         return json([nacional, internacional]);
       }
       if (path.startsWith("/api/alertas")) {
-        return json([]);
+        return json(resumenDePrueba());
       }
       return json({ error: "ruta no encontrada" }, 404);
     });
@@ -112,7 +113,7 @@ describe("PanelCorridas", () => {
           },
         ]);
       }
-      if (path.startsWith("/api/alertas")) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
       return json({ error: "ruta no encontrada" }, 404);
     });
 
@@ -140,7 +141,7 @@ describe("PanelCorridas", () => {
       if (path === RUTAS_REPARTO.procesos) {
         return json([{ ...nacional, etapa }]);
       }
-      if (path.startsWith("/api/alertas")) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
       return json({ error: "ruta no encontrada" }, 404);
     });
 
@@ -181,7 +182,7 @@ describe("PanelCorridas", () => {
       if (path === RUTAS_REPARTO.procesos) {
         return json([nacional]);
       }
-      if (path.startsWith("/api/alertas")) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
       return json({ error: "ruta no encontrada" }, 404);
     });
 
@@ -203,7 +204,7 @@ describe("PanelCorridas", () => {
       const path = String(input);
       if (path === "/api/auth/session") return json(usuario("distribucion"));
       if (path === RUTAS_REPARTO.procesos) return json([nacional]);
-      return json([]);
+      return json(resumenDePrueba());
     });
     montar("/distribucion/no-existe");
     await waitFor(() =>
@@ -219,7 +220,7 @@ describe("PanelCorridas", () => {
       if (path === "/api/auth/session") return json(usuario("distribucion"));
       if (path === RUTAS_REPARTO.procesos)
         return json([nacional, { ...internacional, etapa: "verificacion" }]);
-      return json([]);
+      return json(resumenDePrueba());
     });
     montar("/distribucion/proc-nac");
     await screen.findByRole("button", { name: "Rechazar" });
@@ -271,7 +272,7 @@ describe("PanelCorridas", () => {
         return new Promise<Response>((resolve) => {
           responder = resolve;
         });
-      return json([]);
+      return json(resumenDePrueba());
     });
     montar("/distribucion/proc-nac");
     fireEvent.click(await screen.findByRole("button", { name: "Firmar" }));
@@ -292,29 +293,44 @@ describe("PanelCorridas", () => {
       if (path === "/api/auth/session") return json(usuario("contabilidad"));
       if (path === RUTAS_REPARTO.procesos) return json([nacional]);
       if (path.startsWith("/api/alertas"))
-        return json([
-          {
-            id: "al-1",
-            tipo: "oni",
-            detalle: "Sin identificar",
-            periodo: "2025",
-          },
-        ]);
+        return json(
+          resumenDePrueba({
+            abiertas: 250,
+            criticas_abiertas: 150,
+            porTipo: { oni: 100, duplicado_registro: 150 },
+          }),
+        );
       return json({ error: "ruta no encontrada" }, 404);
     });
 
     montar();
 
-    await screen.findByText(
-      "Revisa las 1 alertas abiertas del periodo antes de firmar.",
-    );
+    const aviso = await screen.findByText(/150 críticas bloquean/);
+    expect(aviso.textContent).toContain("250 alertas abiertas");
     expect(
       vi
         .mocked(fetch)
-        .mock.calls.some(([url]) => String(url).startsWith("/api/alertas")),
+        .mock.calls.some(([url]) =>
+          String(url).startsWith("/api/alertas/resumen"),
+        ),
     ).toBe(true);
-    // Una tarjeta por tipo de alerta; todas comparten la misma descripción.
-    expect(screen.getAllByText("Alertas abiertas del periodo")).toHaveLength(5);
+    // Una tarjeta por tipo de alerta (seis); todas comparten la descripción.
+    expect(screen.getAllByText("Alertas abiertas del periodo")).toHaveLength(6);
+  });
+
+  it("si el resumen falla avisa que no se pudo leer el estado de anomalias", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+      if (path.startsWith("/api/alertas"))
+        return json({ error: "se cayo" }, 500);
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    await screen.findByText(/No se pudo leer el estado de anomalías/);
   });
 
   it("firmar con alertas abiertas avisa, pero no bloquea la compuerta", async () => {
@@ -323,28 +339,18 @@ describe("PanelCorridas", () => {
       if (path === "/api/auth/session") return json(usuario("distribucion"));
       if (path === RUTAS_REPARTO.procesos) return json([nacional]);
       if (path.startsWith("/api/alertas"))
-        return json([
-          {
-            id: "al-1",
-            tipo: "oni",
-            detalle: "Sin identificar",
-            periodo: "2025",
-          },
-          {
-            id: "al-2",
-            tipo: "reserva_declaracion_incompleta",
-            detalle: "80% declarado",
-            periodo: "2025",
-          },
-        ]);
+        return json(
+          resumenDePrueba({
+            abiertas: 2,
+            porTipo: { oni: 1, reserva_declaracion_incompleta: 1 },
+          }),
+        );
       return json({ error: "ruta no encontrada" }, 404);
     });
 
     montar();
 
-    await screen.findByText(
-      "Revisa las 2 alertas abiertas del periodo antes de firmar.",
-    );
+    await screen.findByText("2 alertas abiertas; ninguna bloquea la corrida.");
     expect(
       (screen.getByRole("button", { name: "Firmar" }) as HTMLButtonElement)
         .disabled,
@@ -359,7 +365,7 @@ describe("PanelCorridas", () => {
         return json({ error: "Error nacional" }, 409);
       if (path === RUTAS_REPARTO.procesos)
         return json([nacional, { ...internacional, etapa: "verificacion" }]);
-      return json([]);
+      return json(resumenDePrueba());
     });
 
     montar("/distribucion/proc-nac");

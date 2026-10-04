@@ -22,11 +22,11 @@ export default function Compuerta({
   proceso: Proceso;
   rol: Rol;
   /**
-   * Lo que el firmante deberia saber antes de firmar (hoy: alertas abiertas
-   * del periodo). Avisa, no bloquea: ninguna alerta trae severidad y una
+   * Lo que el firmante deberia saber antes de firmar. Avisa, no bloquea, y
+   * distingue las criticas (el backend responde 409 en `avanzar`) de las
+   * abiertas que no bloquean y de las aceptadas sin corregir el dato. Una
    * reserva por declaracion incompleta es un estado normal del periodo
-   * (`R-04`, `RD 13.1.3`), asi que bloquear por conteo detendria toda
-   * corrida. Quien hace cumplir la regla es el backend de la compuerta.
+   * (`R-04`, `RD 13.1.3`). Quien hace cumplir la regla es el backend.
    */
   advertencia?: string;
   enviando?: boolean;

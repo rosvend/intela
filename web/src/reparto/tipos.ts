@@ -1,15 +1,9 @@
+import type { components } from "../contrato";
+
 /**
- * Contrato que el panel de corridas consume. #34 y #37 lo van a escribir en
- * `api/openapi.yaml`; hasta entonces estas rutas 404 y el hook de #31 las
- * trata como ausencia, no como fallo. No se anaden al YAML todavia: un
- * contrato que promete rutas que devuelven 404 es peor que uno corto.
- *
- * Pendiente de cerrar con #34/#37 antes de que el backend empiece: el YAML
- * ya reserva `/admin/*` para `administrador` (`GET /admin/pipeline`). Si el
- * pipeline aterriza ahi, este panel queda en 404 permanente; y si se queda
- * con rol `administrador`, los dos roles que firman la compuerta
- * (`distribucion` y `contabilidad`) no llegan. Estas tres rutas tienen que
- * ser de nivel superior y legibles por los roles de `RolDeFirma`.
+ * Rutas del panel de corridas y del tablero de anomalias. Ya existen en
+ * `api/openapi.yaml` (#34, #37, #158); la bandeja pide solo las abiertas
+ * porque el resumen cuenta en la base y la lista no tiene que mezclar cerradas.
  */
 export const RUTAS_REPARTO = {
   procesos: "/api/procesos",
@@ -17,8 +11,11 @@ export const RUTAS_REPARTO = {
   firmar: (id: string) => `/api/procesos/${encodeURIComponent(id)}/firmar`,
   alertas: (periodo?: string) =>
     periodo
-      ? `/api/alertas?periodo=${encodeURIComponent(periodo)}`
-      : "/api/alertas",
+      ? `/api/alertas?periodo=${encodeURIComponent(periodo)}&resueltas=false`
+      : "/api/alertas?resueltas=false",
+  resumenAlertas: (periodo: string) =>
+    `/api/alertas/resumen?periodo=${encodeURIComponent(periodo)}`,
+  evaluarAlertas: "/api/alertas/evaluacion",
 } as const;
 
 /** Sondeo del panel: el issue aplaza websocket/SSE para un pico anual. */
@@ -68,22 +65,6 @@ export type PedidoDeFirma = {
   motivo?: string;
 };
 
-/**
- * Tipos que #37 detecta. El string del API no se cierra en el tipo `Alerta`
- * para que un tipo nuevo no tumbe el tablero: se pinta crudo.
- */
-export type TipoDeAlerta =
-  | "oni"
-  | "duplicado_archivo"
-  | "duplicado_registro"
-  | "titular_sin_porcentaje"
-  | "reserva_declaracion_incompleta";
-
-export type Alerta = {
-  id: string;
-  tipo: string;
-  detalle: string;
-  periodo?: string;
-  referencia?: string;
-  resuelta?: boolean;
-};
+export type TipoDeAlerta = components["schemas"]["TipoDeAnomalia"];
+export type Alerta = components["schemas"]["Alerta"];
+export type ResumenDeAlertas = components["schemas"]["ResumenDeAlertas"];
