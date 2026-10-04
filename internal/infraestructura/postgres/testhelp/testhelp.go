@@ -121,6 +121,27 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// Ahora devuelve el reloj de la base (clock_timestamp()).
+//
+// Las pruebas que comparan contra un DEFAULT now() -la cola sella
+// disponible_en al encolar- toman su referencia de aqui, DESPUES de escribir:
+// un solo reloj, sin margen y sin depender del reloj del host, que en un
+// contenedor puede ir por detras o por delante del de la base (#205).
+// Vuelve con la precision de timestamptz (microsegundos), asi que compara
+// igual con lo que se lea de la tabla.
+//
+// No llamar con una fila abierta sobre el mismo pool: Pool admite una sola
+// conexion.
+func Ahora(t *testing.T, pool *pgxpool.Pool) time.Time {
+	t.Helper()
+
+	var ahora time.Time
+	if err := pool.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&ahora); err != nil {
+		t.Fatalf("leer el reloj de la base: %v", err)
+	}
+	return ahora
+}
+
 // DSN devuelve la cadena de conexion a una base recien migrada y vacia.
 //
 // Existe porque no todo lo que se prueba contra Postgres real habla por un
