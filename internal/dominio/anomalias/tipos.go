@@ -133,6 +133,9 @@ type Entrega struct {
 	Fuente  string
 	Periodo string
 	SHA256  string
+
+	// Excluida: una persona la saco del reparto al resolver un duplicado de huella (#164).
+	Excluida bool
 }
 
 // Obra es una obra del periodo con lo necesario para juzgar su declaracion.

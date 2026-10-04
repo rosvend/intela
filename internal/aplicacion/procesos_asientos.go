@@ -31,6 +31,10 @@ type AsientoProceso struct {
 	Revision      int            `json:"revision"`
 	Motivo        string         `json:"motivo,omitempty"`
 	Firma         *FirmaAsentada `json:"firma,omitempty"`
+	// CriticasAceptadasTalCual: cuantas criticas del periodo estaban cerradas sin corregir el dato
+	// cuando la compuerta de anomalias dejo pasar ESTA transicion (#164). Ausente si la transicion
+	// no pasa por la compuerta; un cero explicito si paso y no habia ninguna.
+	CriticasAceptadasTalCual *int `json:"criticas_aceptadas_tal_cual,omitempty"`
 }
 
 // FirmaAsentada es una firma de compuerta: quien, en que rol y sobre que revision (ADR 0008).

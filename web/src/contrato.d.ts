@@ -1053,9 +1053,29 @@ export interface paths {
          *     firmar la decision a nombre de otro, y el asiento del ADR 0006 tiene
          *     que nombrar a quien la tomo de verdad.
          *
-         *     **No toca el registro ofensor.** Asignar la obra de un ONI o descartar
-         *     una fila es la bandeja de #39, con su propio caso de uso y su propio
-         *     asiento; esto solo deja constancia de que alguien se hizo cargo.
+         *     **Una critica se cierra corrigiendo el dato (#164, ADR 0021).** Los
+         *     tres tipos que bloquean la distribucion exigen una `accion`, que se
+         *     aplica en la misma transaccion que el cierre y deja su propio asiento
+         *     sobre el registro que cambio:
+         *
+         *     - `duplicado_registro`: `excluir_uso` saca del reparto la copia que no
+         *       manda -la de la alerta, o la otra si se manda `uso_id`- (escalon
+         *       `duplicado`, asiento `correccion.uso_excluido`).
+         *     - `duplicado_archivo`: `excluir_entrega` saca del reparto la entrega
+         *       entera del periodo -la de la alerta, u otra con los mismos bytes si
+         *       se manda `reporte_id`- (asiento `correccion.entrega_excluida`).
+         *     - `tipo_obra_sin_mapear`: `asignar_tipo_obra` con `tipo_obra` pone la
+         *       categoria de `RD 9.1.1` a la fila (asiento
+         *       `correccion.tipo_obra_asignado`).
+         *     - Solo en los dos duplicados, `aceptar_tal_cual` cierra un falso
+         *       positivo (P-21) sin tocar el dato. La compuerta de
+         *       `/procesos/{id}/avanzar` lo deja pasar pero lo cuenta aparte, y el
+         *       asiento de la transicion dice con cuantas se paso.
+         *
+         *     Cerrar una critica sin `accion` responde 400: era exactamente el cierre
+         *     que dejaba pagar el doble conteo. Las no criticas se cierran solo con
+         *     la nota, como antes: su dato se corrige en otro sitio (la declaracion
+         *     en el catalogo, el ONI en la bandeja de identificacion).
          *
          *     Resolver dos veces responde 409, no 200: quien pulsa el boton el
          *     segundo tiene que saber que la firma escrita no es la suya. Dos
@@ -2191,7 +2211,36 @@ export interface components {
              *     detecto. Si la anomalia vuelve, la alerta se reabre.
              */
             autocerrada?: boolean;
+            /**
+             * @description Rol de la sesion de quien la cerro, tal como estaba al cerrarla
+             *     (#164). Ausente si la autocerro el sistema o si se cerro antes de
+             *     la migracion 00025.
+             * @example distribucion
+             */
+            resuelta_rol?: string;
+            accion?: components["schemas"]["AccionCorrectiva"];
+            /**
+             * @description El registro sobre el que actuo la accion: el id del uso excluido,
+             *     el id de la entrega excluida o el tipo de obra asignado. Ausente
+             *     con `aceptar_tal_cual`, que no toca el dato.
+             * @example uso-0002
+             */
+            accion_objetivo?: string;
         };
+        /**
+         * @description Lo que se hizo con el dato al cerrar una alerta critica (#164, ADR
+         *     0021). Ausente en las no criticas, en las autocerradas y en las
+         *     abiertas.
+         *
+         *     `excluir_uso` y `excluir_entrega` sacan del reparto una fila o una
+         *     entrega entera (escalon `duplicado`); `asignar_tipo_obra` pone la
+         *     categoria de `RD 9.1.1`; `aceptar_tal_cual` cierra un duplicado sin
+         *     tocar el dato, y la compuerta de `/procesos/{id}/avanzar` lo cuenta
+         *     aparte. Las criticas cerradas antes de la migracion 00025 figuran como
+         *     `aceptar_tal_cual`: eso es lo que significaba cerrarlas entonces.
+         * @enum {string}
+         */
+        AccionCorrectiva: "excluir_uso" | "excluir_entrega" | "asignar_tipo_obra" | "aceptar_tal_cual";
         /**
          * @description El periodo que se va a evaluar. Va en el cuerpo y no en la query porque
          *     esta operacion ESCRIBE: un POST cuyo unico argumento viaja en la URL se
@@ -2202,13 +2251,41 @@ export interface components {
             periodo: string;
         };
         /**
-         * @description La nota de quien resuelve, obligatoria. Todo lo demas -quien y
-         *     cuando- lo pone el servidor: la firma sale de la sesion y el instante
-         *     del reloj del nucleo.
+         * @description La nota de quien resuelve, obligatoria, y en una critica la accion
+         *     sobre el dato (#164). Todo lo demas -quien, con que rol y cuando- lo
+         *     pone el servidor: la firma sale de la sesion y el instante del reloj
+         *     del nucleo.
+         *
+         *     Los campos del objetivo van planos: cada accion lee uno solo y los que
+         *     sobran se rechazan con 400.
          */
         ResolucionDeAlerta: {
-            /** @example hablado con la autora, declara esta semana */
+            /**
+             * @description Justificacion auditable. Con `excluir_uso`, `excluir_entrega` o
+             *     `asignar_tipo_obra` viaja tambien a la fila corregida, y ahi tiene
+             *     un tope de 300 caracteres.
+             * @example hablado con la autora, declara esta semana
+             */
             nota: string;
+            accion?: components["schemas"]["AccionCorrectiva"];
+            /**
+             * @description Solo con `excluir_uso`: la copia a excluir. Tiene que repetir el
+             *     registro de la alerta (misma fuente, misma clave). Ausente = la
+             *     fila de la alerta.
+             * @example uso-0001
+             */
+            uso_id?: string;
+            /**
+             * @description Solo con `excluir_entrega`: la entrega a excluir. Tiene que traer
+             *     los mismos bytes que la de la alerta y ser de su periodo. Ausente =
+             *     la entrega de la alerta.
+             */
+            reporte_id?: string;
+            /**
+             * @description Solo con `asignar_tipo_obra`, y obligatorio. Una de las categorias de `RD 9.1.1`.
+             * @enum {string}
+             */
+            tipo_obra?: "cinematografica" | "unitario" | "serie" | "telenovela" | "sketches";
         };
         /** @description Recuento de una pasada de deteccion. */
         ResumenDeEvaluacion: {
@@ -2247,6 +2324,12 @@ export interface components {
              *     salir de `deducciones` (ADR 0021).
              */
             criticas_abiertas: number;
+            /**
+             * @description Criticas del periodo que una persona cerro con `aceptar_tal_cual`,
+             *     sin corregir el dato (#164). No bloquean la compuerta, pero viajan
+             *     aparte para que "cero abiertas" no se lea como "cero anomalias".
+             */
+            criticas_aceptadas: number;
             /**
              * @description Filas del periodo a las que no se les pudo componer clave de
              *     registro, asi que el detector de duplicados NO las comparo con
@@ -6500,6 +6583,7 @@ export interface operations {
                      *         "tipo_obra_sin_mapear": 1
                      *       },
                      *       "criticas_abiertas": 3,
+                     *       "criticas_aceptadas": 0,
                      *       "usos_sin_cotejar": 0
                      *     }
                      */
@@ -6579,16 +6663,12 @@ export interface operations {
         };
         /**
          * @description La nota es obligatoria: es la justificacion auditable de la
-         *     decision y viaja al asiento `alerta.resuelta`. Quien resolvio sale
-         *     de la sesion.
+         *     decision y viaja al asiento `alerta.resuelta`. En una critica va
+         *     ademas la `accion` sobre el dato. Quien resolvio, y con que rol,
+         *     sale de la sesion.
          */
         requestBody: {
             content: {
-                /**
-                 * @example {
-                 *       "nota": "hablado con la autora, declara esta semana"
-                 *     }
-                 */
                 "application/json": components["schemas"]["ResolucionDeAlerta"];
             };
         };
@@ -6619,17 +6699,20 @@ export interface operations {
                     "application/json": components["schemas"]["Alerta"];
                 };
             };
-            /** @description El id no es un UUID, el cuerpo no es un JSON valido, o la nota falta o esta vacia. */
+            /**
+             * @description El id no es un UUID, el cuerpo no es un JSON valido, o la nota
+             *     falta o esta vacia. Tambien 400 si el pedido no cuadra con la
+             *     alerta: una critica sin `accion`, una accion que su tipo no admite,
+             *     un campo que la accion no lee, un `uso_id` que no repite el
+             *     registro de la alerta, un `reporte_id` con otros bytes o de otro
+             *     periodo, un `tipo_obra` fuera de `RD 9.1.1`, o una nota de mas de
+             *     300 caracteres en una accion que escribe sobre la fila.
+             */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "error": "la nota es obligatoria para resolver una alerta"
-                     *     }
-                     */
                     "application/json": components["schemas"]["Error"];
                 };
             };
@@ -6675,17 +6758,18 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description La alerta existe y alguien la cerro antes. */
+            /**
+             * @description La alerta existe y alguien la cerro antes. O la accion ya no
+             *     aplica porque el dato cambio desde que se detecto: la fila ya no
+             *     pondera, la entrega ya esta excluida, el tipo ya esta puesto, o
+             *     excluir dejaria el hecho sin ninguna copia que lo cuente. En ese
+             *     caso la alerta sigue abierta: reevaluar el periodo y mirar otra vez.
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "error": "esa alerta ya estaba resuelta"
-                     *     }
-                     */
                     "application/json": components["schemas"]["Error"];
                 };
             };
@@ -6982,7 +7066,10 @@ export interface operations {
              *     optimista): releer el proceso y reintentar resuelve esto.
              *
              *     Y 409 si el periodo tiene anomalias criticas sin resolver al
-             *     salir de `deducciones`: se resuelven en `/alertas`.
+             *     salir de `deducciones`: se resuelven en `/alertas`, corrigiendo
+             *     el dato (#164). Las aceptadas tal cual no bloquean; el asiento
+             *     `proceso.etapa_avanzada` las cuenta en
+             *     `criticas_aceptadas_tal_cual`.
              *
              *     Y 409 si la liquidacion del periodo no deja mover la corrida
              *     (ADR 0024):

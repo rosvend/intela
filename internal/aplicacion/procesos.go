@@ -214,10 +214,13 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	if v.Etapa == reparto.EtapaDeducciones && p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
 		return uc.valorizarBajoCompuerta(ctx, actorID, procesoID, v, p)
 	}
+	var aceptadas *int
 	if v.Etapa == reparto.EtapaDeducciones || p.Etapa == reparto.EtapaVerificacion {
-		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
+		n, err := uc.compuertaAnomalias(ctx, p.Periodo)
+		if err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
+		aceptadas = &n
 	}
 
 	// Valorizar, liquidar, guardar la etapa y asentar son un solo hecho: sin
@@ -248,7 +251,9 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 				return nil, err
 			}
 		}
-		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+		asiento := asientoProceso(p, v.Etapa)
+		asiento.CriticasAceptadasTalCual = aceptadas
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asiento)}, asientos...), nil
 	})
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -292,14 +297,14 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 
 	criticas := 0
 	err := uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
-		n, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
+		estado, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
 		if err != nil {
 			return nil, err
 		}
-		if n > 0 {
+		if estado.Abiertas > 0 {
 			// Confirmar la unidad sin avanzar: las alertas recien evaluadas
 			// tienen que quedar, y el 409 no puede apuntar a una bandeja vacia.
-			criticas = n
+			criticas = estado.Abiertas
 			return nil, nil
 		}
 		asientos, err := uc.valorizar(ctx, p)
@@ -309,7 +314,9 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 			return nil, err
 		}
-		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+		asiento := asientoProceso(p, v.Etapa)
+		asiento.CriticasAceptadasTalCual = &estado.AceptadasTalCual
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asiento)}, asientos...), nil
 	})
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -320,20 +327,21 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 	return aProcesoVista(p), nil
 }
 
-// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas.
+// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas, y si no,
+// devuelve cuantas se aceptaron tal cual para que el asiento de la transicion las cuente (#164).
 // Se consulta al salir de deducciones (internacional) y al entrar a verificacion.
-func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
+func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) (int, error) {
 	if uc.Anomalias == nil {
-		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
+		return 0, errors.New("procesos mal cableado: falta la compuerta de anomalias")
 	}
-	n, err := uc.Anomalias.Bloqueantes(ctx, periodo)
+	estado, err := uc.Anomalias.Bloqueantes(ctx, periodo)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if n > 0 {
-		return fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, n, periodo)
+	if estado.Abiertas > 0 {
+		return 0, fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, estado.Abiertas, periodo)
 	}
-	return nil
+	return estado.AceptadasTalCual, nil
 }
 
 // valorizar reune bolsa, usos y declaraciones y llama al motor puro de #33,

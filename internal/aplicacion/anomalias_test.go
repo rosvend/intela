@@ -13,6 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/anomalias"
+	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -150,9 +151,19 @@ func (f *alertasFalsas) ListarAlertas(_ context.Context, filtro FiltroAlertas) (
 	return out, nil
 }
 
-func (f *alertasFalsas) ResolverAlerta(
-	_ context.Context, id, actorID, nota string, cuando time.Time,
-) (Alerta, error) {
+func (f *alertasFalsas) AlertaPorID(_ context.Context, id string) (Alerta, error) {
+	if f.err != nil {
+		return Alerta{}, f.err
+	}
+	for _, a := range f.filas {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return Alerta{}, ErrNoEncontrado
+}
+
+func (f *alertasFalsas) ResolverAlerta(_ context.Context, id string, c CierreDeAlerta) (Alerta, error) {
 	if f.err != nil {
 		return Alerta{}, f.err
 	}
@@ -163,13 +174,100 @@ func (f *alertasFalsas) ResolverAlerta(
 		if f.filas[i].Resuelta {
 			return Alerta{}, ErrAlertaYaResuelta
 		}
+		cuando := c.Cuando
 		f.filas[i].Resuelta = true
-		f.filas[i].ResueltaPor = actorID
+		f.filas[i].ResueltaPor = c.ActorID
+		f.filas[i].ResueltaRol = c.ActorRol
 		f.filas[i].ResueltaEn = &cuando
-		f.filas[i].Nota = nota
+		f.filas[i].Nota = c.Nota
+		f.filas[i].Accion = c.Accion
+		f.filas[i].AccionObjetivo = c.AccionObjetivo
 		return f.filas[i], nil
 	}
 	return Alerta{}, ErrNoEncontrado
+}
+
+func (f *alertasFalsas) ContarAlertasConAccion(_ context.Context, periodo, accion string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	n := 0
+	for _, a := range f.filas {
+		if a.Periodo == periodo && a.Accion == accion {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// correccionesFalsas aplica la correccion sobre la MISMA foto que sirve
+// entregasFalsas, para que una reevaluacion vea el dato ya corregido -- que es
+// lo que hace que el detector deje de levantar la alerta --. Apunta cada
+// llamada y puede fallar a pedido.
+type correccionesFalsas struct {
+	entregas *entregasFalsas
+
+	usosExcluidos     []ExclusionDeUso
+	entregasExcluidas []ExclusionDeEntrega
+	tiposAsignados    []string
+
+	err error
+}
+
+func (c *correccionesFalsas) ExcluirUsoDuplicado(_ context.Context, e ExclusionDeUso) error {
+	if c.err != nil {
+		return c.err
+	}
+	for i := range c.entregas.usos {
+		u := &c.entregas.usos[i]
+		if u.ID == e.UsoID && u.Escalon == e.EscalonPrevio && u.ObraID == e.ObraPrevia {
+			u.Escalon, u.ObraID = identificacion.EscalonDuplicado, ""
+			c.usosExcluidos = append(c.usosExcluidos, e)
+			return nil
+		}
+	}
+	return fmt.Errorf("uso %q: %w", e.UsoID, anomalias.ErrAccionNoAplica)
+}
+
+func (c *correccionesFalsas) ExcluirEntregaDuplicada(_ context.Context, e ExclusionDeEntrega) (EntregaExcluida, error) {
+	if c.err != nil {
+		return EntregaExcluida{}, c.err
+	}
+	out := EntregaExcluida{PorEscalon: map[string]int{}}
+	for i := range c.entregas.cargas {
+		if c.entregas.cargas[i].ID == e.ReporteID {
+			c.entregas.cargas[i].Excluida = true
+		}
+	}
+	for i := range c.entregas.usos {
+		u := &c.entregas.usos[i]
+		if u.ReporteID != e.ReporteID || !anomalias.SigueEnJuego(u.Escalon) {
+			continue
+		}
+		out.Usos++
+		out.PorEscalon[u.Escalon]++
+		if u.ObraID != "" && !slices.Contains(out.Obras, u.ObraID) {
+			out.Obras = append(out.Obras, u.ObraID)
+		}
+		u.Escalon, u.ObraID = identificacion.EscalonDuplicado, ""
+	}
+	c.entregasExcluidas = append(c.entregasExcluidas, e)
+	return out, nil
+}
+
+func (c *correccionesFalsas) AsignarTipoObraAUso(_ context.Context, usoID, tipoObra string) (string, error) {
+	if c.err != nil {
+		return "", c.err
+	}
+	for i := range c.entregas.usos {
+		u := &c.entregas.usos[i]
+		if u.ID == usoID && u.TipoObra == "" && u.ObraID != "" {
+			u.TipoObra = tipoObra
+			c.tiposAsignados = append(c.tiposAsignados, usoID+"="+tipoObra)
+			return u.ObraID, nil
+		}
+	}
+	return "", fmt.Errorf("uso %q: %w", usoID, anomalias.ErrAccionNoAplica)
 }
 
 func (f *alertasFalsas) AutocerrarAlertas(
@@ -279,10 +377,33 @@ func servicioSembrado() (Anomalias, *entregasFalsas, *alertasFalsas, *bitacoraFa
 		Declaraciones: vigentes,
 		Coautores:     coautores,
 		Alertas:       alertas,
+		Correcciones:  &correccionesFalsas{entregas: entregas},
 		Bitacora:      bitacora,
 		Unidad:        unidad,
 		Reloj:         relojFijo{instante: instanteAnomalias},
 	}, entregas, alertas, bitacora, unidad
+}
+
+// soloNota es el cierre de una alerta no critica: la nota y nada mas.
+func soloNota(nota string) SolicitudCierreAlerta {
+	return SolicitudCierreAlerta{Nota: nota, ActorRol: string(RolDistribucion)}
+}
+
+// conAccion es el cierre de una critica con su correccion.
+func conAccion(nota string, p anomalias.PedidoDeCorreccion) SolicitudCierreAlerta {
+	return SolicitudCierreAlerta{Nota: nota, ActorRol: string(RolDistribucion), Correccion: p}
+}
+
+// alertaDeTipo devuelve la primera alerta guardada de ese tipo, o falla.
+func alertaDeTipo(t *testing.T, alertas *alertasFalsas, tipo string) Alerta {
+	t.Helper()
+	for _, a := range alertas.filas {
+		if a.Tipo == tipo {
+			return a
+		}
+	}
+	t.Fatalf("no hay ninguna alerta %q en la bandeja", tipo)
+	return Alerta{}
 }
 
 func tiposDe(alertas []Alerta) []string {
@@ -594,9 +715,9 @@ func TestResolverFirmaYAsienta(t *testing.T) {
 	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
 		t.Fatalf("Evaluar: %v", err)
 	}
-	id := alertas.filas[0].ID
+	id := alertaDeTipo(t, alertas, anomalias.TipoONI).ID
 
-	resuelta, err := svc.Resolver(t.Context(), id, "usr-2", "asignada a mano")
+	resuelta, err := svc.Resolver(t.Context(), id, "usr-2", soloNota("asignada a mano"))
 	if err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
@@ -605,6 +726,9 @@ func TestResolverFirmaYAsienta(t *testing.T) {
 	}
 	if resuelta.ResueltaEn == nil || *resuelta.ResueltaEn != instanteAnomalias {
 		t.Fatalf("resuelta_en = %v, el reloj marca %v", resuelta.ResueltaEn, instanteAnomalias)
+	}
+	if resuelta.ResueltaRol != string(RolDistribucion) || resuelta.Accion != "" {
+		t.Fatalf("una no critica se cierra sin accion y con el rol de la sesion: %+v", resuelta)
 	}
 
 	// Dos entradas a la unidad: la de Evaluar y la de Resolver.
@@ -637,7 +761,7 @@ func TestResolverExigeActorAntesDeEscribir(t *testing.T) {
 	id := alertas.filas[0].ID
 
 	for _, actor := range []string{"", "   "} {
-		if _, err := svc.Resolver(t.Context(), id, actor, ""); !errors.Is(err, ErrActorAusente) {
+		if _, err := svc.Resolver(t.Context(), id, actor, soloNota("")); !errors.Is(err, ErrActorAusente) {
 			t.Fatalf("Resolver con actor %q dio %v", actor, err)
 		}
 	}
@@ -657,7 +781,7 @@ func TestResolverExigeNotaAntesDeEscribir(t *testing.T) {
 	entradasAntes := unidad.entradas
 	for _, a := range alertas.filas {
 		for _, nota := range []string{"", "  \n\t"} {
-			if _, err := svc.Resolver(t.Context(), a.ID, "usr-2", nota); !errors.Is(err, ErrNotaObligatoria) {
+			if _, err := svc.Resolver(t.Context(), a.ID, "usr-2", soloNota(nota)); !errors.Is(err, ErrNotaObligatoria) {
 				t.Fatalf("Resolver %s (%s) con nota %q dio %v", a.ID, a.Tipo, nota, err)
 			}
 		}
@@ -677,17 +801,17 @@ func TestResolverDistingueNoExisteDeYaResuelta(t *testing.T) {
 	if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err != nil {
 		t.Fatalf("Evaluar: %v", err)
 	}
-	id := alertas.filas[0].ID
+	id := alertaDeTipo(t, alertas, anomalias.TipoONI).ID
 
-	if _, err := svc.Resolver(t.Context(), "no-existe", "usr-2", "nota de prueba"); !errors.Is(err, ErrNoEncontrado) {
+	if _, err := svc.Resolver(t.Context(), "no-existe", "usr-2", soloNota("nota de prueba")); !errors.Is(err, ErrNoEncontrado) {
 		t.Fatalf("un id inventado dio %v", err)
 	}
-	if _, err := svc.Resolver(t.Context(), id, "usr-2", "nota de prueba"); err != nil {
+	if _, err := svc.Resolver(t.Context(), id, "usr-2", soloNota("nota de prueba")); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	// Dos personas mirando el mismo tablero es el caso normal: quien llega
 	// segundo tiene que saber que la firma escrita no es la suya.
-	if _, err := svc.Resolver(t.Context(), id, "usr-3", "nota de prueba"); !errors.Is(err, ErrAlertaYaResuelta) {
+	if _, err := svc.Resolver(t.Context(), id, "usr-3", soloNota("nota de prueba")); !errors.Is(err, ErrAlertaYaResuelta) {
 		t.Fatalf("la segunda resolucion dio %v", err)
 	}
 }
@@ -713,22 +837,16 @@ func TestCriticasAbiertasSoloCuentaLosTiposQueBloquean(t *testing.T) {
 	}
 
 	// Resolver una critica baja el contador; resolver una informativa no.
-	var critica, informativa string
-	for _, a := range alertas.filas {
-		if anomalias.EsCritica(a.Tipo) && critica == "" {
-			critica = a.ID
-		}
-		if !anomalias.EsCritica(a.Tipo) && informativa == "" {
-			informativa = a.ID
-		}
-	}
-	if _, err := svc.Resolver(t.Context(), informativa, "usr-2", "nota de prueba"); err != nil {
+	informativa := alertaDeTipo(t, alertas, anomalias.TipoONI).ID
+	critica := alertaDeTipo(t, alertas, anomalias.TipoTipoObraSinMapear).ID
+	if _, err := svc.Resolver(t.Context(), informativa, "usr-2", soloNota("nota de prueba")); err != nil {
 		t.Fatalf("Resolver informativa: %v", err)
 	}
 	if n, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba); n != 3 {
 		t.Fatalf("resolver una informativa dejo %d criticas, se esperaban 3", n)
 	}
-	if _, err := svc.Resolver(t.Context(), critica, "usr-2", "nota de prueba"); err != nil {
+	if _, err := svc.Resolver(t.Context(), critica, "usr-2", conAccion("tipo segun el catalogo",
+		anomalias.PedidoDeCorreccion{Accion: anomalias.AccionAsignarTipoObra, TipoObra: "serie"})); err != nil {
 		t.Fatalf("Resolver critica: %v", err)
 	}
 	if n, _ := svc.CriticasAbiertas(t.Context(), periodoDePrueba); n != 2 {
@@ -740,12 +858,12 @@ func TestBloqueantesEvaluaAntesDeContar(t *testing.T) {
 	svc, entregas, alertas, bitacora, _ := servicioSembrado()
 
 	// Periodo nunca evaluado: la bandeja esta vacia y aun asi no puede dar 0.
-	n, err := svc.Bloqueantes(t.Context(), periodoDePrueba)
+	estado, err := svc.Bloqueantes(t.Context(), periodoDePrueba)
 	if err != nil {
 		t.Fatalf("Bloqueantes: %v", err)
 	}
-	if n != 3 {
-		t.Fatalf("Bloqueantes = %d, se esperaban 3 criticas tras evaluar", n)
+	if estado.Abiertas != 3 || estado.AceptadasTalCual != 0 {
+		t.Fatalf("Bloqueantes = %+v, se esperaban 3 criticas abiertas tras evaluar y ninguna aceptada", estado)
 	}
 	if alertas.guardados != 1 || entregas.periodoDeUsos != periodoDePrueba {
 		t.Fatalf("la compuerta no evaluo el periodo (guardados=%d, periodo=%q)", alertas.guardados, entregas.periodoDeUsos)
@@ -831,7 +949,8 @@ func TestReevaluarNoTocaLasQueCerroUnaPersona(t *testing.T) {
 			dup = a.ID
 		}
 	}
-	if _, err := svc.Resolver(t.Context(), dup, "usr-2", "reenvio de la misma parrilla"); err != nil {
+	if _, err := svc.Resolver(t.Context(), dup, "usr-2", conAccion("reenvio de la misma parrilla",
+		anomalias.PedidoDeCorreccion{Accion: anomalias.AccionAceptarTalCual})); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	entregas.usos = entregas.usos[:1]
@@ -860,7 +979,7 @@ func TestUnServicioMalCableadoFallaAntesDeTocarLaBase(t *testing.T) {
 			if _, err := svc.Evaluar(t.Context(), periodoDePrueba, "usr-1"); err == nil {
 				t.Fatal("Evaluar no fallo con el servicio a medias")
 			}
-			if _, err := svc.Resolver(t.Context(), "al-1", "usr-1", "nota de prueba"); err == nil {
+			if _, err := svc.Resolver(t.Context(), "al-1", "usr-1", soloNota("nota de prueba")); err == nil {
 				t.Fatal("Resolver no fallo con el servicio a medias")
 			}
 		})

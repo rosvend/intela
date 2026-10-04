@@ -50,7 +50,7 @@ func TestUnaResolucionRevertidaNoDejaAsientoHuerfano(t *testing.T) {
 	// que abortarla tiene que llevarse el UPDATE y el asiento.
 	abortar := errors.New("abortada a proposito")
 	err = s.EnUnidad(t.Context(), func(ctx context.Context) error {
-		if _, err := svc.Resolver(ctx, id, usuarioAdmin, "cerrada dentro de la unidad"); err != nil {
+		if _, err := svc.Resolver(ctx, id, usuarioAdmin, cierrePara(alertas[0], "cerrada dentro de la unidad")); err != nil {
 			return err
 		}
 		return abortar
@@ -130,7 +130,7 @@ func TestEvaluarDevuelveLasCriticasAbiertasDelPeriodo(t *testing.T) {
 	if i < 0 {
 		t.Fatal("ninguna alerta llego marcada como critica")
 	}
-	if _, err := svc.Resolver(t.Context(), alertas[i].ID, usuarioAdmin, "nota de prueba"); err != nil {
+	if _, err := svc.Resolver(t.Context(), alertas[i].ID, usuarioAdmin, cierrePara(alertas[i], "nota de prueba")); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	despues, err := svc.CriticasAbiertas(t.Context(), periodoAlertas)
