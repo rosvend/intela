@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -213,11 +214,14 @@ func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) 
 }
 
 // ultimo decodifica en destino el asiento mas reciente del hecho que cumple acepta.
+// destino es un puntero y se pone en cero antes de cada candidato: un campo
+// ausente (omitempty) del asiento elegido no puede heredar el de uno descartado.
 func ultimo(asientos []Asiento, hecho string, destino any, acepta func() bool) bool {
 	for i := len(asientos) - 1; i >= 0; i-- {
 		if asientos[i].Hecho != hecho {
 			continue
 		}
+		reflect.ValueOf(destino).Elem().SetZero()
 		if err := json.Unmarshal(asientos[i].Payload, destino); err == nil && acepta() {
 			return true
 		}

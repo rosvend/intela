@@ -339,3 +339,38 @@ func TestExplicarUnAsientoAnteriorA187SigueExplicandose(t *testing.T) {
 		t.Fatalf("obra.puntos = %q, neto = %s", x.Obra.Puntos, x.Neto)
 	}
 }
+
+// Una obra valorizada antes de #187 en proc-1 y despues en otra corrida: explicar
+// proc-1 no puede heredar el desglose del asiento descartado de proc-2.
+func TestExplicarUnAsientoViejoNoHeredaElDesgloseDeOtraCorrida(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+	asientos := b.asientos[:0:0]
+	for _, a := range b.asientos {
+		if a.Hecho == HechoRepartoObraValorizada && a.RefID == "obra-1" {
+			continue
+		}
+		asientos = append(asientos, a)
+	}
+	b.asientos = append(asientos,
+		Asiento{
+			ID: "as-viejo", Hecho: HechoRepartoObraValorizada, RefTipo: RefObra, RefID: "obra-1",
+			Payload: []byte(`{"proceso_id":"proc-1","periodo":"2026-01","puntos":"5616","importe":"280000.00","retenida":false,"declaracion":{"version":3,"vigente_desde":"2025-12-01"},"titulares":[{"titular_id":"titular-1","ipi":"IPI-1","porcentaje":"100","importe":"280000.00"}],"usos":[{"uso_id":"u-1","reporte_id":"rep-1","escalon":"difuso","puntaje":"0.91"}]}`),
+		},
+		Asiento{
+			ID: "as-nuevo", Hecho: HechoRepartoObraValorizada, RefTipo: RefObra, RefID: "obra-1",
+			Payload: []byte(`{"proceso_id":"proc-2","periodo":"2026-02","puntos":"9999","importe":"1.00","retenida":false,"titulares":[],"usos":[],"valorizacion":[{"uso_id":"u-9","formula":"RD 9.1.1","puntos":"9999","terminos":[{"factores":[{"nombre":"emisiones","valor":"9999","origen":"uso"}],"producto":"9999"}]}]}`),
+		},
+	)
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, "proc-1:obra-1")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Valorizacion == nil || len(x.Valorizacion) != 0 {
+		t.Fatalf("valorizacion = %#v, se esperaba lista vacia: es de otra corrida", x.Valorizacion)
+	}
+	if x.Obra.Puntos != "5616" {
+		t.Fatalf("obra.puntos = %q, se esperaba el de proc-1", x.Obra.Puntos)
+	}
+}
