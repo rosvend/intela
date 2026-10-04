@@ -1000,6 +1000,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/alertas/resumen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resumir las anomalias de un periodo
+         * @description Foto de lectura de un periodo para el tablero y la compuerta: cuantas
+         *     alertas abiertas hay por tipo, cuantas criticas bloquean la corrida,
+         *     cuantas criticas se aceptaron sin corregir el dato y cuando se evaluo
+         *     el periodo por ultima vez.
+         *
+         *     Esta ruta NO evalua: es una lectura. Cuenta en la base, no sobre una
+         *     pagina de `GET /alertas`, asi que el conteo no se trunca. Un
+         *     `ultima_evaluacion` null significa que el periodo nunca se evaluo:
+         *     "sin evaluar" no es "limpio".
+         */
+        get: operations["resumirAlertas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/alertas/evaluacion": {
         parameters: {
             query?: never;
@@ -2286,6 +2314,29 @@ export interface components {
              * @enum {string}
              */
             tipo_obra?: "cinematografica" | "unitario" | "serie" | "telenovela" | "sketches";
+        };
+        ConteoDeTipoDeAnomalia: {
+            abiertas: number;
+            /** @description El tipo bloquea POST /procesos/{id}/avanzar (409). */
+            critica: boolean;
+        };
+        /** @description Lo abierto de un periodo, contado en la base. */
+        ResumenDeAlertas: {
+            periodo: string;
+            abiertas: number;
+            criticas_abiertas: number;
+            /** @description Criticas cerradas con aceptar_tal_cual (#164): no bloquean, pero quien firma debe saberlo. */
+            criticas_aceptadas: number;
+            /** Format: date-time */
+            ultima_evaluacion: string | null;
+            por_tipo: {
+                oni: components["schemas"]["ConteoDeTipoDeAnomalia"];
+                duplicado_archivo: components["schemas"]["ConteoDeTipoDeAnomalia"];
+                duplicado_registro: components["schemas"]["ConteoDeTipoDeAnomalia"];
+                titular_sin_porcentaje: components["schemas"]["ConteoDeTipoDeAnomalia"];
+                reserva_declaracion_incompleta: components["schemas"]["ConteoDeTipoDeAnomalia"];
+                tipo_obra_sin_mapear: components["schemas"]["ConteoDeTipoDeAnomalia"];
+            };
         };
         /** @description Recuento de una pasada de deteccion. */
         ResumenDeEvaluacion: {
@@ -6487,6 +6538,124 @@ export interface operations {
                 };
             };
             /** @description Un filtro llego mal formado o fuera de su lista cerrada. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cableo la deteccion de anomalias. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "la deteccion de anomalias no esta configurada en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resumirAlertas: {
+        parameters: {
+            query: {
+                /**
+                 * @description Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y `12`.
+                 *     Un valor mal formado se rechaza con 400 en vez de ignorarse.
+                 * @example 2025-01
+                 */
+                periodo: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description El resumen del periodo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2025-01",
+                     *       "abiertas": 4,
+                     *       "criticas_abiertas": 1,
+                     *       "criticas_aceptadas": 0,
+                     *       "ultima_evaluacion": "2026-05-02T08:30:00Z",
+                     *       "por_tipo": {
+                     *         "oni": {
+                     *           "abiertas": 2,
+                     *           "critica": false
+                     *         },
+                     *         "duplicado_archivo": {
+                     *           "abiertas": 0,
+                     *           "critica": true
+                     *         },
+                     *         "duplicado_registro": {
+                     *           "abiertas": 1,
+                     *           "critica": true
+                     *         },
+                     *         "titular_sin_porcentaje": {
+                     *           "abiertas": 1,
+                     *           "critica": false
+                     *         },
+                     *         "reserva_declaracion_incompleta": {
+                     *           "abiertas": 0,
+                     *           "critica": false
+                     *         },
+                     *         "tipo_obra_sin_mapear": {
+                     *           "abiertas": 0,
+                     *           "critica": true
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ResumenDeAlertas"];
+                };
+            };
+            /** @description El periodo falta o llego mal formado. */
             400: {
                 headers: {
                     [name: string]: unknown;

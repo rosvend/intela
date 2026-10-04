@@ -3305,6 +3305,88 @@ paths:
               example:
                 error: la deteccion de anomalias no esta configurada en esta instalacion
 
+  /alertas/resumen:
+    get:
+      tags: [anomalias]
+      summary: Resumir las anomalias de un periodo
+      description: |
+        Foto de lectura de un periodo para el tablero y la compuerta: cuantas
+        alertas abiertas hay por tipo, cuantas criticas bloquean la corrida,
+        cuantas criticas se aceptaron sin corregir el dato y cuando se evaluo
+        el periodo por ultima vez.
+
+        Esta ruta NO evalua: es una lectura. Cuenta en la base, no sobre una
+        pagina de `GET /alertas`, asi que el conteo no se trunca. Un
+        `ultima_evaluacion` null significa que el periodo nunca se evaluo:
+        "sin evaluar" no es "limpio".
+      operationId: resumirAlertas
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      parameters:
+        - name: periodo
+          in: query
+          required: true
+          description: |
+            Periodo exacto, `AAAA` o `AAAA-MM`, con el mes entre `01` y `12`.
+            Un valor mal formado se rechaza con 400 en vez de ignorarse.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: 2025-01
+      responses:
+        "200":
+          description: El resumen del periodo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResumenDeAlertas"
+              example:
+                periodo: 2025-01
+                abiertas: 4
+                criticas_abiertas: 1
+                criticas_aceptadas: 0
+                ultima_evaluacion: "2026-05-02T08:30:00Z"
+                por_tipo:
+                  oni: { abiertas: 2, critica: false }
+                  duplicado_archivo: { abiertas: 0, critica: true }
+                  duplicado_registro: { abiertas: 1, critica: true }
+                  titular_sin_porcentaje: { abiertas: 1, critica: false }
+                  reserva_declaracion_incompleta: { abiertas: 0, critica: false }
+                  tipo_obra_sin_mapear: { abiertas: 0, critica: true }
+        "400":
+          description: El periodo falta o llego mal formado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "bolsa invalida: periodo \"2025-13\", se esperaba AAAA o AAAA-MM con un mes entre 01 y 12"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no basta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: Esta instalacion no cableo la deteccion de anomalias.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: la deteccion de anomalias no esta configurada en esta instalacion
+
   /alertas/evaluacion:
     post:
       tags: [anomalias]
@@ -5562,6 +5644,37 @@ components:
           type: string
           description: Solo con `asignar_tipo_obra`, y obligatorio. Una de las categorias de `RD 9.1.1`.
           enum: [cinematografica, unitario, serie, telenovela, sketches]
+
+    ConteoDeTipoDeAnomalia:
+      type: object
+      additionalProperties: false
+      required: [abiertas, critica]
+      properties:
+        abiertas: { type: integer, minimum: 0 }
+        critica: { type: boolean, description: "El tipo bloquea POST /procesos/{id}/avanzar (409)." }
+
+    ResumenDeAlertas:
+      type: object
+      additionalProperties: false
+      required: [periodo, abiertas, criticas_abiertas, criticas_aceptadas, por_tipo, ultima_evaluacion]
+      description: Lo abierto de un periodo, contado en la base.
+      properties:
+        periodo: { type: string }
+        abiertas: { type: integer, minimum: 0 }
+        criticas_abiertas: { type: integer, minimum: 0 }
+        criticas_aceptadas: { type: integer, minimum: 0, description: "Criticas cerradas con aceptar_tal_cual (#164): no bloquean, pero quien firma debe saberlo." }
+        ultima_evaluacion: { type: string, format: date-time, nullable: true }
+        por_tipo:
+          type: object
+          additionalProperties: false
+          required: [oni, duplicado_archivo, duplicado_registro, titular_sin_porcentaje, reserva_declaracion_incompleta, tipo_obra_sin_mapear]
+          properties:
+            oni: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
+            duplicado_archivo: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
+            duplicado_registro: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
+            titular_sin_porcentaje: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
+            reserva_declaracion_incompleta: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
+            tipo_obra_sin_mapear: { $ref: "#/components/schemas/ConteoDeTipoDeAnomalia" }
 
     ResumenDeEvaluacion:
       type: object

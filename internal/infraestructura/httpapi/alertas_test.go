@@ -3,8 +3,10 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,9 +23,12 @@ type anomaliasFalsas struct {
 	alerta  aplicacion.Alerta
 	resumen aplicacion.ResumenEvaluacion
 
+	resumenAlertas aplicacion.ResumenAlertas
+
 	errListar   error
 	errEvaluar  error
 	errResolver error
+	errResumen  error
 
 	filtroRecibido    aplicacion.FiltroAlertas
 	periodoRecibido   string
@@ -52,6 +57,11 @@ func (a *anomaliasFalsas) Resolver(
 ) (aplicacion.Alerta, error) {
 	a.idRecibido, a.actorRecibido, a.notaRecibida, a.solicitudRecibida = id, actorID, s.Nota, s
 	return a.alerta, a.errResolver
+}
+
+func (a *anomaliasFalsas) Resumen(_ context.Context, periodo string) (aplicacion.ResumenAlertas, error) {
+	a.periodoRecibido = periodo
+	return a.resumenAlertas, a.errResumen
 }
 
 const idAlertaHTTP = "3f1d0a4e-0000-4000-8000-000000000001"
@@ -132,6 +142,84 @@ func TestAlertasAplicaLosRolesPorRuta(t *testing.T) {
 	}
 }
 
+// El resumen es una lectura: los cuatro roles de lectura, y el titular no.
+func TestResumenDeAlertasAplicaLosRoles(t *testing.T) {
+	casos := map[aplicacion.Rol]int{
+		aplicacion.RolAdministrador: http.StatusOK,
+		aplicacion.RolDistribucion:  http.StatusOK,
+		aplicacion.RolContabilidad:  http.StatusOK,
+		aplicacion.RolAuditor:       http.StatusOK,
+		aplicacion.RolTitular:       http.StatusForbidden,
+	}
+	for rol, esperado := range casos {
+		t.Run(string(rol), func(t *testing.T) {
+			h := servidorConAnomalias(t, rol, &anomaliasFalsas{})
+			if rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2025-01", "", "tok"); rec.Code != esperado {
+				t.Fatalf("GET /alertas/resumen = %d, se esperaba %d. Cuerpo: %s", rec.Code, esperado, rec.Body)
+			}
+		})
+	}
+}
+
+func TestResumenDeAlertasTraduceErrores(t *testing.T) {
+	casos := []struct {
+		nombre string
+		err    error
+		quiero int
+	}{
+		{"periodo invalido", fmt.Errorf("periodo %q: %w", "2026-13", recaudo.ErrBolsaInvalida), http.StatusBadRequest},
+		{"fallo generico", errors.New("se cayo la base"), http.StatusInternalServerError},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConAnomalias(t, aplicacion.RolDistribucion, &anomaliasFalsas{errResumen: c.err})
+			rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2026-13", "", "tok")
+			if rec.Code != c.quiero {
+				t.Fatalf("codigo = %d, se esperaba %d. Cuerpo: %s", rec.Code, c.quiero, rec.Body)
+			}
+			if c.quiero == http.StatusInternalServerError && strings.Contains(rec.Body.String(), "base") {
+				t.Fatalf("el 500 filtra el error interno: %s", rec.Body)
+			}
+		})
+	}
+}
+
+// Un periodo sin evaluar sale como `null` literal y no como clave ausente.
+func TestResumenDeAlertasUltimaEvaluacion(t *testing.T) {
+	cuando := time.Date(2026, 5, 2, 8, 30, 0, 0, time.UTC)
+	casos := []struct {
+		nombre string
+		valor  *time.Time
+		quiero any
+	}{
+		{"nunca evaluado", nil, nil},
+		{"evaluado", &cuando, "2026-05-02T08:30:00Z"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			falso := &anomaliasFalsas{resumenAlertas: aplicacion.ResumenAlertas{
+				Periodo: "2025-01", UltimaEvaluacion: c.valor,
+			}}
+			h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
+			rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2025-01", "", "tok")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			var crudo map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &crudo); err != nil {
+				t.Fatal(err)
+			}
+			got, hay := crudo["ultima_evaluacion"]
+			if !hay || got != c.quiero {
+				t.Fatalf("ultima_evaluacion = %#v (presente %v), se esperaba %#v", got, hay, c.quiero)
+			}
+			if falso.periodoRecibido != "2025-01" {
+				t.Fatalf("periodo recibido = %q", falso.periodoRecibido)
+			}
+		})
+	}
+}
+
 // Sin sesion es 401 y no 403: un 403 a quien no se identifico le diria que la
 // ruta existe y que el problema es el rol.
 func TestAlertasSinSesionEs401(t *testing.T) {
@@ -152,6 +240,15 @@ func TestAlertasSinCasoDeUsoEs503(t *testing.T) {
 	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
 
 	if rec := pedir(t, h, http.MethodGet, "/alertas", "", "tok"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestResumenDeAlertasSinCasoDeUsoEs503(t *testing.T) {
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-1", Rol: aplicacion.RolAdministrador}}
+	h := Nueva(Casos{Auth: auth}, Opciones{}).Router()
+
+	if rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2025-01", "", "tok"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("codigo = %d, se esperaba 503. Cuerpo: %s", rec.Code, rec.Body)
 	}
 }

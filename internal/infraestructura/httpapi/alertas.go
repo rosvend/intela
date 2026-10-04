@@ -28,6 +28,7 @@ type Anomalias interface {
 	Evaluar(ctx context.Context, periodo, actorID string) (aplicacion.ResumenEvaluacion, error)
 	Listar(ctx context.Context, f aplicacion.FiltroAlertas) ([]aplicacion.Alerta, error)
 	Resolver(ctx context.Context, id, actorID string, s aplicacion.SolicitudCierreAlerta) (aplicacion.Alerta, error)
+	Resumen(ctx context.Context, periodo string) (aplicacion.ResumenAlertas, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,22 @@ type resumenEvaluacionJSON struct {
 	// abiertas" no es "cero anomalias" si alguna se cerro sin corregir el dato.
 	CriticasAceptadas int `json:"criticas_aceptadas"`
 	UsosSinCotejar    int `json:"usos_sin_cotejar"`
+}
+
+type conteoDeTipoJSON struct {
+	Abiertas int  `json:"abiertas"`
+	Critica  bool `json:"critica"`
+}
+
+// resumenAlertasJSON es la foto de lectura de un periodo. `ultima_evaluacion`
+// va sin omitempty: null quiere decir "nunca evaluado", que no es "limpio".
+type resumenAlertasJSON struct {
+	Periodo           string                      `json:"periodo"`
+	Abiertas          int                         `json:"abiertas"`
+	CriticasAbiertas  int                         `json:"criticas_abiertas"`
+	CriticasAceptadas int                         `json:"criticas_aceptadas"`
+	PorTipo           map[string]conteoDeTipoJSON `json:"por_tipo"`
+	UltimaEvaluacion  *time.Time                  `json:"ultima_evaluacion"`
 }
 
 // evaluacionJSON es el cuerpo de la pasada. Un objeto y no un `?periodo=` en
@@ -234,6 +251,33 @@ func (a *API) listarAlertas(w http.ResponseWriter, r *http.Request) {
 		cuerpo = append(cuerpo, aAlertaJSON(al))
 	}
 	escribirJSON(w, http.StatusOK, cuerpo)
+}
+
+// resumirAlertas sirve el resumen de un periodo: cuenta en la base y no evalua.
+func (a *API) resumirAlertas(w http.ResponseWriter, r *http.Request) {
+	resumen, err := a.anomalias.Resumen(r.Context(), r.URL.Query().Get("periodo"))
+	switch {
+	case err == nil:
+	case errors.Is(err, recaudo.ErrBolsaInvalida):
+		escribirError(w, http.StatusBadRequest, err.Error())
+		return
+	default:
+		a.log.ErrorContext(r.Context(), "fallo al resumir alertas", slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "no se pudo resumir las alertas")
+		return
+	}
+	porTipo := make(map[string]conteoDeTipoJSON, len(resumen.PorTipo))
+	for tipo, c := range resumen.PorTipo {
+		porTipo[tipo] = conteoDeTipoJSON{Abiertas: c.Abiertas, Critica: c.Critica}
+	}
+	escribirJSON(w, http.StatusOK, resumenAlertasJSON{
+		Periodo:           resumen.Periodo,
+		Abiertas:          resumen.Abiertas,
+		CriticasAbiertas:  resumen.CriticasAbiertas,
+		CriticasAceptadas: resumen.CriticasAceptadas,
+		PorTipo:           porTipo,
+		UltimaEvaluacion:  resumen.UltimaEvaluacion,
+	})
 }
 
 // evaluarAnomalias corre los seis detectores sobre un periodo.

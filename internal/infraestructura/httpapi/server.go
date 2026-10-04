@@ -303,6 +303,7 @@ func (a *API) Router() http.Handler {
 					aplicacion.RolContabilidad, aplicacion.RolAuditor,
 				))
 				lectura.Get("/", a.conAnomalias(a.listarAlertas))
+				lectura.Get("/resumen", a.conAnomalias(a.resumirAlertas))
 			})
 			al.Group(func(escritura chi.Router) {
 				escritura.Use(requiereRol(
