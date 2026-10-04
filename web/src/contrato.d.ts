@@ -2759,8 +2759,13 @@ export interface components {
                 titulo: string;
                 /** @enum {string} */
                 escalon: "alias" | "id_global" | "difuso" | "manual";
-                /** @description Vacio para alias e id global, que son exactos. */
+                /** @description Puntaje del matching (ADR 0007), no puntos de reparto. Vacio para alias e id global, que son exactos. */
                 puntaje: string;
+                /**
+                 * @description Puntos de reparto de la obra en la corrida (RD 9), tal como se persistieron y entraron al reparto: redondeados a 8 decimales. Los `puntos` de cada uso en `valorizacion` son exactos, asi que su suma puede diferir de este total a partir del noveno decimal. No es `puntaje`.
+                 * @example 5616
+                 */
+                puntos: string;
             };
             /** @description Como se reconocio la obra en cada uso que peso (ADR 0007). */
             identificacion: {
@@ -2774,6 +2779,18 @@ export interface components {
                 /** Format: date-time */
                 resuelto_en?: string;
             }[];
+            /**
+             * @description Cuanto peso cada uso y la aritmetica que lo dio (#187), en el orden de
+             *     `identificacion`. Vacio en cifras valorizadas antes de #187: el
+             *     desglose no se reconstruye (ADR 0006); `obra.puntos` si esta.
+             *
+             *     Sin cota de usos, a proposito: toda cifra se explica hasta su
+             *     origen, y truncar dejaria usos sin explicar. Lo acotado es el peso
+             *     de cada uso: ~381 B en TV, suscripcion y hotel (un termino de 4
+             *     factores) y ~544 B en OTT (3 terminos), el mayor. Una telenovela
+             *     diaria con 60 usos en la corrida son ~23 KB.
+             */
+            valorizacion: components["schemas"]["ValorizacionDeUso"][];
             regla: {
                 snapshot_id: string;
                 reglamento: string;
@@ -2820,6 +2837,36 @@ export interface components {
             fuente: string;
             sha256: string;
             clave_objeto: string;
+        };
+        /**
+         * @description Puntos de un uso como suma de productos: `puntos` = suma de los
+         *     `producto` de `terminos`; cada `producto` = multiplicacion de sus
+         *     `factores`. Decimales exactos como cadena, sin redondear; el total
+         *     persistido de la obra (`obra.puntos`) va a 8 decimales.
+         */
+        ValorizacionDeUso: {
+            uso_id: string;
+            /** @enum {string} */
+            formula: "RD 9.1.1" | "RD 9.2" | "RD 9.3" | "RD 9.4" | "RD 9.5" | "RD 9.6" | "RD 9.7";
+            /** @example 5616 */
+            puntos: string;
+            terminos: components["schemas"]["TerminoDeValorizacion"][];
+        };
+        TerminoDeValorizacion: {
+            factores: components["schemas"]["FactorDeValorizacion"][];
+            /** @example 5616 */
+            producto: string;
+        };
+        FactorDeValorizacion: {
+            /** @enum {string} */
+            nombre: "ponderacion" | "duracion_min" | "rating" | "emisiones" | "espectadores" | "taquilla" | "exhibiciones" | "pb" | "wa" | "minutos_vistos" | "wb" | "vistas" | "wc";
+            /** @example 1.3 */
+            valor: string;
+            /**
+             * @description parametro: del snapshot congelado de la corrida. uso: de la fila canonica del reporte, ya normalizada (la duracion ya trae RD 9.1.1(c)).
+             * @enum {string}
+             */
+            origen: "parametro" | "uso";
         };
         /** @description Una pagina de la cola manual y el total de pendientes bajo los mismos filtros. */
         PaginaCasosIdentificacion: {
@@ -4870,7 +4917,8 @@ export interface operations {
                      *         "id": "obra-1",
                      *         "titulo": "La Casa de las Dos Palmas",
                      *         "escalon": "difuso",
-                     *         "puntaje": "0.91"
+                     *         "puntaje": "0.91",
+                     *         "puntos": "5616"
                      *       },
                      *       "identificacion": [
                      *         {
@@ -4879,6 +4927,40 @@ export interface operations {
                      *           "escalon": "difuso",
                      *           "puntaje": "0.91",
                      *           "evidencia": "trgm sobre titulo normalizado"
+                     *         }
+                     *       ],
+                     *       "valorizacion": [
+                     *         {
+                     *           "uso_id": "uso-1",
+                     *           "formula": "RD 9.1.1",
+                     *           "puntos": "5616",
+                     *           "terminos": [
+                     *             {
+                     *               "producto": "5616",
+                     *               "factores": [
+                     *                 {
+                     *                   "nombre": "ponderacion",
+                     *                   "valor": "1.3",
+                     *                   "origen": "parametro"
+                     *                 },
+                     *                 {
+                     *                   "nombre": "duracion_min",
+                     *                   "valor": "48",
+                     *                   "origen": "uso"
+                     *                 },
+                     *                 {
+                     *                   "nombre": "rating",
+                     *                   "valor": "9",
+                     *                   "origen": "uso"
+                     *                 },
+                     *                 {
+                     *                   "nombre": "emisiones",
+                     *                   "valor": "10",
+                     *                   "origen": "uso"
+                     *                 }
+                     *               ]
+                     *             }
+                     *           ]
                      *         }
                      *       ],
                      *       "regla": {
