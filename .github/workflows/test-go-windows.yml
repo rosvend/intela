@@ -1,0 +1,41 @@
+# Reusable stage: the Go suite on Windows, native.
+#
+# Exists because the code is developed on Windows too, and a POSIX-only
+# assumption (a directory fsync, a TMPDIR, syscall.Rlimit) stays invisible until
+# someone runs it there (#207). `test-go.yml` stays the Linux, -race gate.
+#
+#   -short   Windows runners do not run Linux containers, so testcontainers
+#            suites (Postgres) are skipped; they are covered by `test-go.yml`.
+#   no -race it needs cgo and a C toolchain the runner does not ship.
+
+name: Test Go (Windows)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Same reason as test-go.yml: MIGRACIONES_BASE_REF must be reachable.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -short
+        env:
+          MIGRACIONES_BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: go test -short -count=1 ./...
