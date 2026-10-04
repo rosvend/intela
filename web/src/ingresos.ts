@@ -1,3 +1,7 @@
+import type { components } from "./contrato";
+
+export type ValorizacionDeUso = components["schemas"]["ValorizacionDeUso"];
+
 export type FiltroIngresos = {
   obra: string;
   fuente: string;
@@ -56,11 +60,15 @@ export type Explicacion = {
     titulo: string;
     escalon: string;
     puntaje: string;
+    /** Puntos de reparto de la obra (RD 9). No es puntaje, que es del matching. */
+    puntos: string;
   };
   regla: {
     snapshot_id: string;
     reglamento: string;
   };
+  /** Desglose por uso (#187). Vacio en cifras valorizadas antes de #187. */
+  valorizacion: ValorizacionDeUso[];
   split: {
     titular_id: string;
     ipi: string;

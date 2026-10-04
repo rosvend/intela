@@ -434,7 +434,7 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 	}
 	return asientosDeValorizacion(entradaValorizacion{
 		proceso: p, bolsa: bp, snap: snap, resultado: resultado,
-		vigentes: vigentes, usos: filas, origen: origen,
+		vigentes: vigentes, usos: filas, motor: usos, origen: origen,
 	})
 }
 

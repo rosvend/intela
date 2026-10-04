@@ -12,7 +12,7 @@ import {
   PanelIngresos,
   TablaIngresos,
 } from "./PanelIngresos";
-import type { Explicacion, Ingreso } from "./ingresos";
+import type { Explicacion, Ingreso, ValorizacionDeUso } from "./ingresos";
 import { api } from "./api";
 
 vi.mock("./api", () => ({
@@ -37,6 +37,28 @@ const anaSegundo: Ingreso = {
   neto: "750.00",
 };
 
+function usoTV(id: string): ValorizacionDeUso {
+  return {
+    uso_id: id,
+    formula: "RD 9.1.1",
+    puntos: "5616",
+    terminos: [
+      {
+        producto: "5616",
+        factores: [
+          { nombre: "ponderacion", valor: "1.3", origen: "parametro" },
+          { nombre: "duracion_min", valor: "48", origen: "uso" },
+          { nombre: "rating", valor: "9", origen: "uso" },
+          { nombre: "emisiones", valor: "10", origen: "uso" },
+        ],
+      },
+    ],
+  };
+}
+
+const lineaTV =
+  "RD 9.1.1: ponderacion 1.3 × duracion (min) 48 × rating 9 × emisiones 10 = 5616 puntos";
+
 const linaje: Explicacion = {
   ref: anaCasa.ref,
   neto: "3600.00",
@@ -58,7 +80,9 @@ const linaje: Explicacion = {
     titulo: "La Casa de las Dos Palmas",
     escalon: "alias",
     puntaje: "1.00000",
+    puntos: "5616",
   },
+  valorizacion: [usoTV("u-1")],
   regla: { snapshot_id: "snap-2026-01", reglamento: "RD-IX" },
   split: {
     titular_id: "tit-ana",
@@ -82,6 +106,7 @@ const linaje: Explicacion = {
 // devolver GET /explicar/{ref}.
 const linajeReal: Explicacion = {
   ...linaje,
+  valorizacion: [],
   regla: {
     snapshot_id: "snap-2026-01",
     reglamento: "RD 9.1.1+RD-IX-seed-sintetico",
@@ -221,6 +246,45 @@ describe("PanelExplicacion", () => {
     expect(recibo.textContent).toContain("user-distribucion-1");
     expect(recibo.textContent).toContain("verificacion");
     expect(recibo.textContent).toContain("2026-02-01");
+  });
+
+  it("el recibo itemiza los puntos de la obra por factor", () => {
+    render(<PanelExplicacion cifra={linaje} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+
+    expect(screen.getByText(lineaTV)).toBeTruthy();
+    expect(
+      screen.getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent === "Total de la obra: 5616 puntos",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("una cifra anterior al desglose dice que solo se conserva el total", () => {
+    render(<PanelExplicacion cifra={{ ...linaje, valorizacion: [] }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+
+    expect(
+      screen.getByText(/se conserva solo el total: 5616 puntos/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/= 5616 puntos/)).toBeNull();
+  });
+
+  it("con mas de 5 usos muestra 5 y un desplegable con el resto", () => {
+    const usos = ["u-1", "u-2", "u-3", "u-4", "u-5", "u-6", "u-7"].map(usoTV);
+    const { container } = render(
+      <PanelExplicacion cifra={{ ...linaje, valorizacion: usos }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mas detalles" }));
+
+    const items = () => container.querySelectorAll(".recibo-puntos ul li");
+    expect(items().length).toBe(5);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver los 7 usos" }));
+    expect(items().length).toBe(7);
+    expect(screen.getByRole("button", { name: "Ver menos" })).toBeTruthy();
   });
 });
 
