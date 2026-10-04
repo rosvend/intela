@@ -77,6 +77,22 @@ const (
 	BaseTaquilla     = "taquilla"
 )
 
+// ClaveBaseCineTeatro es la clave del parametro normativo que llena
+// [Snapshot.BaseCineTeatro] (P-18). Vive aqui y no solo en el adaptador para
+// que el error del motor la nombre: es lo que el operador tiene que cargar.
+const ClaveBaseCineTeatro = "cine_teatro.base"
+
+// ParseBaseCineTeatro valida la base de cine/teatro que trae un parametro.
+// Simetrico a [ParseGrupoCanal]: una base desconocida es un error tipado al
+// congelar el snapshot, no una corrida de cine que falla meses despues.
+func ParseBaseCineTeatro(s string) (string, error) {
+	switch s {
+	case BaseEspectadores, BaseTaquilla:
+		return s, nil
+	}
+	return "", fmt.Errorf("%w: %q, se esperaba %q o %q", ErrBaseCineTeatroDesconocida, s, BaseTaquilla, BaseEspectadores)
+}
+
 // Circuito de la corrida. Son dos recorridos distintos, no una variante de
 // uno: el internacional no valoriza por puntos (RD 7.4). Ver ADR 0008.
 //
@@ -148,8 +164,9 @@ type Snapshot struct {
 	AsignacionTercerosPct decimal.Decimal
 
 	// BaseCineTeatro es "espectadores" o "taquilla" (P-18). Vacio es error.
-	// Es string a proposito: no cabe en parametros.valor NUMERIC(18,6);
-	// la resolucion del snapshot (#34) lo lee de una clave textual aparte.
+	// Es string a proposito: no cabe en parametros.valor NUMERIC(18,6); la
+	// resolucion del snapshot lo lee de la clave textual `cine_teatro.base`
+	// (columna `valor_texto`, migracion 00025, #194).
 	BaseCineTeatro string
 
 	Reglamento string
@@ -315,4 +332,7 @@ var (
 	ErrParametroAusente     = errors.New("parametro normativo ausente")
 	ErrRepartoInvalido      = errors.New("reparto invalido")
 	ErrProcesoInvalido      = errors.New("proceso invalido")
+
+	// ErrBaseCineTeatroDesconocida: la base de P-18 no es taquilla ni espectadores.
+	ErrBaseCineTeatroDesconocida = errors.New("base de cine/teatro desconocida")
 )

@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -258,6 +261,88 @@ func TestAvanzarEtapaConCriticasAbiertasEs409(t *testing.T) {
 	}
 }
 
+// TestAvanzarEtapaBolsaSinUsosEs409ConMensajeExplicable es el criterio de
+// #194: una bolsa sin usos que la ponderen no es un 500 generico, es un 409
+// que nombra la bolsa y dice que hacer.
+func TestAvanzarEtapaBolsaSinUsosEs409ConMensajeExplicable(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: %w", "proc-1", &aplicacion.ErrorBolsaSinUsos{
+		BolsaID: "bolsa-procinal-2025-01-nacional", CanalID: "procinal", Periodo: "2025-01",
+	})
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var cuerpo struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("el cuerpo no es JSON: %v", err)
+	}
+	for _, fragmento := range []string{`"bolsa-procinal-2025-01-nacional"`, "no tiene usos", "2025-01", `"procinal"`} {
+		if !strings.Contains(cuerpo.Error, fragmento) {
+			t.Errorf("el mensaje %q no dice %s", cuerpo.Error, fragmento)
+		}
+	}
+}
+
+// Un parametro normativo que falta -al abrir, o en el snapshot ya congelado
+// al valorizar- o cuyo valor no se admite se arregla cargando una vigencia,
+// no reintentando: 409 con el mensaje que la nombra, no el 500 de #194.
+func TestProcesoParametroAusenteOInvalidoEs409(t *testing.T) {
+	casos := []struct {
+		nombre, metodo, ruta, cuerpo string
+		err                          error
+		fragmento                    string
+	}{
+		{"abrir sin la clausula", http.MethodPost, "/procesos", cuerpoAbrirProceso,
+			&aplicacion.ErrorParametroAusente{Claves: []string{"cine_teatro.base"}}, "cine_teatro.base"},
+		{"abrir con un valor invalido", http.MethodPost, "/procesos", cuerpoAbrirProceso,
+			fmt.Errorf("parametro %q: %w", "cine_teatro.base", aplicacion.ErrParametroInvalido), "cine_teatro.base"},
+		{"valorizar con un snapshot sin la base", http.MethodPost, "/procesos/proc-1/avanzar", "",
+			fmt.Errorf("motor de reparto: %w: base_cine_teatro (clave cine_teatro.base, P-18)", reparto.ErrParametroAusente),
+			"cine_teatro.base"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
+			rec := pedir(t, h, c.metodo, c.ruta, c.cuerpo, "tok")
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("codigo = %d, se esperaba 409. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), c.fragmento) {
+				t.Errorf("el cuerpo %s no nombra %s", rec.Body, c.fragmento)
+			}
+		})
+	}
+}
+
+// Un snapshot congelado que no se puede releer es corrupcion de la tabla, no
+// una vigencia que falte: 500 con log, aunque el error envuelva ademas un
+// ErrParametroInvalido (una fila `cine_teatro.base = 'boletas'` alterada por
+// fuera del adaptador). Antes ganaba el case de parametros: 409 "cargue la
+// vigencia", que no arregla nada, y sin rastro en el log.
+func TestAvanzarEtapaConSnapshotCorruptoEs500ConLogAunqueEnvuelvaUnParametroInvalido(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: snapshot %q: %w: %w", "proc-1", "snp2-abc",
+		aplicacion.ErrSnapshotCorrupto,
+		fmt.Errorf("parametro %q: %w", "cine_teatro.base", aplicacion.ErrParametroInvalido))
+	var buf bytes.Buffer
+	auth := &autenticacionFalsa{usuario: aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador}}
+	h := Nueva(Casos{Auth: auth, Procesos: &procesosFalso{err: err}},
+		Opciones{Log: slog.New(slog.NewTextHandler(&buf, nil))}).Router()
+
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "cine_teatro.base") {
+		t.Errorf("el 500 no expone el detalle interno al cliente: %s", rec.Body)
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "snapshot de parametros corrupto") {
+		t.Errorf("el snapshot corrupto tiene que quedar en el log a Error, log: %s", buf.String())
+	}
+}
+
 func TestListarProcesosSinFilasDevuelveListaVaciaNoNull(t *testing.T) {
 	h := servidorConProcesos(t, aplicacion.RolAuditor, &procesosFalso{})
 	rec := pedir(t, h, http.MethodGet, "/procesos", "", "tok")
@@ -290,5 +375,93 @@ func TestProcesosPasanElActorDeLaSesion(t *testing.T) {
 				t.Fatalf("actor = %q, se esperaba el de la sesion", falso.actorRecibido)
 			}
 		})
+	}
+}
+
+// TestAvanzarEtapaBloqueadoPorLaLiquidacionEs409 es #193: la liquidacion del
+// periodo no deja mover la corrida. Es un conflicto con el estado del periodo,
+// no un fallo del servidor, y el mensaje tiene que llegar entero: nombra las
+// corridas que el operador tiene que ir a mirar.
+func TestAvanzarEtapaBloqueadoPorLaLiquidacionEs409(t *testing.T) {
+	casos := []struct {
+		err      error
+		esperado string
+	}{
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: 2026-01/nacional no se liquida hasta que lleguen a \"liquidacion_final\": proc-2 (verificacion)", aplicacion.ErrLiquidacionEnEspera),
+			esperado: "proc-2 (verificacion)",
+		},
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: 2026-01/nacional se liquido con proc-2 y proc-1 no estaba entre ellas", aplicacion.ErrPeriodoYaLiquidado),
+			esperado: "se liquido con proc-2",
+		},
+		{
+			err:      fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-1 y proc-2 reparten la misma bolsa bolsa-x en 2026-01/nacional", aplicacion.ErrBolsaRepetida),
+			esperado: "reparten la misma bolsa bolsa-x",
+		},
+	}
+	for _, c := range casos {
+		h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
+		rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%v: codigo = %d, se esperaba 409. Cuerpo: %s", c.err, rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), c.esperado) {
+			t.Fatalf("%v: el cuerpo tiene que contener %q: %s", c.err, c.esperado, rec.Body)
+		}
+	}
+}
+
+// TestAvanzarEtapaInconsistenciasDeLiquidacionEs500ConLog: fallos de integridad
+// que el operador no puede resolver moviendo corridas (descuadre de dinero,
+// corrida sin resultados, base inconsistente) se registran en el log y responden 500.
+func TestAvanzarEtapaInconsistenciasDeLiquidacionEs500ConLog(t *testing.T) {
+	casos := []struct {
+		nombre string
+		err    error
+	}{
+		{
+			nombre: "descuadre de dinero",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: las corridas [proc-1] reparten 200 sobre un neto de 100", aplicacion.ErrCorridaNoCuadra),
+		},
+		{
+			nombre: "corrida sin resultados de proceso",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: la corrida proc-2 no tiene resultados de proceso registrados", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+		{
+			nombre: "hermana sin firmas en etapa posterior",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-2 esta en \"auditoria\" sin las firmas de distribucion y contabilidad", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+		{
+			nombre: "disparador no aparece entre las corridas",
+			err:    fmt.Errorf("avanzar etapa de \"proc-1\": liquidar \"proc-1\": %w: proc-1 paso la compuerta pero no aparece entre las corridas de 2026-01/nacional", aplicacion.ErrInconsistenciaLiquidacion),
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: c.err})
+			rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("%s: codigo = %d, se esperaba 500. Cuerpo: %s", c.nombre, rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), "inconsistencia en los datos de liquidacion") {
+				t.Fatalf("%s: el cuerpo tiene que decir 'inconsistencia en los datos de liquidacion': %s", c.nombre, rec.Body)
+			}
+		})
+	}
+}
+
+// TestAvanzarEtapaSinSMMLVDiceQueFaltaUnParametro: sin SMMLV vigente la
+// liquidacion no puede emitir. Sigue siendo 500 -- es configuracion del
+// servidor --, pero no el generico "no se pudo avanzar".
+func TestAvanzarEtapaSinSMMLVDiceQueFaltaUnParametro(t *testing.T) {
+	err := fmt.Errorf("avanzar etapa de %q: smmlv: %w", "proc-1", aplicacion.ErrParametroAusente)
+	h := servidorConProcesos(t, aplicacion.RolAdministrador, &procesosFalso{err: err})
+	rec := pedir(t, h, http.MethodPost, "/procesos/proc-1/avanzar", "", "tok")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo = %d, se esperaba 500. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "parametro normativo ausente") {
+		t.Fatalf("cuerpo = %s, se esperaba que nombrara el parametro ausente", rec.Body)
 	}
 }

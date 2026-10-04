@@ -3,6 +3,7 @@ package migraciones_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -298,5 +299,266 @@ func TestDownDeRefiereARestauraLaFuncionAnterior(t *testing.T) {
 	}
 	if codigo, columna := estado(); !codigo || !columna {
 		t.Fatalf("tras el segundo up: IN006=%v refiere_a=%v", codigo, columna)
+	}
+}
+
+// proveedorEnLaVersionAnteriorA baja la base de testhelp a la version justo
+// anterior a la migracion cuyo nombre termina en sufijo, y devuelve el
+// proveedor, la conexion y esa version.
+func proveedorEnLaVersionAnteriorA(t *testing.T, sufijo string) (*goose.Provider, *sql.DB, int64) {
+	t.Helper()
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	var version int64
+	for _, s := range p.ListSources() {
+		if strings.HasSuffix(s.Path, sufijo) {
+			version = s.Version
+		}
+	}
+	if version == 0 {
+		t.Fatalf("no se encontro la migracion *%s", sufijo)
+	}
+	if _, err := p.Up(t.Context()); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := p.DownTo(t.Context(), version-1); err != nil {
+		t.Fatalf("bajar a %d: %v", version-1, err)
+	}
+	return p, db, version
+}
+
+// La migracion de parametros textuales (#194) le da `cine_teatro.base` a una
+// base ya sembrada con el dataset sintetico -la de la demo, que no se puede
+// resembrar porque tiene asientos-, y a ninguna otra: una instalacion con
+// parametros reales no recibe un valor inventado (ADR 0004).
+func TestParametrosTextualesSiembraLaBaseDeCineSoloEnUnaBaseSintetica(t *testing.T) {
+	casos := []struct {
+		nombre     string
+		filas      string
+		quiereFila bool
+	}{
+		{"base sembrada con el dataset sintetico",
+			`('ott.wa', 0.5, DATE '2024-01-01', 'sintetico', 'RD-IX-seed-sintetico'),
+			 ('ponderacion.serie', 1.3, DATE '2023-01-01', 'Consejo Directivo', 'RD 9.1.1')`, true},
+		{"base con parametros reales", `('ponderacion.serie', 1.3, DATE '2023-01-01', 'Consejo Directivo', 'RD 9.1.1')`, false},
+		{"base vacia", "", false},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			ctx := t.Context()
+			p, db, version := proveedorEnLaVersionAnteriorA(t, "_parametros_textuales.sql")
+			if c.filas != "" {
+				if _, err := db.ExecContext(ctx,
+					`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento) VALUES `+c.filas); err != nil {
+					t.Fatalf("sembrar parametros previos: %v", err)
+				}
+			}
+			if _, err := p.UpTo(ctx, version); err != nil {
+				t.Fatalf("subir a %d: %v", version, err)
+			}
+
+			var (
+				valorTexto, organo string
+				desde              string
+				valorNulo          bool
+			)
+			err := db.QueryRowContext(ctx,
+				`SELECT valor_texto, valor IS NULL, organo, vigente_desde::text
+				   FROM parametros WHERE clave = 'cine_teatro.base'`).Scan(&valorTexto, &valorNulo, &organo, &desde)
+			if !c.quiereFila {
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("no tenia que sembrarse cine_teatro.base: err=%v valor=%q", err, valorTexto)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("leer cine_teatro.base: %v", err)
+			}
+			// La vigencia es la del dataset sintetico, para que cubra sus periodos.
+			if valorTexto != "taquilla" || !valorNulo || organo != "sintetico" || desde != "2024-01-01" {
+				t.Fatalf("cine_teatro.base = %q (valor NULL=%v, organo %q, desde %s), se esperaba taquilla sintetica desde 2024-01-01",
+					valorTexto, valorNulo, organo, desde)
+			}
+		})
+	}
+}
+
+// El down de 00025 no puede dejar un snapshot congelado sin su valor: se
+// niega mientras haya uno textual (ADR 0005). Sin snapshots textuales baja y
+// vuelve a subir limpio: ver TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual.
+func TestDownDeParametrosTextualesNoDejaSnapshotsSinValor(t *testing.T) {
+	ctx := t.Context()
+	p, db, version := proveedorEnLaVersionAnteriorA(t, "_parametros_textuales.sql")
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO snapshots_parametros (snapshot_id, clave, valor_texto, organo, reglamento, vigente_desde)
+		 VALUES ('snp2-`+strings.Repeat("a", 64)+`', 'cine_teatro.base', 'taquilla', 'sintetico', 'RD-IX-seed-sintetico', DATE '2024-01-01')`); err != nil {
+		t.Fatalf("congelar una fila textual: %v", err)
+	}
+	if _, err := p.DownTo(ctx, version-1); err == nil || !strings.Contains(err.Error(), "ADR 0005") {
+		t.Fatalf("el down tenia que negarse citando la ADR 0005, dio: %v", err)
+	}
+}
+
+// Sin snapshots textuales el down de 00025 si baja: borra la fila textual de
+// `parametros` -no cabe en el esquema de 00024- y devuelve `valor` a NOT NULL.
+// Es el camino del DELETE y del SET NOT NULL, que la prueba de la negativa no
+// recorre. Despues vuelve a subir.
+func TestDownDeParametrosTextualesSinSnapshotsBorraLaFilaTextual(t *testing.T) {
+	ctx := t.Context()
+	p, db, version := proveedorEnLaVersionAnteriorA(t, "_parametros_textuales.sql")
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO parametros (clave, valor, valor_texto, vigente_desde, organo, reglamento)
+		 VALUES ('cine_teatro.base', NULL, 'taquilla', DATE '2024-01-01', 'sintetico', 'RD-IX-seed-sintetico'),
+		        ('ott.wa', 0.5, NULL, DATE '2024-01-01', 'sintetico', 'RD-IX-seed-sintetico')`); err != nil {
+		t.Fatalf("sembrar una fila textual y una numerica: %v", err)
+	}
+
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar sin snapshots textuales tenia que funcionar: %v", err)
+	}
+	var textuales, numericas int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE clave = 'cine_teatro.base'), COUNT(*) FILTER (WHERE clave = 'ott.wa')
+		   FROM parametros`).Scan(&textuales, &numericas); err != nil {
+		t.Fatalf("contar parametros tras el down: %v", err)
+	}
+	if textuales != 0 || numericas != 1 {
+		t.Fatalf("tras el down quedan %d filas textuales y %d numericas, se esperaban 0 y 1", textuales, numericas)
+	}
+	for _, tabla := range []string{"parametros", "snapshots_parametros"} {
+		var nulable string
+		if err := db.QueryRowContext(ctx,
+			`SELECT is_nullable FROM information_schema.columns
+			  WHERE table_schema = current_schema() AND table_name = $1 AND column_name = 'valor'`,
+			tabla).Scan(&nulable); err != nil {
+			t.Fatalf("leer la nulabilidad de %s.valor: %v", tabla, err)
+		}
+		if nulable != "NO" {
+			t.Errorf("%s.valor quedo nulable tras el down", tabla)
+		}
+	}
+
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+}
+
+// La migracion de #164 marca como `aceptar_tal_cual` las criticas que una
+// persona cerro antes de ella -- eso es lo que significaba "resuelta" entonces:
+// nadie corrigio el dato -- y deja sin accion las no criticas y las
+// autocerradas. Su Down devuelve a pendiente las filas 'duplicado', para que la
+// cascada las mire otra vez en vez de romper el CHECK del escalon.
+func TestCorreccionDeAnomaliasMarcaLasCriticasYaCerradas(t *testing.T) {
+	ctx := t.Context()
+	db, err := sql.Open("pgx", testhelp.DSN(t))
+	if err != nil {
+		t.Fatalf("abrir la base: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	var version int64
+	for _, s := range p.ListSources() {
+		if strings.HasSuffix(s.Path, "_correccion_de_anomalias.sql") {
+			version = s.Version
+		}
+	}
+	if version == 0 {
+		t.Fatal("no se encontro la migracion *_correccion_de_anomalias.sql")
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar a %d: %v", version-1, err)
+	}
+
+	ejecutar := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	ejecutar(`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+	          VALUES ('usr-1', 'usr-1@redes.test', 'Uno', 'distribucion', 'hash-de-prueba-suficientemente-larga')`)
+	insertar := func(tipo, refID string, resuelta, autocerrada bool) {
+		t.Helper()
+		var por any
+		if resuelta && !autocerrada {
+			por = "usr-1"
+		}
+		var en any
+		nota := ""
+		if resuelta {
+			en, nota = "2026-01-10T00:00:00Z", "cerrada antes de #164"
+		}
+		ejecutar(`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, detalle, detectada,
+		                               resuelta, resuelta_por, resuelta_en, nota, autocerrada)
+		          VALUES ('2026-01', $1, 'uso', $2, 'detalle', now(), $3, $4, $5, $6, $7)`,
+			tipo, refID, resuelta, por, en, nota, autocerrada)
+	}
+	insertar("duplicado_registro", "u-cerrada", true, false)
+	insertar("tipo_obra_sin_mapear", "u-sintipo", true, false)
+	insertar("duplicado_registro", "u-auto", true, true)
+	insertar("duplicado_registro", "u-abierta", false, false)
+	insertar("oni", "u-oni", true, false)
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+
+	quiero := map[string]string{
+		"u-cerrada": "aceptar_tal_cual",
+		"u-sintipo": "aceptar_tal_cual",
+		"u-auto":    "",
+		"u-abierta": "",
+		"u-oni":     "",
+	}
+	for ref, accion := range quiero {
+		var got string
+		if err := db.QueryRowContext(ctx, `SELECT accion FROM alertas WHERE ref_id = $1`, ref).Scan(&got); err != nil {
+			t.Fatalf("leer %s: %v", ref, err)
+		}
+		if got != accion {
+			t.Errorf("%s: accion = %q, se esperaba %q", ref, got, accion)
+		}
+	}
+
+	// Una fila 'duplicado' no sobrevive al Down con ese escalon.
+	ejecutar(`INSERT INTO reportes (id, fuente, periodo, sha256, clave_objeto, nbytes)
+	          VALUES ('rep-1', 'caracol', '2026-01', repeat('a', 64), 'reportes/a.csv', 1)`)
+	ejecutar(`INSERT INTO usos (id, reporte_id, fuente, titulo, modalidad, escalon, oni,
+	                            resuelto_por, resuelto_en, nota_resolucion)
+	          VALUES ('u-dup', 'rep-1', 'caracol', 'Titulo', 'tv', 'duplicado', FALSE, 'usr-1', now(), 'reenvio')`)
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar con una fila duplicado: %v", err)
+	}
+	var escalon string
+	var oni bool
+	if err := db.QueryRowContext(ctx, `SELECT escalon, oni FROM usos WHERE id = 'u-dup'`).Scan(&escalon, &oni); err != nil {
+		t.Fatalf("leer la fila: %v", err)
+	}
+	if escalon != "pendiente" || !oni {
+		t.Fatalf("tras el down: escalon=%q oni=%v, se esperaba pendiente y ONI", escalon, oni)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("subir de nuevo: %v", err)
 	}
 }

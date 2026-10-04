@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/anomalias"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
 
@@ -26,7 +27,7 @@ import (
 type Anomalias interface {
 	Evaluar(ctx context.Context, periodo, actorID string) (aplicacion.ResumenEvaluacion, error)
 	Listar(ctx context.Context, f aplicacion.FiltroAlertas) ([]aplicacion.Alerta, error)
-	Resolver(ctx context.Context, id, actorID, nota string) (aplicacion.Alerta, error)
+	Resolver(ctx context.Context, id, actorID string, s aplicacion.SolicitudCierreAlerta) (aplicacion.Alerta, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,10 @@ type alertaJSON struct {
 	ResueltaEn  *time.Time `json:"resuelta_en,omitempty"`
 	Nota        string     `json:"nota,omitempty"`
 	Autocerrada bool       `json:"autocerrada"`
+	// ResueltaRol, Accion y AccionObjetivo son el cierre con correccion de #164.
+	ResueltaRol    string `json:"resuelta_rol,omitempty"`
+	Accion         string `json:"accion,omitempty"`
+	AccionObjetivo string `json:"accion_objetivo,omitempty"`
 }
 
 // resumenEvaluacionJSON es lo que devuelve una pasada de deteccion.
@@ -84,7 +89,10 @@ type resumenEvaluacionJSON struct {
 	Autocerradas     int            `json:"autocerradas"`
 	PorTipo          map[string]int `json:"por_tipo"`
 	CriticasAbiertas int            `json:"criticas_abiertas"`
-	UsosSinCotejar   int            `json:"usos_sin_cotejar"`
+	// CriticasAceptadas no bloquean pero se cuentan aparte (#164): "cero
+	// abiertas" no es "cero anomalias" si alguna se cerro sin corregir el dato.
+	CriticasAceptadas int `json:"criticas_aceptadas"`
+	UsosSinCotejar    int `json:"usos_sin_cotejar"`
 }
 
 // evaluacionJSON es el cuerpo de la pasada. Un objeto y no un `?periodo=` en
@@ -94,9 +102,19 @@ type evaluacionJSON struct {
 	Periodo string `json:"periodo"`
 }
 
-// resolucionJSON es el cuerpo de una resolucion: la nota (obligatoria); quien resolvio sale de la sesion.
+// resolucionJSON es el cuerpo de una resolucion: la nota (obligatoria) y, en
+// una critica, la accion sobre el dato (#164). Quien resolvio y con que rol
+// salen de la sesion.
+//
+// Los tres campos del objetivo van planos y no en un objeto anidado, igual que
+// `obra_id` en el cuerpo de la resolucion de un caso: cada accion lee uno solo
+// y el dominio rechaza los que sobran ([anomalias.ValidarForma]).
 type resolucionJSON struct {
-	Nota string `json:"nota"`
+	Nota      string `json:"nota"`
+	Accion    string `json:"accion"`
+	UsoID     string `json:"uso_id"`
+	ReporteID string `json:"reporte_id"`
+	TipoObra  string `json:"tipo_obra"`
 }
 
 // separadorReferencia une ref_tipo y ref_id en la cadena que se pinta.
@@ -116,21 +134,24 @@ func aAlertaJSON(a aplicacion.Alerta) alertaJSON {
 		referencia += separadorRefTitular + a.RefTitular
 	}
 	return alertaJSON{
-		ID:          a.ID,
-		Tipo:        a.Tipo,
-		Detalle:     a.Detalle,
-		Periodo:     a.Periodo,
-		Referencia:  referencia,
-		RefTipo:     a.RefTipo,
-		RefID:       a.RefID,
-		RefTitular:  a.RefTitular,
-		Critica:     a.Critica,
-		Detectada:   a.Detectada,
-		Resuelta:    a.Resuelta,
-		ResueltaPor: a.ResueltaPor,
-		ResueltaEn:  a.ResueltaEn,
-		Nota:        a.Nota,
-		Autocerrada: a.Autocerrada,
+		ID:             a.ID,
+		Tipo:           a.Tipo,
+		Detalle:        a.Detalle,
+		Periodo:        a.Periodo,
+		Referencia:     referencia,
+		RefTipo:        a.RefTipo,
+		RefID:          a.RefID,
+		RefTitular:     a.RefTitular,
+		Critica:        a.Critica,
+		Detectada:      a.Detectada,
+		Resuelta:       a.Resuelta,
+		ResueltaPor:    a.ResueltaPor,
+		ResueltaEn:     a.ResueltaEn,
+		Nota:           a.Nota,
+		Autocerrada:    a.Autocerrada,
+		ResueltaRol:    a.ResueltaRol,
+		Accion:         a.Accion,
+		AccionObjetivo: a.AccionObjetivo,
 	}
 }
 
@@ -264,23 +285,30 @@ func (a *API) evaluarAnomalias(w http.ResponseWriter, r *http.Request) {
 	}
 
 	escribirJSON(w, http.StatusOK, resumenEvaluacionJSON{
-		Periodo:          resumen.Periodo,
-		Detectadas:       resumen.Detectadas,
-		Nuevas:           resumen.Nuevas,
-		Autocerradas:     resumen.Autocerradas,
-		PorTipo:          resumen.PorTipo,
-		CriticasAbiertas: resumen.CriticasAbiertas,
-		UsosSinCotejar:   resumen.UsosSinCotejar,
+		Periodo:           resumen.Periodo,
+		Detectadas:        resumen.Detectadas,
+		Nuevas:            resumen.Nuevas,
+		Autocerradas:      resumen.Autocerradas,
+		PorTipo:           resumen.PorTipo,
+		CriticasAbiertas:  resumen.CriticasAbiertas,
+		CriticasAceptadas: resumen.CriticasAceptadas,
+		UsosSinCotejar:    resumen.UsosSinCotejar,
 	})
 }
 
-// resolverAlerta marca una alerta como atendida a nombre de quien la atiende.
+// resolverAlerta marca una alerta como atendida a nombre de quien la atiende
+// y, si es critica, corrige el dato con la accion del cuerpo (#164).
 //
-// El actor sale de la SESION y no del cuerpo: dejarlo llegar por JSON
-// permitiria firmar la decision a nombre de otro, y el asiento del ADR 0006
-// tiene que nombrar a quien la tomo de verdad.
+// El actor y su rol salen de la SESION y no del cuerpo: dejarlos llegar por
+// JSON permitiria firmar la decision a nombre de otro, y el asiento del
+// ADR 0006 tiene que nombrar a quien la tomo de verdad.
 //
 // Un POST sin cuerpo llega al caso de uso con nota vacia y sale 400 por ErrNotaObligatoria.
+//
+// 400 para un pedido mal formado o que no cuadra con la alerta
+// (ErrAccionInvalida, nota larga); 409 para uno que el dato ya no admite
+// (ErrAccionNoAplica: la fila ya no pondera, la entrega ya esta excluida,
+// quitarla dejaria el hecho sin contar) -- hay que reevaluar y mirar otra vez.
 func (a *API) resolverAlerta(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCuerpoAlertas)
 
@@ -303,11 +331,27 @@ func (a *API) resolverAlerta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alerta, err := a.anomalias.Resolver(r.Context(), id, usuario.ID, cuerpo.Nota)
+	alerta, err := a.anomalias.Resolver(r.Context(), id, usuario.ID, aplicacion.SolicitudCierreAlerta{
+		Nota:     cuerpo.Nota,
+		ActorRol: string(usuario.Rol),
+		Correccion: anomalias.PedidoDeCorreccion{
+			Accion:    cuerpo.Accion,
+			UsoID:     cuerpo.UsoID,
+			ReporteID: cuerpo.ReporteID,
+			TipoObra:  cuerpo.TipoObra,
+		},
+	})
 	switch {
 	case err == nil:
 	case errors.Is(err, aplicacion.ErrNotaObligatoria):
 		escribirError(w, http.StatusBadRequest, aplicacion.ErrNotaObligatoria.Error())
+		return
+	case errors.Is(err, anomalias.ErrAccionInvalida), errors.Is(err, anomalias.ErrNotaDemasiadoLarga):
+		// El mensaje entero: dice que accion admite el tipo o que campo sobra.
+		escribirError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, anomalias.ErrAccionNoAplica):
+		escribirError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, aplicacion.ErrNoEncontrado):
 		escribirError(w, http.StatusNotFound, "esa alerta no existe")

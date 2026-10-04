@@ -2,7 +2,10 @@ package aplicacion
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,13 +95,17 @@ func (g *gestionDeclaracionesFalsa) VigentesDeObras(_ context.Context, _ []strin
 }
 
 type usosDeRepartoFalso struct {
-	usos []UsoDeReparto
+	usos     []UsoDeReparto
+	resumen  ResumenUsosDeCanal
+	sinCanal int
 }
 
 func (u *usosDeRepartoFalso) UsosDeCanal(_ context.Context, _, _ string, _ int) ([]UsoDeReparto, ResumenUsosDeCanal, error) {
-	return u.usos, ResumenUsosDeCanal{}, nil
+	return u.usos, u.resumen, nil
 }
-func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) { return 0, nil }
+func (u *usosDeRepartoFalso) UsosSinCanal(_ context.Context, _ string) (int, error) {
+	return u.sinCanal, nil
+}
 
 type repositorioResultadosFalso struct {
 	procesoID string
@@ -561,6 +568,148 @@ func TestAvanzarEtapaNacionalValorizaAlEntrarAImporteObra(t *testing.T) {
 	}
 }
 
+// procesoNacionalListoParaValorizar deja proc-1 en deducciones contra una
+// bolsa del usuario "procinal", con obra-1 declarada al 100%.
+func procesoNacionalListoParaValorizar(t *testing.T, snap reparto.Snapshot, usos *usosDeRepartoFalso) (Procesos, *repositorioProcesosFalso) {
+	t.Helper()
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2025-01", reparto.Nacional, "bolsa-procinal", "snp1-viejo", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = reparto.EtapaDeducciones
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	decl, err := repertorio.NuevaDeclaracion("obra-1", []repertorio.Parte{
+		{TitularID: "titular-1", IPI: "IPI-1", Porcentaje: d("100")},
+	})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	uc := conBitacora(Procesos{
+		Repo:       repo,
+		Parametros: &parametrosNormativosFalso{snap: snap},
+		Bolsas: &repositorioRecaudoFalso{bolsa: BolsaPersistida{
+			ID: "bolsa-procinal", UsuarioID: "procinal", Periodo: "2025-01", Circuito: recaudo.Nacional, Bruto: d("1000000"),
+		}},
+		Declaraciones: &gestionDeclaracionesFalsa{porObra: map[string]VersionDeclaracion{"obra-1": {Declaracion: decl}}},
+		Usos:          usos,
+		Resultados:    &repositorioResultadosFalso{},
+	})
+	return uc, repo
+}
+
+// TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer es el criterio de
+// #194: una bolsa sin usos que la ponderen responde con un error que nombra
+// la bolsa, el canal y el periodo, y distingue "falta el reporte" de "faltan
+// identificar las filas". El motor ya rechazaba la lista vacia, pero con "no
+// hay usos" a secas.
+func TestAvanzarEtapaBolsaSinUsosEsErrorTipadoQueDiceQueHacer(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre     string
+		resumen    ResumenUsosDeCanal
+		sinCanal   int
+		fragmentos []string
+		noDice     string
+	}{
+		{"ninguna fila del canal", ResumenUsosDeCanal{}, 0,
+			[]string{"cargue el reporte", "si ya esta cargado, corrija el canal_id"}, "cola"},
+		{"reporte cargado con usos sin canal", ResumenUsosDeCanal{}, 3,
+			[]string{"3 usos del periodo no traen canal", "corrija la atribucion del canal"}, "cargue el reporte"},
+		{"filas del canal sin identificar", ResumenUsosDeCanal{Pendientes: 1, ONI: 2}, 0,
+			[]string{"1 pendientes, 2 ONI", "cola de identificacion"}, "cargue el reporte"},
+		{"filas del canal solo excluidas o descartadas", ResumenUsosDeCanal{Excluidos: 5, Descartados: 1}, 0,
+			[]string{"5 excluidos", "1 descartados", "R-27", "ninguno pondera"}, "identifique"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			uc, repo := procesoNacionalListoParaValorizar(t, snapshotDePrueba(),
+				&usosDeRepartoFalso{resumen: c.resumen, sinCanal: c.sinCanal})
+
+			_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+			if !errors.Is(err, ErrBolsaSinUsos) {
+				t.Fatalf("se esperaba ErrBolsaSinUsos, dio: %v", err)
+			}
+			var sinUsos *ErrorBolsaSinUsos
+			if !errors.As(err, &sinUsos) {
+				t.Fatalf("se esperaba *ErrorBolsaSinUsos, dio: %T", err)
+			}
+			if sinUsos.BolsaID != "bolsa-procinal" || sinUsos.CanalID != "procinal" || sinUsos.Periodo != "2025-01" {
+				t.Errorf("error = %+v, se esperaba bolsa-procinal/procinal/2025-01", *sinUsos)
+			}
+			for _, f := range append([]string{`"bolsa-procinal"`, `"procinal"`, "2025-01"}, c.fragmentos...) {
+				if !strings.Contains(err.Error(), f) {
+					t.Errorf("el mensaje %q no dice %s", err, f)
+				}
+			}
+			if strings.Contains(err.Error(), c.noDice) {
+				t.Errorf("el mensaje %q no deberia decir %s", err, c.noDice)
+			}
+			if sinUsos.UsosSinCanal != c.sinCanal {
+				t.Errorf("UsosSinCanal = %d, se esperaba %d", sinUsos.UsosSinCanal, c.sinCanal)
+			}
+			// La corrida no sale de deducciones y no persiste un resultado vacio.
+			v, _ := repo.ProcesoPorID(t.Context(), "proc-1")
+			if v.Etapa != reparto.EtapaDeducciones {
+				t.Errorf("etapa = %q, la corrida no puede avanzar sin usos", v.Etapa)
+			}
+			if uc.Resultados.(*repositorioResultadosFalso).procesoID != "" {
+				t.Error("se guardo un resultado sin usos")
+			}
+		})
+	}
+}
+
+// Una corrida de cine abierta con un snapshot que no trae la base de P-18 -la
+// de Procinal de #194, congelada con la version 1 de las clausulas- no se
+// arregla cargando la fila: el snapshot no se vuelve a resolver (ADR 0005).
+// El error lo dice, en vez de sugerir un reintento que fallaria igual.
+func TestAvanzarEtapaConSnapshotSinBaseCineDiceQueAbraOtraCorrida(t *testing.T) {
+	t.Parallel()
+
+	snap := snapshotDePrueba()
+	snap.BaseCineTeatro = ""
+	uc, _ := procesoNacionalListoParaValorizar(t, snap,
+		&usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("procinal", reparto.Cine, "")}})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+	if !errors.Is(err, reparto.ErrParametroAusente) {
+		t.Fatalf("se esperaba reparto.ErrParametroAusente, dio: %v", err)
+	}
+	for _, f := range []string{"base_cine_teatro", "cine_teatro.base", `"snp1-viejo"`, "abra una corrida nueva", `"bolsa-procinal"`} {
+		if !strings.Contains(err.Error(), f) {
+			t.Errorf("el mensaje %q no dice %s", err, f)
+		}
+	}
+}
+
+// Con la base en el snapshot, la corrida de cine valoriza: es el otro lado de
+// la prueba de arriba, sin Postgres.
+func TestAvanzarEtapaValorizaCineConLaBaseDelSnapshot(t *testing.T) {
+	t.Parallel()
+
+	snap := snapshotDePrueba()
+	snap.BaseCineTeatro = reparto.BaseTaquilla
+	uc, _ := procesoNacionalListoParaValorizar(t, snap,
+		&usosDeRepartoFalso{usos: []UsoDeReparto{usoDeCanal("procinal", reparto.Cine, "")}})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaImporteObra {
+		t.Fatalf("etapa = %q, se esperaba importe_obra", v.Etapa)
+	}
+	res := uc.Resultados.(*repositorioResultadosFalso).guardado
+	if len(res.Obras) != 1 || res.Obras[0].ObraID != "obra-1" {
+		t.Fatalf("resultado.Obras = %+v, se esperaba una linea de obra-1", res.Obras)
+	}
+}
+
 func TestAvanzarEtapaNacionalSinUnidadFallaClaro(t *testing.T) {
 	t.Parallel()
 
@@ -707,14 +856,15 @@ func TestListarProcesosDelegaAlRepositorio(t *testing.T) {
 
 // compuertaFalsa es una CompuertaAnomalias con respuesta fija.
 type compuertaFalsa struct {
-	criticas int
-	err      error
-	pedidos  []string
+	criticas  int
+	aceptadas int
+	err       error
+	pedidos   []string
 }
 
-func (c *compuertaFalsa) Bloqueantes(_ context.Context, periodo string) (int, error) {
+func (c *compuertaFalsa) Bloqueantes(_ context.Context, periodo string) (EstadoCompuerta, error) {
 	c.pedidos = append(c.pedidos, periodo)
-	return c.criticas, c.err
+	return EstadoCompuerta{Abiertas: c.criticas, AceptadasTalCual: c.aceptadas}, c.err
 }
 
 func procesoEnDeducciones(t *testing.T, circuito reparto.Circuito) *repositorioProcesosFalso {
@@ -882,4 +1032,273 @@ func (origenCompleto) OrigenDeUsos(_ context.Context, ids []string) (map[string]
 		m[id] = OrigenDeUso{UsoID: id, ReporteID: "rep", Escalon: "alias"}
 	}
 	return m, nil
+}
+
+// Una critica aceptada tal cual no bloquea, pero la transicion que la
+// compuerta deja pasar dice con cuantas se paso (#164): "cero abiertas" no es
+// "cero anomalias". Y la que no pasa por la compuerta no lo dice.
+func TestElAsientoDeLaTransicionCuentaLasCriticasAceptadasTalCual(t *testing.T) {
+	t.Parallel()
+
+	aceptadasDe := func(t *testing.T, bitacora *bitacoraFalsa) (int, bool) {
+		t.Helper()
+		for _, a := range bitacora.asientos {
+			if a.Hecho != HechoProcesoEtapaAvanzada {
+				continue
+			}
+			var p struct {
+				Aceptadas *int `json:"criticas_aceptadas_tal_cual"`
+			}
+			if err := json.Unmarshal(a.Payload, &p); err != nil {
+				t.Fatalf("payload del asiento: %v", err)
+			}
+			if p.Aceptadas == nil {
+				return 0, false
+			}
+			return *p.Aceptadas, true
+		}
+		t.Fatal("no se asento la transicion")
+		return 0, false
+	}
+
+	t.Run("sale de deducciones con dos aceptadas", func(t *testing.T) {
+		t.Parallel()
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{
+			Repo: procesoEnDeducciones(t, reparto.Internacional), Bitacora: bitacora,
+			Anomalias: &compuertaFalsa{aceptadas: 2},
+		})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if n, hay := aceptadasDe(t, bitacora); !hay || n != 2 {
+			t.Fatalf("criticas_aceptadas_tal_cual = %d (presente=%v), se esperaba 2", n, hay)
+		}
+	})
+
+	// Un cero explicito: paso por la compuerta y no habia ninguna.
+	t.Run("sale de deducciones sin aceptadas", func(t *testing.T) {
+		t.Parallel()
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{
+			Repo: procesoEnDeducciones(t, reparto.Internacional), Bitacora: bitacora,
+			Anomalias: &compuertaFalsa{},
+		})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if n, hay := aceptadasDe(t, bitacora); !hay || n != 0 {
+			t.Fatalf("criticas_aceptadas_tal_cual = %d (presente=%v), se esperaba un cero explicito", n, hay)
+		}
+	})
+
+	t.Run("recaudo a deducciones no pasa por la compuerta", func(t *testing.T) {
+		t.Parallel()
+		repo := nuevoRepositorioProcesosFalso()
+		p, err := reparto.AbrirProceso("proc-1", "2026-01", reparto.Internacional, "bolsa-1", "snap-1", "IX")
+		if err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		bitacora := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{Repo: repo, Bitacora: bitacora, Anomalias: &compuertaFalsa{aceptadas: 4}})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", ""); err != nil {
+			t.Fatalf("AvanzarEtapa: %v", err)
+		}
+		if _, hay := aceptadasDe(t, bitacora); hay {
+			t.Fatal("una transicion que no pasa por la compuerta no puede afirmar cuantas aceptadas habia")
+		}
+	})
+}
+
+// emisionFalsa es el doble de [EmisionLiquidacion]. Apunta en que etapa estaba
+// la corrida en el repositorio en el momento de la llamada: es lo que prueba
+// que al ENTRAR se emite despues de guardar la etapa y al SALIR antes.
+type emisionFalsa struct {
+	repo   *repositorioProcesosFalso
+	err    error
+	vistas []reparto.Etapa
+	ids    []string
+}
+
+func (e *emisionFalsa) GenerarLiquidacion(_ context.Context, procesoID string) ([]OrdenVista, error) {
+	e.ids = append(e.ids, procesoID)
+	e.vistas = append(e.vistas, e.repo.procesos[procesoID].Etapa)
+	return nil, e.err
+}
+
+// procesoEnEtapa guarda proc-1 en la etapa y revision dadas, con las firmas de
+// la compuerta sobre esa misma revision cuando la etapa es una compuerta.
+func procesoEnEtapa(t *testing.T, circuito reparto.Circuito, etapa reparto.Etapa, revision int) *repositorioProcesosFalso {
+	t.Helper()
+	repo := nuevoRepositorioProcesosFalso()
+	p, err := reparto.AbrirProceso("proc-1", "2026-01", circuito, "bolsa-1", "snap-1", "IX")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	p.Etapa = etapa
+	p.Revision = revision
+	if etapa == reparto.EtapaVerificacion {
+		p.Firmas = []reparto.Firma{
+			{Rol: string(reparto.RolDistribucion), ActorID: "actor-dist", SobreRev: revision},
+			{Rol: string(reparto.RolContabilidad), ActorID: "actor-conta", SobreRev: revision},
+		}
+	}
+	if err := repo.GuardarProceso(t.Context(), aProcesoVista(p), 0); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	repo.guardados = nil
+	return repo
+}
+
+// TestAvanzarEtapaEmiteLaLiquidacionAlEntrarALiquidacionFinal es #193: salir de
+// verificacion hacia liquidacion_final emite las ordenes del periodo en la
+// misma unidad, DESPUES de guardar la etapa -- la liquidacion lee la etapa
+// nueva dentro de la transaccion.
+func TestAvanzarEtapaEmiteLaLiquidacionAlEntrarALiquidacionFinal(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	emision := &emisionFalsa{repo: repo}
+	libro := &bitacoraFalsa{}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision, Bitacora: libro})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if v.Etapa != reparto.EtapaLiquidacionFinal || v.Revision != 2 {
+		t.Fatalf("etapa/revision = %q/%d, se esperaba liquidacion_final/2", v.Etapa, v.Revision)
+	}
+	if !slices.Equal(emision.ids, []string{"proc-1"}) {
+		t.Fatalf("GenerarLiquidacion = %v, se esperaba una llamada con proc-1", emision.ids)
+	}
+	if emision.vistas[0] != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("al emitir la corrida estaba en %q; la etapa se guarda antes", emision.vistas[0])
+	}
+	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoProcesoEtapaAvanzada {
+		t.Fatalf("asientos = %+v, se esperaba el de la etapa avanzada", libro.asientos)
+	}
+}
+
+// TestAvanzarEtapaToleraLaEsperaDelPeriodoAlEntrar: la corrida que llega antes
+// que sus hermanas entra igual a liquidacion_final (ADR 0024).
+func TestAvanzarEtapaToleraLaEsperaDelPeriodoAlEntrar(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	emision := &emisionFalsa{repo: repo, err: fmt.Errorf("%w: faltan prc-b", ErrLiquidacionEnEspera)}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("esperar a las hermanas no es un fallo al entrar: %v", err)
+	}
+	if v.Etapa != reparto.EtapaLiquidacionFinal || repo.procesos["proc-1"].Etapa != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("etapa = %q, se esperaba liquidacion_final", v.Etapa)
+	}
+}
+
+// TestAvanzarEtapaNoEntraSiLaEmisionFalla: cualquier otro fallo de la
+// liquidacion revierte la transicion, para que avanzar y emitir sean un solo
+// hecho.
+func TestAvanzarEtapaNoEntraSiLaEmisionFalla(t *testing.T) {
+	t.Parallel()
+
+	for _, causa := range []error{ErrPeriodoYaLiquidado, ErrCorridaNoCuadra, ErrParametroAusente} {
+		repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+		emision := &emisionFalsa{repo: repo, err: causa}
+		unidad := &unidadFalsa{}
+		libro := &bitacoraFalsa{}
+		uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision, Unidad: unidad, Bitacora: libro})
+
+		_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+		if !errors.Is(err, causa) {
+			t.Fatalf("err = %v, se esperaba %v", err, causa)
+		}
+		if unidad.confirmo {
+			t.Fatalf("%v: la unidad no puede confirmar una etapa cuya emision fallo", causa)
+		}
+		if len(libro.asientos) != 0 {
+			t.Fatalf("%v: asientos = %+v; sin emision no hay etapa avanzada", causa, libro.asientos)
+		}
+	}
+}
+
+// TestAvanzarEtapaNoSaleDeLiquidacionFinalSinLiquidar: salir hacia
+// pago_registro vuelve a pedir la liquidacion ANTES de guardar, y si el
+// periodo sigue esperando la corrida no se mueve: no se paga lo que no se
+// liquido.
+func TestAvanzarEtapaNoSaleDeLiquidacionFinalSinLiquidar(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaLiquidacionFinal, 2)
+	emision := &emisionFalsa{repo: repo, err: fmt.Errorf("%w: faltan prc-b", ErrLiquidacionEnEspera)}
+	uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if !errors.Is(err, ErrLiquidacionEnEspera) {
+		t.Fatalf("err = %v, se esperaba ErrLiquidacionEnEspera", err)
+	}
+	if len(repo.guardados) != 0 {
+		t.Fatalf("guardados = %+v; la corrida no sale de liquidacion_final", repo.guardados)
+	}
+	if emision.vistas[0] != reparto.EtapaLiquidacionFinal {
+		t.Fatalf("al pedir la liquidacion la corrida estaba en %q; se pide antes de guardar", emision.vistas[0])
+	}
+
+	emision.err = nil
+	v, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err != nil {
+		t.Fatalf("con el periodo liquidado sale: %v", err)
+	}
+	if v.Etapa != reparto.EtapaPagoRegistro {
+		t.Fatalf("etapa = %q, se esperaba pago_registro", v.Etapa)
+	}
+}
+
+// TestAvanzarEtapaSoloLiquidaEnLaFronteraDeLiquidacionFinalNacional: ninguna
+// otra transicion llama a la liquidacion, y el internacional tampoco -- no
+// valoriza (RD 7.4), asi que no tiene lineas de titular de las que emitir.
+func TestAvanzarEtapaSoloLiquidaEnLaFronteraDeLiquidacionFinalNacional(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		circuito reparto.Circuito
+		etapa    reparto.Etapa
+		revision int
+	}{
+		{reparto.Internacional, reparto.EtapaVerificacion, 1},
+		{reparto.Internacional, reparto.EtapaLiquidacionFinal, 2},
+		{reparto.Nacional, reparto.EtapaImporteTitular, 1},
+		{reparto.Nacional, reparto.EtapaLiquidacionParcial, 1},
+	}
+	for _, c := range casos {
+		repo := procesoEnEtapa(t, c.circuito, c.etapa, c.revision)
+		emision := &emisionFalsa{repo: repo}
+		uc := conBitacora(Procesos{Repo: repo, Liquidacion: emision})
+		if _, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin"); err != nil {
+			t.Fatalf("%s desde %s: %v", c.circuito, c.etapa, err)
+		}
+		if len(emision.ids) != 0 {
+			t.Fatalf("%s desde %s: GenerarLiquidacion = %v, no debio llamarse", c.circuito, c.etapa, emision.ids)
+		}
+	}
+}
+
+// TestAvanzarEtapaSinLiquidacionFallaClaro: un Procesos cableado sin la
+// liquidacion no puede dejar entrar una corrida a liquidacion_final como si
+// nada: seria el defecto de #193 otra vez, sin ningun aviso.
+func TestAvanzarEtapaSinLiquidacionFallaClaro(t *testing.T) {
+	t.Parallel()
+
+	repo := procesoEnEtapa(t, reparto.Nacional, reparto.EtapaVerificacion, 1)
+	uc := conBitacora(Procesos{Repo: repo})
+
+	_, err := uc.AvanzarEtapa(t.Context(), "proc-1", "actor-admin")
+	if err == nil || !strings.Contains(err.Error(), "falta Liquidacion") {
+		t.Fatalf("err = %v, se esperaba un error de cableado que nombre Liquidacion", err)
+	}
 }

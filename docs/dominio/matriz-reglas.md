@@ -33,7 +33,7 @@ pasando (`go test ./...`).
 | Estado | Conteo | Reglas |
 | ------ | ------ | ------ |
 | done | 5 | R-02, R-03, R-04, R-27, R-35 |
-| partial | 27 | R-01, R-05, R-08–R-10, R-12–R-26, R-28–R-30, R-32–R-34, R-36 |
+| partial | 28 | R-01, R-05, R-08–R-10, R-12–R-26, R-28–R-30, R-32–R-34, R-36, R-37 |
 | blocked-on-client-data | 4 | R-06, R-07, R-11, R-31 |
 | fuera-de-alcance | 11 | T-01…T-11 |
 
@@ -50,7 +50,7 @@ pasando (`go test ./...`).
 | R-07 Reserva por errores técnicos (≤5% nacional) | `RD 14.1`, `RD 14.5.1`, `RD 14.5.2`, `RD 14.5.4` | Parámetros sembrados (`reserva.errores_tecnicos`); circuito nacional | `TestParametrosSinteticosVanEtiquetados` | blocked-on-client-data |
 | R-08 Destino del remanente de la reserva | `RD 14.4` | Previsto en `prescripcion` / `reparto` | — | partial |
 | R-09 Frecuencia mínima de distribución | `RD 12` | `calendario`; `cmd/scheduler`; ADR 0004 | — | partial |
-| R-10 Liquidación aceptada por silencio (15 días) | `RD 13.2` | Esquema `notificaciones`; reloj de dominio | — | partial |
+| R-10 Liquidación aceptada por silencio (15 días) | `RD 13.2` | Emisión al entrar a `liquidacion_final` con aviso de portal en `notificaciones` (ADR 0024, #193); reloj de dominio | `TestLaLiquidacionDelPeriodoEsperaALaUltimaCorrida`; `TestAvanzarEtapaDisparaLiquidacionPuntaAPuntaHTTP` | partial |
 | R-11 Distribuciones de menor cuantía (2% SMMLV) | `RD 13.3` | ADR 0004 (SMMLV); `liquidacion` (andamiaje) | — | blocked-on-client-data |
 | R-12 Documentos para cobrar (RUT, cert. bancaria) | `RD 13.1.6` | Skill afiliación; sin dominio de documentos aún | — | partial |
 | R-13 Conservación de registros (≥10 años) | `RD 13.2`, `RD 13.4` | Bitácora append-only (ADR 0006) | — | partial |
@@ -61,7 +61,7 @@ pasando (`go test ./...`).
 | R-18 Publicación del listado ONI (sin montos) | `RD 13.8.1`–`RD 13.8.4` | Vista `oni_publico`; identificación | `TestGuardarMatchExcluidoNoEsONI`; `TestResolverUsosIntegracionCriterio4Repertorio` | partial |
 | R-19 Prescripción ONI: 3 años | `RD 13.8.7`, `RD 15.2` | `internal/dominio/prescripcion` (andamiaje) | — | partial |
 | R-20 Prescripción general: 10 años | `RD 15.1` | `prescripcion` + `notificaciones` | — | partial |
-| R-21 Notificación válida (correo o portal) | `RD 13.8.8` | Esquema `notificaciones.via` | — | partial |
+| R-21 Notificación válida (correo o portal) | `RD 13.8.8` | Esquema `notificaciones.via`; aviso de portal `postgres.AvisoPortal` en la transacción de la orden (ADR 0024); correo pendiente (#55) | `TestAvisoPortalSeNiegaFueraDeUnaUnidad`; `TestLaLiquidacionDelPeriodoEsperaALaUltimaCorrida` | partial |
 | R-22 Plazo de respuesta a reclamos: 15 días hábiles | `RD 14.3` | Tabla / paquete `reclamaciones` | — | partial |
 | R-23 No se atienden reclamos por errores de declaración | `RD 14.5.6` | `reclamaciones` (andamiaje) | — | partial |
 | R-24 Solo reclama quien estaba afiliado en el periodo | `RD 14.5.5`, `RD 14.5.8` | `afiliacion` (andamiaje); P-11 | — | partial |
@@ -77,6 +77,7 @@ pasando (`go test ./...`).
 | R-34 Fechas de corte de rendimientos | `RD 10.1`, `RD 10.2.1` | `internal/dominio/recaudo` (circuitos / periodos) | `TestNuevaBolsaRechaza`; `TestCircuitosSonLosDosDelReglamento` | partial |
 | R-35 Inversiones nacional e internacional separadas | `RD 10.3` | `internal/dominio/recaudo`; UNIQUE bolsa (usuario, periodo, circuito) | `TestCircuitosSonLosDosDelReglamento`; `TestNuevaBolsaRechaza`; `TestNacionalEInternacionalDelMismoPeriodoConviven` | done |
 | R-36 Resolución manual de un caso ONI | `RD 7.1`, `RD 9.5` (R-27), `RD 13.8` | `internal/dominio/identificacion` (resolucion); `internal/aplicacion` (resolucion_identificacion); postgres; `POST /identificacion/casos/{id}/resolucion` | `TestResolverCaso`; `TestNormalizarNota`; `TestResolverAsignaAUnaCandidata`; `TestResolverDescarta`; `TestResolverSiElAsientoFallaNoQuedaNadaHecho`; `TestResolverIntegracionAsignaAUnaCandidata`; `TestResolverIntegracionDosResolucionesConcurrentesSoloUnaGana`; `TestResolverUsosNoPisaUnaResolucionManualNiUnDescarte`; `TestElCheckDeUsosSostieneLaResolucionManual` | partial |
+| R-37 Cerrar una anomalía crítica corrige el dato | `RD 9.1.1`; ADR 0006; ADR 0021 | `internal/dominio/anomalias` (correccion); `internal/aplicacion` (anomalias, anomalias_correccion); postgres (correcciones); `POST /alertas/{id}/resolver` | `TestUnaCriticaSinAccionNoSeCierra`; `TestExcluirUnUsoQueYaNoAplica`; `TestResolverUnaCriticaSinAccionNoLaCierra`; `TestAceptarTalCualNoTocaElDatoYLaCompuertaLaCuentaAparte`; `TestElAsientoDeLaTransicionCuentaLasCriticasAceptadasTalCual`; `TestUnDuplicadoResueltoConExclusionPonderaLaFilaUnaVez`; `TestLosCheckDeLaCorreccionSostienenElCierre`; `TestCorreccionDeAnomaliasMarcaLasCriticasYaCerradas` | partial |
 | T-01 Televisión abierta y cerrada: 4% | `RT 3.1.1`, `RT 3.1.2` | `CategoriaUsuario` en `recaudo` (etiqueta) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |
 | T-02 Salas de cine: 4% sobre 50% taquilla | `RT 4` (P-01 provisional) | Idem (`cine`) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |
 | T-03 Transporte aéreo | `RT 3.3` | Idem (`transporte_aereo`) | `TestNuevoUsuarioAceptaTodasLasCategorias` | fuera-de-alcance |

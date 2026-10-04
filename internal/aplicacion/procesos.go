@@ -44,6 +44,11 @@ type Procesos struct {
 	Reloj    Reloj
 	// Origen da el archivo exacto y la identificacion de cada uso que pondero.
 	Origen RepositorioOrigenDeUsos
+
+	// Liquidacion emite las ordenes de pago del periodo al entrar a
+	// liquidacion_final y es la guarda al salir de ella (#193, ADR 0024). Solo
+	// la usa el circuito nacional; abrir, firmar o rechazar no la tocan.
+	Liquidacion EmisionLiquidacion
 }
 
 // aProcesoVista traduce el agregado a la forma que persiste el puerto.
@@ -209,14 +214,18 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 	if v.Etapa == reparto.EtapaDeducciones && p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
 		return uc.valorizarBajoCompuerta(ctx, actorID, procesoID, v, p)
 	}
+	var aceptadas *int
 	if v.Etapa == reparto.EtapaDeducciones || p.Etapa == reparto.EtapaVerificacion {
-		if err := uc.compuertaAnomalias(ctx, p.Periodo); err != nil {
+		n, err := uc.compuertaAnomalias(ctx, p.Periodo)
+		if err != nil {
 			return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 		}
+		aceptadas = &n
 	}
 
-	// Valorizar, guardar la etapa y asentar son un solo hecho: sin la unidad,
-	// un reintento tras un fallo parcial valorizaria dos veces el mismo dinero.
+	// Valorizar, liquidar, guardar la etapa y asentar son un solo hecho: sin
+	// la unidad, un reintento tras un fallo parcial valorizaria o emitiria dos
+	// veces el mismo dinero.
 	err = uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
 		var asientos []pendiente
 		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaImporteObra {
@@ -225,15 +234,57 @@ func (uc Procesos) AvanzarEtapa(ctx context.Context, procesoID, actorID string) 
 				return nil, err
 			}
 		}
+		// Salir: ANTES de guardar, porque la liquidacion exige que la
+		// corrida siga en liquidacion_final.
+		if p.Circuito == reparto.Nacional && v.Etapa == reparto.EtapaLiquidacionFinal {
+			if err := uc.liquidar(ctx, procesoID, false); err != nil {
+				return nil, err
+			}
+		}
 		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 			return nil, err
 		}
-		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+		// Entrar: DESPUES de guardar, porque la liquidacion lee la etapa y la
+		// revision nuevas dentro de esta misma unidad.
+		if p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaLiquidacionFinal {
+			if err := uc.liquidar(ctx, procesoID, true); err != nil {
+				return nil, err
+			}
+		}
+		asiento := asientoProceso(p, v.Etapa)
+		asiento.CriticasAceptadasTalCual = aceptadas
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asiento)}, asientos...), nil
 	})
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
 	}
 	return aProcesoVista(p), nil
+}
+
+// liquidar emite las ordenes del periodo de la corrida (RD 13.5, #193) dentro
+// de la unidad de la transicion.
+//
+// Al entrar a liquidacion_final (entrando == true) un periodo incompleto no es
+// un fallo: la corrida queda en la etapa esperando a sus hermanas, y la ultima
+// en llegar emite por todas (ADR 0024). Al salir hacia pago_registro si lo es:
+// no se paga lo que no se liquido, asi que [ErrLiquidacionEnEspera] revierte la
+// transicion y la corrida se queda donde esta.
+//
+// Solo el circuito nacional: el internacional no valoriza (RD 7.4), asi que no
+// tiene resultado del que salgan lineas de titular, y su reparto por la
+// proporcion de la sociedad hermana no esta modelado todavia.
+func (uc Procesos) liquidar(ctx context.Context, procesoID string, entrando bool) error {
+	if uc.Liquidacion == nil {
+		return errors.New("procesos mal cableado: falta Liquidacion")
+	}
+	_, err := uc.Liquidacion.GenerarLiquidacion(ctx, procesoID)
+	if entrando && errors.Is(err, ErrLiquidacionEnEspera) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("liquidar %q: %w", procesoID, err)
+	}
+	return nil
 }
 
 // valorizarBajoCompuerta evalua el periodo y, si no hay criticas abiertas,
@@ -246,14 +297,14 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 
 	criticas := 0
 	err := uc.transicion(ctx, actorID, func(ctx context.Context) ([]pendiente, error) {
-		n, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
+		estado, err := uc.Anomalias.Bloqueantes(ctx, p.Periodo)
 		if err != nil {
 			return nil, err
 		}
-		if n > 0 {
+		if estado.Abiertas > 0 {
 			// Confirmar la unidad sin avanzar: las alertas recien evaluadas
 			// tienen que quedar, y el 409 no puede apuntar a una bandeja vacia.
-			criticas = n
+			criticas = estado.Abiertas
 			return nil, nil
 		}
 		asientos, err := uc.valorizar(ctx, p)
@@ -263,7 +314,9 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 		if err := uc.Repo.GuardarProceso(ctx, aProcesoVista(p), v.Revision); err != nil {
 			return nil, err
 		}
-		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asientoProceso(p, v.Etapa))}, asientos...), nil
+		asiento := asientoProceso(p, v.Etapa)
+		asiento.CriticasAceptadasTalCual = &estado.AceptadasTalCual
+		return append([]pendiente{pendienteDeProceso(HechoProcesoEtapaAvanzada, p, asiento)}, asientos...), nil
 	})
 	if err != nil {
 		return ProcesoVista{}, fmt.Errorf("avanzar etapa de %q: %w", procesoID, err)
@@ -274,20 +327,21 @@ func (uc Procesos) valorizarBajoCompuerta(ctx context.Context, actorID, procesoI
 	return aProcesoVista(p), nil
 }
 
-// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas.
+// compuertaAnomalias bloquea la transicion si el periodo tiene criticas abiertas, y si no,
+// devuelve cuantas se aceptaron tal cual para que el asiento de la transicion las cuente (#164).
 // Se consulta al salir de deducciones (internacional) y al entrar a verificacion.
-func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) error {
+func (uc Procesos) compuertaAnomalias(ctx context.Context, periodo string) (int, error) {
 	if uc.Anomalias == nil {
-		return errors.New("procesos mal cableado: falta la compuerta de anomalias")
+		return 0, errors.New("procesos mal cableado: falta la compuerta de anomalias")
 	}
-	n, err := uc.Anomalias.Bloqueantes(ctx, periodo)
+	estado, err := uc.Anomalias.Bloqueantes(ctx, periodo)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if n > 0 {
-		return fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, n, periodo)
+	if estado.Abiertas > 0 {
+		return 0, fmt.Errorf("%w: %d en %q, resuelvalas en /alertas", ErrAnomaliasCriticasAbiertas, estado.Abiertas, periodo)
 	}
-	return nil
+	return estado.AceptadasTalCual, nil
 }
 
 // valorizar reune bolsa, usos y declaraciones y llama al motor puro de #33,
@@ -306,9 +360,21 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 
 	// ADR 0019: una corrida = una bolsa = un canal, y el usuario de recaudo de
 	// television ES el canal (ver [recaudo.Usuario]).
-	usos, filas, _, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
+	usos, filas, resumen, err := (Reparto{Usos: uc.Usos}).usosYFilasDeCanal(ctx, p.Periodo, bp.UsuarioID)
 	if err != nil {
 		return nil, fmt.Errorf("usos del canal %q: %w", bp.UsuarioID, err)
+	}
+	// El motor tambien rechaza una lista vacia, pero con "no hay usos" a
+	// secas: no nombra la bolsa ni dice si falta el reporte, la atribucion
+	// del canal o la identificacion (#194).
+	if len(usos) == 0 {
+		sinCanal, err := (Reparto{Usos: uc.Usos}).UsosSinCanal(ctx, p.Periodo)
+		if err != nil {
+			return nil, err
+		}
+		return nil, &ErrorBolsaSinUsos{
+			BolsaID: bp.ID, CanalID: bp.UsuarioID, Periodo: p.Periodo, Resumen: resumen, UsosSinCanal: sinCanal,
+		}
 	}
 
 	obraIDs := make([]string, 0, len(usos))
@@ -340,6 +406,15 @@ func (uc Procesos) valorizar(ctx context.Context, p reparto.ProcesoDeReparto) ([
 	}
 
 	resultado, err := reparto.Reparto(bolsa, usos, snap, decls, reparto.Opciones{SnapshotID: p.SnapshotID})
+	if errors.Is(err, reparto.ErrParametroAusente) {
+		// El snapshot se congelo al abrir y no se vuelve a resolver (ADR
+		// 0005): cargar ahora la fila que falta no arregla ESTA corrida. Una
+		// abierta antes de que existiera la clausula -la de Procinal de #194,
+		// congelada sin `cine_teatro.base`- solo sale con una corrida nueva.
+		return nil, fmt.Errorf("motor de reparto: %w: el snapshot %q de la corrida no lo trae con un valor valido "+
+			"y no se vuelve a resolver; con la vigencia correcta cargada, abra una corrida nueva de la bolsa %q",
+			err, p.SnapshotID, p.BolsaID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("motor de reparto: %w", err)
 	}

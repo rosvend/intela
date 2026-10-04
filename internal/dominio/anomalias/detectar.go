@@ -62,10 +62,13 @@ func deteccionONI(usos []Uso) []Hallazgo {
 // 2. Duplicado por huella de archivo
 
 // duplicadosPorHuella alerta las entregas del periodo cuyos bytes ya llegaron bajo otra fuente, de cualquier periodo (D2).
+//
+// Una entrega excluida (#164) no se alerta ni cuenta como pata de otra colision: sus filas ya no
+// ponderan, y la alerta de la otra entrega del par se autocierra en vez de pedir una segunda exclusion.
 func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 	porHuella := make(map[string][]Entrega, len(entregas))
 	for _, e := range entregas {
-		if e.SHA256 == "" {
+		if e.SHA256 == "" || e.Excluida {
 			continue
 		}
 		porHuella[e.SHA256] = append(porHuella[e.SHA256], e)
@@ -73,7 +76,7 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 
 	out := make([]Hallazgo, 0)
 	for _, e := range entregas {
-		if e.Periodo != periodo {
+		if e.Periodo != periodo || e.Excluida {
 			continue
 		}
 		colisiones := porHuella[e.SHA256]
@@ -104,13 +107,17 @@ func duplicadosPorHuella(periodo string, entregas []Entrega) []Hallazgo {
 // 3. Duplicado por registro logico
 
 // duplicadosPorRegistro alerta la fila que repite (fuente, clave de registro) de otra del periodo; clave vacia no compara (D3).
+//
+// Una fila fuera de juego ('descartado' o 'duplicado', [SigueEnJuego]) no se compara: no pondera ni
+// puede volver a ponderar, asi que no duplica nada. Es lo que hace que excluir una copia (#164) deje
+// de levantar la alerta, sea la copia de la alerta o la otra.
 func duplicadosPorRegistro(usos []Uso) []Hallazgo {
 	type primera struct{ usoID, reporteID string }
 
 	vistas := make(map[string]primera, len(usos))
 	out := make([]Hallazgo, 0)
 	for _, u := range usos {
-		if u.ClaveRegistro == "" {
+		if u.ClaveRegistro == "" || !SigueEnJuego(u.Escalon) {
 			continue
 		}
 		clave := u.Fuente + "\x00" + u.ClaveRegistro

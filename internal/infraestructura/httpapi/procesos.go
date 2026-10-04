@@ -227,10 +227,55 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 	case errors.Is(err, aplicacion.ErrAnomaliasCriticasAbiertas):
 		// 409: el periodo tiene criticas abiertas; se resuelven en /alertas (#37, ADR 0021).
 		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrLiquidacionEnEspera),
+		errors.Is(err, aplicacion.ErrPeriodoYaLiquidado),
+		errors.Is(err, aplicacion.ErrBolsaRepetida):
+		// 409: la liquidacion del periodo no deja mover la corrida (#193,
+		// ADR 0024) -- faltan corridas hermanas por verificar, el periodo ya se
+		// liquido sin esta, o dos corridas del periodo reparten la misma bolsa --.
+		// El mensaje nombra las corridas implicadas.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrInconsistenciaLiquidacion),
+		errors.Is(err, aplicacion.ErrCorridaNoCuadra):
+		// 500: fallo de integridad que el operador no puede arreglar
+		// moviendo corridas (descuadre de dinero, corrida sin resultados,
+		// corrida en etapa posterior sin firmas o disparador ausente).
+		// Se registra en el log para que deje rastro en el servidor.
+		log.ErrorContext(r.Context(), "inconsistencia en liquidacion al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "inconsistencia en los datos de liquidacion")
+	case errors.Is(err, aplicacion.ErrParametroAusente) && !esParametroTipado(err):
+		// Sin SMMLV vigente la liquidacion no puede evaluar R-11 (ADR 0004:
+		// se falla, no se inventa). Es configuracion del servidor, no del
+		// proceso: 500, igual que en /liquidaciones, pero nombrandolo.
+		log.ErrorContext(r.Context(), "parametro normativo ausente al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "parametro normativo ausente")
 	case errors.Is(err, aplicacion.ErrProcesoConflictoDeConcurrencia):
 		// 409 tambien, pero es control de concurrencia optimista, no un
 		// conflicto de negocio: otra transicion escribio primero. El mensaje
 		// del sentinel ya le dice al cliente que reintente.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrSnapshotCorrupto):
+		// 500 con log, y ANTES que el case de parametros: releer un snapshot
+		// congelado cuyas filas no forman el conjunto que su id nombra (ADR
+		// 0005) puede envolver a la vez ErrSnapshotCorrupto y la causa de
+		// armarlo -un ErrParametroInvalido si una fila se altero por fuera
+		// del adaptador-. Eso no se arregla cargando una vigencia: el
+		// snapshot no se vuelve a resolver, y alguien tiene que mirar la
+		// tabla. Es el mismo caso que una tasa ambigua o una clausula que
+		// falta al releer, que ya salian como 500.
+		log.ErrorContext(r.Context(), "fallo al "+accion, slog.Any("error", err))
+		escribirError(w, http.StatusInternalServerError, "no se pudo "+accion)
+	case errors.Is(err, aplicacion.ErrBolsaSinUsos):
+		// 409: la bolsa no tiene usos identificados de su canal en el periodo
+		// (#194). El mensaje nombra bolsa, canal y periodo, y dice si falta
+		// el reporte o la identificacion.
+		escribirError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, aplicacion.ErrParametroAusente), errors.Is(err, aplicacion.ErrParametroInvalido),
+		errors.Is(err, reparto.ErrParametroAusente):
+		// 409: falta un parametro normativo o su valor no se admite -al
+		// abrir, en la fecha del periodo; al valorizar, en el snapshot ya
+		// congelado-. No es un fallo del servidor: se arregla cargando la
+		// vigencia que el mensaje nombra (ADR 0004), no reintentando (#194).
 		escribirError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, reparto.ErrRepartoInvalido):
 		// 409 y no 400: el cuerpo de la peticion es correcto, lo que no
@@ -242,4 +287,11 @@ func escribirErrorDeProceso(w http.ResponseWriter, r *http.Request, log *slog.Lo
 		escribirError(w, http.StatusInternalServerError, "no se pudo "+accion)
 	}
 	return err
+}
+
+// esParametroTipado distingue el parametro ausente que nombra claves y fecha
+// (409 al abrir, #194) del que la liquidacion encuentra sin SMMLV (500).
+func esParametroTipado(err error) bool {
+	var e *aplicacion.ErrorParametroAusente
+	return errors.As(err, &e)
 }

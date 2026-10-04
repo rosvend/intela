@@ -317,89 +317,102 @@ func (s *Store) Documentos(ctx context.Context) (map[string]liquidacion.Document
 // Todas, de cualquier revision, y no solo las de la vigente: quien comprueba
 // la compuerta necesita poder distinguir una corrida que nadie firmo de una
 // rechazada cuyas firmas dejaron de contar al subir la revision, y con el
-// filtro aqui las dos llegarian como "cero firmas".
+// filtro aqui las dos llegarian como "cero firmas". Y las firmas de la
+// verificacion que la corrida ya dejo atras estan, por construccion, en una
+// revision anterior a la vigente.
 func (s *Store) MetaDeProceso(ctx context.Context, procesoID string) (aplicacion.MetaProceso, error) {
-	meta := aplicacion.MetaProceso{ID: procesoID}
-	var circuito, etapa string
-	err := s.ejecutorDe(ctx).QueryRow(ctx,
-		`SELECT circuito, etapa, periodo, revision FROM procesos WHERE id = $1`, procesoID).
-		Scan(&circuito, &etapa, &meta.Periodo, &meta.Revision)
+	metas, err := s.metasDeProcesos(ctx, `WHERE p.id = $1`, procesoID)
 	if err != nil {
 		return aplicacion.MetaProceso{}, traducirError(err, "proceso %q", procesoID)
 	}
-	meta.Circuito = reparto.Circuito(circuito)
-	meta.Etapa = reparto.Etapa(etapa)
-
-	filas, err := s.ejecutorDe(ctx).Query(ctx,
-		`SELECT rol, actor_id, revision FROM firmas
-		 WHERE proceso_id = $1
-		 ORDER BY revision, rol`, procesoID)
-	if err != nil {
-		return aplicacion.MetaProceso{}, traducirError(err, "firmas del proceso %q", procesoID)
+	if len(metas) == 0 {
+		return aplicacion.MetaProceso{}, fmt.Errorf("proceso %q: %w", procesoID, aplicacion.ErrNoEncontrado)
 	}
-	defer filas.Close()
-
-	meta.Firmas = []reparto.Firma{}
-	for filas.Next() {
-		var f reparto.Firma
-		if err := filas.Scan(&f.Rol, &f.ActorID, &f.SobreRev); err != nil {
-			return aplicacion.MetaProceso{}, traducirError(err, "escanear firma del proceso %q", procesoID)
-		}
-		meta.Firmas = append(meta.Firmas, f)
-	}
-	if err := filas.Err(); err != nil {
-		return aplicacion.MetaProceso{}, traducirError(err, "firmas del proceso %q", procesoID)
-	}
-	return meta, nil
+	return metas[0], nil
 }
 
-// ProcesosListos son las corridas de un periodo y circuito que ya pasaron la
-// compuerta del RD 13.5.
+// CorridasDePeriodo lee la cabecera y las firmas de TODAS las corridas de un
+// periodo y circuito, en cualquier etapa, ordenadas por id.
 //
-// Las dos firmas se piden con `EXISTS` contra `p.revision` y no contra un
-// numero fijo: un rechazo sube la revision del proceso y las firmas de la
-// anterior dejan de contar (es la razon de que `revision` este en la PK de
-// `firmas`). Un `COUNT(*) = 2` sobre la tabla entera aceptaria dos firmas de
-// revisiones distintas, que es exactamente la doble firma que el control
-// existe para impedir.
+// Sin filtrar por etapa ni por firmas: cuales ya cerraron la verificacion y
+// cuales todavia no es la regla que aplica el caso de uso (ADR 0024). Antes
+// ese filtro vivia aqui, en SQL, y pedia las firmas sobre la revision vigente,
+// que es justo donde una corrida que salio de verificacion no las tiene (#193).
 //
-// No comprueba que exista `resultados_proceso`: una corrida firmada sin
+// No comprueba que exista `resultados_proceso`: una corrida lista sin
 // resultado es una inconsistencia, y dejarla fuera en silencio la convertiria
 // en dinero que nadie liquida. Que falle al pedir su insumo es lo correcto.
-func (s *Store) ProcesosListos(
+func (s *Store) CorridasDePeriodo(
 	ctx context.Context, periodo string, circuito reparto.Circuito,
-) ([]string, error) {
-	filas, err := s.ejecutorDe(ctx).Query(ctx, `
-		SELECT p.id
-		FROM procesos p
-		WHERE p.periodo = $1
-		  AND p.circuito = $2
-		  AND p.etapa = $3
-		  AND EXISTS (SELECT 1 FROM firmas f
-		              WHERE f.proceso_id = p.id AND f.rol = 'distribucion'
-		                AND f.revision = p.revision)
-		  AND EXISTS (SELECT 1 FROM firmas f
-		              WHERE f.proceso_id = p.id AND f.rol = 'contabilidad'
-		                AND f.revision = p.revision)
-		ORDER BY p.id`,
-		periodo, string(circuito), string(reparto.EtapaLiquidacionFinal))
+) ([]aplicacion.MetaProceso, error) {
+	metas, err := s.metasDeProcesos(ctx, `WHERE p.periodo = $1 AND p.circuito = $2`, periodo, string(circuito))
 	if err != nil {
-		return nil, traducirError(err, "corridas listas de %s/%s", periodo, circuito)
+		return nil, traducirError(err, "corridas de %s/%s", periodo, circuito)
 	}
-	defer filas.Close()
+	return metas, nil
+}
 
-	ids := []string{}
+// metasDeProcesos es la lectura comun de [Store.MetaDeProceso] y
+// [Store.CorridasDePeriodo]: la cabecera de cada corrida que cumpla filtro y
+// todas sus firmas, en dos consultas y no una por corrida.
+func (s *Store) metasDeProcesos(ctx context.Context, filtro string, args ...any) ([]aplicacion.MetaProceso, error) {
+	ex := s.ejecutorDe(ctx)
+	filas, err := ex.Query(ctx,
+		`SELECT p.id, p.circuito, p.etapa, p.periodo, p.bolsa_id, p.revision
+		   FROM procesos p `+filtro+`
+		  ORDER BY p.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	metas := []aplicacion.MetaProceso{}
+	indice := map[string]int{}
 	for filas.Next() {
-		var id string
-		if err := filas.Scan(&id); err != nil {
-			return nil, traducirError(err, "escanear corrida lista de %s/%s", periodo, circuito)
+		var (
+			m               aplicacion.MetaProceso
+			circuito, etapa string
+		)
+		if err := filas.Scan(&m.ID, &circuito, &etapa, &m.Periodo, &m.BolsaID, &m.Revision); err != nil {
+			filas.Close()
+			return nil, err
 		}
-		ids = append(ids, id)
+		m.Circuito = reparto.Circuito(circuito)
+		m.Etapa = reparto.Etapa(etapa)
+		m.Firmas = []reparto.Firma{}
+		indice[m.ID] = len(metas)
+		metas = append(metas, m)
 	}
+	filas.Close()
 	if err := filas.Err(); err != nil {
-		return nil, traducirError(err, "corridas listas de %s/%s", periodo, circuito)
+		return nil, err
 	}
-	return ids, nil
+	if len(metas) == 0 {
+		return metas, nil
+	}
+
+	ids := make([]string, len(metas))
+	for i, m := range metas {
+		ids[i] = m.ID
+	}
+	firmas, err := ex.Query(ctx,
+		`SELECT proceso_id, rol, actor_id, revision FROM firmas
+		  WHERE proceso_id = ANY($1)
+		  ORDER BY proceso_id, revision, rol`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer firmas.Close()
+	for firmas.Next() {
+		var (
+			procesoID string
+			f         reparto.Firma
+		)
+		if err := firmas.Scan(&procesoID, &f.Rol, &f.ActorID, &f.SobreRev); err != nil {
+			return nil, err
+		}
+		i := indice[procesoID]
+		metas[i].Firmas = append(metas[i].Firmas, f)
+	}
+	return metas, firmas.Err()
 }
 
 func (s *Store) InsumoDeProceso(ctx context.Context, procesoID string) (aplicacion.InsumoLiquidacion, error) {
@@ -441,7 +454,7 @@ func (s *Store) InsumoDeProceso(ctx context.Context, procesoID string) (aplicaci
 }
 
 func (s *Store) SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error) {
-	var valor decimal.Decimal
+	var valor decimal.NullDecimal
 	err := s.ejecutorDe(ctx).QueryRow(ctx, `
 		SELECT valor FROM parametros
 		WHERE clave = $1
@@ -455,7 +468,11 @@ func (s *Store) SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal
 		}
 		return decimal.Zero, traducido
 	}
-	return valor, nil
+	// NULL es una fila textual (migracion 00025): el SMMLV es una cifra.
+	if !valor.Valid {
+		return decimal.Zero, fmt.Errorf("%w: %s es textual, se esperaba una cifra", aplicacion.ErrParametroInvalido, claveSMMLV)
+	}
+	return valor.Decimal, nil
 }
 
 // sinNil convierte un slice nil en uno vacio: `TEXT[] NOT NULL` rechaza el NULL

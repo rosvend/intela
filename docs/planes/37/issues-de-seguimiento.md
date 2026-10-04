@@ -10,7 +10,7 @@ estado, para que el codigo y la PR que las citan tengan donde remitir.
 
 | Texto | Issue | Estado |
 | ----- | ----- | ------ |
-| A | #164 | Abierta |
+| A | #164 | Resuelta en la rama `feature/164-resolver-critica-corrige-dato` (R-37, ADR 0021 actualizado) |
 | B | #165 | Cerrada por la PR #169 |
 | — | #166 (limite TOCTOU entre evaluar y valorizar; ver la PR #171) | Abierta |
 
