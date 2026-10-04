@@ -158,11 +158,11 @@ func TestVaciarNoRetomaEnLaMismaPasadaElTrabajoQueAcabaDeFallar(t *testing.T) {
 		t.Fatalf("Encolar: %v", err)
 	}
 
-	// Por delante del now() con el que la base sella disponible_en al insertar,
-	// para que el trabajo ya este disponible. Truncado a microsegundos, que es
-	// la precision de timestamptz: sin eso el instante no vuelve igual de la
-	// base y la comparacion exacta de mas abajo seria un falso rojo.
-	inicio := time.Now().UTC().Truncate(time.Microsecond).Add(time.Second)
+	// El reloj de la base, tomado despues de encolar: disponible_en lo sello su
+	// now() y un instante del host podria quedar por detras (#205). Ya viene en
+	// microsegundos, la precision de timestamptz, asi que la comparacion exacta
+	// de mas abajo no da un falso rojo.
+	inicio := testhelp.Ahora(t, lector).UTC()
 	reloj := &relojDetenido{instante: inicio}
 
 	ejecuciones := 0
