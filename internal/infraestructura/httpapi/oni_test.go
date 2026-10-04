@@ -50,7 +50,10 @@ func publicacionEjemplo() aplicacion.PublicacionONI {
 		DireccionFisica:      "Calle 74 #7-35, Bogota D.C.",
 		DireccionElectronica: "oni@redescritores.com",
 		Obras: []oni.ProyeccionPublica{
-			{ID: "uso-1", Titulo: "Serie Desconocida", Fuente: "caracol", IDsFuente: "ID-99", Modalidad: "tv", Periodo: "2026-01"},
+			{
+				ID: "uso-1", Titulo: "Serie Desconocida", Fuente: "caracol", IDsFuente: "ID-99",
+				Modalidad: "tv", Periodo: "2026-01", FechaProceso: "2026-08-31T12:00:00Z",
+			},
 		},
 	}
 }
@@ -92,6 +95,40 @@ func TestListadoONIPublicoNoPideSesion(t *testing.T) {
 	if obra["ids_fuente"] != "ID-99" {
 		t.Fatalf("ids_fuente = %v", obra["ids_fuente"])
 	}
+	if obra["fecha_proceso"] != "2026-08-31T12:00:00Z" {
+		t.Fatalf("fecha_proceso de la obra = %v", obra["fecha_proceso"])
+	}
+}
+
+func TestListadoONIPublicoConservaElAnclaDeCadaObra(t *testing.T) {
+	pub := publicacionEjemplo()
+	pub.FechaProceso = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	pub.Obras = []oni.ProyeccionPublica{
+		{ID: "uso-1", Titulo: "Serie Desconocida", Fuente: "caracol", IDsFuente: "ID-99", Modalidad: "tv", Periodo: "2026-01", FechaProceso: "2026-08-31T12:00:00Z"},
+		{ID: "uso-tardio", Titulo: "Capitulo Tardio", Fuente: "caracol", IDsFuente: "ID-100", Modalidad: "tv", Periodo: "2026-01", FechaProceso: "2026-09-15T12:00:00Z"},
+	}
+	rec := pedir(t, servidorONI(t, &autenticacionFalsa{}, &listadoONIFalso{pub: pub}, nil),
+		http.MethodGet, "/publico/oni", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d, cuerpo: %s", rec.Code, rec.Body)
+	}
+	cuerpo := decodificar(t, rec)
+	if cuerpo["fecha_proceso"] != "2026-09-15T12:00:00Z" {
+		t.Fatalf("cabecera = %v", cuerpo["fecha_proceso"])
+	}
+	obras, _ := cuerpo["obras"].([]any)
+	if len(obras) != 2 {
+		t.Fatalf("obras = %v", obras)
+	}
+	primera, _ := obras[0].(map[string]any)
+	segunda, _ := obras[1].(map[string]any)
+	if primera["fecha_proceso"] != "2026-08-31T12:00:00Z" || segunda["fecha_proceso"] != "2026-09-15T12:00:00Z" {
+		t.Fatalf("anclas = %v y %v", primera["fecha_proceso"], segunda["fecha_proceso"])
+	}
+	explicacion, _ := cuerpo["explicacion"].(string)
+	if !strings.Contains(explicacion, "fecha de publicacion de esa obra") {
+		t.Fatalf("la explicacion sigue hablando de una sola publicacion: %v", cuerpo["explicacion"])
+	}
 }
 
 func TestListadoONIPublicoNuncaIncluyeMontos(t *testing.T) {
@@ -119,6 +156,7 @@ func TestListadoONIPublicoNuncaIncluyeMontos(t *testing.T) {
 	obra0, _ := obras[0].(map[string]any)
 	permitidosObra := map[string]bool{
 		"id": true, "titulo": true, "fuente": true, "ids_fuente": true, "modalidad": true,
+		"fecha_proceso": true,
 	}
 	for k := range obra0 {
 		if !permitidosObra[k] {

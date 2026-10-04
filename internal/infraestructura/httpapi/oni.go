@@ -23,11 +23,12 @@ type EscrituraONI interface {
 }
 
 type obraONIJSON struct {
-	ID        string `json:"id"`
-	Titulo    string `json:"titulo"`
-	Fuente    string `json:"fuente"`
-	IDsFuente string `json:"ids_fuente"`
-	Modalidad string `json:"modalidad"`
+	ID           string `json:"id"`
+	Titulo       string `json:"titulo"`
+	Fuente       string `json:"fuente"`
+	IDsFuente    string `json:"ids_fuente"`
+	Modalidad    string `json:"modalidad"`
+	FechaProceso string `json:"fecha_proceso"`
 }
 
 type listadoONIJSON struct {
@@ -47,11 +48,12 @@ func aListadoONIJSON(p aplicacion.PublicacionONI) listadoONIJSON {
 	obras := make([]obraONIJSON, 0, len(p.Obras))
 	for _, o := range p.Obras {
 		obras = append(obras, obraONIJSON{
-			ID:        o.ID,
-			Titulo:    o.Titulo,
-			Fuente:    o.Fuente,
-			IDsFuente: o.IDsFuente,
-			Modalidad: o.Modalidad,
+			ID:           o.ID,
+			Titulo:       o.Titulo,
+			Fuente:       o.Fuente,
+			IDsFuente:    o.IDsFuente,
+			Modalidad:    o.Modalidad,
+			FechaProceso: o.FechaProceso,
 		})
 	}
 	return listadoONIJSON{
