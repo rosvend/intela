@@ -208,9 +208,15 @@ export interface paths {
          *
          *     Esta publicacion arranca el reloj de prescripcion de tres anos
          *     (R-19, RD 13.8.7). Por eso la ruta no pide autenticacion: `security: []`.
+         *     El reloj de cada obra es `obras[].fecha_proceso`, la fecha de la
+         *     publicacion que la incluyo. Una complementaria posterior no lo mueve.
          *
-         *     Sin `periodo` devuelve la publicacion mas reciente. Con `periodo`
-         *     (YYYY o YYYY-MM) filtra a esa instantanea.
+         *     Sin `periodo` devuelve la publicacion mas reciente del periodo vigente.
+         *     Con `periodo` (YYYY o YYYY-MM) filtra a ese periodo. En ambos casos
+         *     `obras` consolida todas las secuencias de ese periodo. `fecha_proceso`
+         *     de la cabecera es la de la secuencia mas reciente, no el ancla de cada
+         *     obra. `POST /oni/publicaciones` responde solo las obras de la
+         *     secuencia que acaba de crear.
          */
         get: operations["listadoONIPublico"];
         put?: never;
@@ -232,12 +238,17 @@ export interface paths {
         put?: never;
         /**
          * Publicar el listado ONI de un periodo
-         * @description Congela la cola viva de ONI del periodo como listado publico, registra
-         *     la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
-         *     asiento en la bitacora.
+         * @description Congela los usos ONI pendientes del periodo como listado publico,
+         *     registra la fecha del proceso (ancla de R-19 para esos usos), las dos
+         *     direcciones, y deja un asiento en la bitacora. Permite publicaciones
+         *     complementarias si entran usos ONI tardios.
          *
-         *     Solo `administrador` y `distribucion`. Republicar el mismo periodo
-         *     responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+         *     La respuesta 201 trae solo las obras de esta secuencia, cada una con
+         *     su `fecha_proceso`. `GET /publico/oni` consolida todas las secuencias
+         *     del periodo; no es el mismo conjunto.
+         *
+         *     Solo `administrador` y `distribucion`. Republicar sin nuevos usos
+         *     pendientes responde 409.
          */
         post: operations["publicarListadoONI"];
         delete?: never;
@@ -1591,16 +1602,25 @@ export interface components {
              * @enum {string}
              */
             modalidad: "tv" | "cine" | "ott" | "hotel";
+            /**
+             * Format: date-time
+             * @description Ancla de R-19 de esta obra, RFC 3339. Es la fecha de la
+             *     publicacion que la incluyo. Una complementaria del mismo periodo
+             *     no la reescribe.
+             */
+            fecha_proceso: string;
         };
         /**
-         * @description Instantanea publicada del listado ONI. La fecha_proceso es el ancla
-         *     de los tres anos de R-19.
+         * @description Instantanea publicada del listado ONI. `fecha_proceso` de la cabecera
+         *     es la de la secuencia mas reciente. El ancla de R-19 de cada obra es
+         *     `obras[].fecha_proceso`.
          */
         ListadoONI: {
             periodo: string;
             /**
              * Format: date-time
-             * @description Fecha de la publicacion, RFC 3339. No se reescribe.
+             * @description Fecha de la secuencia mas reciente de este periodo, RFC 3339.
+             *     No es el ancla de cada obra: esa va en `obras[].fecha_proceso`.
              */
             fecha_proceso: string;
             /** @description Direccion fisica a la que se allega documentacion (RD 13.8.4.3). */
@@ -3809,7 +3829,8 @@ export interface operations {
                      *           "titulo": "Serie Desconocida",
                      *           "fuente": "caracol",
                      *           "ids_fuente": "ID-99",
-                     *           "modalidad": "tv"
+                     *           "modalidad": "tv",
+                     *           "fecha_proceso": "2026-08-31T12:00:00Z"
                      *         }
                      *       ]
                      *     }
@@ -3916,7 +3937,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Ese periodo ya tiene listado publicado. */
+            /** @description Ese periodo ya fue publicado y no tiene usos ONI pendientes sin publicar. */
             409: {
                 headers: {
                     [name: string]: unknown;

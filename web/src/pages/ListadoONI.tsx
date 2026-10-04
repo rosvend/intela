@@ -7,6 +7,7 @@ export type ObraONIPublica = {
   fuente: string;
   ids_fuente: string;
   modalidad: string;
+  fecha_proceso: string;
 };
 
 export type ListadoONI = {
@@ -74,7 +75,7 @@ function Contenido({ listado }: { listado: ListadoONI }) {
           <strong>Periodo:</strong> {listado.periodo}
         </p>
         <p>
-          <strong>Fecha del proceso:</strong> {fecha}
+          <strong>Ultima publicacion:</strong> {fecha}
         </p>
         <p>
           <strong>Direccion fisica:</strong> {listado.direccion_fisica}
@@ -98,6 +99,7 @@ function Contenido({ listado }: { listado: ListadoONI }) {
               <th>Fuente</th>
               <th>Identificadores</th>
               <th>Modalidad</th>
+              <th>Publicado</th>
             </tr>
           </thead>
           <tbody>
@@ -107,6 +109,7 @@ function Contenido({ listado }: { listado: ListadoONI }) {
                 <td>{o.fuente}</td>
                 <td>{o.ids_fuente || "—"}</td>
                 <td>{o.modalidad}</td>
+                <td>{formatearFecha(o.fecha_proceso)}</td>
               </tr>
             ))}
           </tbody>

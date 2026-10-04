@@ -15,6 +15,15 @@ const listado = {
       fuente: "caracol",
       ids_fuente: "ID-99",
       modalidad: "tv",
+      fecha_proceso: "2026-08-31T12:00:00Z",
+    },
+    {
+      id: "uso-tardio",
+      titulo: "Capitulo Tardio",
+      fuente: "caracol",
+      ids_fuente: "ID-100",
+      modalidad: "tv",
+      fecha_proceso: "2026-09-15T12:00:00Z",
     },
   ],
 };
@@ -38,7 +47,15 @@ describe("ListadoONI", () => {
     render(<ListadoONI />);
 
     expect(await screen.findByText("Serie Desconocida")).toBeTruthy();
-    expect(screen.getByText("caracol")).toBeTruthy();
+    expect(screen.getByText("Capitulo Tardio")).toBeTruthy();
+    expect(
+      screen.getByRole("columnheader", { name: "Publicado" }),
+    ).toBeTruthy();
+    expect(screen.getAllByText("31 de agosto de 2026").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByText("15 de septiembre de 2026")).toBeTruthy();
+    expect(screen.getAllByText("caracol").length).toBe(2);
     expect(screen.getByText("ID-99")).toBeTruthy();
     expect(screen.getByText("Calle 74 #7-35, Bogota D.C.")).toBeTruthy();
     expect(screen.getByText("oni@redescritores.com")).toBeTruthy();

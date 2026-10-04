@@ -34,6 +34,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +50,20 @@ import (
 
 	"github.com/rosvend/intela/migrations"
 )
+
+func init() {
+	if os.Getenv("DOCKER_HOST") == "" {
+		if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+			podmanSock := filepath.Join(runtimeDir, "podman", "podman.sock")
+			if _, err := os.Stat(podmanSock); err == nil {
+				_ = os.Setenv("DOCKER_HOST", "unix://"+podmanSock)
+				if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
+					_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+				}
+			}
+		}
+	}
+}
 
 const (
 	// La misma familia que docker-compose.yml (postgres:16.6-alpine) y que la
