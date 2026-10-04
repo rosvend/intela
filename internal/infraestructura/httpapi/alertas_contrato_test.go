@@ -98,12 +98,13 @@ func TestElContratoJSONDeUnaAlertaFijaSusNombres(t *testing.T) {
 // la compuerta.
 func TestElContratoJSONDelResumenFijaSusNombres(t *testing.T) {
 	falso := &anomaliasFalsas{resumen: aplicacion.ResumenEvaluacion{
-		Periodo:          "2025-01",
-		Detectadas:       7,
-		Nuevas:           6,
-		PorTipo:          map[string]int{"oni": 1},
-		CriticasAbiertas: 3,
-		UsosSinCotejar:   2,
+		Periodo:           "2025-01",
+		Detectadas:        7,
+		Nuevas:            6,
+		PorTipo:           map[string]int{"oni": 1},
+		CriticasAbiertas:  3,
+		CriticasAceptadas: 1,
+		UsosSinCotejar:    2,
 	}}
 	h := servidorConAnomalias(t, aplicacion.RolDistribucion, falso)
 
@@ -118,11 +119,12 @@ func TestElContratoJSONDelResumenFijaSusNombres(t *testing.T) {
 	}
 
 	quiero := map[string]any{
-		"periodo":           "2025-01",
-		"detectadas":        float64(7),
-		"nuevas":            float64(6),
-		"criticas_abiertas": float64(3),
-		"usos_sin_cotejar":  float64(2),
+		"periodo":            "2025-01",
+		"detectadas":         float64(7),
+		"nuevas":             float64(6),
+		"criticas_abiertas":  float64(3),
+		"criticas_aceptadas": float64(1),
+		"usos_sin_cotejar":   float64(2),
 	}
 	for campo, esperado := range quiero {
 		got, hay := crudo[campo]

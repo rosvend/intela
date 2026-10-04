@@ -225,9 +225,12 @@ func construir() (http.Handler, error) {
 		Declaraciones: store,
 		Coautores:     store,
 		Alertas:       store,
-		Bitacora:      store,
-		Unidad:        store,
-		Reloj:         reloj.Sistema{},
+		// Cerrar una critica corrige el dato (#164): sin esto POST
+		// /alertas/{id}/resolver falla cerrado en vez de cerrar sin corregir.
+		Correcciones: store,
+		Bitacora:     store,
+		Unidad:       store,
+		Reloj:        reloj.Sistema{},
 	}
 
 	reporte := aplicacion.ServicioLiquidacion{

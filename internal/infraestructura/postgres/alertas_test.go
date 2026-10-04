@@ -121,6 +121,7 @@ func servicioDeAnomalias(s *Store, instante time.Time) aplicacion.Anomalias {
 		Declaraciones: s,
 		Coautores:     s,
 		Alertas:       s,
+		Correcciones:  s,
 		Bitacora:      s,
 		Unidad:        s,
 		Reloj:         reloj.Fijo{Instante: instante},
@@ -128,6 +129,21 @@ func servicioDeAnomalias(s *Store, instante time.Time) aplicacion.Anomalias {
 }
 
 var instanteAlertas = time.Date(2026, 5, 2, 8, 30, 0, 0, time.UTC)
+
+// cierrePara arma el cierre que una alerta admite desde #164: la nota sola en
+// las no criticas, aceptar tal cual en los duplicados y asignar el tipo en
+// `tipo_obra_sin_mapear`. Las pruebas de la bandeja que no miran el dato usan
+// esto; las que prueban la correccion arman su pedido a mano.
+func cierrePara(a aplicacion.Alerta, nota string) aplicacion.SolicitudCierreAlerta {
+	s := aplicacion.SolicitudCierreAlerta{Nota: nota, ActorRol: string(aplicacion.RolAdministrador)}
+	switch a.Tipo {
+	case anomalias.TipoDuplicadoRegistro, anomalias.TipoDuplicadoArchivo:
+		s.Correccion.Accion = anomalias.AccionAceptarTalCual
+	case anomalias.TipoTipoObraSinMapear:
+		s.Correccion = anomalias.PedidoDeCorreccion{Accion: anomalias.AccionAsignarTipoObra, TipoObra: "serie"}
+	}
+	return s
+}
 
 func refsDeAlertas(alertas []aplicacion.Alerta) []string {
 	out := make([]string, 0, len(alertas))
@@ -264,7 +280,7 @@ func TestEvaluarAnomaliasNoReabreUnaAlertaResuelta(t *testing.T) {
 		t.Fatalf("Listar: %v", err)
 	}
 	id := alertas[0].ID
-	if _, err := svc.Resolver(t.Context(), id, usuarioAdmin, "revisada"); err != nil {
+	if _, err := svc.Resolver(t.Context(), id, usuarioAdmin, cierrePara(alertas[0], "revisada")); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 
@@ -400,7 +416,7 @@ func TestResolverAlertaYSuAsientoSonUnaSolaTransaccion(t *testing.T) {
 	// Un actor que no esta en `usuarios` revienta la FK de `asientos`, que es
 	// la SEGUNDA escritura: si las dos no compartieran transaccion, la alerta
 	// quedaria resuelta y sin asiento.
-	if _, err := svc.Resolver(t.Context(), id, "usr-fantasma", "nota de prueba"); err == nil {
+	if _, err := svc.Resolver(t.Context(), id, "usr-fantasma", cierrePara(alertas[0], "nota de prueba")); err == nil {
 		t.Fatal("Resolver no fallo con un actor que no existe")
 	}
 
@@ -427,7 +443,7 @@ func TestResolverAlertaFirmaYDistingueLaSegundaVez(t *testing.T) {
 	}
 	id := alertas[0].ID
 
-	resuelta, err := svc.Resolver(t.Context(), id, usuarioAdmin, "asignada a mano")
+	resuelta, err := svc.Resolver(t.Context(), id, usuarioAdmin, cierrePara(alertas[0], "asignada a mano"))
 	if err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
@@ -440,12 +456,12 @@ func TestResolverAlertaFirmaYDistingueLaSegundaVez(t *testing.T) {
 
 	// Dos personas mirando el mismo tablero es el caso normal. Quien llega
 	// segundo tiene que saber que la firma escrita no es la suya.
-	if _, err := svc.Resolver(t.Context(), id, usuarioTitular, "nota de prueba"); !errors.Is(err, aplicacion.ErrAlertaYaResuelta) {
+	if _, err := svc.Resolver(t.Context(), id, usuarioTitular, cierrePara(alertas[0], "nota de prueba")); !errors.Is(err, aplicacion.ErrAlertaYaResuelta) {
 		t.Fatalf("la segunda resolucion dio %v", err)
 	}
 	// Y un id que no existe no es lo mismo.
 	const idInventado = "00000000-0000-0000-0000-000000000000"
-	if _, err := svc.Resolver(t.Context(), idInventado, usuarioAdmin, "nota de prueba"); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := svc.Resolver(t.Context(), idInventado, usuarioAdmin, cierrePara(alertas[0], "nota de prueba")); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("un id inventado dio %v", err)
 	}
 }
@@ -455,7 +471,9 @@ func TestResolverAlertaFirmaYDistingueLaSegundaVez(t *testing.T) {
 func TestResolverAlertaConUnIDQueNoEsUUID(t *testing.T) {
 	s, _ := sembrarPeriodoConAnomalias(t)
 
-	_, err := s.ResolverAlerta(t.Context(), "no-soy-un-uuid", usuarioAdmin, "", instanteAlertas)
+	_, err := s.ResolverAlerta(t.Context(), "no-soy-un-uuid", aplicacion.CierreDeAlerta{
+		ActorID: usuarioAdmin, Nota: "nota de prueba", Cuando: instanteAlertas,
+	})
 	if err == nil {
 		t.Fatal("ResolverAlerta acepto un id que no es UUID")
 	}
@@ -503,7 +521,7 @@ func TestListarAlertasFiltra(t *testing.T) {
 		t.Fatalf("sin resolver hay %d alertas, se esperaban 6", len(sinResolver))
 	}
 
-	if _, err := svc.Resolver(t.Context(), sinResolver[0].ID, usuarioAdmin, "nota de prueba"); err != nil {
+	if _, err := svc.Resolver(t.Context(), sinResolver[0].ID, usuarioAdmin, cierrePara(sinResolver[0], "nota de prueba")); err != nil {
 		t.Fatalf("Resolver: %v", err)
 	}
 	cerradas := true

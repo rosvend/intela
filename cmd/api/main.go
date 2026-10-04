@@ -198,9 +198,12 @@ func ejecutar(log *slog.Logger) error {
 		Declaraciones: store,
 		Coautores:     store,
 		Alertas:       store,
-		Bitacora:      store,
-		Unidad:        store,
-		Reloj:         reloj.Sistema{},
+		// Cerrar una critica corrige el dato (#164): sin esto POST
+		// /alertas/{id}/resolver falla cerrado en vez de cerrar sin corregir.
+		Correcciones: store,
+		Bitacora:     store,
+		Unidad:       store,
+		Reloj:        reloj.Sistema{},
 	}
 
 	// El flujo de aprobaciones de RD 13.5 (#34). Seis puertos, un solo
