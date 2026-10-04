@@ -14,6 +14,7 @@ import {
   idsDeFuente,
   type CandidatoIdentificacion,
   type CasoIdentificacion,
+  type SugerenciaIdentificacion,
 } from "./tipos";
 
 /** El caso sobre el que se abrio el panel, y en que modo. */
@@ -267,6 +268,7 @@ function TarjetaCaso({
   // tarjeta para ver por que un registro esta en la bandeja.
   const [expandida, setExpandida] = useState(true);
   const idCuerpo = useId();
+  const sugerenciaTexto = textoDeSugerencia(caso.sugerencia);
 
   return (
     <li className="bandeja-caso">
@@ -323,6 +325,15 @@ function TarjetaCaso({
           </div>
 
           <section className="bandeja-candidatas">
+            {sugerenciaTexto && (
+              <p className="bandeja-sugerencia" role="status">
+                <strong>{sugerenciaTexto}</strong>
+                <span>Confírmala o elige otra. Nada se asigna solo.</span>
+                {caso.sugerencia.motivo !== "" && (
+                  <span className="muted">{caso.sugerencia.motivo}</span>
+                )}
+              </p>
+            )}
             <div className="bandeja-candidatas-cabecera">
               <div>
                 <h3>Obras candidatas</h3>
@@ -392,4 +403,16 @@ function TarjetaCaso({
       )}
     </li>
   );
+}
+
+/** Texto de la propuesta. `null` si no hay con que sugerir: no se pinta un aviso vacio. */
+function textoDeSugerencia(
+  sugerencia: SugerenciaIdentificacion,
+): string | null {
+  if (sugerencia.decision === "ninguna") return null;
+  if (sugerencia.decision === "descartar") {
+    return "Sugerencia: descartar este registro.";
+  }
+  const nombre = sugerencia.titulo || sugerencia.obra_id;
+  return `Sugerencia: asignar a ${nombre}.`;
 }

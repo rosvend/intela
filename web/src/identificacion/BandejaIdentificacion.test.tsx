@@ -58,6 +58,16 @@ const casoUno = {
   resuelto_en: null,
   ultima_actualizacion: "2024-11-05T10:00:00Z",
   nota: null,
+  sugerencia: {
+    decision: "asignar",
+    obra_id: "obra-1",
+    titulo: "La Niña",
+    confianza: 0.5,
+    motivo: "sin resoluciones anteriores de este titulo",
+    orden: ["obra-1", "obra-2"],
+    aceptada: null,
+    sello: "sello-mostrado",
+  },
 } satisfies CasoIdentificacion;
 
 const obraDeBusqueda = {
@@ -169,6 +179,10 @@ describe("BandejaIdentificacion", () => {
     expect(screen.getByText("0,71")).not.toBeNull();
     expect(screen.getByText("0,43")).not.toBeNull();
     expect(screen.getByText("2 coincidencias")).not.toBeNull();
+    expect(screen.getByText("Sugerencia: asignar a La Niña.")).not.toBeNull();
+    expect(
+      screen.getByText("Confírmala o elige otra. Nada se asigna solo."),
+    ).not.toBeNull();
 
     // ADR 0007: ninguna candidata viene marcada o resaltada por defecto. Las
     // dos ofrecen exactamente el mismo boton, sin distincion visual de
@@ -216,6 +230,7 @@ describe("BandejaIdentificacion", () => {
         decision: "asignar",
         obra_id: "obra-1",
         nota: "coincide la ficha tecnica",
+        sello: "sello-mostrado",
       },
     });
   });
@@ -273,6 +288,7 @@ describe("BandejaIdentificacion", () => {
         decision: "asignar",
         obra_id: "obra-9",
         nota: "obra correcta del catálogo",
+        sello: "sello-mostrado",
       },
     });
   });
@@ -302,7 +318,11 @@ describe("BandejaIdentificacion", () => {
     await waitFor(() => expect(capturado).not.toBeNull());
     expect(capturado).toEqual({
       id: "caso-1",
-      cuerpo: { decision: "descartar", nota: "no es del repertorio" },
+      cuerpo: {
+        decision: "descartar",
+        nota: "no es del repertorio",
+        sello: "sello-mostrado",
+      },
     });
   });
 

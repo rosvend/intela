@@ -42,6 +42,10 @@ type casoJSON struct {
 	// Nota es null en un caso pendiente y el texto de la decision en uno
 	// resuelto: la justificacion es obligatoria al resolver (#175, D5).
 	Nota *string `json:"nota"`
+
+	// Sugerencia siempre viaja: "ninguna" es la ausencia de propuesta, no
+	// la falta del campo. Aceptada es null mientras nadie ha resuelto.
+	Sugerencia sugerenciaJSON `json:"sugerencia"`
 }
 
 type candidatoJSON struct {
@@ -61,6 +65,19 @@ type obraRefJSON struct {
 type resolutorJSON struct {
 	ID     string `json:"id"`
 	Nombre string `json:"nombre"`
+}
+
+type sugerenciaJSON struct {
+	Decision  string                `json:"decision"`
+	ObraID    *string               `json:"obra_id"`
+	Titulo    *string               `json:"titulo"`
+	Confianza decimalComoNumeroJSON `json:"confianza"`
+	Motivo    string                `json:"motivo"`
+	Orden     []string              `json:"orden"`
+	Aceptada  *bool                 `json:"aceptada"`
+	// Sello es null cuando no hay propuesta verificable que devolver al
+	// confirmar: un caso ya resuelto, o una bandeja sin sello.
+	Sello *string `json:"sello"`
 }
 
 func (a *API) listarCasosIdentificacion(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +139,39 @@ func aCasoJSON(c aplicacion.CasoIdentificacion) casoJSON {
 	if c.Nota != "" {
 		nota := c.Nota
 		out.Nota = &nota
+	}
+	out.Sugerencia = aSugerenciaJSON(c.Sugerencia)
+	return out
+}
+
+func aSugerenciaJSON(s *aplicacion.SugerenciaCaso) sugerenciaJSON {
+	if s == nil {
+		return sugerenciaJSON{Decision: "ninguna", Orden: []string{}}
+	}
+	out := sugerenciaJSON{
+		Decision:  s.Decision,
+		Confianza: decimalComoNumeroJSON(s.Confianza),
+		Motivo:    s.Motivo,
+		Orden:     s.Orden,
+		Aceptada:  s.Aceptada,
+	}
+	if out.Decision == "" {
+		out.Decision = "ninguna"
+	}
+	if out.Orden == nil {
+		out.Orden = []string{}
+	}
+	if s.ObraID != "" {
+		obra := s.ObraID
+		out.ObraID = &obra
+	}
+	if s.Titulo != "" {
+		titulo := s.Titulo
+		out.Titulo = &titulo
+	}
+	if s.Sello != "" {
+		sello := s.Sello
+		out.Sello = &sello
 	}
 	return out
 }

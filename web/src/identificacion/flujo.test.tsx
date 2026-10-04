@@ -15,7 +15,11 @@ import type { Obra } from "../catalogo/tipos";
 import { ProveedorDeSesion } from "../sesion";
 import { formatearInstante } from "../tablero/formato";
 import type { ResolucionDeCaso } from "./resolucion";
-import { HECHO_ASIGNADA, type CasoIdentificacion } from "./tipos";
+import {
+  HECHO_ASIGNADA,
+  sugerenciaNinguna,
+  type CasoIdentificacion,
+} from "./tipos";
 
 /**
  * El recorrido completo de #39 sobre `<App />` con un servidor falso CON
@@ -79,6 +83,7 @@ const CASO_PENDIENTE = {
   resuelto_en: null,
   ultima_actualizacion: "2026-09-20T10:00:00Z",
   nota: null,
+  sugerencia: sugerenciaNinguna(),
 } satisfies CasoIdentificacion;
 
 /** Un segundo pendiente, sin candidatas, para el conteo del badge. */
