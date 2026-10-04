@@ -464,14 +464,29 @@ func servidorConLog(t *testing.T, ing Ingesta, buf *bytes.Buffer) http.Handler {
 	return Nueva(Casos{Auth: auth, Ingesta: ing}, Opciones{Log: log}).Router()
 }
 
+// romperTemporal deja inutilizable el directorio temporal del SO. Go lo lee de
+// TMPDIR en POSIX y de TMP/TEMP en Windows (os.TempDir), asi que se fijan las
+// tres. Comprueba que surtio efecto: si algun SO leyera otra variable, la prueba
+// que lo usa quedaria vacia sin avisar (#207).
+func romperTemporal(t *testing.T) {
+	t.Helper()
+	roto := filepath.Join(t.TempDir(), "no-existe")
+	for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(v, roto)
+	}
+	if got := os.TempDir(); filepath.Clean(got) != filepath.Clean(roto) {
+		t.Fatalf("no se pudo romper el temporal: os.TempDir() = %q, se esperaba %q", got, roto)
+	}
+}
+
 // Un fallo de disco del servidor al derramar el multipart no es una peticion
 // mal formada: con 1 MiB en memoria, todo archivo mayor crea un temporal via
-// os.CreateTemp, y un TMPDIR inutilizable falla ahi. Antes del arreglo esa
+// os.CreateTemp, y un directorio temporal del SO inutilizable falla ahi. Antes del arreglo esa
 // rama contestaba 400 sin log; ahora es 5xx con log a Error y un mensaje que
 // no culpa al cliente. El control de 300 KiB demuestra que lo pequeno sigue
 // en memoria y entra con 201 aunque el temporal este roto.
 func TestSubirReporteConTemporalRotoDa5xxConLogYLoPequenoSigueEn201(t *testing.T) {
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+	romperTemporal(t)
 
 	grande := bytes.Repeat([]byte("x"), 3<<20)
 	pequeno := bytes.Repeat([]byte("x"), 300<<10)
@@ -515,10 +530,10 @@ func TestSubirReporteConTemporalRotoDa5xxConLogYLoPequenoSigueEn201(t *testing.T
 	}
 }
 
-// Un cuerpo truncado sigue siendo culpa del cliente aunque TMPDIR este roto:
-// no es *os.PathError y tiene que dar 400, no 500.
+// Un cuerpo truncado sigue siendo culpa del cliente aunque el directorio
+// temporal del SO este roto: no es *os.PathError y tiene que dar 400, no 500.
 func TestSubirReporteTruncadoConTemporalRotoSigueEn400(t *testing.T) {
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-existe"))
+	romperTemporal(t)
 
 	var cuerpo bytes.Buffer
 	escritor := multipart.NewWriter(&cuerpo)
