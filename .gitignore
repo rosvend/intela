@@ -282,3 +282,8 @@ contexto-reflect.md
 # Binarios locales de herramientas (golangci-lint, etc.) instalados fuera del
 # PATH del CI. No versionar.
 .tools/
+
+# Estado y ejecuciones del agente local (.ravenclaude): centinelas de sesion y
+# checkins automaticos de worktrees, no artefactos del repositorio. Mismo
+# argumento que .dshwolf/.
+.ravenclaude/

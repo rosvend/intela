@@ -181,3 +181,159 @@ func TestUnUsoPorAliasNoAsientaPuntaje(t *testing.T) {
 		t.Fatalf("puntaje = %q, un alias es exacto y no lleva puntaje", id.Puntaje)
 	}
 }
+
+func TestValorizarAsientaElDesglosePorFactor(t *testing.T) {
+	t.Parallel()
+	e, _ := entornoValorizacion(t)
+
+	if _, err := e.uc.AvanzarEtapa(t.Context(), "proc-1", "usr-admin"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	var obra AsientoObraValorizada
+	for _, a := range asientosDe(t, e.bitacora, HechoRepartoObraValorizada) {
+		if a.RefID != "obra-1" {
+			continue
+		}
+		if err := json.Unmarshal(a.Payload, &obra); err != nil {
+			t.Fatalf("payload: %v", err)
+		}
+	}
+	if len(obra.Valorizacion) != 1 {
+		t.Fatalf("valorizacion = %+v, se esperaba un uso", obra.Valorizacion)
+	}
+	v := obra.Valorizacion[0]
+	if v.UsoID != "u-1" || v.Formula != "RD 9.1.1" || len(v.Terminos) != 1 {
+		t.Fatalf("valorizacion = %+v", v)
+	}
+	nombres := []string{"ponderacion", "duracion_min", "rating", "emisiones"}
+	origenes := []string{"parametro", "uso", "uso", "uso"}
+	valores := []string{"1.3", "48", "9", "10"}
+	fs := v.Terminos[0].Factores
+	if len(fs) != len(nombres) {
+		t.Fatalf("factores = %+v", fs)
+	}
+	prod := decimal.NewFromInt(1)
+	for i, f := range fs {
+		if f.Nombre != nombres[i] || f.Origen != origenes[i] || !decimal.RequireFromString(f.Valor).Equal(decimal.RequireFromString(valores[i])) {
+			t.Errorf("factor %d = %+v, se esperaba %s=%s (%s)", i, f, nombres[i], valores[i], origenes[i])
+		}
+		prod = prod.Mul(decimal.RequireFromString(f.Valor))
+	}
+	if !prod.Equal(decimal.RequireFromString(v.Terminos[0].Producto)) || !prod.Equal(decimal.RequireFromString(v.Puntos)) {
+		t.Errorf("producto de factores %s != producto %s / puntos %s", prod, v.Terminos[0].Producto, v.Puntos)
+	}
+	if !decimal.RequireFromString(v.Puntos).Round(8).Equal(decimal.RequireFromString(obra.Puntos)) || obra.Puntos != "5616" {
+		t.Errorf("puntos del uso %s no reproducen los de la obra %s", v.Puntos, obra.Puntos)
+	}
+}
+
+// El desglose se asienta en decimal exacto: ni StringFixed ni Round. Con
+// factores de muchos decimales, cualquier redondeo cambia las cadenas.
+func TestValorizarAsientaElDesgloseSinRedondear(t *testing.T) {
+	t.Parallel()
+	e, _ := entornoValorizacion(t)
+	snap := snapshotDePrueba()
+	snap.PondSerie = d("1.123456789")
+	u1 := usoDeCanal("z", reparto.TV, "")
+	u1.Uso.ReporteID, u1.Uso.Escalon = "rep-1", "difuso"
+	u1.Uso.DuracionMin = d("48.123456")
+	u1.Uso.Rating = d("9.1234567")
+	e.uc.Parametros = &parametrosNormativosFalso{snap: snap}
+	e.uc.Usos = &usosDeRepartoFalso{usos: []UsoDeReparto{u1}}
+
+	if _, err := e.uc.AvanzarEtapa(t.Context(), "proc-1", "usr-admin"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	var obra AsientoObraValorizada
+	for _, a := range asientosDe(t, e.bitacora, HechoRepartoObraValorizada) {
+		if a.RefID == "obra-1" {
+			if err := json.Unmarshal(a.Payload, &obra); err != nil {
+				t.Fatalf("payload: %v", err)
+			}
+		}
+	}
+	if len(obra.Valorizacion) != 1 || len(obra.Valorizacion[0].Terminos) != 1 {
+		t.Fatalf("valorizacion = %+v", obra.Valorizacion)
+	}
+	v := obra.Valorizacion[0]
+	esperado := d("1.123456789").Mul(d("48.123456")).Mul(d("9.1234567")).Mul(d("10"))
+	if esperado.Exponent() > -8 {
+		t.Fatalf("el caso no ejerce el redondeo: %s tiene pocos decimales", esperado)
+	}
+	fs := v.Terminos[0].Factores
+	for i, w := range []string{"1.123456789", "48.123456", "9.1234567", "10"} {
+		if fs[i].Valor != w {
+			t.Errorf("factor %d (%s) = %q, se esperaba %q exacto", i, fs[i].Nombre, fs[i].Valor, w)
+		}
+	}
+	if v.Terminos[0].Producto != esperado.String() || v.Puntos != esperado.String() {
+		t.Errorf("producto = %q, puntos = %q, se esperaba %q exacto", v.Terminos[0].Producto, v.Puntos, esperado.String())
+	}
+	if obra.Puntos != esperado.Round(8).String() {
+		t.Errorf("obra.puntos = %q, se esperaba el total a 8 decimales %q", obra.Puntos, esperado.Round(8).String())
+	}
+}
+
+func TestValorizarConObraDelMotorDistintaNoAsienta(t *testing.T) {
+	t.Parallel()
+
+	_, err := asientosDeValorizacion(entradaValorizacion{
+		usos:   []UsoDeReparto{usoDeCanal("z", reparto.TV, "")},
+		motor:  []reparto.Uso{{ObraID: "otra-obra", Modalidad: reparto.TV, TipoObra: "serie"}},
+		snap:   snapshotDePrueba(),
+		origen: map[string]OrigenDeUso{"u-1": {UsoID: "u-1", ReporteID: "rep-1"}},
+	})
+	if !errors.Is(err, ErrLinajeIncompleto) {
+		t.Fatalf("error = %v, se esperaba ErrLinajeIncompleto", err)
+	}
+}
+
+func TestValorizarConUsosDelMotorDescuadradosNoAsienta(t *testing.T) {
+	t.Parallel()
+
+	_, err := asientosDeValorizacion(entradaValorizacion{
+		usos:   []UsoDeReparto{usoDeCanal("z", reparto.TV, "")},
+		motor:  nil,
+		origen: map[string]OrigenDeUso{"u-1": {UsoID: "u-1", ReporteID: "rep-1"}},
+	})
+	if !errors.Is(err, ErrLinajeIncompleto) {
+		t.Fatalf("error = %v, se esperaba ErrLinajeIncompleto", err)
+	}
+}
+
+// El desglose no tiene cota de usos (toda cifra se explica hasta su origen),
+// asi que lo que se acota es el peso de cada uso: si crece, que sea a
+// proposito y con la cifra de api/openapi.yaml actualizada.
+func TestValorizacionDeUsoPesaLoDocumentado(t *testing.T) {
+	t.Parallel()
+
+	// Un id de uso real: "rep-" + sha256 del reporte + "-" + fila.
+	id := "rep-06dcc11feeb15c2aa8c4a5dd7aca791af5c0a81a4149f5e467a433eb016393a0-1234"
+	casos := []struct {
+		mod  reparto.Modalidad
+		cota int
+	}{
+		{reparto.TV, 400},
+		{reparto.OTT, 560},
+	}
+	for _, c := range casos {
+		u, err := aUsoDeReparto(usoDeCanal("z", c.mod, ""))
+		if err != nil {
+			t.Fatalf("%s: %v", c.mod, err)
+		}
+		dg, err := reparto.DesglosarUso(u, snapshotDePrueba())
+		if err != nil {
+			t.Fatalf("%s: desglose: %v", c.mod, err)
+		}
+		b, err := json.Marshal(valorizacionDe(id, dg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s: %d B", c.mod, len(b))
+		if len(b) > c.cota {
+			t.Errorf("%s: un uso pesa %d B, la cota documentada es %d B", c.mod, len(b), c.cota)
+		}
+	}
+}
