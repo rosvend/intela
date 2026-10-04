@@ -184,7 +184,13 @@ export default function TableroAnomalias() {
             {alertas.mensaje}
           </p>
         )}
-        {(alertas.tipo === "ausente" || alertas.tipo === "inactivo") && (
+        {procesos.tipo === "error" && (
+          <p className="tarjeta-error" role="alert">
+            {procesos.mensaje}
+          </p>
+        )}
+        {(alertas.tipo === "ausente" ||
+          (alertas.tipo === "inactivo" && procesos.tipo !== "error")) && (
           <p className="muted">Sin datos todavía.</p>
         )}
         {resumen.tipo === "error" && alertas.tipo !== "error" && (

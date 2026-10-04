@@ -306,6 +306,21 @@ describe("TableroAnomalias", () => {
     expect(screen.queryByText("Sin datos todavía.")).toBeNull();
   });
 
+  it("un 502 de /procesos sin ?periodo es una caida, no 'Sin datos todavía'", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      if (String(input) === "/api/auth/session")
+        return json(sesion("administrador"));
+      return json({ error: "servicio no disponible" }, 502);
+    });
+
+    montar("/anomalias");
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText("Sin datos todavía.")).toBeNull();
+  });
+
   it("avisa cuando la lista es una pagina de un total mayor", async () => {
     const cien = Array.from({ length: 100 }, (_, i) =>
       alerta({ id: `al-${i}`, tipo: "oni", detalle: `ONI ${i}` }),
