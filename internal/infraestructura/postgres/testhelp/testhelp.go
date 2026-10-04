@@ -111,9 +111,8 @@ func Pool(t *testing.T) *pgxpool.Pool {
 // disponible_en al encolar- toman su referencia de aqui, DESPUES de escribir:
 // un solo reloj, sin margen y sin depender del reloj del host, que en un
 // contenedor puede ir por detras o por delante del de la base (#205).
-// clock_timestamp y no now(): now() es el inicio de la transaccion y una
-// abierta fijaria el instante. Vuelve con la precision de timestamptz
-// (microsegundos), asi que compara igual con lo que se lea de la tabla.
+// Vuelve con la precision de timestamptz (microsegundos), asi que compara
+// igual con lo que se lea de la tabla.
 //
 // No llamar con una fila abierta sobre el mismo pool: Pool admite una sola
 // conexion.
