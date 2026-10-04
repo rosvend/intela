@@ -66,6 +66,7 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Lint (workflows)` | `actionlint` con shellcheck sobre cada `run:` | El PR toca `.github/` |
 | `Lint (Go)` | `go mod tidy` sin diff, `gofmt -l`, `go vet`, `go build`, `golangci-lint` | Hay `go.mod` y el PR toca Go |
 | `Test (Go)` | `go test -race -count=1` con perfil de cobertura | Hay `go.mod` y el PR toca Go |
+| `Test (Go, Windows)` | `go vet` y `go test -short -count=1` en `windows-latest`, nativo y sin `-race` (#207) | Hay `go.mod` y el PR toca Go |
 | `Perf (10k batch)` | KR-1: el lote de 10.000 registros en menos de 5 min, sin `-race` | Hay `go.mod` y el PR toca Go |
 | `Reproducibility (engine re-run)` | ADR 0005: los dorados del Canal Z dos veces, byte a byte, con `-race` | Hay `go.mod` y el PR toca Go |
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
@@ -204,6 +205,42 @@ el build no es reproducible, que es justo lo contrario de lo que pide el
   que lo exige — un `npm install` en el `web/Dockerfile` re-resolveria el arbol en cada build y dos
   imagenes del mismo commit podrian llevar codigo distinto. La capa trajo eslint y tsc, y vitest y
   prettier llegaron despues: hoy `Lint (frontend)` y `Test (frontend)` comprueban de verdad.
+
+## Correr la suite desde Windows
+
+`Test (Go, Windows)` corre en CI lo que sigue, y es lo mismo que se puede correr en local en nativo:
+
+- `go build ./...`, `go vet ./...` y `go test -short -count=1 ./...`. `-short` salta las suites con
+  testcontainers (`postgres`, `semilla`), porque los runners de Windows no ejecutan contenedores Linux.
+- La suite completa, con **Docker Desktop encendido**: `go test -count=1 -p 1 ./...`. Si sale
+  `panic: rootless Docker is not supported on Windows`, es que Docker esta apagado, no un bug.
+
+Lo que solo corre en Linux, y por que:
+
+- **`internal/infraestructura/objetos/disco_rlimit_test.go`** (`//go:build linux || darwin`) es el
+  **unico test excluido en Windows**. Provoca el fallo de escritura con `RLIMIT_FSIZE`, un EFBIG real
+  del nucleo sin equivalente en Windows. `Test (Go)` en Linux lo ejecuta.
+- `-race` necesita cgo y un compilador de C: el pre-push de `lefthook` (`go test -race`) no corre en
+  Windows nativo. Usar el contenedor de abajo.
+- `Disco.sincronizarDir` es un no-op en Windows (`Access is denied` al hacer fsync de un directorio).
+  Es el adaptador de desarrollo; produccion usa S3.
+
+Suite completa con `-race` desde Git Bash, en un contenedor Linux:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm --network host \
+  -v "$PWD":/app -w /app \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v glci-gomod:/go/pkg/mod -v glci-gocache:/root/.cache/go-build \
+  -e GOPROXY=off -e TESTCONTAINERS_HOST_OVERRIDE=localhost \
+  golang:1.24 go test -race -count=1 -p 1 ./...
+```
+
+`-p 1` evita `too many clients already` (53300) por varios Postgres en paralelo. Si el repo es un
+`git worktree` o esta bajo `/mnt/c`, comprueba con `cat` desde dentro del contenedor que ve tus
+archivos: Docker Desktop puede servir una vista cacheada. Ademas, `migraciones` y `numeracion` no
+funcionan **dentro** del contenedor sobre un worktree (su `.git` apunta a una ruta de Windows):
+corrigelos en nativo, que pasan, o desde un clon en ext4 de WSL.
 
 ## Lo que todavia no cubre
 
