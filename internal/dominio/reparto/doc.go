@@ -30,6 +30,13 @@
 //     deducciones y declaraciones, en proporciones del padre restringidas
 //     a las obras comunicadas en la plataforma (parrafo final de `RD 9.7`).
 //
+// # Desglose
+//
+// [DesglosarUso] devuelve, por uso, los factores de su formula como una suma
+// de productos (Puntos = suma de Producto, Producto = multiplicacion de los
+// factores). Las estrategias de arriba suman esos mismos terminos: el recibo
+// de ExplicarCifra y el motor no pueden divergir (#187).
+//
 // Los invariantes de [Uso] sin dinero, R-04 (retencion total) y R-01
 // (solo IPI en lineas de titular) se mantienen.
 package reparto

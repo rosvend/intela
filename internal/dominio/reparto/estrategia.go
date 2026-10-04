@@ -37,81 +37,58 @@ func ponderacionTipo(tipo, obraID string, snap Snapshot) (decimal.Decimal, error
 	}
 }
 
-// puntosTV calcula puntos por obra con la formula de RD 9.1.1:
-// Pond(tipo) * Duracion * Rating * Emisiones.
+// puntosTV suma los terminos de [DesglosarUso] (RD 9.1.1): un solo camino
+// para el motor y el recibo.
 func puntosTV(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, error) {
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
-		pond, err := ponderacionTipo(u.TipoObra, u.ObraID, snap)
+		ts, err := terminosTV(u, snap)
 		if err != nil {
 			return nil, err
 		}
-		if u.DuracionMin.IsNegative() || u.Rating.IsNegative() {
-			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
-		}
-		emisiones := decimal.NewFromInt(u.Emisiones)
-		if emisiones.IsNegative() {
-			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
-		}
-		p := pond.Mul(u.DuracionMin).Mul(u.Rating).Mul(emisiones)
-		out[u.ObraID] = out[u.ObraID].Add(p)
+		out[u.ObraID] = out[u.ObraID].Add(sumar(ts))
 	}
 	return out, nil
 }
 
-// puntosCineTeatro pondera por espectadores o taquilla segun el snapshot (P-18).
+// puntosCineTeatro suma los terminos de [DesglosarUso] (P-18): un solo camino
+// para el motor y el recibo.
 func puntosCineTeatro(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, error) {
-	switch snap.BaseCineTeatro {
-	case BaseEspectadores, BaseTaquilla:
-	default:
-		// El mensaje nombra tambien la clave de `parametros` que la llena:
-		// es la que el operador reconoce y carga (ADR 0004), no el campo.
-		return nil, fmt.Errorf("%w: base_cine_teatro (clave %s, P-18)", ErrParametroAusente, ClaveBaseCineTeatro)
-	}
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
-		var w decimal.Decimal
-		if snap.BaseCineTeatro == BaseEspectadores {
-			w = u.Espectadores
-		} else {
-			w = u.Taquilla
+		ts, err := terminosCineTeatro(u, snap)
+		if err != nil {
+			return nil, err
 		}
-		if w.IsNegative() {
-			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
-		}
-		out[u.ObraID] = out[u.ObraID].Add(w)
+		out[u.ObraID] = out[u.ObraID].Add(sumar(ts))
 	}
 	return out, nil
 }
 
-// puntosTransporte pondera por exhibiciones. Cero exhibiciones = cero peso.
+// puntosTransporte suma los terminos de [DesglosarUso]: un solo camino para
+// el motor y el recibo.
 func puntosTransporte(usos []Uso) (map[string]decimal.Decimal, error) {
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
-		if u.Exhibiciones < 0 {
-			return nil, fmt.Errorf("%w: medida negativa en obra %q", ErrRepartoInvalido, u.ObraID)
+		ts, err := terminosTransporte(u)
+		if err != nil {
+			return nil, err
 		}
-		w := decimal.NewFromInt(u.Exhibiciones)
-		out[u.ObraID] = out[u.ObraID].Add(w)
+		out[u.ObraID] = out[u.ObraID].Add(sumar(ts))
 	}
 	return out, nil
 }
 
-// puntosOTT aplica Pi = PB*Wa + DU*Wb + V*Wc.
+// puntosOTT suma los terminos de [DesglosarUso] (Pi = PB*Wa + DU*Wb + V*Wc):
+// un solo camino para el motor y el recibo.
 func puntosOTT(usos []Uso, snap Snapshot) (map[string]decimal.Decimal, error) {
-	if err := exigirPositivo("ott.wa", snap.Wa); err != nil {
-		return nil, err
-	}
-	if err := exigirPositivo("ott.wb", snap.Wb); err != nil {
-		return nil, err
-	}
-	if err := exigirPositivo("ott.wc", snap.Wc); err != nil {
-		return nil, err
-	}
 	out := make(map[string]decimal.Decimal)
 	for _, u := range usos {
-		p := u.PB.Mul(snap.Wa).Add(u.MinutosVistos.Mul(snap.Wb)).Add(u.Vistas.Mul(snap.Wc))
-		out[u.ObraID] = out[u.ObraID].Add(p)
+		ts, err := terminosOTT(u, snap)
+		if err != nil {
+			return nil, err
+		}
+		out[u.ObraID] = out[u.ObraID].Add(sumar(ts))
 	}
 	return out, nil
 }
