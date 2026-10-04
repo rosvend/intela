@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { firmarProceso } from "./cliente";
+import { evaluarPeriodo, firmarProceso } from "./cliente";
 import { RUTAS_REPARTO } from "./tipos";
 
 describe("cliente de procesos", () => {
@@ -46,7 +46,26 @@ describe("cliente de procesos", () => {
   it("las rutas de lectura cuadran con el contrato de #34 y #37", () => {
     expect(RUTAS_REPARTO.procesos).toBe("/api/procesos");
     expect(RUTAS_REPARTO.proceso("p/1")).toBe("/api/procesos/p%2F1");
-    expect(RUTAS_REPARTO.alertas("2025")).toBe("/api/alertas?periodo=2025");
-    expect(RUTAS_REPARTO.alertas()).toBe("/api/alertas");
+    expect(RUTAS_REPARTO.alertas("2025")).toBe(
+      "/api/alertas?periodo=2025&resueltas=false",
+    );
+    expect(RUTAS_REPARTO.alertas()).toBe("/api/alertas?resueltas=false");
+    expect(RUTAS_REPARTO.resumenAlertas("2025-01")).toBe(
+      "/api/alertas/resumen?periodo=2025-01",
+    );
+    expect(RUTAS_REPARTO.evaluarAlertas).toBe("/api/alertas/evaluacion");
+  });
+
+  it("evaluarPeriodo hace POST /alertas/evaluacion con el periodo", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+
+    await evaluarPeriodo("2025");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/alertas/evaluacion",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init?.body).toBe('{"periodo":"2025"}');
   });
 });

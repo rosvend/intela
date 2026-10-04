@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/anomalias"
 )
 
 // Los nombres de campo que el tablero de #104 ya consume, escritos como
@@ -90,6 +92,69 @@ func TestElContratoJSONDeUnaAlertaFijaSusNombres(t *testing.T) {
 		if got := crudo[0][campo]; got != esperado {
 			t.Errorf("%q = %#v, se esperaba %#v", campo, got, esperado)
 		}
+	}
+}
+
+// TestElContratoJSONDelResumenDeAlertasFijaSusNombres fija contra literales la
+// forma de GET /alertas/resumen (ResumenDeAlertas en api/openapi.yaml).
+func TestElContratoJSONDelResumenDeAlertasFijaSusNombres(t *testing.T) {
+	cuando := time.Date(2026, 5, 2, 8, 30, 0, 0, time.UTC)
+	porTipo := map[string]aplicacion.ConteoDeTipo{}
+	for _, tipo := range anomalias.Tipos() {
+		porTipo[tipo] = aplicacion.ConteoDeTipo{Critica: anomalias.EsCritica(tipo)}
+	}
+	porTipo[anomalias.TipoONI] = aplicacion.ConteoDeTipo{Abiertas: 4}
+	falso := &anomaliasFalsas{resumenAlertas: aplicacion.ResumenAlertas{
+		Periodo: "2025-01", Abiertas: 4, CriticasAbiertas: 0, CriticasAceptadas: 2,
+		PorTipo: porTipo, UltimaEvaluacion: &cuando,
+	}}
+	h := servidorConAnomalias(t, aplicacion.RolAuditor, falso)
+
+	rec := pedir(t, h, http.MethodGet, "/alertas/resumen?periodo=2025-01", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var crudo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &crudo); err != nil {
+		t.Fatalf("respuesta: %v", err)
+	}
+	quiero := map[string]any{
+		"periodo":            "2025-01",
+		"abiertas":           float64(4),
+		"criticas_abiertas":  float64(0),
+		"criticas_aceptadas": float64(2),
+		"ultima_evaluacion":  "2026-05-02T08:30:00Z",
+	}
+	for campo, esperado := range quiero {
+		if got := crudo[campo]; got != esperado {
+			t.Errorf("%q = %#v, se esperaba %#v", campo, got, esperado)
+		}
+	}
+	tipos, ok := crudo["por_tipo"].(map[string]any)
+	if !ok || len(tipos) != 6 {
+		t.Fatalf("por_tipo = %#v, se esperaban las 6 claves", crudo["por_tipo"])
+	}
+	for _, tipo := range []string{
+		"oni", "duplicado_archivo", "duplicado_registro",
+		"titular_sin_porcentaje", "reserva_declaracion_incompleta", "tipo_obra_sin_mapear",
+	} {
+		conteo, ok := tipos[tipo].(map[string]any)
+		if !ok {
+			t.Errorf("falta por_tipo.%s", tipo)
+			continue
+		}
+		if _, hay := conteo["abiertas"]; !hay {
+			t.Errorf("por_tipo.%s sin `abiertas`", tipo)
+		}
+		if _, hay := conteo["critica"]; !hay {
+			t.Errorf("por_tipo.%s sin `critica`", tipo)
+		}
+	}
+	if oni := tipos["oni"].(map[string]any); oni["abiertas"] != float64(4) || oni["critica"] != false {
+		t.Errorf("oni = %#v", oni)
+	}
+	if dup := tipos["duplicado_registro"].(map[string]any); dup["critica"] != true {
+		t.Errorf("duplicado_registro = %#v", dup)
 	}
 }
 
