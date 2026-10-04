@@ -74,7 +74,9 @@ type ObraLinaje struct {
 	Escalon string
 	Puntaje string
 	// Puntos son los puntos de reparto de la obra en la corrida; no es
-	// Puntaje, que es el del matching.
+	// Puntaje, que es el del matching. Es el total persistido, a 8
+	// decimales; los Puntos de cada uso en Valorizacion son exactos, asi que
+	// su suma puede diferir a partir del noveno decimal.
 	Puntos string
 }
 

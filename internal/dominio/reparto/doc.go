@@ -34,8 +34,12 @@
 //
 // [DesglosarUso] devuelve, por uso, los factores de su formula como una suma
 // de productos (Puntos = suma de Producto, Producto = multiplicacion de los
-// factores). Las estrategias de arriba suman esos mismos terminos: el recibo
-// de ExplicarCifra y el motor no pueden divergir (#187).
+// factores). TV, cine y teatro, transporte y OTT suman exactamente esos
+// terminos, asi que en ellas el recibo de ExplicarCifra reproduce los puntos
+// del motor (#187). Suscripcion y hotel tambien, con una excepcion: el motor
+// descarta antes de sumar los usos fuera de repertorio (R-27) y el desglose
+// no, asi que el recibo listaria un uso que no sumo. Hoy no ocurre porque
+// ningun uso llega marcado FueraDeRepertorio al motor.
 //
 // Los invariantes de [Uso] sin dinero, R-04 (retencion total) y R-01
 // (solo IPI en lineas de titular) se mantienen.

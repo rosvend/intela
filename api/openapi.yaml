@@ -6126,7 +6126,7 @@ components:
             titulo: {type: string, description: "De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos."}
             escalon: {type: string, enum: [alias, id_global, difuso, manual]}
             puntaje: {type: string, description: "Puntaje del matching (ADR 0007), no puntos de reparto. Vacio para alias e id global, que son exactos."}
-            puntos: {type: string, example: "5616", description: "Puntos de reparto de la obra en la corrida (RD 9), redondeados a 8 decimales. No es `puntaje`."}
+            puntos: {type: string, example: "5616", description: "Puntos de reparto de la obra en la corrida (RD 9), tal como se persistieron y entraron al reparto: redondeados a 8 decimales. Los `puntos` de cada uso en `valorizacion` son exactos, asi que su suma puede diferir de este total a partir del noveno decimal. No es `puntaje`."}
         identificacion:
           type: array
           description: Como se reconocio la obra en cada uso que peso (ADR 0007).
@@ -6147,6 +6147,12 @@ components:
             Cuanto peso cada uso y la aritmetica que lo dio (#187), en el orden de
             `identificacion`. Vacio en cifras valorizadas antes de #187: el
             desglose no se reconstruye (ADR 0006); `obra.puntos` si esta.
+
+            Sin cota de usos, a proposito: toda cifra se explica hasta su
+            origen, y truncar dejaria usos sin explicar. Lo acotado es el peso
+            de cada uso: ~381 B en TV, suscripcion y hotel (un termino de 4
+            factores) y ~544 B en OTT (3 terminos), el mayor. Una telenovela
+            diaria con 60 usos en la corrida son ~23 KB.
           items:
             $ref: "#/components/schemas/ValorizacionDeUso"
         regla:
@@ -6218,7 +6224,8 @@ components:
       description: |
         Puntos de un uso como suma de productos: `puntos` = suma de los
         `producto` de `terminos`; cada `producto` = multiplicacion de sus
-        `factores`. Decimales exactos como cadena, sin redondear.
+        `factores`. Decimales exactos como cadena, sin redondear; el total
+        persistido de la obra (`obra.puntos`) va a 8 decimales.
       properties:
         uso_id: {type: string}
         formula: {type: string, enum: ["RD 9.1.1", "RD 9.2", "RD 9.3", "RD 9.4", "RD 9.5", "RD 9.6", "RD 9.7"]}

@@ -2711,7 +2711,7 @@ export interface components {
                 /** @description Puntaje del matching (ADR 0007), no puntos de reparto. Vacio para alias e id global, que son exactos. */
                 puntaje: string;
                 /**
-                 * @description Puntos de reparto de la obra en la corrida (RD 9), redondeados a 8 decimales. No es `puntaje`.
+                 * @description Puntos de reparto de la obra en la corrida (RD 9), tal como se persistieron y entraron al reparto: redondeados a 8 decimales. Los `puntos` de cada uso en `valorizacion` son exactos, asi que su suma puede diferir de este total a partir del noveno decimal. No es `puntaje`.
                  * @example 5616
                  */
                 puntos: string;
@@ -2732,6 +2732,12 @@ export interface components {
              * @description Cuanto peso cada uso y la aritmetica que lo dio (#187), en el orden de
              *     `identificacion`. Vacio en cifras valorizadas antes de #187: el
              *     desglose no se reconstruye (ADR 0006); `obra.puntos` si esta.
+             *
+             *     Sin cota de usos, a proposito: toda cifra se explica hasta su
+             *     origen, y truncar dejaria usos sin explicar. Lo acotado es el peso
+             *     de cada uso: ~381 B en TV, suscripcion y hotel (un termino de 4
+             *     factores) y ~544 B en OTT (3 terminos), el mayor. Una telenovela
+             *     diaria con 60 usos en la corrida son ~23 KB.
              */
             valorizacion: components["schemas"]["ValorizacionDeUso"][];
             regla: {
@@ -2784,7 +2790,8 @@ export interface components {
         /**
          * @description Puntos de un uso como suma de productos: `puntos` = suma de los
          *     `producto` de `terminos`; cada `producto` = multiplicacion de sus
-         *     `factores`. Decimales exactos como cadena, sin redondear.
+         *     `factores`. Decimales exactos como cadena, sin redondear; el total
+         *     persistido de la obra (`obra.puntos`) va a 8 decimales.
          */
         ValorizacionDeUso: {
             uso_id: string;

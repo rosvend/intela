@@ -106,7 +106,8 @@ type AsientoObraValorizada struct {
 	Usos        []IdentificacionDeUso `json:"usos"`
 	// Valorizacion es la aritmetica de los puntos de cada uso (#187). Un
 	// asiento anterior a #187 no la trae y Explicar devuelve lista vacia: no
-	// se reconstruye (ADR 0006).
+	// se reconstruye (ADR 0006). Sin cota de usos: lo acotado es el peso de
+	// cada uno (TestValorizacionDeUsoPesaLoDocumentado).
 	Valorizacion []ValorizacionDeUso `json:"valorizacion,omitempty"`
 }
 

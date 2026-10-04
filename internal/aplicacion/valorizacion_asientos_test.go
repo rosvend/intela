@@ -302,3 +302,38 @@ func TestValorizarConUsosDelMotorDescuadradosNoAsienta(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrLinajeIncompleto", err)
 	}
 }
+
+// El desglose no tiene cota de usos (toda cifra se explica hasta su origen),
+// asi que lo que se acota es el peso de cada uso: si crece, que sea a
+// proposito y con la cifra de api/openapi.yaml actualizada.
+func TestValorizacionDeUsoPesaLoDocumentado(t *testing.T) {
+	t.Parallel()
+
+	// Un id de uso real: "rep-" + sha256 del reporte + "-" + fila.
+	id := "rep-06dcc11feeb15c2aa8c4a5dd7aca791af5c0a81a4149f5e467a433eb016393a0-1234"
+	casos := []struct {
+		mod  reparto.Modalidad
+		cota int
+	}{
+		{reparto.TV, 400},
+		{reparto.OTT, 560},
+	}
+	for _, c := range casos {
+		u, err := aUsoDeReparto(usoDeCanal("z", c.mod, ""))
+		if err != nil {
+			t.Fatalf("%s: %v", c.mod, err)
+		}
+		dg, err := reparto.DesglosarUso(u, snapshotDePrueba())
+		if err != nil {
+			t.Fatalf("%s: desglose: %v", c.mod, err)
+		}
+		b, err := json.Marshal(valorizacionDe(id, dg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s: %d B", c.mod, len(b))
+		if len(b) > c.cota {
+			t.Errorf("%s: un uso pesa %d B, la cota documentada es %d B", c.mod, len(b), c.cota)
+		}
+	}
+}
