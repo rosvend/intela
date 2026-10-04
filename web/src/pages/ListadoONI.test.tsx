@@ -48,8 +48,12 @@ describe("ListadoONI", () => {
 
     expect(await screen.findByText("Serie Desconocida")).toBeTruthy();
     expect(screen.getByText("Capitulo Tardio")).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Publicado" })).toBeTruthy();
-    expect(screen.getAllByText("31 de agosto de 2026").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("columnheader", { name: "Publicado" }),
+    ).toBeTruthy();
+    expect(screen.getAllByText("31 de agosto de 2026").length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByText("15 de septiembre de 2026")).toBeTruthy();
     expect(screen.getAllByText("caracol").length).toBe(2);
     expect(screen.getByText("ID-99")).toBeTruthy();
