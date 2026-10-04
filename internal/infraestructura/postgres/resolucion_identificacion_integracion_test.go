@@ -14,6 +14,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/infraestructura/triage"
 )
 
 // Pruebas de integracion de la resolucion manual (#175): el caso de uso con el
@@ -26,7 +27,10 @@ const revisorDePrueba = "usr-revisor"
 
 // resolucionDePrueba cablea el caso de uso como lo hacen cmd/api y cmd/lambda.
 func resolucionDePrueba(s *Store, reloj aplicacion.Reloj) aplicacion.ResolucionIdentificacion {
-	return aplicacion.ResolucionIdentificacion{Repo: s, Bitacora: s, Unidad: s, Reloj: reloj}
+	return aplicacion.ResolucionIdentificacion{
+		Repo: s, Bitacora: s, Unidad: s, Reloj: reloj,
+		Ejemplos: s, Rankeador: triage.Heuristico{},
+	}
 }
 
 // relojQuieto es un Reloj que no avanza: el instante entra por el puerto (ADR
@@ -399,7 +403,9 @@ func TestResolverIntegracionSiElAsientoFallaNoQuedaNadaEscrito(t *testing.T) {
 	s, pool := sembrarResolucion(t)
 	r := aplicacion.ResolucionIdentificacion{
 		Repo: s, Unidad: s, Reloj: relojQuieto{instanteResolucion},
-		Bitacora: bitacoraQueFalla{s},
+		Bitacora:  bitacoraQueFalla{s},
+		Ejemplos:  s,
+		Rankeador: triage.Heuristico{},
 	}
 
 	_, err := r.Resolver(t.Context(),
@@ -423,6 +429,14 @@ func TestResolverIntegracionSiElAsientoFallaNoQuedaNadaEscrito(t *testing.T) {
 	}
 	if alias != 0 {
 		t.Fatalf("el alias sobrevivio al rollback: %d filas", alias)
+	}
+	var ejemplos int
+	if err := pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM ejemplos_resolucion WHERE uso_id = 'u-1'`).Scan(&ejemplos); err != nil {
+		t.Fatalf("contar ejemplos: %v", err)
+	}
+	if ejemplos != 0 {
+		t.Fatalf("el ejemplo etiquetado sobrevivio al rollback: %d filas", ejemplos)
 	}
 }
 

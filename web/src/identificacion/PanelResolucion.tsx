@@ -187,6 +187,11 @@ export default function PanelResolucion({
             obra_id: obraElegida!.id,
             nota: notaRecortada,
           };
+    // El sello es la propuesta que se mostro. Sin el, el servidor mediria la
+    // aceptacion contra el historial de este momento, que puede haber cambiado.
+    if (caso.sugerencia.sello) {
+      cuerpo.sello = caso.sugerencia.sello;
+    }
 
     try {
       await resolverCaso(caso.id, cuerpo);

@@ -44,6 +44,12 @@ func paginaDePrueba() aplicacion.PaginaCasos {
 				ObraID: "o-1", Titulo: "La Casa de Papel", Anio: 2017, Genero: "Drama",
 				Puntaje: decimal.RequireFromString("0.61"), TituloConsultado: "la casa",
 			}},
+			Sugerencia: &aplicacion.SugerenciaCaso{
+				Decision: "asignar", ObraID: "o-1", Titulo: "La Casa de Papel",
+				Confianza: decimal.RequireFromString("0.61"),
+				Motivo:    "sin resoluciones anteriores de este titulo",
+				Orden:     []string{"o-1"},
+			},
 		},
 		{
 			UsoID: "u-2", Estado: aplicacion.EstadoCasoAsignado, Candidatos: []aplicacion.CandidatoCaso{},
@@ -81,6 +87,10 @@ func TestListarCasosIdentificacionDevuelveCasosYPendientes(t *testing.T) {
 	if len(p.Candidatos) != 1 || p.Candidatos[0].ObraID != "o-1" || p.Candidatos[0].Anio != 2017 {
 		t.Fatalf("candidatos = %+v", p.Candidatos)
 	}
+	if p.Sugerencia.Decision != "asignar" || p.Sugerencia.ObraID == nil || *p.Sugerencia.ObraID != "o-1" ||
+		p.Sugerencia.Aceptada != nil || len(p.Sugerencia.Orden) != 1 {
+		t.Fatalf("sugerencia = %+v", p.Sugerencia)
+	}
 	a := cuerpo.Casos[1]
 	if a.ResueltoPor == nil || a.ResueltoPor.Nombre != "Revisora" || a.ObraAsignada == nil || a.ResueltoEn == nil {
 		t.Fatalf("asignado = %+v", a)
@@ -96,6 +106,12 @@ func TestCasosIdentificacionPuntajeViajaComoNumeroYCandidatosVacioEsLista(t *tes
 	}
 	if !strings.Contains(cuerpo, `"candidatos":[]`) {
 		t.Fatalf("un caso sin candidatos tiene que ser []: %s", cuerpo)
+	}
+	if !strings.Contains(cuerpo, `"sugerencia":`) || !strings.Contains(cuerpo, `"decision":"ninguna"`) {
+		t.Fatalf("la sugerencia tiene que viajar, tambien cuando no hay propuesta: %s", cuerpo)
+	}
+	if !strings.Contains(cuerpo, `"orden":[]`) {
+		t.Fatalf("un orden vacio tiene que ser []: %s", cuerpo)
 	}
 }
 
