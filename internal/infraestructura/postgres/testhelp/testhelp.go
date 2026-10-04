@@ -34,6 +34,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +50,20 @@ import (
 
 	"github.com/rosvend/intela/migrations"
 )
+
+func init() {
+	if os.Getenv("DOCKER_HOST") == "" {
+		if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+			podmanSock := filepath.Join(runtimeDir, "podman", "podman.sock")
+			if _, err := os.Stat(podmanSock); err == nil {
+				_ = os.Setenv("DOCKER_HOST", "unix://"+podmanSock)
+				if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
+					_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+				}
+			}
+		}
+	}
+}
 
 const (
 	// La misma familia que docker-compose.yml (postgres:16.6-alpine) y que la
@@ -103,6 +119,27 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	// convive con conexiones vivas.
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// Ahora devuelve el reloj de la base (clock_timestamp()).
+//
+// Las pruebas que comparan contra un DEFAULT now() -la cola sella
+// disponible_en al encolar- toman su referencia de aqui, DESPUES de escribir:
+// un solo reloj, sin margen y sin depender del reloj del host, que en un
+// contenedor puede ir por detras o por delante del de la base (#205).
+// Vuelve con la precision de timestamptz (microsegundos), asi que compara
+// igual con lo que se lea de la tabla.
+//
+// No llamar con una fila abierta sobre el mismo pool: Pool admite una sola
+// conexion.
+func Ahora(t *testing.T, pool *pgxpool.Pool) time.Time {
+	t.Helper()
+
+	var ahora time.Time
+	if err := pool.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&ahora); err != nil {
+		t.Fatalf("leer el reloj de la base: %v", err)
+	}
+	return ahora
 }
 
 // DSN devuelve la cadena de conexion a una base recien migrada y vacia.

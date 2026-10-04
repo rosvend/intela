@@ -67,13 +67,14 @@ func TestResolverCasoAsignaYDevuelveElCaso(t *testing.T) {
 	h := servidorConResolucion(t, aplicacion.RolAdministrador, falso)
 
 	rec := pedir(t, h, http.MethodPost, rutaResolucion,
-		`{"decision":"asignar","obra_id":"o-1","nota":"coincide la ficha tecnica"}`, "tok")
+		`{"decision":"asignar","obra_id":"o-1","nota":"coincide la ficha tecnica","sello":"sello-mostrado"}`, "tok")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
 	}
 
 	quiero := aplicacion.SolicitudResolucion{
 		UsoID: "u-1", Decision: "asignar", ObraID: "o-1", Nota: "coincide la ficha tecnica",
+		Sello: "sello-mostrado",
 	}
 	if falso.pedido != quiero {
 		t.Fatalf("pedido = %+v, quiere %+v", falso.pedido, quiero)
@@ -239,6 +240,10 @@ func TestResolverCasoTiposDeError(t *testing.T) {
 			"obra inexistente", `{"decision":"asignar","obra_id":"o-x","nota":"ok"}`,
 			fmt.Errorf("%w: %q", aplicacion.ErrObraInexistente, "o-x"),
 			http.StatusBadRequest, "catalogo",
+		},
+		{
+			"propuesta que no verifica", `{"decision":"asignar","obra_id":"o-1","nota":"ok","sello":"no"}`,
+			aplicacion.ErrPropuestaInvalida, http.StatusBadRequest, "propuesta",
 		},
 	}
 

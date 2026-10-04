@@ -26,6 +26,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
+	"github.com/rosvend/intela/internal/infraestructura/triage"
 )
 
 // dirObjetosPorDefecto es la boveda de reportes crudos cuando nadie fija
@@ -240,18 +241,21 @@ func ejecutar(log *slog.Logger) error {
 			Fisica:      config.Cadena("ONI_DIRECCION_FISICA", ""),
 			Electronica: config.Cadena("ONI_DIRECCION_ELECTRONICA", ""),
 		},
-		Padron:         padron,
-		Ingesta:        recepcion,
-		Declaraciones:  declaraciones,
-		Recaudo:        recaudo,
-		Reporte:        reporte,
-		Procesos:       procesos,
-		Cola:           aplicacion.Normalizacion{Reportes: store},
-		Anomalias:      anomalias,
-		Auditoria:      aplicacion.Auditoria{Bitacora: store},
-		Identificacion: aplicacion.CasosIdentificacion{Repo: store},
+		Padron:        padron,
+		Ingesta:       recepcion,
+		Declaraciones: declaraciones,
+		Recaudo:       recaudo,
+		Reporte:       reporte,
+		Procesos:      procesos,
+		Cola:          aplicacion.Normalizacion{Reportes: store},
+		Anomalias:     anomalias,
+		Auditoria:     aplicacion.Auditoria{Bitacora: store},
+		Identificacion: aplicacion.CasosIdentificacion{
+			Repo: store, Ejemplos: store, Rankeador: triage.Heuristico{},
+		},
 		Resolucion: aplicacion.ResolucionIdentificacion{
 			Repo: store, Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
+			Ejemplos: store, Rankeador: triage.Heuristico{},
 		},
 		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},

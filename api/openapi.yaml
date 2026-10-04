@@ -705,9 +705,15 @@ paths:
 
         Esta publicacion arranca el reloj de prescripcion de tres anos
         (R-19, RD 13.8.7). Por eso la ruta no pide autenticacion: `security: []`.
+        El reloj de cada obra es `obras[].fecha_proceso`, la fecha de la
+        publicacion que la incluyo. Una complementaria posterior no lo mueve.
 
-        Sin `periodo` devuelve la publicacion mas reciente. Con `periodo`
-        (YYYY o YYYY-MM) filtra a esa instantanea.
+        Sin `periodo` devuelve la publicacion mas reciente del periodo vigente.
+        Con `periodo` (YYYY o YYYY-MM) filtra a ese periodo. En ambos casos
+        `obras` consolida todas las secuencias de ese periodo. `fecha_proceso`
+        de la cabecera es la de la secuencia mas reciente, no el ancla de cada
+        obra. `POST /oni/publicaciones` responde solo las obras de la
+        secuencia que acaba de crear.
       operationId: listadoONIPublico
       security: []
       parameters:
@@ -740,6 +746,7 @@ paths:
                     fuente: caracol
                     ids_fuente: ID-99
                     modalidad: tv
+                    fecha_proceso: "2026-08-31T12:00:00Z"
         "400":
           description: El periodo no tiene la forma YYYY o YYYY-MM.
           content:
@@ -762,12 +769,17 @@ paths:
       tags: [oni]
       summary: Publicar el listado ONI de un periodo
       description: |
-        Congela la cola viva de ONI del periodo como listado publico, registra
-        la fecha del proceso (ancla de R-19), las dos direcciones, y deja un
-        asiento en la bitacora.
+        Congela los usos ONI pendientes del periodo como listado publico,
+        registra la fecha del proceso (ancla de R-19 para esos usos), las dos
+        direcciones, y deja un asiento en la bitacora. Permite publicaciones
+        complementarias si entran usos ONI tardios.
 
-        Solo `administrador` y `distribucion`. Republicar el mismo periodo
-        responde 409: reescribir la fecha resetearia el reloj de prescripcion.
+        La respuesta 201 trae solo las obras de esta secuencia, cada una con
+        su `fecha_proceso`. `GET /publico/oni` consolida todas las secuencias
+        del periodo; no es el mismo conjunto.
+
+        Solo `administrador` y `distribucion`. Republicar sin nuevos usos
+        pendientes responde 409.
       operationId: publicarListadoONI
       requestBody:
         required: true
@@ -809,7 +821,7 @@ paths:
               example:
                 error: no autorizado
         "409":
-          description: Ese periodo ya tiene listado publicado.
+          description: Ese periodo ya fue publicado y no tiene usos ONI pendientes sin publicar.
           content:
             application/json:
               schema:
@@ -1069,6 +1081,15 @@ paths:
         Nunca aparecen los usos `excluido` (R-27) ni los resueltos por la
         cascada. No lleva importes ni medidas de ponderacion (ADR 0007, R-18).
 
+        `sugerencia` es una propuesta del rankeador (#53): un orden y una
+        accion (`asignar`, `descartar` o `ninguna`) que la persona confirma o
+        cambia. No resuelve el caso. `aceptada` es `null` mientras este
+        pendiente y, una vez resuelto, dice si la persona confirmo esa
+        propuesta. `sello` ata la propuesta a este caso: quien confirma lo
+        devuelve para que la aceptacion se mida contra lo que vio, no contra
+        un rankeo posterior. `candidatos` sigue en el orden de la cascada;
+        `sugerencia.orden` es el orden propuesto.
+
         `pendientes` cuenta los casos pendientes bajo los mismos filtros de
         `fuente` y `periodo`, sin mirar `estado` ni la pagina: alimenta el
         contador de la bandeja. `ultima_actualizacion` es `resuelto_en` para un
@@ -1158,6 +1179,15 @@ paths:
                     resuelto_en: null
                     ultima_actualizacion: "2025-02-01T10:00:00Z"
                     nota: null
+                    sugerencia:
+                      decision: asignar
+                      obra_id: obra-12
+                      titulo: La Casa de las Dos Palmas
+                      confianza: 0.43
+                      motivo: sin resoluciones anteriores de este titulo
+                      orden: [obra-12]
+                      aceptada: null
+                      sello: eyJ1c28iOiJ1c28tMSJ9.firma
         "400":
           description: Un filtro o la paginacion vienen mal formados.
           content:
@@ -1217,7 +1247,10 @@ paths:
         reparte entre las obras que si ponderan.
 
         La nota es obligatoria en las dos y tiene un tope de 300 caracteres.
-        Se puede resolver aunque el periodo este en reparto o ya distribuido:
+        `sello`, si viene, es el de `sugerencia.sello` del listado: la
+        aceptacion se mide contra esa propuesta. Un sello que no verifica
+        responde 400. Se puede resolver aunque el periodo este en reparto o ya
+        distribuido:
         la operacion se serializa con el cerrojo de periodo que comparten la
         compuerta de anomalias, la ingesta y la valorizacion.
 
@@ -1294,6 +1327,15 @@ paths:
                     resuelto_en: "2026-09-27T15:04:05Z"
                     ultima_actualizacion: "2026-09-27T15:04:05Z"
                     nota: coincide la ficha tecnica con la declaracion
+                    sugerencia:
+                      decision: asignar
+                      obra_id: obra-12
+                      titulo: La Nina T3
+                      confianza: 0.37
+                      motivo: sin resoluciones anteriores de este titulo
+                      orden: [obra-12]
+                      aceptada: true
+                      sello: null
                 descartar:
                   summary: Caso descartado
                   value:
@@ -1315,12 +1357,21 @@ paths:
                     resuelto_en: "2026-09-27T15:04:05Z"
                     ultima_actualizacion: "2026-09-27T15:04:05Z"
                     nota: no es un uso del repertorio de REDES
+                    sugerencia:
+                      decision: ninguna
+                      obra_id: null
+                      titulo: null
+                      confianza: 0
+                      motivo: no hay candidatas ni resoluciones anteriores suficientes para sugerir
+                      orden: []
+                      aceptada: false
+                      sello: null
         "400":
           description: |
             El cuerpo no es un JSON valido, la nota falta o pasa de 300
             caracteres, la decision no es `asignar` ni `descartar`, `asignar`
-            viene sin `obra_id` (o `descartar` con el), o la obra no esta en el
-            catalogo.
+            viene sin `obra_id` (o `descartar` con el), la obra no esta en el
+            catalogo, o `sello` no es el de la propuesta mostrada para ese caso.
           content:
             application/json:
               schema:
@@ -4764,7 +4815,7 @@ components:
     ObraONIPublica:
       type: object
       additionalProperties: false
-      required: [id, titulo, fuente, ids_fuente, modalidad]
+      required: [id, titulo, fuente, ids_fuente, modalidad, fecha_proceso]
       description: |
         Proyeccion publica de un uso en ONI. Titulo e informacion
         identificatoria. No hay, y no va a haber, campo de dinero (R-18,
@@ -4786,6 +4837,13 @@ components:
           type: string
           enum: [tv, cine, ott, hotel]
           description: Modalidad de comunicacion publica (RD 8).
+        fecha_proceso:
+          type: string
+          format: date-time
+          description: |
+            Ancla de R-19 de esta obra, RFC 3339. Es la fecha de la
+            publicacion que la incluyo. Una complementaria del mismo periodo
+            no la reescribe.
 
     ListadoONI:
       type: object
@@ -4798,8 +4856,9 @@ components:
         - explicacion
         - obras
       description: |
-        Instantanea publicada del listado ONI. La fecha_proceso es el ancla
-        de los tres anos de R-19.
+        Instantanea publicada del listado ONI. `fecha_proceso` de la cabecera
+        es la de la secuencia mas reciente. El ancla de R-19 de cada obra es
+        `obras[].fecha_proceso`.
       properties:
         periodo:
           type: string
@@ -4807,7 +4866,9 @@ components:
         fecha_proceso:
           type: string
           format: date-time
-          description: Fecha de la publicacion, RFC 3339. No se reescribe.
+          description: |
+            Fecha de la secuencia mas reciente de este periodo, RFC 3339.
+            No es el ancla de cada obra: esa va en `obras[].fecha_proceso`.
         direccion_fisica:
           type: string
           description: Direccion fisica a la que se allega documentacion (RD 13.8.4.3).
@@ -6388,7 +6449,7 @@ components:
           description: Casos pendientes con los filtros `fuente` y `periodo`, sin `estado` ni paginacion.
     CasoIdentificacion:
       type: object
-      required: [id, titulo, titulo_original, fuente, modalidad, reporte_id, periodo, ids_fuente, evidencia, estado, candidatos, obra_asignada, resuelto_por, resuelto_en, ultima_actualizacion, nota]
+      required: [id, titulo, titulo_original, fuente, modalidad, reporte_id, periodo, ids_fuente, evidencia, estado, candidatos, obra_asignada, resuelto_por, resuelto_en, ultima_actualizacion, nota, sugerencia]
       description: |
         Un uso que la cascada no resolvio, tal como llego, con la evidencia
         para que una persona decida. Sin importes ni medidas (ADR 0007).
@@ -6465,6 +6526,68 @@ components:
             La justificacion de la decision, obligatoria al resolver (#175).
             `null` mientras el caso este pendiente.
 
+        sugerencia:
+          $ref: "#/components/schemas/SugerenciaIdentificacion"
+
+    SugerenciaIdentificacion:
+      type: object
+      required: [decision, obra_id, titulo, confianza, motivo, orden, aceptada, sello]
+      description: |
+        Lo que el rankeador propone para un caso de la cola (#53). Es una
+        sugerencia: la persona la confirma o elige otra. Ningun caso se
+        resuelve solo (ADR 0007).
+
+        `orden` son los ids de obra de mejor a peor ajuste. `candidatos` no se
+        reordena: sigue siendo la evidencia de la cascada.
+
+        `sello` es la propuesta verificable que se mostro. El cliente lo
+        devuelve al resolver. `null` en un caso ya resuelto: ahi la propuesta
+        guardada es la que se midio.
+      properties:
+        decision:
+          type: string
+          enum: [asignar, descartar, ninguna]
+          description: |
+            `asignar` propone `obra_id`. `descartar` propone dejar el caso
+            fuera del repertorio. `ninguna` es que no hay con que proponer.
+        obra_id:
+          type: string
+          nullable: true
+          description: Obra propuesta cuando `decision` es `asignar`. `null` en los otros dos.
+        titulo:
+          type: string
+          nullable: true
+          description: Titulo de catalogo de `obra_id`, para mostrarlo sin otro cruce. `null` si no hay obra.
+        confianza:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            Ajuste entre la similitud del escalon difuso y las resoluciones
+            anteriores del mismo titulo. No es una probabilidad ni un porcentaje
+            de reparto.
+        motivo:
+          type: string
+          description: Por que se propuso eso, en una frase.
+        orden:
+          type: array
+          items:
+            type: string
+          description: Ids de obra en el orden sugerido. Lista vacia si no hay candidatas.
+        aceptada:
+          type: boolean
+          nullable: true
+          description: |
+            `null` mientras el caso esta pendiente. Tras resolver, `true` si la
+            persona confirmo la sugerencia y `false` si la cambio.
+        sello:
+          type: string
+          nullable: true
+          description: |
+            Sello de la propuesta mostrada para este caso. Quien confirma lo
+            devuelve en el cuerpo de la resolucion. `null` si no hay una
+            propuesta verificable que devolver (un caso ya resuelto).
+
     ResolucionDeCaso:
       type: object
       required: [decision, nota]
@@ -6498,6 +6621,13 @@ components:
             dice quien, la nota dice por que, y la auditoria de RD 16 pregunta
             las dos cosas.
           example: coincide la ficha tecnica con la declaracion
+        sello:
+          type: string
+          description: |
+            El `sugerencia.sello` del listado. Si viene, la aceptacion se mide
+            contra esa propuesta aunque el historial haya cambiado. Si no
+            verifica, la peticion es un 400 y no se escribe nada.
+          example: eyJ1c28iOiJ1c28tMSJ9.firma
     CandidatoIdentificacion:
       type: object
       required: [obra_id, titulo, anio, genero, puntaje, titulo_consultado]

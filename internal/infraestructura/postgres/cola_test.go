@@ -173,13 +173,14 @@ func TestTomarConLaColaVaciaEsErrSinTrabajo(t *testing.T) {
 func TestTomarEsFIFOYMarcaElTrabajoEnCurso(t *testing.T) {
 	store, pool := colaVacia(t)
 	ctx := t.Context()
-	ahora := time.Now().Add(time.Second)
 
 	for corrida := 1; corrida <= 3; corrida++ {
 		if _, err := store.Encolar(ctx, clave(aplicacion.TrabajoResolverUsos, "2026", corrida), nil); err != nil {
 			t.Fatalf("Encolar: %v", err)
 		}
 	}
+	// El reloj de la base, despues de encolar: ver testhelp.Ahora (#205).
+	ahora := testhelp.Ahora(t, pool)
 
 	for corrida := 1; corrida <= 3; corrida++ {
 		trabajo, err := store.Tomar(ctx, ahora)
@@ -207,13 +208,13 @@ func TestTomarEsFIFOYMarcaElTrabajoEnCurso(t *testing.T) {
 // filtro, el worker giraria sobre el hasta agotar los intentos en segundos y
 // la espera exponencial no serviria de nada.
 func TestTomarRespetaLaEsperaDeReintento(t *testing.T) {
-	store, _ := colaVacia(t)
+	store, pool := colaVacia(t)
 	ctx := t.Context()
-	ahora := time.Now().Add(time.Second)
 
 	if _, err := store.Encolar(ctx, clave(aplicacion.TrabajoEjecutarReparto, "2026", 1), nil); err != nil {
 		t.Fatalf("Encolar: %v", err)
 	}
+	ahora := testhelp.Ahora(t, pool)
 
 	trabajo, err := store.Tomar(ctx, ahora)
 	if err != nil {
@@ -252,7 +253,6 @@ func TestTomarRespetaLaEsperaDeReintento(t *testing.T) {
 func TestTomarNoEntregaElMismoTrabajoADosWorkers(t *testing.T) {
 	store, pool := colaVacia(t)
 	ctx := t.Context()
-	ahora := time.Now().Add(time.Second)
 
 	const trabajos, workers = 24, 4
 	for corrida := 1; corrida <= trabajos; corrida++ {
@@ -260,6 +260,7 @@ func TestTomarNoEntregaElMismoTrabajoADosWorkers(t *testing.T) {
 			t.Fatalf("Encolar: %v", err)
 		}
 	}
+	ahora := testhelp.Ahora(t, pool)
 
 	var (
 		mu      sync.Mutex
@@ -317,19 +318,20 @@ func TestTomarNoEntregaElMismoTrabajoADosWorkers(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCerrarEscribeLasTresFormas(t *testing.T) {
-	ahora := time.Now().Add(time.Second)
-	vuelta := ahora.Add(90 * time.Minute)
+	const espera = 90 * time.Minute
 
 	casos := []struct {
 		nombre    string
-		cierre    aplicacion.Cierre
+		cierre    func(ahora time.Time) aplicacion.Cierre
 		estado    string
 		conError  bool
 		mueveHora bool
 	}{
-		{"exito", aplicacion.Hecho(), "hecho", false, false},
-		{"reintento", aplicacion.Reintentar(vuelta, "la base no responde"), "pendiente", true, true},
-		{"abandono", aplicacion.Abandonar("sin manejador"), "fallido", true, false},
+		{"exito", func(time.Time) aplicacion.Cierre { return aplicacion.Hecho() }, "hecho", false, false},
+		{"reintento", func(ahora time.Time) aplicacion.Cierre {
+			return aplicacion.Reintentar(ahora.Add(espera), "la base no responde")
+		}, "pendiente", true, true},
+		{"abandono", func(time.Time) aplicacion.Cierre { return aplicacion.Abandonar("sin manejador") }, "fallido", true, false},
 	}
 
 	for _, c := range casos {
@@ -340,11 +342,17 @@ func TestCerrarEscribeLasTresFormas(t *testing.T) {
 			if _, err := store.Encolar(ctx, clave(aplicacion.TrabajoEjecutarReparto, "2026", 1), nil); err != nil {
 				t.Fatalf("Encolar: %v", err)
 			}
+			// Dentro de la subprueba y despues de encolar: la restauracion de
+			// la base (y, la primera vez, el arranque del contenedor) cuesta
+			// segundos, y un instante tomado antes quedaria por detras del
+			// now() con el que la base sello disponible_en (#205).
+			ahora := testhelp.Ahora(t, pool)
 			trabajo, err := store.Tomar(ctx, ahora)
 			if err != nil {
 				t.Fatalf("Tomar: %v", err)
 			}
-			if err := store.Cerrar(ctx, trabajo.ID, c.cierre); err != nil {
+			antes := leerFila(t, pool, trabajo.ID).disponible
+			if err := store.Cerrar(ctx, trabajo.ID, c.cierre(ahora)); err != nil {
 				t.Fatalf("Cerrar: %v", err)
 			}
 
@@ -357,10 +365,14 @@ func TestCerrarEscribeLasTresFormas(t *testing.T) {
 			}
 			// La hora solo se mueve cuando hay reintento: dejarla intacta en
 			// los otros dos casos es lo que permite ver, en un trabajo
-			// abandonado, cuando se intento por ultima vez.
-			if movida := f.disponible.After(ahora); movida != c.mueveHora {
-				t.Errorf("disponible_en = %v (ahora %v), se esperaba movida = %v",
-					f.disponible, ahora, c.mueveHora)
+			// abandonado, cuando se intento por ultima vez. Con Equal y no
+			// con After: tambien detecta un COALESCE que escriba otro instante.
+			esperada := antes
+			if c.mueveHora {
+				esperada = ahora.Add(espera)
+			}
+			if !f.disponible.Equal(esperada) {
+				t.Errorf("disponible_en = %v, se esperaba %v", f.disponible, esperada)
 			}
 		})
 	}
@@ -369,13 +381,13 @@ func TestCerrarEscribeLasTresFormas(t *testing.T) {
 // Un cierre repetido no puede reescribir un estado que ya no le pertenece:
 // dejaria `hecho` un trabajo reprogramado, y la corrida no se ejecutaria.
 func TestCerrarDosVecesElMismoTrabajoEsErrNoEncontrado(t *testing.T) {
-	store, _ := colaVacia(t)
+	store, pool := colaVacia(t)
 	ctx := t.Context()
-	ahora := time.Now().Add(time.Second)
 
 	if _, err := store.Encolar(ctx, clave(aplicacion.TrabajoEjecutarReparto, "2026", 1), nil); err != nil {
 		t.Fatalf("Encolar: %v", err)
 	}
+	ahora := testhelp.Ahora(t, pool)
 	trabajo, err := store.Tomar(ctx, ahora)
 	if err != nil {
 		t.Fatalf("Tomar: %v", err)
@@ -404,12 +416,12 @@ func TestCerrarUnTrabajoQueNoExisteEsErrNoEncontrado(t *testing.T) {
 func TestUnTrabajoHechoBloqueaElReencoladoDeLaMismaCorrida(t *testing.T) {
 	store, pool := colaVacia(t)
 	ctx := t.Context()
-	ahora := time.Now().Add(time.Second)
 	original := clave(aplicacion.TrabajoEjecutarReparto, "2026", 1)
 
 	if _, err := store.Encolar(ctx, original, nil); err != nil {
 		t.Fatalf("Encolar: %v", err)
 	}
+	ahora := testhelp.Ahora(t, pool)
 	trabajo, err := store.Tomar(ctx, ahora)
 	if err != nil {
 		t.Fatalf("Tomar: %v", err)
