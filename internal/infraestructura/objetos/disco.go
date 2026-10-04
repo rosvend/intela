@@ -141,6 +141,9 @@ func (d Disco) ruta(clave string) (string, error) {
 // el de MinIO o S3 que el ADR 0006 pide de verdad -con object-lock-, la
 // durabilidad la responde el almacen y su contrato, no este fichero. Hasta
 // entonces el hueco existe y esta aqui escrito.
+//
+// En Windows el hueco es un poco mayor: sincronizarDir no hace nada alli (ver
+// disco_sync_windows.go), asi que solo el fsync del fichero esta de por medio.
 func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 	destino, err := d.ruta(clave)
 	if err != nil {
@@ -197,17 +200,6 @@ func (d Disco) Poner(ctx context.Context, clave string, datos []byte) error {
 	// nunca llego a publicar. Es el mismo estado que el orden de GuardarReporte
 	// existe para impedir, alcanzado por el otro lado.
 	return sincronizarDir(dir)
-}
-
-// sincronizarDir fuerza a disco la entrada de directorio de lo que se acaba de
-// enlazar.
-func sincronizarDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	return f.Sync()
 }
 
 func (d Disco) Obtener(ctx context.Context, clave string) ([]byte, error) {
