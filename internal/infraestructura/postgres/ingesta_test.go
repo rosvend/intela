@@ -1868,6 +1868,70 @@ func idsDe(usos []aplicacion.UsoPersistido) []string {
 	return ids
 }
 
+// cambio.USD y cambio.usd son dos filas para el EXCLUDE de `parametros` y
+// para la deduplicacion por clave completa, pero las dos normalizan a
+// Tasas["USD"]. Sin esta prueba la segunda pisa a la primera en silencio
+// (#147): el mismo fallo que [armarSnapshot] ya rechaza con ErrorTasaAmbigua.
+func TestSnapshotNormalizacionRechazaUSDYusdVigentesALaVez(t *testing.T) {
+	pool := testhelp.Pool(t)
+	s := &Store{pool: pool}
+	ctx := t.Context()
+
+	for _, p := range []struct{ clave, valor string }{
+		{"cambio.USD", "4100"},
+		{"cambio.usd", "4050"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
+			 VALUES ($1, $2, '2026-01-01', 'Asamblea', 'RD')`,
+			p.clave, p.valor); err != nil {
+			t.Fatalf("sembrar %s: %v", p.clave, err)
+		}
+	}
+
+	_, err := s.SnapshotNormalizacion(ctx)
+	var ambigua *aplicacion.ErrorTasaAmbigua
+	if !errors.As(err, &ambigua) {
+		t.Fatalf("se esperaba *aplicacion.ErrorTasaAmbigua, dio: %v", err)
+	}
+	if !errors.Is(err, aplicacion.ErrTasaAmbigua) {
+		t.Errorf("errors.Is(err, ErrTasaAmbigua) tiene que reconocerlo")
+	}
+	if ambigua.Codigo != "USD" {
+		t.Errorf("Codigo = %q, se esperaba USD", ambigua.Codigo)
+	}
+	viste := map[string]bool{}
+	for _, clave := range ambigua.Claves {
+		viste[clave] = true
+	}
+	if !viste["cambio.USD"] || !viste["cambio.usd"] {
+		t.Errorf("Claves = %v, se esperaban cambio.USD y cambio.usd", ambigua.Claves)
+	}
+}
+
+func TestSnapshotNormalizacionUsaLaMonedaBaseCompartida(t *testing.T) {
+	pool := testhelp.Pool(t)
+	s := &Store{pool: pool}
+	ctx := t.Context()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO parametros (clave, valor, vigente_desde, organo, reglamento)
+		 VALUES ('cambio.USD', '4100', '2026-01-01', 'Asamblea', 'RD')`); err != nil {
+		t.Fatalf("sembrar cambio.USD: %v", err)
+	}
+
+	snap, err := s.SnapshotNormalizacion(ctx)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snap.MonedaBase != monedaBase {
+		t.Errorf("MonedaBase = %q, se esperaba %q", snap.MonedaBase, monedaBase)
+	}
+	if !snap.Tasas["USD"].Equal(decimal.RequireFromString("4100")) {
+		t.Errorf("Tasas[USD] = %s, se esperaba 4100", snap.Tasas["USD"])
+	}
+}
+
 func cargaPorID(t *testing.T, cargas []aplicacion.CargaReporte, id string) aplicacion.CargaReporte {
 	t.Helper()
 	for _, c := range cargas {
