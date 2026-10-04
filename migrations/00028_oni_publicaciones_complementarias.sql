@@ -1,4 +1,4 @@
--- Publicaciones ONI complementarias (#184). Numero 00027, primero libre por encima de 00026 en main. Ver docs/planes/184-oni-tardios.md.
+-- Publicaciones ONI complementarias (#184). 00028: main llega a 00026 y #199 tomo 00027. Ver docs/planes/184-oni-tardios.md.
 
 -- +goose Up
 
@@ -15,11 +15,6 @@ ALTER TABLE oni_publicaciones
 -- +goose StatementBegin
 ALTER TABLE oni_publicaciones
   ADD CONSTRAINT oni_publicaciones_periodo_secuencia_key UNIQUE (periodo, secuencia);
--- +goose StatementEnd
-
--- +goose StatementBegin
-CREATE INDEX IF NOT EXISTS oni_publicaciones_periodo_secuencia
-  ON oni_publicaciones (periodo, secuencia DESC);
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -49,10 +44,6 @@ CREATE INDEX IF NOT EXISTS oni_publicacion_items_uso
 
 -- +goose StatementBegin
 DROP INDEX IF EXISTS usos_oni_pendientes_publicar;
--- +goose StatementEnd
-
--- +goose StatementBegin
-DROP INDEX IF EXISTS oni_publicaciones_periodo_secuencia;
 -- +goose StatementEnd
 
 -- +goose StatementBegin

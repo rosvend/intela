@@ -5,7 +5,7 @@ despues (reporte tardio o uso reabierto) y quedaba en `escalon = 'oni'` no se
 podia publicar: republicar el periodo respondia 409 y `publicado_en` seguia
 en NULL, asi que el reloj de R-19 (RD 13.8.7) no arrancaba.
 
-La migracion `00027_oni_publicaciones_complementarias.sql` quita
+La migracion `00028_oni_publicaciones_complementarias.sql` quita
 `UNIQUE (periodo)`, agrega `secuencia` con `UNIQUE (periodo, secuencia)` y un
 unico por `oni_publicacion_items(uso_id)`. El down vuelve a `UNIQUE (periodo)`:
 falla, a proposito, si ya hay una complementaria.
@@ -20,8 +20,9 @@ La cabecera de `GET /publico/oni` es la secuencia mas reciente y no reescribe
 las anteriores. `POST /oni/publicaciones` responde solo las obras de la
 secuencia recien creada.
 
-El 00027 es el primero libre por encima de `00026_correccion_de_anomalias.sql`
-en `main`. goose corre con `allowMissing = false`: un numero por debajo de la
-version ya aplicada, o dos ficheros con el mismo numero, tumban el despliegue.
-El #199 tambien pide 00027 y no esta en `main`; el que entre segundo tiene que
-volver a tomar el primero libre.
+El 00028 es el primero libre por encima de `00026_correccion_de_anomalias.sql`
+en `main` y de `00027_ejemplos_resolucion.sql` del #199. goose corre con
+`allowMissing = false`: un numero por debajo de la version ya aplicada, o dos
+ficheros con el mismo numero, tumban el despliegue. Por eso el #199 tiene que
+entrar a `main` antes que este PR; si este entra primero, el #199 tiene que
+renumerarse por encima de 00028.
