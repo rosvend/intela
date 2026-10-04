@@ -10,14 +10,19 @@ import { useRecurso } from "../tablero/useDashboard";
 import {
   TIPOS_DE_ALERTA,
   conteoDeTipo,
+  advertenciaDeCompuerta,
   etiquetaDeTipo,
-  totalPendientes,
 } from "./anomalias";
 import { firmarProceso } from "./cliente";
 import Compuerta from "./Compuerta";
 import Pipeline from "./Pipeline";
 import { ETIQUETA_CIRCUITO, ETIQUETA_ETAPA } from "./etapas";
-import { Alerta, INTERVALO_SONDEO_MS, Proceso, RUTAS_REPARTO } from "./tipos";
+import {
+  INTERVALO_SONDEO_MS,
+  Proceso,
+  ResumenDeAlertas,
+  RUTAS_REPARTO,
+} from "./tipos";
 
 export default function PanelCorridas() {
   const { id } = useParams<{ id: string }>();
@@ -51,10 +56,10 @@ export default function PanelCorridas() {
   const periodo = seleccionado?.periodo;
   // Solo quien puede ver /anomalias lee /api/alertas. Contabilidad firma y
   // tambien llega a /anomalias (para ver el aviso antes de firmar); pedirlas
-  // con un rol sin acceso dejaria las cinco tarjetas en rojo con el 403.
+  // con un rol sin acceso dejaria las seis tarjetas en rojo con el 403.
   const verAnomalias = usuario ? puedeVer(usuario.rol, "/anomalias") : false;
-  const alertas = useRecurso<Alerta[]>(
-    RUTAS_REPARTO.alertas(periodo),
+  const resumen = useRecurso<ResumenDeAlertas>(
+    RUTAS_REPARTO.resumenAlertas(periodo ?? ""),
     Boolean(periodo) && verAnomalias,
     recarga,
   );
@@ -65,8 +70,7 @@ export default function PanelCorridas() {
     setFirma({ clave: "", enviando: false, error: "" });
   }, [clave]);
 
-  const abiertas =
-    alertas.tipo === "listo" ? totalPendientes(alertas.datos) : 0;
+  const abiertas = resumen.tipo === "listo" ? resumen.datos.abiertas : 0;
   const enlaceAnomalias = `/anomalias?periodo=${encodeURIComponent(periodo ?? "")}`;
 
   if (!usuario) return null;
@@ -191,9 +195,11 @@ export default function PanelCorridas() {
                 proceso={seleccionado}
                 rol={usuario.rol}
                 advertencia={
-                  abiertas > 0
-                    ? `Revisa las ${formatearEntero(abiertas)} alertas abiertas del periodo antes de firmar.`
-                    : ""
+                  resumen.tipo === "listo"
+                    ? advertenciaDeCompuerta(resumen.datos)
+                    : resumen.tipo === "error"
+                      ? "No se pudo leer el estado de anomalías del periodo. No firmes sin revisarlo."
+                      : ""
                 }
                 enviando={firma.clave === clave && firma.enviando}
                 error={firma.clave === clave ? firma.error : ""}
@@ -217,7 +223,7 @@ export default function PanelCorridas() {
                       descripcion="Alertas abiertas del periodo"
                       to={enlaceAnomalias}
                       etiquetaEnlace="Ir a resolución"
-                      recurso={conteoDeTipo(alertas, tipo)}
+                      recurso={conteoDeTipo(resumen, tipo)}
                     >
                       {(datos) => (
                         <p className="tarjeta-valor">
