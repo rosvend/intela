@@ -8,8 +8,9 @@
 # a copy of a tfvars file instead of a surprise.
 #
 # There is no NAT Gateway and no internet gateway, on purpose. The Lambdas only
-# ever talk to PostgreSQL and to S3: PostgreSQL is inside this VPC, and S3 is
-# reached through a gateway endpoint, which is free. CloudWatch Logs works
+# ever talk to PostgreSQL, S3 and Bedrock: PostgreSQL is inside this VPC, S3 is
+# reached through a gateway endpoint, which is free, and Bedrock through an
+# interface endpoint in one subnet (ADR 0025). CloudWatch Logs works
 # without an endpoint because the Lambda service writes the logs on the
 # function's behalf, not through the function's own network interface.
 

@@ -135,7 +135,7 @@ variable "log_retention_days" {
 
 # The in-app assistant (#66). No key means the assistant answers "not available"; the API still serves.
 variable "agente_proveedor" {
-  description = "Value for AGENTE_PROVEEDOR: anthropic, falso, or empty (anthropic when a key is present)."
+  description = "Value for AGENTE_PROVEEDOR: bedrock, anthropic, falso, or empty (anthropic when a key is present)."
   type        = string
   default     = ""
 }
@@ -148,7 +148,7 @@ variable "anthropic_api_key" {
 }
 
 variable "agente_modelo" {
-  description = "Value for AGENTE_MODELO. Empty uses the adapter default (Haiku 4.5)."
+  description = "Value for AGENTE_MODELO. Empty uses the adapter default (Haiku 4.5). Another Bedrock model also needs bedrock_policy_json widened."
   type        = string
   default     = ""
 }
@@ -158,4 +158,9 @@ variable "agente_plazo" {
   description = "Value for AGENTE_PLAZO, the whole-question deadline. Go duration syntax."
   type        = string
   default     = "25s"
+}
+
+variable "bedrock_policy_json" {
+  description = "IAM policy that lets the function invoke the assistant's Bedrock models. Opaque here: the composition root writes it."
+  type        = string
 }

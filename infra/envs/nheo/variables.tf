@@ -80,8 +80,19 @@ variable "monthly_budget_usd" {
 }
 
 variable "anthropic_api_key" {
-  description = "Key for the in-app assistant (#66). Comes from the ANTHROPIC_API_KEY secret; empty leaves the assistant answering 'not available'."
+  description = "Key for the assistant's optional direct Anthropic provider (#66). Comes from the ANTHROPIC_API_KEY secret; only read when agente_proveedor = \"anthropic\"."
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "agente_proveedor" {
+  description = "Value for AGENTE_PROVEEDOR. bedrock is the production path (ADR 0025); anthropic needs the key AND a route to the internet, which these subnets do not have."
+  type        = string
+  default     = "bedrock"
+
+  validation {
+    condition     = contains(["bedrock", "anthropic", "falso"], var.agente_proveedor)
+    error_message = "agente_proveedor must be bedrock, anthropic or falso."
+  }
 }

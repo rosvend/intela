@@ -43,3 +43,11 @@ resource "aws_iam_role_policy" "vault" {
   role   = module.function.role_name
   policy = var.vault_policy_json
 }
+
+# The assistant's model (#66, ADR 0025). Opaque here, like the vault policy: the
+# composition root knows which models and regions; this module only attaches it.
+resource "aws_iam_role_policy" "bedrock" {
+  name   = "${var.name_prefix}-api-bedrock"
+  role   = module.function.role_name
+  policy = var.bedrock_policy_json
+}

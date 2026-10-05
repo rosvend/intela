@@ -53,8 +53,9 @@ resource "aws_route_table_association" "private" {
 }
 
 # Gateway endpoints are free. Interface endpoints are not -- they bill about
-# $7.20 per month each, which is why nothing in this design reads SSM or Secrets
-# Manager at runtime from inside the VPC.
+# $7.20 per month per AZ, which is why nothing in this design reads SSM or
+# Secrets Manager at runtime from inside the VPC. The one exception is Bedrock,
+# below, which the assistant cannot do without.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
@@ -76,7 +77,7 @@ resource "aws_security_group" "lambda" {
 
 resource "aws_vpc_security_group_egress_rule" "lambda_all" {
   security_group_id = aws_security_group.lambda.id
-  description       = "Outbound to PostgreSQL and to the S3 gateway endpoint. There is no route to the internet from these subnets."
+  description       = "Outbound to PostgreSQL, the S3 gateway endpoint and the Bedrock interface endpoint. There is no route to the internet from these subnets."
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
@@ -96,6 +97,48 @@ resource "aws_vpc_security_group_ingress_rule" "database_from_lambda" {
   description                  = "PostgreSQL from the Intela Lambdas"
   from_port                    = 5432
   to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.lambda.id
+}
+
+# The assistant's model (#66, ADR 0025). Bedrock is reached through an interface
+# endpoint so the API keeps having no route to the internet. The alternative, a
+# NAT Gateway, is about USD 32 a month plus traffic and opens egress for the
+# whole API.
+#
+# One subnet, on purpose: an interface endpoint bills about USD 7.20 a month
+# PER AZ plus USD 0.01 per GB. A Lambda in the other AZ still reaches it, with
+# cross-AZ traffic that is negligible for chat-sized payloads. The price is that
+# losing this AZ takes the assistant down; nothing else depends on it.
+#
+# Private DNS makes bedrock-runtime.<region>.amazonaws.com resolve to the
+# endpoint, so the SDK needs no custom endpoint URL.
+resource "aws_vpc_endpoint" "bedrock_runtime" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private[0].id]
+  security_group_ids  = [aws_security_group.bedrock_endpoint.id]
+  private_dns_enabled = true
+
+  tags = { Name = "${var.name_prefix}-bedrock-runtime" }
+}
+
+# The Lambda side needs no new rule: lambda_all already allows all egress, and
+# the subnets still have no route out of the VPC.
+resource "aws_security_group" "bedrock_endpoint" {
+  name        = "${var.name_prefix}-bedrock-endpoint"
+  description = "Bedrock runtime interface endpoint. HTTPS from the Intela Lambdas only."
+  vpc_id      = aws_vpc.this.id
+
+  tags = { Name = "${var.name_prefix}-bedrock-endpoint" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "bedrock_from_lambda" {
+  security_group_id            = aws_security_group.bedrock_endpoint.id
+  description                  = "HTTPS from the Intela Lambdas"
+  from_port                    = 443
+  to_port                      = 443
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.lambda.id
 }
