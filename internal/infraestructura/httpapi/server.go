@@ -79,6 +79,7 @@ type Casos struct {
 	Resolucion     ResolucionIdentificacion
 	Explicar       Explicador
 	Ingresos       ConsultaIngresos
+	Tablero        Tablero
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -109,6 +110,7 @@ type API struct {
 	resolucion     ResolucionIdentificacion
 	explicar       Explicador
 	ingresos       ConsultaIngresos
+	tablero        Tablero
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -145,6 +147,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		resolucion:     casos.Resolucion,
 		explicar:       casos.Explicar,
 		ingresos:       casos.Ingresos,
+		tablero:        casos.Tablero,
 		opts:           opts,
 		log:            log,
 	}
@@ -339,6 +342,26 @@ func (a *API) Router() http.Handler {
 				compuerta.Use(requiereRol(aplicacion.RolDistribucion, aplicacion.RolContabilidad))
 				compuerta.Post("/{id}/firmar", a.firmarProceso)
 				compuerta.Post("/{id}/rechazar", a.rechazarGateProceso)
+			})
+		})
+
+		// Tarjetas del panel de inicio: staff con la misma lectura que /procesos;
+		// las del titular recortan por el TitularID de la sesion.
+		protegido.Route("/tablero", func(tab chi.Router) {
+			tab.Group(func(staff chi.Router) {
+				staff.Use(requiereRol(
+					aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+					aplicacion.RolContabilidad, aplicacion.RolAuditor,
+				))
+				staff.Get("/cargas-pendientes", a.conTablero(a.tableroCargasPendientes))
+				staff.Get("/obras-en-reserva", a.conTablero(a.tableroObrasEnReserva))
+				staff.Get("/oni", a.conTablero(a.tableroONI))
+				staff.Get("/ultima-corrida", a.conTablero(a.tableroUltimaCorrida))
+			})
+			tab.Group(func(titular chi.Router) {
+				titular.Use(requiereRol(aplicacion.RolTitular))
+				titular.Get("/mis-obras", a.conTablero(a.tableroMisObras))
+				titular.Get("/ultima-liquidacion", a.conTablero(a.tableroUltimaLiquidacion))
 			})
 		})
 

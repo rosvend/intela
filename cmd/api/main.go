@@ -259,6 +259,7 @@ func ejecutar(log *slog.Logger) error {
 		},
 		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
+		Tablero:  aplicacion.Tablero{Repo: store},
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,
