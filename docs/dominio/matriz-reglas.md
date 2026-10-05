@@ -67,7 +67,7 @@ pasando (`go test ./...`).
 | R-24 Solo reclama quien estaba afiliado en el periodo | `RD 14.5.5`, `RD 14.5.8` | `afiliacion` (andamiaje); P-11 | — | partial |
 | R-25 Autores de sociedades hermanas reclaman por su sociedad | `RD 14.5.7` | `reclamaciones` (andamiaje) | — | partial |
 | R-26 Excepciones: no es comunicación pública | `RD 8.2`, `RT 1` | Documentado en skill tarifas; sin filtro de dominio | — | partial |
-| R-27 Se excluyen canales/programas fuera de repertorio | `RD 9.5` | `internal/dominio/identificacion`; `internal/aplicacion` | `TestResolverUsosExcluyeSinSondearYGuardaLaExclusion`; `TestGuardarMatchExcluidoNoEsONI`; `TestResolverUsosIntegracionCriterio4Repertorio` | done |
+| R-27 Se excluyen canales/programas fuera de repertorio | `RD 9.5` | `internal/dominio/identificacion`; `internal/dominio/reparto` (`Pondera`); `internal/aplicacion` | `TestResolverUsosExcluyeSinSondearYGuardaLaExclusion`; `TestGuardarMatchExcluidoNoEsONI`; `TestResolverUsosIntegracionCriterio4Repertorio`; `TestPonderaSoloExcluyeR27EnSuscripcionYHotel`; `TestDesgloseDeLosUsosQuePonderanReproduceLosPuntosDelMotor`; `TestValorizarSuscripcionNoAsientaElUsoFueraDeRepertorio`; `TestValorizarTVConMarcaFueraDeRepertorioSiAsientaElUso` | done |
 | R-28 Exclusividad de sociedad | `RS 1`, `RS 4.1` | `internal/dominio/afiliacion` (andamiaje) | — | partial |
 | R-29 Requisito mínimo para socio activo | `RS 4.1` | Clase `titulares`; afiliación (andamiaje) | — | partial |
 | R-30 Solo los Socios pueden pedir anticipo | `RA 2.2` | Tabla / `internal/dominio/anticipos` (andamiaje) | — | partial |
