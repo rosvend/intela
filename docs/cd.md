@@ -129,6 +129,29 @@ corrida que apunte a otro sitio no puede leerlos. Ademas hace falta la variable 
 `id-token: write` ya se concede, en los dos jobs que lo usan y en ninguno mas — que era exactamente
 la condicion que este documento ponia.
 
+### La clave del asistente
+
+El asistente de solo lectura (#66) llama a un modelo de lenguaje. Su clave es la unica credencial
+de aplicacion que entra por el despliegue:
+
+1. Crear el secreto de repositorio `ANTHROPIC_API_KEY` (Settings -> Secrets and variables ->
+   Actions). `terraform.yml` y `deploy.yml` lo exportan como `TF_VAR_anthropic_api_key`.
+2. `infra/envs/nheo` lo pasa al modulo `api`, que lo inyecta como `ANTHROPIC_API_KEY` en la
+   Lambda. La variable es `sensitive`: el plan que se comenta en el PR la imprime como
+   `(sensitive value)`. Queda, eso si, en el estado de Terraform (bucket cifrado) y en la
+   configuracion de la funcion; moverla a SSM/Secrets Manager es infraestructura nueva que no
+   entra en #66.
+3. Sin el secreto el despliegue no falla: el asistente contesta "no disponible" y el resto de la
+   API sirve igual.
+
+`AGENTE_PLAZO` (25 s por defecto en el modulo) acota la pregunta entera por debajo del
+`timeout_s` de la Lambda (30 s): al vencer, el usuario recibe un evento `error` en vez de un 502
+mudo. Si en produccion se ven plazos vencidos, subir los dos a la vez (p. ej. 60 s y 55 s).
+
+La Function URL esta en modo buffer: el cuerpo SSE de `/agente/consulta` llega entero al final, no
+evento a evento. El panel lo pinta igual; para verlo en vivo habria que pasar la URL a
+`RESPONSE_STREAM`, que hoy no soporta el adaptador de `cmd/lambda`.
+
 ## La compuerta de aprobacion
 
 `deploy.yml` corre con `environment: production`. Anadir *required reviewers* a ese entorno en los
