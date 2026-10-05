@@ -66,8 +66,8 @@ func (s *Store) LiberarSaldoReserva(
 			return traducirError(err, "bloquear reserva de %q", procesoID)
 		}
 
+		var disponible decimal.Decimal
 		if rendimientoAUsar.IsPositive() {
-			var disponible decimal.Decimal
 			if err := tx.QueryRow(ctx,
 				`SELECT monto FROM rendimientos WHERE circuito = 'nacional' AND vigencia = $1 FOR UPDATE`,
 				vigenciaRendimiento).Scan(&disponible); err != nil {
@@ -80,16 +80,62 @@ func (s *Store) LiberarSaldoReserva(
 			return err
 		}
 
-		if _, err := tx.Exec(ctx, `UPDATE reservas SET saldo = $2 WHERE proceso_id = $1`, procesoID, nuevoSaldo); err != nil {
-			return traducirError(err, "actualizar saldo de reserva %q", procesoID)
-		}
-
+		saldoPersistir := nuevoSaldo
 		if rendimientoAUsar.IsPositive() {
+			// Las lineas de fn mezclan el saldo de la reserva y el rendimiento.
+			// reservas_liberaciones guarda ese total. rendimientos_distribuciones
+			// guarda solo la parte del rendimiento, con el mismo peso (el
+			// Importe) que DistribuirSobreProporciones. El residuo de esa
+			// particion se queda en el ledger: rendimientos.monto baja la suma
+			// de las filas (rendimientoAUsar - residuo), no el importe pedido
+			// entero. La primera particion ya metio rendimientoAUsar en el
+			// saldo nuevo, asi que ese mismo residuo sale de la reserva: no
+			// puede quedar en los dos lados. Sin lineas el residuo es el
+			// importe completo y no sale del ledger.
+			partes, residuo, err := reparto.DistribuirSobreProporciones(rendimientoAUsar, lineas)
+			if err != nil {
+				return err
+			}
+			consumido := rendimientoAUsar.Sub(residuo)
+			// Un residuo negativo pide un centavo mas del que hay. Si el
+			// saldo bloqueado cubre el pedido pero no ese centavo, no se
+			// atribuye: las filas suman lo que el ledger si puede soltar.
+			// Un pedido mayor que el saldo sigue cayendo en el CHECK
+			// (monto >= 0), no en este recorte.
+			if consumido.GreaterThan(disponible) && !rendimientoAUsar.GreaterThan(disponible) {
+				exceso := consumido.Sub(disponible)
+				if err := rebajarImporte(partes, exceso); err != nil {
+					return err
+				}
+				consumido = disponible
+				residuo = rendimientoAUsar.Sub(consumido)
+			}
+			saldoPersistir = nuevoSaldo.Sub(residuo)
+			if saldoPersistir.IsNegative() {
+				if err := rebajarImporte(lineas, saldoPersistir.Neg()); err != nil {
+					return err
+				}
+				saldoPersistir = decimal.Zero
+			}
 			if _, err := tx.Exec(ctx,
 				`UPDATE rendimientos SET monto = monto - $2 WHERE circuito = 'nacional' AND vigencia = $1`,
-				vigenciaRendimiento, rendimientoAUsar); err != nil {
+				vigenciaRendimiento, consumido); err != nil {
 				return traducirError(err, "descontar rendimiento nacional/%s", vigenciaRendimiento)
 			}
+			for _, l := range partes {
+				if _, err := tx.Exec(ctx,
+					`INSERT INTO rendimientos_distribuciones
+					   (circuito, vigencia, proceso_id, obra_id, titular_id, ipi, porcentaje, importe)
+					 VALUES ('nacional', $1, $2, $3, $4, $5, $6, $7)`,
+					vigenciaRendimiento, procesoID, l.ObraID, l.TitularID, l.IPI, l.Porcentaje, l.Importe,
+				); err != nil {
+					return traducirError(err, "guardar distribucion del rendimiento nacional/%s", vigenciaRendimiento)
+				}
+			}
+		}
+
+		if _, err := tx.Exec(ctx, `UPDATE reservas SET saldo = $2 WHERE proceso_id = $1`, procesoID, saldoPersistir); err != nil {
+			return traducirError(err, "actualizar saldo de reserva %q", procesoID)
 		}
 
 		for _, l := range lineas {
@@ -103,4 +149,25 @@ func (s *Store) LiberarSaldoReserva(
 		}
 		return nil
 	})
+}
+
+// rebajarImporte resta exceso desde el final. Lo usa el residuo que no cabe
+// en el ledger ni en el saldo de la reserva: sale de una linea ya calculada
+// en vez de dejar el importe en dos sitios o en ninguno.
+func rebajarImporte(lineas []reparto.LineaTitular, exceso decimal.Decimal) error {
+	for i := len(lineas) - 1; i >= 0 && exceso.IsPositive(); i-- {
+		if !lineas[i].Importe.IsPositive() {
+			continue
+		}
+		if lineas[i].Importe.GreaterThanOrEqual(exceso) {
+			lineas[i].Importe = lineas[i].Importe.Sub(exceso)
+			return nil
+		}
+		exceso = exceso.Sub(lineas[i].Importe)
+		lineas[i].Importe = decimal.Zero
+	}
+	if exceso.IsPositive() {
+		return fmt.Errorf("%w: residuo de rendimiento sin linea de donde restarlo", reparto.ErrRepartoInvalido)
+	}
+	return nil
 }

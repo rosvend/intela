@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -14,9 +15,17 @@ import (
 
 // sembrarCorridaBase deja una bolsa, un proceso, dos obras y dos titulares
 // listos para que resultados_obra/resultados_titular referencien por FK.
+//
+// El pool es el de [testhelp.Pool] (MaxConns=1). Una prueba que necesite
+// varias conexiones a la vez abre el suyo y siembra con [sembrarCorridaSobre]:
+// una segunda llamada a Pool restauraria la base y borraria lo sembrado.
 func sembrarCorridaBase(t *testing.T) *Store {
 	t.Helper()
-	pool := testhelp.Pool(t)
+	return sembrarCorridaSobre(t, testhelp.Pool(t))
+}
+
+func sembrarCorridaSobre(t *testing.T, pool *pgxpool.Pool) *Store {
+	t.Helper()
 	s := &Store{pool: pool}
 	ctx := t.Context()
 

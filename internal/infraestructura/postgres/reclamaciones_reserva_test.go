@@ -322,6 +322,39 @@ func TestGuardarReclamacionRechazaComprometerMasDeLoQueQuedaEnLaReserva(t *testi
 	}
 }
 
+// TestAbrirReclamacionDosVecesNoDevuelveUnMontoQueLaFilaNoTiene es B8
+// (#156). ON CONFLICT DO NOTHING tragaba el segundo alta y el caso de uso
+// devolvía el monto pedido, que la fila no tiene. Tiene que fallar con el
+// centinela, y la fila se queda como quedo al abrirse.
+func TestAbrirReclamacionDosVecesNoDevuelveUnMontoQueLaFilaNoTiene(t *testing.T) {
+	s := sembrarTitularYActores(t)
+	b := aplicacion.BolsasAccesorias{Reclamaciones: s}
+	ctx := t.Context()
+
+	abierta, err := b.AbrirReclamacion(ctx, "rec-1", "titular-a", "proceso-1", "detalle original",
+		dec("30.00"), true, false)
+	if err != nil {
+		t.Fatalf("abrir: %v", err)
+	}
+	if !abierta.MontoSolicitado.Equal(dec("30.00")) {
+		t.Fatalf("monto abierto = %s, se esperaba 30.00", abierta.MontoSolicitado)
+	}
+
+	_, err = b.AbrirReclamacion(ctx, "rec-1", "titular-a", "proceso-1", "otro detalle",
+		dec("80.00"), true, false)
+	if !errors.Is(err, aplicacion.ErrReclamacionYaRegistrada) {
+		t.Fatalf("error = %v, se esperaba ErrReclamacionYaRegistrada", err)
+	}
+
+	leido, err := s.ReclamacionPorID(ctx, "rec-1")
+	if err != nil {
+		t.Fatalf("leer reclamacion: %v", err)
+	}
+	if leido.Detalle != "detalle original" || !leido.MontoSolicitado.Equal(dec("30.00")) {
+		t.Fatalf("la fila no es la persistida: %+v", leido)
+	}
+}
+
 func TestReclamacionPorIDSinFilaEsNoEncontrado(t *testing.T) {
 	s := sembrarTitularYActores(t)
 	_, err := s.ReclamacionPorID(t.Context(), "rec-que-no-existe")
