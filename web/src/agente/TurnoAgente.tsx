@@ -4,22 +4,20 @@ import {
   LockClosedIcon,
   NoSymbolIcon,
 } from "@heroicons/react/24/outline";
+import type { Turno } from "./conversacion";
 import { etiquetaHerramienta } from "./herramientas";
 import TextoConCitas from "./TextoConCitas";
-import {
-  enCurso,
-  type RespuestaAgente,
-  type TurnoAgente as Turno,
-} from "./turno";
 
-/** Respuesta del asistente en un turno: rastro de herramientas y luego respuesta, aviso o fallo. */
+/** Turno del asistente: rastro de herramientas y luego respuesta, aviso o fallo. Mismo DOM en vivo o en buffer. */
 export default function TurnoAgente({ turno }: { turno: Turno }) {
-  const vivo = enCurso(turno);
   return (
-    <div className="turno-agente" aria-live="polite">
-      <Pasos herramientas={turno.herramientas} vivo={vivo} />
-      {turno.fallo && <Fallo />}
-      {turno.respuesta && <Respuesta respuesta={turno.respuesta} />}
+    <div className="turno-agente">
+      <Pasos
+        herramientas={turno.herramientas}
+        vivo={turno.estado === "pendiente"}
+      />
+      {turno.estado === "error" && <Fallo texto={turno.texto} />}
+      {turno.estado === "listo" && <Respuesta turno={turno} />}
     </div>
   );
 }
@@ -59,21 +57,21 @@ function Pasos({
   );
 }
 
-function Respuesta({ respuesta }: { respuesta: RespuestaAgente }) {
-  if (respuesta.restringida) {
+function Respuesta({ turno }: { turno: Turno }) {
+  if (turno.restringida) {
     return (
       <div className="agente-aviso agente-aviso--restringida" role="note">
         <LockClosedIcon className="agente-aviso-icono" aria-hidden="true" />
         <div>
           <strong>Fuera del alcance de tu rol</strong>
-          <p>{respuesta.texto}</p>
+          <p>{turno.texto}</p>
         </div>
       </div>
     );
   }
   return (
     <>
-      {respuesta.parcial && (
+      {turno.parcial && (
         <p className="agente-aviso agente-aviso--parcial" role="note">
           <ExclamationTriangleIcon
             className="agente-aviso-icono"
@@ -87,25 +85,23 @@ function Respuesta({ respuesta }: { respuesta: RespuestaAgente }) {
       )}
       <p
         className={
-          respuesta.parcial
+          turno.parcial
             ? "agente-respuesta agente-respuesta--parcial"
             : "agente-respuesta"
         }
       >
-        <TextoConCitas texto={respuesta.texto} />
+        <TextoConCitas texto={turno.texto} />
       </p>
     </>
   );
 }
 
-function Fallo() {
+// El texto llega curado (evento error o mensaje JSON de la API); vacio, se dice igual que no hay asistente.
+function Fallo({ texto }: { texto: string }) {
   return (
-    <div className="agente-aviso agente-aviso--fallo" role="alert">
+    <p className="agente-aviso agente-aviso--fallo" role="alert">
       <NoSymbolIcon className="agente-aviso-icono" aria-hidden="true" />
-      <div>
-        <strong>El asistente no está disponible.</strong>
-        <p>No se obtuvo respuesta. Vuelve a preguntar en unos minutos.</p>
-      </div>
-    </div>
+      <span>{texto.trim() || "El asistente no está disponible."}</span>
+    </p>
   );
 }
