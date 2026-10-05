@@ -354,3 +354,28 @@ func TestPagadorCineNuncaEsIgualAFuenteCine(t *testing.T) {
 			"un reporte de cine y su pagador son dos ejes distintos", PagadorCine, FuenteCine)
 	}
 }
+
+// Las bolsas se dimensionan como un periodo real: cientos de millones por pagador.
+func TestBolsasConImportesDeUnPeriodoReal(t *testing.T) {
+	quiere := map[string]string{
+		"bolsa-caracol-" + Periodo + "-nacional":    "600000000.00",
+		"bolsa-rcn-" + Periodo + "-nacional":        "600000000.00",
+		"bolsa-procinal-" + Periodo + "-nacional":   "200000000.00",
+		"bolsa-netflix-" + Periodo + "-nacional":    "350000000.00",
+		"bolsa-transporte-" + Periodo + "-nacional": "40000000.00",
+		"bolsa-dago-" + Periodo + "-internacional":  "100000000.00",
+	}
+	bolsas := Construir().Bolsas
+	if len(bolsas) != len(quiere) {
+		t.Fatalf("bolsas = %d, se esperaban %d", len(bolsas), len(quiere))
+	}
+	for _, b := range bolsas {
+		monto, ok := quiere[b.ID]
+		if !ok {
+			t.Fatalf("bolsa inesperada %s", b.ID)
+		}
+		if !b.Bruto.Equal(decimal.RequireFromString(monto)) {
+			t.Errorf("bolsa %s bruto %s, se esperaba %s", b.ID, b.Bruto, monto)
+		}
+	}
+}
