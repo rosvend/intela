@@ -121,11 +121,19 @@ func pctGrupo(g GrupoCanal, snap Snapshot) (decimal.Decimal, error) {
 	return v, nil
 }
 
+// Pondera dice si un uso entra en la valorizacion de su corrida. Es la unica
+// definicion: el motor (filtrarRepertorio) y el asiento del recibo la
+// comparten. R-27 (RD 9.5): en suscripcion y hotel un uso fuera de repertorio
+// no suma; en las demas modalidades la marca no aplica.
+func Pondera(u Uso) bool {
+	return !u.FueraDeRepertorio || (u.Modalidad != Suscripcion && u.Modalidad != Hotel)
+}
+
 // filtrarRepertorio aplica R-27: excluye usos de canales fuera de repertorio.
 func filtrarRepertorio(usos []Uso) []Uso {
 	out := make([]Uso, 0, len(usos))
 	for _, u := range usos {
-		if u.FueraDeRepertorio {
+		if !Pondera(u) {
 			continue
 		}
 		out = append(out, u)

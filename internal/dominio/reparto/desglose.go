@@ -44,8 +44,7 @@ type Termino struct {
 
 // Desglose es la aritmetica de los puntos de un uso: Puntos = suma de los
 // Producto de Terminos (#187). Es lo que el recibo itemiza; el motor suma
-// exactamente estos mismos terminos, salvo los usos que suscripcion y hotel
-// descartan por R-27 (ver doc.go).
+// exactamente estos mismos terminos.
 type Desglose struct {
 	Formula  string
 	Terminos []Termino
