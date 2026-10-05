@@ -17,12 +17,22 @@ import { firmarProceso } from "./cliente";
 import Compuerta from "./Compuerta";
 import Pipeline from "./Pipeline";
 import { ETIQUETA_CIRCUITO, ETIQUETA_ETAPA } from "./etapas";
+import { esCompuerta } from "./firmas";
+import { Bolsa } from "../tablero/recaudo";
+import { formatearCOP, formatearCOPCompacto } from "../ui/dinero";
+import "../staff.css";
 import {
   INTERVALO_SONDEO_MS,
   Proceso,
   ResumenDeAlertas,
   RUTAS_REPARTO,
 } from "./tipos";
+
+/** El contrato trae `bolsa_id`; el tipo local todavia no lo declara. */
+function bolsaIdDe(p: Proceso): string | undefined {
+  const id = (p as Proceso & { bolsa_id?: unknown }).bolsa_id;
+  return typeof id === "string" && id !== "" ? id : undefined;
+}
 
 export default function PanelCorridas() {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +41,21 @@ export default function PanelCorridas() {
   const [firma, setFirma] = useState({ clave: "", enviando: false, error: "" });
 
   const procesos = useRecurso<Proceso[]>(RUTAS_REPARTO.procesos, true, recarga);
+  // Todo rol que ve /distribucion puede leer /bolsas (x-required-roles).
+  const bolsas = useRecurso<Bolsa[]>("/api/bolsas");
+  const brutoPorBolsa = useMemo(
+    () =>
+      new Map(
+        bolsas.tipo === "listo" && Array.isArray(bolsas.datos)
+          ? bolsas.datos.map((b) => [b.id, String(b.bruto)] as const)
+          : [],
+      ),
+    [bolsas],
+  );
+  const brutoDe = (p: Proceso) => {
+    const idBolsa = bolsaIdDe(p);
+    return idBolsa ? brutoPorBolsa.get(idBolsa) : undefined;
+  };
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -97,13 +122,13 @@ export default function PanelCorridas() {
   }
 
   return (
-    <section className="tablero panel-corridas">
+    <section className="tablero panel-corridas staff">
       <header className="tablero-cabecera">
         <div>
           <h1>Distribución</h1>
           <p className="muted">
-            Estado de cada corrida por etapa. Nada se reparte con críticas
-            abiertas.
+            Cada reparto avanza por etapas. Nada se paga con alertas críticas
+            abiertas ni sin las dos firmas.
           </p>
         </div>
       </header>
@@ -129,60 +154,61 @@ export default function PanelCorridas() {
 
       {procesos.tipo === "listo" && lista.length > 0 && seleccionado && (
         <div className="panel-corridas-cuerpo">
-          <article className="tarjeta tarjeta-amplia">
-            <h2 className="tarjeta-etiqueta">Corridas</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Periodo</th>
-                  <th>Circuito</th>
-                  <th>Etapa</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lista.map((proceso) => {
-                  const activo = proceso.id === seleccionado.id;
-                  return (
-                    <tr
-                      key={proceso.id}
-                      className={activo ? "fila-activa" : undefined}
-                    >
-                      <td>
-                        <Link
-                          to={`/distribucion/${encodeURIComponent(proceso.id)}`}
-                          aria-current={activo ? "true" : undefined}
-                        >
-                          {proceso.periodo}
-                        </Link>
-                      </td>
-                      <td>{ETIQUETA_CIRCUITO[proceso.circuito]}</td>
-                      <td>
-                        <span className="badge">
-                          {ETIQUETA_ETAPA[proceso.etapa]}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </article>
+          <ul className="corridas-lista" aria-label="Corridas">
+            {lista.map((proceso, i) => {
+              const activo = proceso.id === seleccionado.id;
+              const bruto = brutoDe(proceso);
+              return (
+                <li
+                  key={proceso.id}
+                  className={`corrida-tarjeta${activo ? " corrida-tarjeta-activa" : ""}`}
+                  style={{ animationDelay: `${i * 50}ms` }}
+                >
+                  <Link
+                    className="corrida-periodo"
+                    to={`/distribucion/${encodeURIComponent(proceso.id)}`}
+                    aria-current={activo ? "true" : undefined}
+                  >
+                    {proceso.periodo}
+                  </Link>
+                  <span className="corrida-circuito">
+                    {ETIQUETA_CIRCUITO[proceso.circuito]}
+                  </span>
+                  <span
+                    className={`chip ${esCompuerta(proceso.etapa) ? "chip-alerta" : "chip-marca"}`}
+                  >
+                    {ETIQUETA_ETAPA[proceso.etapa]}
+                  </span>
+                  {bruto && (
+                    <span className="corrida-bolsa" title={formatearCOP(bruto)}>
+                      {formatearCOPCompacto(bruto)}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
 
           <div className="panel-corridas-detalle">
-            <article className="tarjeta tarjeta-amplia">
-              <header className="tablero-cabecera">
+            <section className="panel">
+              <header className="panel-cabecera corrida-cabecera">
                 <div>
-                  <h2>
-                    {seleccionado.periodo} ·{" "}
-                    {ETIQUETA_CIRCUITO[seleccionado.circuito]}
+                  <h2 className="panel-titulo corrida-titulo">
+                    Periodo {seleccionado.periodo}
                   </h2>
                   <p className="muted">
-                    Etapa actual: {ETIQUETA_ETAPA[seleccionado.etapa]}
+                    Circuito{" "}
+                    {ETIQUETA_CIRCUITO[seleccionado.circuito].toLowerCase()}
+                    {brutoDe(seleccionado) &&
+                      ` · bolsa de ${formatearCOP(brutoDe(seleccionado) ?? "")}`}
                   </p>
                 </div>
+                <span className="chip chip-marca">
+                  {ETIQUETA_ETAPA[seleccionado.etapa]}
+                </span>
               </header>
               {seleccionado.rechazo && (
-                <p className="login-aviso" role="status">
+                <p className="corrida-rechazo" role="status">
                   Último rechazo: {seleccionado.rechazo}
                 </p>
               )}
@@ -206,7 +232,22 @@ export default function PanelCorridas() {
                 onFirmar={() => void actuar("firmar")}
                 onRechazar={(motivo) => void actuar("rechazar", motivo)}
               />
-            </article>
+              <details className="detalle-tecnico">
+                <summary>Detalle técnico</summary>
+                <dl>
+                  <dt>Proceso</dt>
+                  <dd>{seleccionado.id}</dd>
+                  <dt>Revisión</dt>
+                  <dd>{seleccionado.revision}</dd>
+                  {bolsaIdDe(seleccionado) && (
+                    <>
+                      <dt>Bolsa</dt>
+                      <dd>{bolsaIdDe(seleccionado)}</dd>
+                    </>
+                  )}
+                </dl>
+              </details>
+            </section>
 
             {/*
              * Sin acceso a /anomalias no se piden las alertas, asi que las
@@ -214,11 +255,21 @@ export default function PanelCorridas() {
              * vez de prometer un conteo que este rol nunca va a ver.
              */}
             {verAnomalias && (
-              <>
-                <section className="tablero-kpis">
+              <section
+                className="corrida-alertas"
+                aria-label="Alertas del periodo"
+              >
+                {abiertas > 0 && (
+                  <Link className="corrida-alertas-aviso" to={enlaceAnomalias}>
+                    Hay {formatearEntero(abiertas)} alertas abiertas en este
+                    periodo. Ir a resolución.
+                  </Link>
+                )}
+                <div className="corrida-alertas-rejilla">
                   {TIPOS_DE_ALERTA.map((tipo) => (
                     <Tarjeta
                       key={tipo}
+                      className="tarjeta-mini"
                       titulo={etiquetaDeTipo(tipo)}
                       descripcion="Alertas abiertas del periodo"
                       to={enlaceAnomalias}
@@ -232,16 +283,8 @@ export default function PanelCorridas() {
                       )}
                     </Tarjeta>
                   ))}
-                </section>
-                {abiertas > 0 && (
-                  <p>
-                    <Link to={enlaceAnomalias}>
-                      Hay {formatearEntero(abiertas)} alertas abiertas en este
-                      periodo. Ir a resolución.
-                    </Link>
-                  </p>
-                )}
-              </>
+                </div>
+              </section>
             )}
           </div>
         </div>

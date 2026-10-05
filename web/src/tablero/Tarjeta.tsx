@@ -1,6 +1,8 @@
 import { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import Detalle from "../ui/Detalle";
 import { Recurso } from "./tipos";
+import "../staff.css";
 
 type Props<T> = {
   titulo: string;
@@ -9,13 +11,18 @@ type Props<T> = {
   etiquetaEnlace?: string;
   recurso: Recurso<T>;
   mensajeAusente?: string;
+  /** Icono decorativo junto al titulo. */
+  icono?: ReactNode;
+  /** Explicacion en lenguaje llano, detras de un `Detalle`. */
+  ayuda?: ReactNode;
+  className?: string;
   children: (datos: T) => ReactNode;
 };
 
 /**
  * Tarjeta de KPI reutilizable. Recibe un `Recurso` y no asume que el
  * backend exista: cargando, ausente, error y listo son estados de
- * primer nivel. Los paneles de #40 y #42 pueden usarla tal cual.
+ * primer nivel. Cada tarjeta falla sola: nunca tumba la pagina.
  */
 export function Tarjeta<T>({
   titulo,
@@ -24,17 +31,37 @@ export function Tarjeta<T>({
   etiquetaEnlace,
   recurso,
   mensajeAusente = "Sin datos todavía",
+  icono,
+  ayuda,
+  className,
   children,
 }: Props<T>) {
   const etiqueta = etiquetaEnlace ?? `Ver ${titulo.toLowerCase()}`;
 
   return (
-    <article className="tarjeta">
-      <h2 className="tarjeta-etiqueta">{titulo}</h2>
-      {descripcion && <p className="tarjeta-descripcion">{descripcion}</p>}
+    <article className={className ? `tarjeta ${className}` : "tarjeta"}>
+      <div className="tarjeta-cabecera">
+        {icono && (
+          <span className="tarjeta-icono" aria-hidden="true">
+            {icono}
+          </span>
+        )}
+        <h2 className="tarjeta-etiqueta">{titulo}</h2>
+        {ayuda && (
+          <Detalle
+            titulo={titulo}
+            claseDisparador="tarjeta-ayuda"
+            etiquetaDisparador={`Qué significa ${titulo}`}
+            disparador={<span aria-hidden="true">?</span>}
+          >
+            <span className="detalle-texto">{ayuda}</span>
+          </Detalle>
+        )}
+      </div>
       <div className="tarjeta-cuerpo">
         {cuerpo(recurso, mensajeAusente, children)}
       </div>
+      {descripcion && <p className="tarjeta-descripcion">{descripcion}</p>}
       {to &&
         (esFragmento(to) ? (
           <a className="tarjeta-enlace" href={to}>
@@ -60,14 +87,10 @@ function cuerpo<T>(
 ): ReactNode {
   switch (recurso.tipo) {
     case "cargando":
-      return (
-        <p className="muted" role="status">
-          Cargando…
-        </p>
-      );
+      return <Esqueleto />;
     case "ausente":
     case "inactivo":
-      return <p className="muted">{mensajeAusente}</p>;
+      return <p className="muted tarjeta-vacio">{mensajeAusente}</p>;
     case "error":
       return (
         <p className="tarjeta-error" role="alert">
@@ -77,4 +100,17 @@ function cuerpo<T>(
     case "listo":
       return children(recurso.datos);
   }
+}
+
+/** Placeholder con brillo; el texto real queda para el lector de pantalla. */
+export function Esqueleto({ lineas = 1 }: { lineas?: number }) {
+  return (
+    <div className="esqueleto" role="status">
+      <span className="solo-lector">Cargando…</span>
+      <span className="esqueleto-bloque esqueleto-cifra" aria-hidden="true" />
+      {Array.from({ length: lineas - 1 }, (_, i) => (
+        <span key={i} className="esqueleto-bloque" aria-hidden="true" />
+      ))}
+    </div>
+  );
 }

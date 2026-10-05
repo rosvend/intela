@@ -109,4 +109,67 @@ describe("Compuerta", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirmar rechazo" }));
     expect(onRechazar).toHaveBeenCalledWith("cifras no cuadran");
   });
+
+  it("dice en claro cuantas firmas pide la etapa y cuantas lleva", () => {
+    montar(
+      "administrador",
+      proceso({
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Esta etapa necesita 2 firmas" }),
+    ).toBeTruthy();
+    expect(screen.getByText("1 de 2")).toBeTruthy();
+  });
+
+  it("una firma de una revision anterior no cuenta", () => {
+    montar(
+      "distribucion",
+      proceso({
+        revision: 2,
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+      }),
+    );
+    expect(screen.getByText("0 de 2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Firmar" })).toBeTruthy();
+  });
+
+  it("los ids crudos viven en el detalle tecnico, no en la tarjeta", () => {
+    montar(
+      "administrador",
+      proceso({
+        revision: 3,
+        firmas: [{ rol: "contabilidad", actor_id: "usr-c9", sobre_rev: 3 }],
+      }),
+    );
+    const tecnico = screen
+      .getByText("Detalle técnico de las firmas")
+      .closest("details");
+    expect(tecnico).toBeTruthy();
+    expect(tecnico?.hasAttribute("open")).toBe(false);
+    expect(tecnico?.textContent).toContain("proc-1");
+    expect(tecnico?.textContent).toContain("usr-c9");
+    expect(tecnico?.textContent).toContain("Revisión 3");
+  });
+
+  it("mientras se envia la firma los botones se bloquean", () => {
+    render(
+      <Compuerta
+        proceso={proceso()}
+        rol="distribucion"
+        enviando
+        onFirmar={vi.fn()}
+        onRechazar={vi.fn()}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: /Firmando/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Rechazar" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
 });

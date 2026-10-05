@@ -1,14 +1,17 @@
 import { FormEvent, useId, useState } from "react";
+import { CheckIcon, ShieldCheckIcon } from "@heroicons/react/20/solid";
+import { iniciales } from "../iniciales";
 import { Rol } from "../sesion";
 import {
   ETIQUETA_ROL_FIRMA,
   ROLES_DE_COMPUERTA,
   esCompuerta,
+  firmasDeRevision,
   puedeFirmar,
-  rolesFirmados,
 } from "./firmas";
 import { ETIQUETA_ETAPA } from "./etapas";
 import { Proceso } from "./tipos";
+import "../staff.css";
 
 export default function Compuerta({
   proceso,
@@ -40,8 +43,11 @@ export default function Compuerta({
 
   if (!esCompuerta(proceso.etapa)) return null;
 
-  const firmados = new Set(rolesFirmados(proceso));
+  const firmas = firmasDeRevision(proceso);
+  const firmados = new Set(firmas.map((f) => f.rol));
+  const total = ROLES_DE_COMPUERTA.length;
   const ofreceAccion = puedeFirmar(rol, proceso);
+  const etapa = ETIQUETA_ETAPA[proceso.etapa];
 
   function confirmarRechazo(evento: FormEvent) {
     evento.preventDefault();
@@ -51,29 +57,48 @@ export default function Compuerta({
   }
 
   return (
-    <article className="compuerta">
-      <h3 className="tarjeta-etiqueta">
-        Compuerta · {ETIQUETA_ETAPA[proceso.etapa]}
-      </h3>
-      <p className="muted">
-        Revisión {proceso.revision}. El dinero no sale con una sola firma (RD
-        13.5).
-      </p>
+    <article className="compuerta-tarjeta">
+      <header className="compuerta-cabecera">
+        <span className="compuerta-sello" aria-hidden="true">
+          <ShieldCheckIcon />
+        </span>
+        <div>
+          <h3 className="compuerta-titulo">
+            Esta etapa necesita {total} firmas
+          </h3>
+          <p className="muted">
+            {etapa}: el dinero no avanza sin la firma de Distribución y de
+            Contabilidad.
+          </p>
+        </div>
+        <span
+          className={`chip ${firmados.size === total ? "chip-ok" : "chip-marca"}`}
+        >
+          {firmados.size} de {total}
+        </span>
+      </header>
+
       <ul className="compuerta-firmas">
-        {ROLES_DE_COMPUERTA.map((rolFirma) => (
-          <li key={rolFirma}>
-            <span>{ETIQUETA_ROL_FIRMA[rolFirma]}</span>
-            <span
-              className={
-                firmados.has(rolFirma)
-                  ? "compuerta-estado-firmado"
-                  : "compuerta-estado-pendiente"
-              }
+        {ROLES_DE_COMPUERTA.map((rolFirma) => {
+          const firmado = firmados.has(rolFirma);
+          const nombre = ETIQUETA_ROL_FIRMA[rolFirma];
+          return (
+            <li
+              key={rolFirma}
+              className={firmado ? "compuerta-firmante-hecho" : undefined}
             >
-              {firmados.has(rolFirma) ? "Firmado" : "Pendiente"}
-            </span>
-          </li>
-        ))}
+              <span className="compuerta-avatar" aria-hidden="true">
+                {firmado ? <CheckIcon /> : iniciales(nombre)}
+              </span>
+              <span className="compuerta-firmante">
+                <span>{nombre}</span>
+                <span className={`chip ${firmado ? "chip-ok" : ""}`}>
+                  {firmado ? "Firmado" : "Pendiente"}
+                </span>
+              </span>
+            </li>
+          );
+        })}
       </ul>
 
       {ofreceAccion && advertencia && (
@@ -90,7 +115,7 @@ export default function Compuerta({
             disabled={enviando}
             onClick={onFirmar}
           >
-            Firmar
+            {enviando ? "Firmando…" : "Firmar"}
           </button>
           <button
             type="button"
@@ -106,6 +131,10 @@ export default function Compuerta({
       {ofreceAccion && rechazando && (
         <form className="compuerta-rechazo" onSubmit={confirmarRechazo}>
           <label htmlFor={idMotivo}>Motivo del rechazo</label>
+          <p className="muted compuerta-ayuda">
+            La distribución vuelve a la etapa anterior y quien la preparó verá
+            este motivo.
+          </p>
           <textarea
             id={idMotivo}
             value={motivo}
@@ -139,6 +168,22 @@ export default function Compuerta({
           {error}
         </p>
       )}
+
+      <details className="detalle-tecnico">
+        <summary>Detalle técnico de las firmas</summary>
+        <dl>
+          <dt>Proceso</dt>
+          <dd>{proceso.id}</dd>
+          <dt>Revisión</dt>
+          <dd>Revisión {proceso.revision}</dd>
+          {firmas.map((f) => (
+            <div key={f.rol}>
+              <dt>Firma de {ETIQUETA_ROL_FIRMA[f.rol]}</dt>
+              <dd>{f.actor_id}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </article>
   );
 }

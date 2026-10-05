@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -396,5 +397,59 @@ describe("PanelCorridas", () => {
       expect(screen.getByText(/Sin datos todavía/)).toBeTruthy(),
     );
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("cada corrida es una tarjeta con su periodo, circuito, etapa y bolsa", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === RUTAS_REPARTO.procesos)
+        return json([{ ...nacional, bolsa_id: "bolsa-1" }, internacional]);
+      if (path === "/api/bolsas")
+        return json([
+          {
+            id: "bolsa-1",
+            usuario_id: "caracol",
+            periodo: "2025",
+            circuito: "nacional",
+            bruto: "600000000.00",
+          },
+        ]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    const lista = await screen.findByRole("list", { name: "Corridas" });
+    const tarjetas = within(lista).getAllByRole("listitem");
+    expect(tarjetas).toHaveLength(2);
+    expect(within(tarjetas[0]).getByText("Nacional")).toBeTruthy();
+    expect(within(tarjetas[0]).getByText("Verificación")).toBeTruthy();
+    await within(tarjetas[0]).findByText("$ 600 M");
+    expect(
+      within(tarjetas[0])
+        .getByRole("link", { name: "2025" })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    expect(within(tarjetas[1]).queryByText(/\$/)).toBeNull();
+  });
+
+  it("el id crudo del proceso queda detras del detalle tecnico", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === RUTAS_REPARTO.procesos) return json([internacional]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montar();
+
+    const tecnico = (await screen.findByText("Detalle técnico")).closest(
+      "details",
+    );
+    expect(tecnico?.textContent).toContain("proc-int");
+    expect(tecnico?.hasAttribute("open")).toBe(false);
   });
 });
