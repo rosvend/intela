@@ -178,7 +178,7 @@ describe("TableroAnomalias", () => {
     expect(detalle.textContent).toContain("reserva");
   });
 
-  it("pinta una tarjeta por alerta con su severidad y esconde la referencia tecnica", async () => {
+  it("pinta una tarjeta por alerta con titulo, severidad y la frase del servidor, sin detalle tecnico", async () => {
     servir();
 
     montar();
@@ -186,14 +186,50 @@ describe("TableroAnomalias", () => {
     const lista = await screen.findByRole("list", { name: "Alertas abiertas" });
     const tarjetas = within(lista).getAllByRole("listitem");
     expect(tarjetas).toHaveLength(3);
+    expect(
+      within(tarjetas[0]).getByText("Usos sin obra identificada"),
+    ).toBeTruthy();
+    expect(
+      within(tarjetas[0]).getByText("Título no identificado"),
+    ).toBeTruthy();
     expect(within(tarjetas[2]).getByText("Bloquea el reparto")).toBeTruthy();
     expect(within(tarjetas[0]).getByText("No bloquea")).toBeTruthy();
 
+    expect(
+      screen.queryByRole("button", { name: "Detalle técnico" }),
+    ).toBeNull();
     expect(screen.queryByText("uso:uso-9")).toBeNull();
-    fireEvent.click(
-      within(tarjetas[0]).getByRole("button", { name: "Detalle técnico" }),
-    );
-    expect(screen.getByText("uso:uso-9")).toBeTruthy();
+  });
+
+  it("no hereda la clase .revision del <dl> de afiliacion, que lo parte en una columna de 11rem", async () => {
+    servir();
+
+    const { container } = montar();
+
+    await screen.findByText("Título no identificado");
+    const pantalla = container.querySelector("section.anomalias");
+    expect(pantalla?.classList.contains("revision")).toBe(false);
+    expect(pantalla?.classList.contains("revision-pantalla")).toBe(true);
+  });
+
+  it("no pone subtitulo de relleno bajo el titulo", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("Título no identificado");
+    expect(screen.queryByText(/Lo que conviene revisar/)).toBeNull();
+  });
+
+  it("vuelve al panel de corridas con un boton, no con texto enlazado", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("Título no identificado");
+    const volver = screen.getByRole("link", { name: "Panel de corridas" });
+    expect(volver.getAttribute("href")).toBe("/distribucion");
+    expect(volver.className).toContain("boton-secundario");
   });
 
   it("una ONI enlaza a la bandeja de identificacion sin perder el periodo de la vista", async () => {
@@ -205,6 +241,7 @@ describe("TableroAnomalias", () => {
     const enlaces = screen.getAllByRole("link", { name: "Identificar" });
     expect(enlaces).toHaveLength(2);
     expect(enlaces[0]?.getAttribute("href")).toBe("/identificacion");
+    expect(enlaces[0]?.className).toContain("boton-primario");
     expect((screen.getByLabelText("Periodo") as HTMLSelectElement).value).toBe(
       "2025",
     );

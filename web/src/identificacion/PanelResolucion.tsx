@@ -1,6 +1,5 @@
 import { Fragment, useId, useState, type ReactElement } from "react";
 import "../revision.css";
-import Detalle from "../ui/Detalle";
 import { ApiError } from "../api";
 import { esObra, type Obra } from "../catalogo/tipos";
 import { useLista } from "../catalogo/useLista";
@@ -11,8 +10,6 @@ import {
   resolverCaso,
   type ResolucionDeCaso,
 } from "./resolucion";
-import DetalleTecnico from "./DetalleTecnico";
-import { IconoInfo } from "./iconos";
 import MedidorConfianza from "./MedidorConfianza";
 import {
   compararTitulos,
@@ -223,16 +220,6 @@ export default function PanelResolucion({
         <h2 id={idTitulo} className="panel-resolucion-titulo">
           {TITULO_POR_MODO[modo.tipo]}
         </h2>
-        <span className="panel-resolucion-tecnico">
-          <Detalle
-            titulo="Detalle técnico"
-            etiquetaDisparador="Detalle técnico"
-            claseDisparador="revision-icono-boton"
-            disparador={<IconoInfo />}
-          >
-            <DetalleTecnico caso={caso} />
-          </Detalle>
-        </span>
         <button
           type="button"
           className="dialogo-cerrar"

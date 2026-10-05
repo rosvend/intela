@@ -117,6 +117,22 @@ afterEach(() => {
 });
 
 describe("ListaOni", () => {
+  it("sin subtitulo de relleno, con un boton a los casos pendientes y sin la clase .revision", async () => {
+    instalarServidor({ porDefecto: [casoPendiente] });
+    const { container } = montar();
+
+    const enlace = await screen.findByRole("link", {
+      name: "Ir a casos pendientes",
+    });
+    expect(enlace.className).toContain("boton-secundario");
+    expect(screen.queryByText(/Cada uso que necesitó revisión/)).toBeNull();
+    expect(
+      container
+        .querySelector("section.lista-oni")
+        ?.classList.contains("revision"),
+    ).toBe(false);
+  });
+
   it("pinta el estado y el responsable de cada fila, con guion cuando no hay responsable", async () => {
     instalarServidor({ porDefecto: [casoPendiente, casoAsignado] });
     montar();
@@ -294,12 +310,11 @@ describe("ListaOni", () => {
       "En revisión",
     ]);
     expect(within(dialogo).getByText(casoPendiente.evidencia)).not.toBeNull();
-    // Los ids, detras del detalle tecnico.
+    // Sin detalle tecnico: los ids no se muestran.
     expect(within(dialogo).queryByText("ID_Ficha=48213")).toBeNull();
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Detalle técnico" }),
-    );
-    expect(within(dialogo).getByText("ID_Ficha=48213")).not.toBeNull();
+    expect(
+      within(dialogo).queryByRole("button", { name: "Detalle técnico" }),
+    ).toBeNull();
 
     // Ninguna peticion nueva: el modal se armo con lo que la fila ya traia.
     expect(consultas).toHaveLength(1);

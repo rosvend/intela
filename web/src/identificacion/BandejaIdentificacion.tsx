@@ -1,15 +1,14 @@
+import { ArrowRightIcon } from "@heroicons/react/20/solid";
 import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import "../revision.css";
 import Detalle from "../ui/Detalle";
 import { useApi } from "../useApi";
-import DetalleTecnico from "./DetalleTecnico";
 import Dialogo from "./Dialogo";
 import {
   IconoCheck,
   IconoChispa,
   IconoDescartar,
-  IconoInfo,
   IconoLupa,
   IconoPantalla,
   IconoPregunta,
@@ -150,7 +149,7 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
 
   return (
     <section
-      className="bandeja revision"
+      className="bandeja revision-pantalla"
       aria-label="Bandeja de identificación"
     >
       <header className="revision-cabecera">
@@ -159,13 +158,13 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
           {conteo !== undefined && conteo > 0 && (
             <span className="chip chip-marca">{conteo} por revisar</span>
           )}
-          <Link to="/lista-oni" className="revision-enlace">
+          <Link to="/lista-oni" className="boton-secundario boton-enlace">
             Ver lista ONI
+            <ArrowRightIcon aria-hidden="true" />
           </Link>
         </div>
         <p className="revision-intro">
-          Usos reportados que no pudimos asociar con seguridad a una obra del
-          catálogo. Elige la obra correcta o descártalo.
+          Elige la obra correcta de cada uso o descártalo.
         </p>
       </header>
 
@@ -375,14 +374,6 @@ function TarjetaCaso({
           </p>
         </div>
         <span className="chip">{etiquetaDeModalidad(caso.modalidad)}</span>
-        <Detalle
-          titulo="Detalle técnico"
-          etiquetaDisparador="Detalle técnico"
-          claseDisparador="revision-icono-boton"
-          disparador={<IconoInfo />}
-        >
-          <DetalleTecnico caso={caso} />
-        </Detalle>
       </header>
 
       {sugerenciaTexto && (

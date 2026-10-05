@@ -1,3 +1,4 @@
+import { ArrowRightIcon } from "@heroicons/react/20/solid";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
@@ -135,7 +136,8 @@ export default function TableroAnomalias() {
   }
 
   return (
-    <section className="revision anomalias">
+    // No `revision`: styles.css la usa para el <dl> de afiliacion (grid 11rem 1fr).
+    <section className="revision-pantalla anomalias">
       <header className="revision-cabecera">
         <div className="revision-titulo-fila">
           <h1>Anomalías</h1>
@@ -156,10 +158,6 @@ export default function TableroAnomalias() {
             )}
           </select>
         </div>
-        <p className="revision-intro">
-          Lo que conviene revisar antes de repartir. Nada se reparte mientras
-          haya alertas que bloquean.
-        </p>
       </header>
 
       {sinEvaluar && (
@@ -273,14 +271,19 @@ export default function TableroAnomalias() {
       </section>
 
       {procesos.tipo === "listo" && procesos.datos.length > 0 && (
-        <p className="revision-texto-suave">
-          Corridas del periodo:{" "}
-          {procesos.datos
-            .filter((p) => !periodo || p.periodo === periodo)
-            .map((p) => ETIQUETA_CIRCUITO[p.circuito])
-            .join(" · ") || "ninguna"}
-          . <Link to="/distribucion">Volver al panel de corridas</Link>
-        </p>
+        <footer className="anomalias-pie">
+          <p className="revision-texto-suave">
+            Corridas del periodo:{" "}
+            {procesos.datos
+              .filter((p) => !periodo || p.periodo === periodo)
+              .map((p) => ETIQUETA_CIRCUITO[p.circuito])
+              .join(" · ") || "ninguna"}
+          </p>
+          <Link to="/distribucion" className="boton-secundario boton-enlace">
+            Panel de corridas
+            <ArrowRightIcon aria-hidden="true" />
+          </Link>
+        </footer>
       )}
     </section>
   );
@@ -392,41 +395,30 @@ function TarjetaDeAlerta({
       className={`alerta${resuelta ? " alerta-resuelta" : ""}`}
       style={{ "--indice": Math.min(indice, 8) } as React.CSSProperties}
     >
-      <span
-        className="alerta-marca"
-        style={{ background: colorDeTipo(alerta.tipo) }}
-        aria-hidden="true"
-      />
-      <div className="alerta-cuerpo">
-        <div className="alerta-cabecera">
-          <span className="alerta-tipo">{tituloDeTipo(alerta.tipo)}</span>
-          {resuelta ? (
-            <span className="chip chip-ok">Resuelta</span>
-          ) : alerta.critica ? (
-            <span className="chip chip-error">Bloquea el reparto</span>
-          ) : (
-            <span className="chip">No bloquea</span>
-          )}
-        </div>
-        <p className="alerta-detalle">{alerta.detalle}</p>
-      </div>
-      <div className="alerta-acciones">
-        <Detalle
-          titulo="Detalle técnico"
-          etiquetaDisparador="Detalle técnico"
-          claseDisparador="revision-icono-boton"
-          disparador={<IconoInfo />}
-        >
-          <span className="detalle-tecnico-id">
-            {alerta.referencia ?? alerta.periodo ?? "—"}
-          </span>
-        </Detalle>
-        {alerta.tipo === "oni" && !resuelta && (
-          <Link to="/identificacion" className="boton-una">
-            Identificar
-          </Link>
+      <div className="alerta-cabecera">
+        <span
+          className="leyenda-punto"
+          style={{ "--color": colorDeTipo(alerta.tipo) } as React.CSSProperties}
+          aria-hidden="true"
+        />
+        <span className="alerta-tipo">{tituloDeTipo(alerta.tipo)}</span>
+        {resuelta ? (
+          <span className="chip chip-ok">Resuelta</span>
+        ) : alerta.critica ? (
+          <span className="chip chip-error">Bloquea el reparto</span>
+        ) : (
+          <span className="chip">No bloquea</span>
         )}
       </div>
+      <p className="alerta-detalle">{alerta.detalle}</p>
+      {alerta.tipo === "oni" && !resuelta && (
+        <div className="alerta-acciones">
+          <Link to="/identificacion" className="boton-primario boton-enlace">
+            Identificar
+            <ArrowRightIcon aria-hidden="true" />
+          </Link>
+        </div>
+      )}
     </li>
   );
 }
@@ -449,13 +441,6 @@ function IconoBase({ children }: { children: React.ReactNode }) {
     </svg>
   );
 }
-
-const IconoInfo = () => (
-  <IconoBase>
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 11v5M12 8h.01" />
-  </IconoBase>
-);
 
 const IconoPregunta = () => (
   <IconoBase>

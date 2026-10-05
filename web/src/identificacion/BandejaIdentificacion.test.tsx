@@ -164,9 +164,9 @@ afterEach(() => {
 });
 
 describe("BandejaIdentificacion", () => {
-  it("explica la bandeja en una frase y cuenta los pendientes", async () => {
+  it("dice en una frase corta que hacer y cuenta los pendientes", async () => {
     instalarServidor({ casos: [casoUno], pendientes: 3 });
-    montar();
+    const { container } = montar();
 
     expect(
       await screen.findByRole("heading", {
@@ -175,11 +175,24 @@ describe("BandejaIdentificacion", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText(
-        "Usos reportados que no pudimos asociar con seguridad a una obra del catálogo. Elige la obra correcta o descártalo.",
-      ),
+      screen.getByText("Elige la obra correcta de cada uso o descártalo."),
     ).not.toBeNull();
     expect(await screen.findByText("3 por revisar")).not.toBeNull();
+    // `.revision` es el grid 11rem/1fr del <dl> de afiliacion en styles.css.
+    expect(
+      container
+        .querySelector("section.bandeja")
+        ?.classList.contains("revision"),
+    ).toBe(false);
+  });
+
+  it("'Ver lista ONI' es un boton, no texto enlazado", async () => {
+    instalarServidor({ casos: [casoUno] });
+    montar();
+
+    const enlace = await screen.findByRole("link", { name: "Ver lista ONI" });
+    expect(enlace.getAttribute("href")).toBe("/lista-oni");
+    expect(enlace.className).toContain("boton-secundario");
   });
 
   it("cada caso muestra lo reportado, sus candidatas con medidor de parecido y ninguna preseleccionada", async () => {
@@ -212,19 +225,16 @@ describe("BandejaIdentificacion", () => {
     ).not.toBeNull();
   });
 
-  it("los ids internos y la evidencia viven detras de un Detalle", async () => {
+  it("no muestra ids internos ni un Detalle tecnico; el por que sigue a mano", async () => {
     instalarServidor({ casos: [casoUno] });
     montar();
 
     await screen.findByRole("heading", { level: 2, name: "La Niña T3 E12" });
     expect(screen.queryByText("caso-1")).toBeNull();
     expect(screen.queryByText("ID_Ficha=48213")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Detalle técnico" }));
-    const tecnico = screen.getByRole("dialog", { name: "Detalle técnico" });
-    expect(within(tecnico).getByText("caso-1")).not.toBeNull();
-    expect(within(tecnico).getByText("ID_Ficha=48213")).not.toBeNull();
-    expect(within(tecnico).getByText("ING-2024-0890")).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Detalle técnico" }),
+    ).toBeNull();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Por qué La Niña es candidata" }),

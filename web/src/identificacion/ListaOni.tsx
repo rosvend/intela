@@ -1,15 +1,13 @@
+import { ArrowRightIcon } from "@heroicons/react/20/solid";
 import { useEffect, useId, useState, type ReactElement } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Paginador from "../catalogo/Paginador";
 import "../revision.css";
 import { formatearInstante } from "../tablero/formato";
 import BarraApilada from "../ui/BarraApilada";
-import Detalle from "../ui/Detalle";
 import { useApi } from "../useApi";
 import { EsqueletoDeCasos, EstadoVacio } from "./BandejaIdentificacion";
-import DetalleTecnico from "./DetalleTecnico";
 import Dialogo from "./Dialogo";
-import { IconoInfo } from "./iconos";
 import {
   contarPorEstado,
   formatearPeriodo,
@@ -197,17 +195,15 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   const idTituloHistorial = useId();
 
   return (
-    <section className="lista-oni revision">
+    <section className="lista-oni revision-pantalla">
       <header className="revision-cabecera">
         <div className="revision-titulo-fila">
           <h1>Lista ONI</h1>
-          <Link to="/identificacion" className="revision-enlace">
+          <Link to="/identificacion" className="boton-secundario boton-enlace">
             Ir a casos pendientes
+            <ArrowRightIcon aria-hidden="true" />
           </Link>
         </div>
-        <p className="revision-intro">
-          Cada uso que necesitó revisión y en qué quedó.
-        </p>
       </header>
 
       <div className="panel oni-resumen">
@@ -512,14 +508,6 @@ function HistorialDelRegistro({
     <div className="historial-registro">
       <header className="historial-registro-cabecera oni-historial-cabecera">
         <h2 id={idTitulo}>{tituloDelHistorial(caso)}</h2>
-        <Detalle
-          titulo="Detalle técnico"
-          etiquetaDisparador="Detalle técnico"
-          claseDisparador="revision-icono-boton"
-          disparador={<IconoInfo />}
-        >
-          <DetalleTecnico caso={caso} />
-        </Detalle>
       </header>
       <div className="historial-registro-cuerpo">
         <LineaDeTiempo caso={caso} />

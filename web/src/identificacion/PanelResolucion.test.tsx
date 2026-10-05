@@ -200,13 +200,13 @@ describe("PanelResolucion", () => {
     expect(within(reportado).getByText("Caracol TV · nov 2024")).not.toBeNull();
   });
 
-  it("los ids del uso no se ven hasta abrir el detalle tecnico", () => {
+  it("no ofrece un detalle tecnico con los ids del uso", () => {
     render(<Arnes modo={{ tipo: "descarte" }} />);
 
     expect(screen.queryByText("ID_Ficha=48213")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Detalle técnico" }));
-    expect(screen.getByText("ID_Ficha=48213")).not.toBeNull();
-    expect(screen.getByText("caso-1")).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Detalle técnico" }),
+    ).toBeNull();
   });
 
   it("modo descarte: muestra el aviso de que el registro no se asigna a ninguna obra", () => {

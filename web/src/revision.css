@@ -5,11 +5,12 @@
 
 /* ---------- comunes ---------- */
 
-.revision {
+/* No `.revision`: styles.css ya la usa como grid 11rem/1fr para un <dl>. */
+.revision-pantalla {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  max-width: 920px;
+  gap: 1.5rem;
+  max-width: 1120px;
 }
 
 .revision-cabecera {
@@ -40,18 +41,6 @@
   max-width: 60ch;
   color: var(--texto-medio);
   line-height: 1.55;
-}
-
-.revision-enlace {
-  color: var(--acento);
-  font-weight: 600;
-  font-size: 0.9rem;
-  text-decoration: none;
-}
-
-.revision-enlace:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .revision-texto-suave {
@@ -116,7 +105,7 @@
   background: var(--superficie);
   border: 1px dashed var(--borde);
   border-radius: var(--radio-tarjeta);
-  animation: revision-entrar var(--dur-media) var(--curva-salida) both;
+  animation: revision-entrar var(--dur-media) var(--curva-salida) backwards;
 }
 
 .revision-vacio-compacto {
@@ -206,7 +195,7 @@
   }
 }
 
-/* Boton redondo de icono: dispara los Detalle tecnicos y los "por que". */
+/* Boton redondo de icono: dispara los "por que" y las referencias. */
 .revision-icono-boton {
   display: grid;
   place-items: center;
@@ -239,6 +228,31 @@
 .boton-fantasma:focus-visible,
 .chip-filtro:focus-visible,
 .pildora-select:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* <Link> con forma de boton: los botones de styles.css no quitan el subrayado. */
+.boton-enlace {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: transform var(--dur-rapida) ease-out;
+}
+
+.boton-enlace svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.boton-enlace:active {
+  transform: scale(0.97);
+}
+
+.boton-enlace:focus-visible {
   outline: 2px solid var(--acento);
   outline-offset: 2px;
 }
@@ -325,36 +339,14 @@
 }
 
 /* Los Detalle pegados al borde derecho abren hacia la izquierda. */
-.caso-cabecera .detalle-panel,
-.candidata .detalle-panel,
-.alerta-acciones .detalle-panel,
-.panel-resolucion-tecnico .detalle-panel,
-.oni-historial-cabecera .detalle-panel {
+.candidata .detalle-panel {
   left: auto;
   right: 0;
   transform-origin: top right;
 }
 
-/* Contenido de los Detalle tecnicos. */
-.detalle-tecnico {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.3rem 0.75rem;
-  margin: 0;
-}
-
-.detalle-tecnico dt {
-  color: var(--texto-suave);
-  font-size: 0.78rem;
-}
-
-.detalle-tecnico dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
+/* Referencia de origen en el historial de resoluciones. */
 .detalle-tecnico-id {
-  grid-column: 1 / -1;
   font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--texto-medio);
@@ -434,7 +426,7 @@
   border: 1px solid var(--borde);
   border-radius: var(--radio-tarjeta);
   box-shadow: var(--sombra-suave);
-  animation: revision-entrar var(--dur-media) var(--curva-salida) both;
+  animation: revision-entrar var(--dur-media) var(--curva-salida) backwards;
   animation-delay: calc(var(--indice, 0) * 50ms);
 }
 
@@ -614,12 +606,6 @@
 }
 
 /* ---------- Panel de resolucion ---------- */
-
-.panel-resolucion-tecnico {
-  position: absolute;
-  top: 1.2rem;
-  right: 3.4rem;
-}
 
 .dialogo-lateral {
   animation: panel-deslizar var(--dur-media) var(--curva-salida);
@@ -958,7 +944,8 @@ mark.diferencia {
 .anomalias-resumen {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
+  padding: 1.75rem;
 }
 
 .anomalias-resumen .panel-cabecera {
@@ -976,11 +963,19 @@ mark.diferencia {
 .anomalias-frase {
   margin: 0;
   color: var(--texto-medio);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+}
+
+/* Leyenda en 2-3 columnas: seis tipos en una sola columna eran una tira larga. */
+.anomalias-leyenda {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  column-gap: 2rem;
 }
 
 .anomalias-leyenda .leyenda-fila {
-  padding: 0.6rem 0;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--borde);
 }
 
 .leyenda-fila-cero {
@@ -996,6 +991,7 @@ mark.diferencia {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 0;
 }
 
 .anomalias-lista {
@@ -1008,40 +1004,33 @@ mark.diferencia {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+/* `.alertas >`: styles.css define un `.alerta` global (caja rosa) que carga despues. */
+.alertas > .alerta {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-}
-
-.alerta {
-  display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem 1.25rem 1rem 1rem;
+  min-width: 0;
+  padding: 1.25rem 1.4rem;
   background: var(--superficie);
   border: 1px solid var(--borde);
   border-radius: var(--radio-tarjeta);
-  animation: revision-entrar var(--dur-media) var(--curva-salida) both;
+  color: var(--texto);
+  animation: revision-entrar var(--dur-media) var(--curva-salida) backwards;
   animation-delay: calc(var(--indice, 0) * 40ms);
 }
 
-.alerta-resuelta {
+.alertas > .alerta-resuelta {
   opacity: 0.55;
   background: var(--fondo);
 }
 
-.alerta-resuelta .alerta-marca {
+.alerta-resuelta .leyenda-punto {
   filter: grayscale(1);
-}
-
-.alerta-marca {
-  align-self: stretch;
-  border-radius: 99px;
-}
-
-.alerta-cuerpo {
-  min-width: 0;
 }
 
 .alerta-cabecera {
@@ -1051,21 +1040,36 @@ mark.diferencia {
   gap: 0.5rem;
 }
 
+.alerta-cabecera .chip {
+  margin-left: auto;
+}
+
 .alerta-tipo {
   font-weight: 600;
 }
 
 .alerta-detalle {
-  margin: 0.25rem 0 0;
+  margin: 0;
+  max-width: 65ch;
   color: var(--texto-medio);
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  overflow-wrap: break-word;
 }
 
 .alerta-acciones {
   display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 0.25rem;
+}
+
+.anomalias-pie {
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 /* ---------- pantallas angostas ---------- */
@@ -1084,12 +1088,8 @@ mark.diferencia {
     grid-template-columns: 1fr;
   }
 
-  .alerta {
-    grid-template-columns: 4px minmax(0, 1fr);
-  }
-
-  .alerta-acciones {
-    grid-column: 2;
+  .alertas {
+    grid-template-columns: 1fr;
   }
 
   .oni-tabla th:nth-child(3),
@@ -1104,7 +1104,7 @@ mark.diferencia {
 
 @media (prefers-reduced-motion: reduce) {
   .caso,
-  .alerta,
+  .alertas > .alerta,
   .revision-vacio,
   .medidor-relleno,
   .dialogo-lateral,
@@ -1126,6 +1126,7 @@ mark.diferencia {
   }
 
   .boton-una,
+  .boton-enlace,
   .boton-fantasma,
   .chip-filtro,
   .revision-icono-boton {
