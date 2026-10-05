@@ -7,6 +7,9 @@ export type EventoRespuesta = Esquemas["EventoAgenteRespuesta"];
 export type EventoError = Esquemas["EventoAgenteError"];
 
 /** El servidor rechaza un historial mas largo (api/openapi.yaml, ConsultaAgente). */
+/** Mensaje unico cuando el asistente falla sin un texto curado del servidor. */
+export const NO_DISPONIBLE = "El asistente no está disponible en este momento.";
+
 export const MAX_HISTORIAL = 20;
 
 /** Un turno de la conversacion. Vive solo en el estado del componente: no se guarda. */

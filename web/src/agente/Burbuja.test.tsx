@@ -127,6 +127,83 @@ describe("Burbuja", () => {
     ).toBe(false);
   });
 
+  it("avisa que la conversacion no se guarda", () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    expect(screen.getByText("Esta conversación no se guarda.")).toBeTruthy();
+  });
+
+  it("flujo en vivo: los chips aparecen antes de la respuesta y quedan junto a sus citas", async () => {
+    let flujo!: ReadableStreamDefaultController<Uint8Array>;
+    const cuerpo = new ReadableStream<Uint8Array>({
+      start: (c) => void (flujo = c),
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(cuerpo, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const enviar = (s: string) => flujo.enqueue(new TextEncoder().encode(s));
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    preguntar("que dice el reglamento de la reserva?");
+
+    enviar('event: tool_call\ndata: {"herramienta":"buscar_reglamento"}\n\n');
+    expect(await screen.findByText("Buscando en el Reglamento…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Copiar cita/ })).toBeNull();
+
+    enviar(
+      'event: answer\ndata: {"texto":"Se retiene en reserva (RD 13.1.3), ver asiento p1:obra-7.","parcial":false,"restringida":false}\n\n',
+    );
+    flujo.close();
+    expect(
+      await screen.findByRole("button", { name: "Copiar cita RD 13.1.3" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Copiar cita asiento p1:obra-7" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Buscando en el Reglamento…")).toBeTruthy();
+  });
+
+  it("flujo en buffer (Lambda): todos los eventos de una vez pintan chips, aviso parcial y citas", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      respuestaSSE(
+        'event: tool_call\ndata: {"herramienta":"listar_oni"}\n\n' +
+          'event: tool_call\ndata: {"herramienta":"estado_corrida"}\n\n' +
+          'event: answer\ndata: {"texto":"Van 3 ONI (RD 9.1.1).","parcial":true,"restringida":false}\n\n',
+      ),
+    );
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    preguntar("#parcial cuantas ONI hay?");
+
+    const nota = await screen.findByRole("note");
+    expect(nota.textContent).toContain("Respuesta parcial");
+    expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(
+      [
+        "Revisando las obras no identificadas…",
+        "Consultando el estado de la corrida…",
+      ],
+    );
+    expect(
+      screen.getByRole("button", { name: "Copiar cita RD 9.1.1" }),
+    ).toBeTruthy();
+  });
+
+  it("el evento error se ve en linea, nunca como un panel en blanco", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      respuestaSSE(
+        'event: error\ndata: {"mensaje":"El asistente no está disponible en este momento."}\n\n',
+      ),
+    );
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    preguntar("#fallo hola");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "no está disponible",
+    );
+  });
+
   it("conserva la conversacion al cerrar y reabrir", async () => {
     vi.mocked(fetch).mockResolvedValue(
       respuestaSSE(

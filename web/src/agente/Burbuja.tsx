@@ -9,11 +9,12 @@ import ErrorBoundary from "../ErrorBoundary";
 import {
   aplicarEvento,
   historialPara,
+  NO_DISPONIBLE,
   turnoPendiente,
   type Turno,
 } from "./conversacion";
-
-const NO_DISPONIBLE = "El asistente no está disponible en este momento.";
+import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
+import TurnoAgente from "./TurnoAgente";
 
 /**
  * Asistente de solo lectura (#66): burbuja flotante abajo a la izquierda que
@@ -78,7 +79,10 @@ export default function Burbuja() {
           onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
         >
           <header className="agente-cabecera">
-            <p className="agente-titulo">Asistente</p>
+            <div>
+              <p className="agente-titulo">Asistente</p>
+              <AvisoNoSeGuarda />
+            </div>
             <button
               type="button"
               className="agente-cerrar"
@@ -141,18 +145,12 @@ function TurnoVista({ turno }: { turno: Turno }) {
       <p className="agente-mensaje agente-mensaje-usuario">{turno.texto}</p>
     );
   }
-  if (turno.estado === "pendiente") {
-    return <p className="agente-mensaje agente-pensando">Pensando…</p>;
-  }
-  if (turno.estado === "error") {
-    return (
-      <p className="agente-mensaje agente-error" role="alert">
-        {turno.texto}
-      </p>
-    );
-  }
+  // El fallo es su propio aviso: dentro de la burbuja gris quedaria como caja en caja.
+  const clase = turno.estado === "error" ? "" : " agente-mensaje-asistente";
   return (
-    <p className="agente-mensaje agente-mensaje-asistente">{turno.texto}</p>
+    <div className={`agente-mensaje${clase}`}>
+      <TurnoAgente turno={turno} />
+    </div>
   );
 }
 
