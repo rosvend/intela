@@ -1,8 +1,12 @@
-# 0026 El asistente usa Claude Haiku 4.5 en Amazon Bedrock por un endpoint de VPC
+# 0026 El asistente usa la API de Anthropic por un NAT Gateway; Bedrock es la alternativa prevista
 
 Fecha: 2026-10-05
-Estado: Vigente. La base legal de la transferencia internacional (Ley 1581 de 2012) esta
-**pendiente de confirmar por el area juridica de REDES**.
+Estado: Vigente. Revisada el mismo dia: la primera version elegia Bedrock; la cuenta no ha enviado
+el formulario de caso de uso de Anthropic, asi que produccion usa la API de Anthropic. La base
+legal de la transferencia internacional (Ley 1581 de 2012) esta **pendiente de confirmar por el
+area juridica de REDES (P-23) y ahora es mas urgente**: los datos salen de AWS.
+
+> El nombre del fichero conserva "bedrock" para no romper enlaces.
 
 > Numero: la revision de #216 pidio "ADR 0025", pero `0025` ya lo ocupa
 > `0025-salir-sin-aviso-de-revocacion.md` en la rama de #215. Dos ADR con el mismo numero no
@@ -14,10 +18,9 @@ El asistente de solo lectura (#66) es la primera vez que Intela envia datos a un
 lenguaje externo y la primera ruta que cuesta dinero por llamada. Tres hechos condicionan la
 decision:
 
-1. **La red.** La Lambda `intela-api` vive en subredes privadas sin Internet Gateway ni NAT;
-   solo tiene el endpoint gateway de S3 (`infra/modules/network`). Desde ahi
-   `api.anthropic.com` no es alcanzable: con `ANTHROPIC_API_KEY` cargada, cada pregunta
-   esperaria el plazo (25 s) y responderia "no disponible", pagando ese tiempo de Lambda.
+1. **La red.** La Lambda `intela-api` vive en subredes privadas; antes de esta decision no
+   tenian Internet Gateway ni NAT, solo el endpoint gateway de S3 (`infra/modules/network`), asi
+   que `api.anthropic.com` no era alcanzable sin salida a internet.
 2. **Los datos.** Al modelo le llegan el texto de la conversacion y, desde #67/#68/#69, los
    resultados de las herramientas: fragmentos de reglamento, pero tambien titulares, obras y
    cifras de reparto.
@@ -27,14 +30,14 @@ decision:
 
 ### Proveedor y modelo
 
-- **Produccion: Claude Haiku 4.5 en Amazon Bedrock**, por la API Converse, con el perfil de
-  inferencia entre regiones `us.anthropic.claude-haiku-4-5-20251001-v1:0`
-  (`internal/infraestructura/modelolenguaje/bedrock`). Haiku porque el asistente consulta y
-  resume: no razona sobre el reparto, que calcula el motor. Es el modelo rapido y barato de la
-  familia, y soporta tool use nativo.
-- **La API directa de Anthropic queda soportada pero no es la de produccion**
-  (`AGENTE_PROVEEDOR=anthropic`): desde la VPC no tiene red (punto 1). Sirve en local o en
-  un despliegue con salida a internet.
+- **Produccion: Claude Haiku 4.5 por la API directa de Anthropic**
+  (`AGENTE_PROVEEDOR=anthropic`, secreto `ANTHROPIC_API_KEY`), saliendo por un NAT Gateway
+  (siguiente seccion). Haiku porque el asistente consulta y resume: no razona sobre el reparto,
+  que calcula el motor. Es el modelo rapido y barato de la familia y soporta tool use nativo.
+- **Bedrock queda como alternativa prevista** (`AGENTE_PROVEEDOR=bedrock`, perfil
+  `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `modelolenguaje/bedrock`). Hoy esta bloqueado:
+  la cuenta 635867291313 no ha enviado el formulario de caso de uso de Anthropic y Converse
+  responde `ResourceNotFoundException`. La politica IAM de Haiku se conserva para el cambio.
 - **`falso`** sigue siendo el de CI, E2E y desarrollo sin proveedor.
 
 `AGENTE_PROVEEDOR` (`bedrock` | `anthropic` | `falso`) elige el adaptador en
@@ -46,25 +49,37 @@ esquemas de herramienta, llamadas y resultados). Otro proveedor es un paquete nu
 `internal/infraestructura/modelolenguaje/` y un `case` en `Elegir`; `aplicacion` no se toca.
 Otro modelo de Bedrock es `AGENTE_MODELO` mas ampliar la politica IAM de `infra/envs/nheo`.
 
-### Red: endpoint de interfaz, no NAT
+**Como se vuelve a Bedrock.** Enviar el formulario de caso de uso (consola de Bedrock -> Model
+catalog -> Claude Haiku 4.5), poner `agente_proveedor = "bedrock"`, comprobar una pregunta real y
+entonces `enable_nat = false`. Si se apaga el NAT, Titan (#67) necesita volver a tener salida: o
+se deja el NAT, o se reintroduce un endpoint de interfaz `bedrock-runtime` (~USD 7,20/mes/AZ).
 
-Un endpoint de interfaz `bedrock-runtime` con DNS privado, en **una sola subred**, con un
-security group que solo admite 443 desde el de las Lambdas. Las subredes siguen sin ruta a
-internet.
+### Red: NAT Gateway
+
+Las subredes privadas de la Lambda no tenian ruta a internet. `infra/modules/network` crea,
+con `enable_nat` (por defecto `true` en `nheo`): una subred publica, un Internet Gateway, **un**
+NAT Gateway en una sola AZ con su IP elastica y la ruta `0.0.0.0/0` de la tabla privada. El
+security group de las Lambdas pasa de "todo" a 443 hacia cualquier destino y 5432 hacia el
+security group de la base. RDS y la Lambda de migraciones usan rutas internas de la VPC
+(Postgres) y el endpoint gateway de S3; el NAT no interviene en ellas. El endpoint de interfaz
+`bedrock-runtime` de la primera version se elimino: con el NAT es redundante.
 
 | Opcion | Costo aprox. | Efecto |
 | ------ | ------------ | ------ |
-| Endpoint de interfaz, 1 AZ (elegida) | USD 7,20/mes + USD 0,01/GB | Trafico dentro de AWS, autenticado por IAM, sin secreto |
-| Endpoint en las 2 AZ | USD 14,40/mes | Sobrevive a la caida de una AZ; no lo justifica un asistente |
-| NAT Gateway | ~USD 32/mes + trafico | Rompe el presupuesto de USD 20 de `nheo` y abre salida a internet a toda la API |
+| NAT Gateway, 1 AZ (elegida) | ~USD 32/mes + USD 0,045/GB | Salida a internet para el asistente (Anthropic) y Titan; si cae su AZ, cae el asistente |
+| Endpoint de interfaz `bedrock-runtime` | USD 7,20/mes/AZ | Solo sirve con Bedrock, hoy bloqueado |
 | Agente en una Lambda fuera de la VPC | 0 | Deja de servir cuando las herramientas leen Postgres (#67, #68) |
 
-Si cae la AZ del endpoint, cae el asistente; el resto de la API no depende de el.
+**Costo.** El NAT suma ~USD 32/mes mas trafico a los ~USD 14 de RDS: el total esperado pasa de
+~USD 15 a ~USD 45-50/mes. Supera el presupuesto de USD 20 de `nheo`; **la persona responsable del
+proyecto aprobo el sobrecosto de forma explicita**. El ejemplo de `monthly_budget_usd` sube a 45.
+Ademas, el NAT abre salida a internet (solo 443) a toda la Lambda, no solo al asistente.
 
 ### Permisos
 
 Politica en linea en el rol de `intela-api`, solo `bedrock:InvokeModel` (Converse se autoriza con
-esa accion; no se usa streaming):
+esa accion; no se usa streaming). Con Anthropic directo solo se usa la ultima entrada (Titan, que no
+exige formulario y sale por el NAT); las de Haiku se conservan para volver a Bedrock:
 
 - el perfil de inferencia `us.anthropic.claude-haiku-4-5-20251001-v1:0` de la cuenta;
 - el modelo base `anthropic.claude-haiku-4-5-20251001-v1:0` en `us-east-1`, `us-east-2` y
@@ -82,26 +97,32 @@ esa accion; no se usa streaming):
 | Nombre, correo, id del usuario | **No** | `contextoDeActor` manda solo el rol; una prueba lo fija |
 | Argumentos de herramienta en el log | **No** | El log guarda nombre de la herramienta y tamano de los argumentos |
 
-Con Bedrock los datos **no salen de la cuenta de AWS de REDES ni llegan a Anthropic**: el
-proveedor del modelo no ve las peticiones, y Bedrock no las usa para entrenar ni las guarda
-(salvo que se active el registro de invocaciones, que no esta activo). Pero el perfil `us.`
-procesa en **us-east-1, us-east-2 o us-west-2**, es decir, **fuera de Colombia**.
+**Con la API de Anthropic, el texto de la conversacion y los resultados de las herramientas
+salen de AWS y llegan a Anthropic, un tercero fuera de AWS y fuera de Colombia.** No quedan dentro
+de la cuenta de REDES. Anthropic los procesa bajo sus condiciones comerciales de API (consultar
+su politica vigente de retencion y de uso para entrenamiento antes de produccion). La clave viaja
+en una cabecera HTTPS; no se registra en el log.
+
+Con Bedrock (la alternativa) los datos no habrian salido de la cuenta de AWS ni llegado a
+Anthropic, aunque el perfil `us.` procesa en us-east-1, us-east-2 o us-west-2, fuera de Colombia.
 
 ### Base legal (pregunta abierta)
 
-Enviar a una region de AWS en Estados Unidos datos personales de titulares (nombres, cifras de
-ingresos) puede ser una **transferencia internacional de datos personales** en el sentido de la
-Ley 1581 de 2012 (art. 26) o, segun como se lea la relacion con AWS, una transmision a un
-encargado. Este ADR **no concluye** cual aplica ni si hace falta autorizacion del titular,
+Enviar a Anthropic (un tercero, en Estados Unidos) datos personales de titulares (nombres, cifras
+de ingresos) es, con alta probabilidad, una **transferencia o transmision internacional de datos
+personales** en el sentido de la Ley 1581 de 2012 (art. 26), y con un tercero distinto de AWS. Este ADR **no concluye** cual aplica ni si hace falta autorizacion del titular,
 clausula contractual o declaracion de conformidad.
 
-- **Pregunta abierta:** ¿la ejecucion del modelo en regiones de EE. UU. por medio de AWS
-  Bedrock tiene base legal suficiente bajo la Ley 1581 y la politica de tratamiento de REDES?
+- **Pregunta abierta:** ¿enviar a Anthropic (API directa, EE. UU.) la conversacion y resultados
+  de herramientas tiene base legal suficiente bajo la Ley 1581 y la politica de tratamiento de
+  REDES?
 - **Duena:** area juridica de REDES SGC. Registrada como P-23 en
   `docs/dominio/preguntas-cliente.md`.
 - **Mientras no se confirme:** el asistente puede operar con herramientas que no devuelven
-  datos personales (reglamento, #67). Las herramientas que devuelven titulares o cifras
-  (#68, #69) no se despliegan a produccion sin esa respuesta.
+  datos personales (reglamento, #67). **Recomendacion:** las herramientas que devuelven titulares
+  o cifras (#68, #69) no se habilitan en produccion hasta responder P-23, salvo que REDES asuma el
+  riesgo de forma explicita y por escrito. Con Bedrock el riesgo era menor; con Anthropic directo
+  es mayor, por eso la pregunta es ahora mas urgente.
 
 ### El agente nunca autoriza ni escribe
 
@@ -125,16 +146,18 @@ al modelo.
   cuenta filtrado por servicio Amazon Bedrock (o un perfil de inferencia de aplicacion
   etiquetado). Las cuotas de servicio de Bedrock (tokens y peticiones por minuto) son el tope
   duro. Ver `docs/cd.md`.
-- **Anthropic directo:** si alguna vez se usa, tope de gasto mensual en la consola de Anthropic
-  para la clave del despliegue.
+- **Anthropic directo (produccion):** poner un tope de gasto mensual en la consola de Anthropic
+  para la clave del despliegue. Es el tope duro del gasto del modelo.
+- **NAT:** ~USD 32/mes fijos mas trafico, etiquetado `Project=intela`: el presupuesto de
+  `infra/modules/budget` si lo ve (ejemplo: USD 45/mes).
 
 ## Consecuencias
 
-- Produccion no necesita el secreto `ANTHROPIC_API_KEY`; sigue declarado para el proveedor
-  opcional.
-- Se paga un endpoint de interfaz (~USD 7,20/mes) dentro de un presupuesto de USD 20.
-- Prerrequisito de cuenta: Bedrock exige enviar una vez el formulario de caso de uso de
-  Anthropic antes de invocar sus modelos (ver `docs/cd.md`).
-- El prompt cacheado que usa el adaptador de Anthropic no se replica en Bedrock: el prefijo de
-  sistema es corto y no alcanza el minimo cacheable.
-- Queda abierta la pregunta legal, con duena, y condiciona el despliegue de #68 y #69.
+- Produccion necesita el secreto `ANTHROPIC_API_KEY` (ya cableado hasta la Lambda como variable
+  de entorno `sensitive` en Terraform).
+- Se paga un NAT Gateway (~USD 32/mes + trafico), por encima del presupuesto original de USD 20;
+  el sobrecosto esta aprobado.
+- La Lambda tiene salida a internet por 443; los datos del asistente salen de AWS.
+- El prompt cacheado del adaptador de Anthropic si aplica en esta ruta.
+- Queda abierta la pregunta legal (P-23), con duena, y condiciona el despliegue de #68 y #69.
+- Volver a Bedrock exige el formulario de caso de uso y luego apagar el NAT (ver arriba).

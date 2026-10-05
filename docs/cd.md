@@ -132,25 +132,29 @@ la condicion que este documento ponia.
 ### El modelo del asistente
 
 El asistente de solo lectura (#66) llama a un modelo de lenguaje. En produccion es **Claude
-Haiku 4.5 en Amazon Bedrock** ([ADR 0026](decisiones/0026-asistente-sobre-bedrock.md)):
-`infra/envs/nheo` fija `AGENTE_PROVEEDOR=bedrock` (variable `agente_proveedor`), la Lambda
-llega a Bedrock por el endpoint de interfaz `bedrock-runtime` de `infra/modules/network`
-(~USD 7,20/mes, una AZ) y se autentica con su rol: no hay secreto que cargar.
+Haiku 4.5 por la API de Anthropic, saliendo por un NAT Gateway**
+([ADR 0026](decisiones/0026-asistente-sobre-bedrock.md)): `infra/envs/nheo` fija
+`AGENTE_PROVEEDOR=anthropic` (variable `agente_proveedor`) y `enable_nat = true`, y
+`infra/modules/network` crea el NAT (~USD 32/mes + USD 0,045/GB, una AZ). Bedrock esta bloqueado
+porque la cuenta no ha enviado el formulario de caso de uso de Anthropic.
 
-1. **Prerrequisito de cuenta, una sola vez.** Bedrock exige enviar el formulario de caso de uso
-   de Anthropic (consola de Bedrock -> Model catalog -> Claude Haiku 4.5) antes de invocar sus
-   modelos. Sin el, Converse responde `ResourceNotFoundException: Model use case details have
-   not been submitted for this account` y el asistente contesta "no disponible". El 2026-10-05
-   la cuenta de `nheo` todavia devolvia ese error.
-2. **Permisos.** El rol de `intela-api` solo puede `bedrock:InvokeModel` sobre el perfil
-   `us.anthropic.claude-haiku-4-5-20251001-v1:0`, el modelo base detras de el (us-east-1,
-   us-east-2, us-west-2) y `amazon.titan-embed-text-v2:0`. Cambiar `AGENTE_MODELO` a otro
-   modelo exige ampliar `data.aws_iam_policy_document.bedrock` en `infra/envs/nheo/main.tf`.
-3. **Anthropic directo, opcional.** `ANTHROPIC_API_KEY` sigue declarado (repositorio ->
-   `TF_VAR_anthropic_api_key`, `sensitive`) y se usa solo con `agente_proveedor = "anthropic"`.
-   Desde estas subredes no hay ruta a `api.anthropic.com`, asi que en `nheo` no sirve. Si se
-   usa en otro despliegue, poner un tope de gasto mensual a esa clave en la consola de Anthropic.
-4. Sin proveedor que funcione el despliegue no falla: el asistente contesta "no disponible" y
+1. **Secreto.** `ANTHROPIC_API_KEY` (secreto de repositorio) llega como `TF_VAR_anthropic_api_key`
+   (`sensitive`) a la variable de entorno de la Lambda. No se registra en el log. Poner un tope de
+   gasto mensual a esa clave en la consola de Anthropic.
+2. **Datos.** El texto de la conversacion y los resultados de herramientas **salen de AWS hacia
+   Anthropic** (tercero, fuera de Colombia). Hasta que el area juridica responda P-23, no se
+   habilitan en produccion las herramientas que devuelven titulares o cifras (#68, #69), salvo
+   aceptacion explicita del riesgo (ver ADR 0026).
+3. **Costo y presupuesto.** El NAT sube el total esperado a ~USD 45-50/mes (RDS ~14 + NAT ~32 +
+   trafico). `monthly_budget_usd` de ejemplo: 45, sobrecosto aprobado por el responsable del
+   proyecto; el presupuesto de `infra/modules/budget` ve el NAT por su etiqueta `Project`.
+4. **Permisos Bedrock.** El rol de `intela-api` solo puede `bedrock:InvokeModel` sobre
+   `amazon.titan-embed-text-v2:0` (embeddings de #67, por el NAT, sin formulario) y, para un
+   cambio futuro, sobre el perfil `us.anthropic.claude-haiku-4-5-20251001-v1:0` y su modelo base.
+5. **Volver a Bedrock.** Enviar el formulario de caso de uso (consola de Bedrock -> Model catalog
+   -> Claude Haiku 4.5), poner `agente_proveedor = "bedrock"`, verificar y despues
+   `enable_nat = false` (Titan necesitaria entonces un endpoint `bedrock-runtime`).
+6. Sin proveedor que funcione el despliegue no falla: el asistente contesta "no disponible" y
    el resto de la API sirve igual.
 
 #### Tope de gasto
@@ -159,11 +163,10 @@ llega a Bedrock por el endpoint de interfaz `bedrock-runtime` de `infra/modules/
 - El limite de 20 preguntas por usuario por minuto **es por instancia**: vive en la memoria del
   proceso, y en Lambda cada entorno caliente tiene el suyo. El tope real es 20 x instancias
   calientes, acotadas por `reserved_concurrency` (10). Un limite compartido es trabajo aparte.
-- El presupuesto de `infra/modules/budget` filtra por la etiqueta `Project=intela`. El endpoint
-  la lleva; **las invocaciones a Bedrock por un perfil del sistema no**, asi que ese
-  presupuesto no ve el gasto del modelo. Crear a mano (o en un PR aparte) un presupuesto de
-  cuenta filtrado por el servicio Amazon Bedrock, y vigilar las cuotas de servicio de Bedrock
-  (tokens y peticiones por minuto del modelo), que son el tope duro.
+- El presupuesto de `infra/modules/budget` filtra por la etiqueta `Project=intela` y ve el NAT,
+  pero **no el gasto del modelo**: el de Anthropic se factura fuera de AWS (tope en su consola)
+  y el de Bedrock por un perfil del sistema no lleva la etiqueta (si se vuelve a Bedrock, un
+  presupuesto de cuenta filtrado por el servicio Amazon Bedrock y sus cuotas de servicio).
 
 `AGENTE_PLAZO` (25 s por defecto en el modulo) acota la pregunta entera por debajo del
 `timeout_s` de la Lambda (30 s): al vencer, el usuario recibe un evento `error` en vez de un 502
