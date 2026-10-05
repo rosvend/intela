@@ -208,7 +208,12 @@ func (s *Store) ListarAlertas(ctx context.Context, f aplicacion.FiltroAlertas) (
 	// PR existe para cazar, y lo cazaron dos pruebas de este mismo paquete.
 	p := f.ConDefecto()
 
-	sql := `SELECT ` + columnasAlerta + ` FROM alertas
+	// LEFT JOIN a obras: el titulo vigente viaja junto al ref_id para que la
+	// bandeja no pida GET /obras/{id} por tarjeta (I4, PR #215). Las columnas
+	// de obras se renombran para no chocar con las de alertas (id, tipo).
+	sql := `SELECT ` + columnasAlerta + `, COALESCE(o.obra_titulo, '') FROM alertas
+		  LEFT JOIN (SELECT id AS obra_id, titulo AS obra_titulo FROM obras) o
+		         ON ref_tipo = 'obra' AND o.obra_id = ref_id
 		  WHERE ($1 = '' OR periodo = $1)
 		    AND ($2 = '' OR tipo = $2)
 		    AND (NOT $3 OR resuelta = $4)
@@ -231,7 +236,7 @@ func (s *Store) ListarAlertas(ctx context.Context, f aplicacion.FiltroAlertas) (
 
 	alertas := make([]aplicacion.Alerta, 0)
 	for filas.Next() {
-		a, err := escanearAlerta(filas)
+		a, err := escanearAlertaConTitulo(filas)
 		if err != nil {
 			return nil, traducirError(err, "escanear alerta")
 		}
@@ -360,6 +365,17 @@ func escanearAlerta(fila pgx.Row) (aplicacion.Alerta, error) {
 		&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
 		&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada,
 		&a.ResueltaRol, &a.Accion, &a.AccionObjetivo,
+	)
+	return a, err
+}
+
+// escanearAlertaConTitulo lee [columnasAlerta] seguido del titulo de la obra.
+func escanearAlertaConTitulo(fila pgx.Row) (aplicacion.Alerta, error) {
+	var a aplicacion.Alerta
+	err := fila.Scan(
+		&a.ID, &a.Periodo, &a.Tipo, &a.RefTipo, &a.RefID, &a.RefTitular, &a.Detalle,
+		&a.Detectada, &a.Resuelta, &a.ResueltaPor, &a.ResueltaEn, &a.Nota, &a.Autocerrada,
+		&a.ResueltaRol, &a.Accion, &a.AccionObjetivo, &a.RefTitulo,
 	)
 	return a, err
 }

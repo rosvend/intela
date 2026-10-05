@@ -798,3 +798,34 @@ func TestElEsquemaNoMezclaAutocierreYFirma(t *testing.T) {
 		t.Fatalf("se esperaba alerta_resuelta_tiene_firma, fue %v", err)
 	}
 }
+
+// I4 (PR #215): el listado trae el titulo vigente de la obra referida, para
+// que la bandeja no pida GET /obras/{id} por tarjeta (ruta solo de admin).
+// Las alertas sobre un uso o una entrega no lo traen.
+func TestListarAlertasTraeElTituloDeLaObra(t *testing.T) {
+	s, _ := sembrarPeriodoConAnomalias(t)
+	svc := servicioDeAnomalias(s, instanteAlertas)
+	if _, err := svc.Evaluar(t.Context(), periodoAlertas, usuarioAdmin); err != nil {
+		t.Fatalf("Evaluar: %v", err)
+	}
+
+	alertas, err := s.ListarAlertas(t.Context(), aplicacion.FiltroAlertas{Periodo: periodoAlertas})
+	if err != nil {
+		t.Fatalf("ListarAlertas: %v", err)
+	}
+	if len(alertas) != 6 {
+		t.Fatalf("hay %d alertas, se esperaban 6", len(alertas))
+	}
+	for _, a := range alertas {
+		quiero := ""
+		if a.RefTipo == "obra" {
+			quiero = "Cronica de una Muerte"
+		}
+		if a.RefTitulo != quiero {
+			t.Errorf("%s|%s:%s: ref_titulo = %q, se esperaba %q", a.Tipo, a.RefTipo, a.RefID, a.RefTitulo, quiero)
+		}
+		if a.RefID == "" {
+			t.Errorf("%s: el titulo no sustituye al ref_id", a.Tipo)
+		}
+	}
+}

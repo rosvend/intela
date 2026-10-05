@@ -29,6 +29,8 @@ const proc2025: Proceso = {
   circuito: "nacional",
   etapa: "verificacion",
   periodo: "2025",
+  bolsa_id: "bolsa-1",
+  snapshot_id: "snap-1",
   revision: 1,
   firmas: [],
 };
@@ -92,6 +94,7 @@ const deSerieY: Alerta[] = [
     detalle: RESERVA_60,
     ref_tipo: "obra",
     ref_id: "obra-serie",
+    ref_titulo: "Serie Y",
   }),
   alerta({
     id: "s-2",
@@ -100,6 +103,7 @@ const deSerieY: Alerta[] = [
     ref_tipo: "obra",
     ref_id: "obra-serie",
     ref_titular: "ipi:IPI-00000002",
+    ref_titulo: "Serie Y",
   }),
 ];
 
@@ -127,7 +131,6 @@ type Rutas = {
   resumen?: () => Response;
   lista?: () => Response;
   evaluar?: () => Response;
-  obras?: Record<string, string>;
 };
 
 function servir({
@@ -135,7 +138,6 @@ function servir({
   resumen = () => json(resumen2025),
   lista = () => json(alertas),
   evaluar = () => new Response(null, { status: 204 }),
-  obras = {},
 }: Rutas = {}) {
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const path = String(input);
@@ -145,9 +147,6 @@ function servir({
       return evaluar();
     if (path === RUTAS_REPARTO.resumenAlertas("2025")) return resumen();
     if (path === RUTAS_REPARTO.alertas("2025")) return lista();
-    const obra = /^\/api\/obras\/([^/]+)$/.exec(path)?.[1];
-    if (obra && obras[decodeURIComponent(obra)])
-      return json({ id: obra, titulo: obras[decodeURIComponent(obra)] });
     return json({ error: "ruta no encontrada" }, 404);
   });
 }
@@ -225,7 +224,7 @@ describe("TableroAnomalias", () => {
   });
 
   it("agrupa por obra con su titulo real y un chip por problema", async () => {
-    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+    servir({ lista: () => json(deSerieY) });
 
     montar();
 
@@ -247,7 +246,7 @@ describe("TableroAnomalias", () => {
   });
 
   it("la frase del servidor no se pinta: vive en el Detalle de cada problema", async () => {
-    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+    servir({ lista: () => json(deSerieY) });
 
     montar();
 
@@ -261,7 +260,9 @@ describe("TableroAnomalias", () => {
   });
 
   it("sin titulo en el catalogo la tarjeta usa el id de la obra", async () => {
-    servir({ lista: () => json(deSerieY) });
+    servir({
+      lista: () => json(deSerieY.map((a) => ({ ...a, ref_titulo: undefined }))),
+    });
 
     montar();
 
@@ -271,7 +272,7 @@ describe("TableroAnomalias", () => {
   });
 
   it("la declaracion y el coautor llevan a abrir la declaracion de la obra", async () => {
-    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+    servir({ lista: () => json(deSerieY) });
 
     montar();
 
@@ -281,6 +282,92 @@ describe("TableroAnomalias", () => {
     expect(enlaces[0].getAttribute("href")).toBe(
       "/catalogo/obra-serie/declaracion",
     );
+  });
+
+  // I4 (PR #215): GET /api/obras/{id} es solo de administrador; el titulo
+  // llega en la alerta y la tarjeta no pide nada por su cuenta.
+  it.each([
+    "administrador",
+    "distribucion",
+    "contabilidad",
+    "auditor",
+  ] as const)(
+    "con rol %s el titulo sale de la alerta, sin pedir /api/obras",
+    async (rol) => {
+      servir({ rol, lista: () => json(deSerieY) });
+
+      montar();
+
+      expect(
+        await screen.findByRole("heading", { name: "Serie Y" }),
+      ).toBeTruthy();
+      const aObras = vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith("/api/obras"));
+      expect(aObras).toHaveLength(0);
+    },
+  );
+
+  // I5 (PR #215): sin acceso a la pantalla de destino, no hay boton.
+  it.each(["distribucion", "contabilidad", "auditor"] as const)(
+    "con rol %s no ofrece acciones hacia pantallas de administrador",
+    async (rol) => {
+      servir({ rol, lista: () => json([...alertas, ...deSerieY]) });
+
+      montar();
+
+      await screen.findByRole("heading", { name: "Serie Y" });
+      for (const nombre of [
+        "Identificar",
+        "Revisar en Ingesta",
+        "Abrir declaración",
+      ]) {
+        expect(screen.queryByRole("link", { name: nombre })).toBeNull();
+      }
+    },
+  );
+
+  // I6 (PR #215): por encima de 100 es un error, no una barra llena.
+  it("una declaracion al 150 % se pinta como error, no como completa", async () => {
+    servir({
+      lista: () =>
+        json([
+          alerta({
+            id: "x-1",
+            tipo: "reserva_declaracion_incompleta",
+            detalle:
+              'la declaracion vigente de la obra "obra-x" no esta completa: lo declarado suma 150% en 2 parte(s) y R-04 exige 100 exactos',
+            ref_tipo: "obra",
+            ref_id: "obra-x",
+            ref_titulo: "Obra X",
+          }),
+        ]),
+    });
+
+    montar();
+
+    const titulo = await screen.findByRole("heading", { name: "Obra X" });
+    const tarjeta = titulo.closest("li") as HTMLElement;
+    expect(within(tarjeta).getByText("Declaración al 150 %")).toBeTruthy();
+    expect(
+      within(tarjeta).queryByRole("img", { name: "100 de 100 % declarado" }),
+    ).toBeNull();
+    const barra = within(tarjeta).getByRole("img", {
+      name: "150 % declarado: excede el 100 %",
+    });
+    expect(barra.className).toContain("problema-progreso-excede");
+    expect(barra.textContent).toContain("150/100");
+  });
+
+  it("una declaracion por debajo de 100 no lleva el estado de exceso", async () => {
+    servir({ lista: () => json(deSerieY) });
+
+    montar();
+
+    const barra = await screen.findByRole("img", {
+      name: "60 de 100 % declarado",
+    });
+    expect(barra.className).not.toContain("problema-progreso-excede");
   });
 
   it("lo que bloquea va primero, con borde de acento y chip relleno con candado", async () => {

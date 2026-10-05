@@ -461,6 +461,9 @@ type Alerta struct {
 	RefID      string
 	RefTitular string
 
+	// RefTitulo es el titulo VIGENTE de la obra si RefTipo es "obra"; vacio si no. Solo lectura: RefID sigue siendo la referencia.
+	RefTitulo string
+
 	Detalle string
 
 	// Critica es DERIVADO ([anomalias.EsCritica]) y no una columna.

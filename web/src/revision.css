@@ -1131,6 +1131,16 @@ mark.diferencia {
   background: var(--alerta);
 }
 
+/* Declaracion por encima de 100 %: error, no completa (I6). */
+.problema-progreso-excede .problema-relleno {
+  background: var(--error);
+}
+
+.problema-progreso-excede .problema-cifra {
+  color: var(--error);
+  font-weight: 600;
+}
+
 .problema-cifra {
   font-family: var(--mono);
   font-size: 0.8rem;

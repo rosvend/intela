@@ -1,7 +1,10 @@
+import { puedeVer } from "../navegacion";
+import type { Rol } from "../sesion";
 import { Alerta, TipoDeAlerta } from "./tipos";
 
 /** Lo que se dibuja junto al chip en vez de la frase del servidor. */
 export type Visual =
+  // `valor` sin tope: por encima de 100 es un error, no una declaracion completa.
   | { forma: "progreso"; valor: number }
   | { forma: "titular"; porcentaje: string | null; ipi: string | null }
   | { forma: "ninguna" };
@@ -87,7 +90,7 @@ export function describirAlerta(alerta: Alerta): Descripcion {
         etiqueta: `Declaración al ${conComa(suma[1])} %`,
         visual: {
           forma: "progreso",
-          valor: Math.min(100, Math.max(0, Number(suma[1]))),
+          valor: Math.max(0, Number(suma[1])),
         },
       };
     }
@@ -150,7 +153,7 @@ export function agruparPorAfectado(alertas: readonly Alerta[]): Afectado[] {
       grupos.set(clave, grupo);
     }
     grupo.problemas.push(problema);
-    grupo.nombre ??= problema.nombre;
+    grupo.nombre ??= problema.nombre ?? alerta.ref_titulo ?? null;
     grupo.bloquea ||= problema.bloquea;
     grupo.cerrado &&= cerrado;
   }
@@ -160,8 +163,16 @@ export function agruparPorAfectado(alertas: readonly Alerta[]): Afectado[] {
   return ordenados.sort((a, b) => rango(a) - rango(b));
 }
 
-/** El unico arreglo que ofrece la tarjeta, decidido por su problema mas grave. */
-export function accionDe(afectado: Afectado): Accion | null {
+/** El unico arreglo que ofrece la tarjeta, si el rol puede ver la pantalla de destino. */
+export function accionDe(afectado: Afectado, rol: Rol): Accion | null {
+  const accion = accionSinRol(afectado);
+  if (!accion) return null;
+  // Las rutas anidadas (/catalogo/:id/declaracion) se autorizan por su seccion.
+  const seccion = `/${accion.ruta.split("/")[1]}`;
+  return puedeVer(rol, seccion) ? accion : null;
+}
+
+function accionSinRol(afectado: Afectado): Accion | null {
   const primero = afectado.problemas.find((p) => !p.cerrado);
   if (!primero) return null;
   switch (primero.alerta.tipo) {

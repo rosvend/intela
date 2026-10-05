@@ -53,6 +53,32 @@ describe("describirAlerta", () => {
     expect(d.visual).toEqual({ forma: "progreso", valor: 62.5 });
   });
 
+  // I6 (PR #215): por encima de 100 no es "completa"; el valor no se topa.
+  it("una declaracion al 150 % conserva el 150, no se topa en 100", () => {
+    const d = describirAlerta(
+      alerta({
+        id: "a",
+        tipo: "reserva_declaracion_incompleta",
+        detalle:
+          "lo declarado suma 150% en 2 parte(s) y R-04 exige 100 exactos",
+      }),
+    );
+    expect(d.etiqueta).toBe("Declaración al 150 %");
+    expect(d.visual).toEqual({ forma: "progreso", valor: 150 });
+  });
+
+  it("una declaracion apenas por encima de 100 tampoco se topa", () => {
+    const d = describirAlerta(
+      alerta({
+        id: "a",
+        tipo: "reserva_declaracion_incompleta",
+        detalle: "lo declarado suma 100.5% en 3 parte(s)",
+      }),
+    );
+    expect(d.etiqueta).toBe("Declaración al 100,5 %");
+    expect(d.visual).toEqual({ forma: "progreso", valor: 100.5 });
+  });
+
   it("una obra sin ninguna declaracion es una barra vacia", () => {
     const d = describirAlerta(
       alerta({
@@ -256,15 +282,37 @@ describe("agruparPorAfectado", () => {
     ]);
     expect(g.nombre).toBe("Pasion de gavilanes");
   });
+
+  // I4 (PR #215): el titulo de la obra llega en la alerta, sin GET por tarjeta.
+  it("una obra toma su nombre de ref_titulo", () => {
+    const [g] = agruparPorAfectado([
+      alerta({
+        id: "r",
+        tipo: "reserva_declaracion_incompleta",
+        ref_titulo: "Serie Y",
+      }),
+    ]);
+    expect(g.nombre).toBe("Serie Y");
+    expect(g.refId).toBe("obra-serie");
+  });
+
+  it("sin ref_titulo la obra no inventa nombre", () => {
+    const [g] = agruparPorAfectado([
+      alerta({ id: "r", tipo: "reserva_declaracion_incompleta" }),
+    ]);
+    expect(g.nombre).toBeNull();
+  });
 });
 
 describe("accionDe", () => {
   const una = (a: Alerta) => agruparPorAfectado([a])[0];
+  const ADMIN = "administrador" as const;
 
   it("una ONI se identifica", () => {
     expect(
       accionDe(
         una(alerta({ id: "a", tipo: "oni", ref_tipo: "uso", ref_id: "u" })),
+        ADMIN,
       ),
     ).toEqual({ etiqueta: "Identificar", ruta: "/identificacion" });
   });
@@ -275,7 +323,7 @@ describe("accionDe", () => {
       "titular_sin_porcentaje",
     ] as const) {
       expect(
-        accionDe(una(alerta({ id: "a", tipo, ref_id: "obra 1" }))),
+        accionDe(una(alerta({ id: "a", tipo, ref_id: "obra 1" })), ADMIN),
       ).toEqual({
         etiqueta: "Abrir declaración",
         ruta: "/catalogo/obra%201/declaracion",
@@ -289,12 +337,12 @@ describe("accionDe", () => {
       "duplicado_registro",
       "tipo_obra_sin_mapear",
     ] as const) {
-      expect(accionDe(una(alerta({ id: "a", tipo, ref_tipo: "uso" })))).toEqual(
-        {
-          etiqueta: "Revisar en Ingesta",
-          ruta: "/ingesta",
-        },
-      );
+      expect(
+        accionDe(una(alerta({ id: "a", tipo, ref_tipo: "uso" })), ADMIN),
+      ).toEqual({
+        etiqueta: "Revisar en Ingesta",
+        ruta: "/ingesta",
+      });
     }
   });
 
@@ -309,12 +357,42 @@ describe("accionDe", () => {
         critica: true,
       }),
     ]);
-    expect(accionDe(g)?.etiqueta).toBe("Revisar en Ingesta");
+    expect(accionDe(g, ADMIN)?.etiqueta).toBe("Revisar en Ingesta");
   });
 
   it("una tarjeta cerrada no ofrece accion", () => {
     expect(
-      accionDe(una(alerta({ id: "a", tipo: "oni", resuelta: true }))),
+      accionDe(una(alerta({ id: "a", tipo: "oni", resuelta: true })), ADMIN),
+    ).toBeNull();
+  });
+
+  // I5 (PR #215): Identificacion, Ingesta y Catalogo son solo de
+  // administrador; a los demas roles de lectura no se les ofrece un boton que
+  // lleva a una pantalla que no pueden ver.
+  describe.each(["distribucion", "contabilidad", "auditor"] as const)(
+    "con rol %s",
+    (rol) => {
+      it.each([
+        ["oni", "uso"],
+        ["duplicado_archivo", "reporte"],
+        ["duplicado_registro", "uso"],
+        ["tipo_obra_sin_mapear", "uso"],
+        ["reserva_declaracion_incompleta", "obra"],
+        ["titular_sin_porcentaje", "obra"],
+      ] as const)("%s no ofrece accion", (tipo, ref_tipo) => {
+        expect(accionDe(una(alerta({ id: "a", tipo, ref_tipo })), rol)).toBe(
+          null,
+        );
+      });
+    },
+  );
+
+  it("el titular tampoco recibe accion", () => {
+    expect(
+      accionDe(
+        una(alerta({ id: "a", tipo: "oni", ref_tipo: "uso" })),
+        "titular",
+      ),
     ).toBeNull();
   });
 });

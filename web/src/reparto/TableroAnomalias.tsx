@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
 import "../revision.css";
-import { useSesion } from "../sesion";
+import { useSesion, type Rol } from "../sesion";
 import { formatearEntero } from "../tablero/formato";
 import { useRecurso } from "../tablero/useDashboard";
 import BarraApilada, { PALETA } from "../ui/BarraApilada";
@@ -278,6 +278,7 @@ export default function TableroAnomalias() {
                   key={afectado.clave}
                   afectado={afectado}
                   indice={i}
+                  rol={usuario?.rol}
                 />
               ))}
             </ul>
@@ -395,34 +396,18 @@ const CLASE_DE_REGISTRO: Record<Afectado["refTipo"], string> = {
   uso: "Uso reportado",
 };
 
-/** El titulo del catalogo para una obra; el id si no llega. */
-function useNombre(afectado: Afectado): string {
-  const esObra = afectado.refTipo === "obra";
-  const obra = useRecurso<{ titulo?: unknown }>(
-    `/api/obras/${encodeURIComponent(afectado.refId)}`,
-    esObra,
-  );
-  if (afectado.nombre) return afectado.nombre;
-  if (
-    esObra &&
-    obra.tipo === "listo" &&
-    typeof obra.datos?.titulo === "string" &&
-    obra.datos.titulo !== ""
-  ) {
-    return obra.datos.titulo;
-  }
-  return afectado.refId;
-}
-
 function TarjetaDeAfectado({
   afectado,
   indice,
+  rol,
 }: {
   afectado: Afectado;
   indice: number;
+  rol: Rol | undefined;
 }): ReactElement {
-  const nombre = useNombre(afectado);
-  const accion = accionDe(afectado);
+  // El titulo llega en la alerta (ref_titulo); sin el, el id.
+  const nombre = afectado.nombre ?? afectado.refId;
+  const accion = rol ? accionDe(afectado, rol) : null;
   const clase = afectado.bloquea
     ? " afectado-bloquea"
     : afectado.cerrado
@@ -490,16 +475,26 @@ function FilaDeProblema({ problema }: { problema: Problema }): ReactElement {
 function VisualDeProblema({ visual }: { visual: Visual }): ReactElement | null {
   if (visual.forma === "progreso") {
     const cifra = visual.valor.toLocaleString("es-CO");
+    // Por encima de 100 no es "completa": la barra se llena en rojo y lo dice.
+    const excede = visual.valor > 100;
     return (
       <span
-        className="problema-progreso"
+        className={`problema-progreso${excede ? " problema-progreso-excede" : ""}`}
         role="img"
-        aria-label={`${cifra} de 100 % declarado`}
+        aria-label={
+          excede
+            ? `${cifra} % declarado: excede el 100 %`
+            : `${cifra} de 100 % declarado`
+        }
       >
         <span className="problema-pista" aria-hidden="true">
           <span
             className="problema-relleno"
-            style={{ "--valor": `${visual.valor}%` } as React.CSSProperties}
+            style={
+              {
+                "--valor": `${Math.min(100, visual.valor)}%`,
+              } as React.CSSProperties
+            }
           />
         </span>
         <span className="problema-cifra" aria-hidden="true">
