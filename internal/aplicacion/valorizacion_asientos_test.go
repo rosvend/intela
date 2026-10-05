@@ -337,3 +337,121 @@ func TestValorizacionDeUsoPesaLoDocumentado(t *testing.T) {
 		}
 	}
 }
+
+// entradaConDosUsos arma la entrada del asiento con dos usos de obra-1 que corre
+// el motor real: el segundo sale marcado FueraDeRepertorio (R-27, #206).
+func entradaConDosUsos(t *testing.T, mod reparto.Modalidad) entradaValorizacion {
+	t.Helper()
+	grupo := string(reparto.GrupoPrivadosNacionales)
+	if mod == reparto.TV {
+		grupo = ""
+	}
+	u1, u2 := usoDeCanal("z", mod, grupo), usoDeCanal("z", mod, grupo)
+	u1.Uso.ReporteID = "rep-1"
+	u2.Uso.ID, u2.Uso.ReporteID = "u-2", "rep-2"
+	filas := []UsoDeReparto{u1, u2}
+
+	motor := make([]reparto.Uso, len(filas))
+	for i, f := range filas {
+		u, err := aUsoDeReparto(f)
+		if err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		motor[i] = u
+	}
+	motor[1].FueraDeRepertorio = true
+
+	decl, err := repertorio.NuevaDeclaracion("obra-1", []repertorio.Parte{{TitularID: "titular-1", IPI: "IPI-1", Porcentaje: d("100")}})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	snap := snapshotDePrueba()
+	bp := BolsaPersistida{ID: "bolsa-1", UsuarioID: "z", Periodo: "2026-01", Circuito: recaudo.Nacional, Bruto: d("1000000")}
+	bolsa, err := recaudo.NuevaBolsa(bp.UsuarioID, bp.Periodo, bp.Circuito, bp.Bruto)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	resultado, err := reparto.Reparto(bolsa, motor, snap, []repertorio.Declaracion{decl}, reparto.Opciones{SnapshotID: "snap-1"})
+	if err != nil {
+		t.Fatalf("motor de reparto: %v", err)
+	}
+	return entradaValorizacion{
+		proceso: reparto.ProcesoDeReparto{ID: "proc-1", Periodo: "2026-01", Circuito: recaudo.Nacional},
+		bolsa:   bp, snap: snap, resultado: resultado, usos: filas, motor: motor,
+		vigentes: map[string]VersionDeclaracion{"obra-1": {Version: 1, Declaracion: decl}},
+		origen: map[string]OrigenDeUso{
+			"u-1": {UsoID: "u-1", ReporteID: "rep-1", Fuente: "caracol", SHA256: "abc", ClaveObjeto: "crudos/abc", Escalon: "exacto"},
+			"u-2": {UsoID: "u-2", ReporteID: "rep-2", Fuente: "caracol", SHA256: "def", ClaveObjeto: "crudos/def", Escalon: "exacto"},
+		},
+	}
+}
+
+func obraAsentada(t *testing.T, ps []pendiente, obraID string) AsientoObraValorizada {
+	t.Helper()
+	for _, p := range ps {
+		if p.hecho == HechoRepartoObraValorizada && p.refID == obraID {
+			return p.payload.(AsientoObraValorizada)
+		}
+	}
+	t.Fatalf("no hay asiento de la obra %q", obraID)
+	return AsientoObraValorizada{}
+}
+
+func reportesDeLaCorrida(t *testing.T, ps []pendiente) []ReporteAsentado {
+	t.Helper()
+	for _, p := range ps {
+		if p.hecho == HechoRepartoValorizado {
+			return p.payload.(AsientoValorizacion).Reportes
+		}
+	}
+	t.Fatal("no hay asiento de la corrida")
+	return nil
+}
+
+// R-27 (RD 9.5): el motor no pondera el uso fuera de repertorio de una
+// suscripcion, asi que el recibo no lo itemiza (#206).
+func TestValorizarSuscripcionNoAsientaElUsoFueraDeRepertorio(t *testing.T) {
+	t.Parallel()
+	ps, err := asientosDeValorizacion(entradaConDosUsos(t, reparto.Suscripcion))
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	obra := obraAsentada(t, ps, "obra-1")
+	if len(obra.Valorizacion) != 1 || obra.Valorizacion[0].UsoID != "u-1" {
+		t.Fatalf("valorizacion = %+v, se esperaba solo u-1", obra.Valorizacion)
+	}
+	if len(obra.Usos) != 1 || obra.Usos[0].UsoID != "u-1" {
+		t.Fatalf("usos = %+v, se esperaba solo u-1", obra.Usos)
+	}
+	suma := decimal.Zero
+	for _, v := range obra.Valorizacion {
+		suma = suma.Add(decimal.RequireFromString(v.Puntos))
+	}
+	if !suma.Round(8).Equal(decimal.RequireFromString(obra.Puntos)) {
+		t.Errorf("suma de la valorizacion %s != puntos de la obra %s", suma.Round(8), obra.Puntos)
+	}
+	for _, r := range reportesDeLaCorrida(t, ps) {
+		if r.ID == "rep-2" {
+			t.Errorf("rep-2 no peso y no debe estar en los reportes: %+v", r)
+		}
+	}
+}
+
+// La marca solo excluye en suscripcion y hotel: en TV el motor pondera el uso
+// y el asiento debe conservarlo.
+func TestValorizarTVConMarcaFueraDeRepertorioSiAsientaElUso(t *testing.T) {
+	t.Parallel()
+	ps, err := asientosDeValorizacion(entradaConDosUsos(t, reparto.TV))
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	obra := obraAsentada(t, ps, "obra-1")
+	if len(obra.Valorizacion) != 2 || len(obra.Usos) != 2 {
+		t.Fatalf("valorizacion = %+v, usos = %+v, se esperaban los dos usos", obra.Valorizacion, obra.Usos)
+	}
+	if got := len(reportesDeLaCorrida(t, ps)); got != 2 {
+		t.Errorf("reportes = %d, se esperaban 2", got)
+	}
+}
