@@ -71,8 +71,8 @@ func partir(md string) ([]aplicacion.SeccionReglamento, error) {
 	)
 	cerrar := func() {
 		actual.Texto = strings.TrimSpace(texto.String())
-		// Un literal sin cuerpo (RD 5.1) tiene su contenido en el titulo: sigue siendo citable.
-		if actual.Texto == "" {
+		// Un literal sin cuerpo (RD 5.1) tiene su contenido en el titulo; un capitulo sin cuerpo (RD 9) solo agrupa.
+		if actual.Texto == "" && actual.Cita != abrev+" "+m[1] {
 			actual.Texto = actual.Titulo
 		}
 		if actual.Texto != "" {
