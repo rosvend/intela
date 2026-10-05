@@ -420,6 +420,17 @@ var (
 	// explicar despues.
 	ErrReservaYaRegistrada = errors.New("ya existe una reserva registrada para ese proceso")
 
+	// ErrReclamacionYaRegistrada: ya existe una reclamacion con ese id.
+	//
+	// AbrirReclamacion es de una sola vez por id. GuardarReclamacion usa
+	// ON CONFLICT DO NOTHING para poder firmar una fila que ya existe, y sin
+	// este centinela un segundo alta con otro monto_solicitado devolvía la
+	// reclamacion que el llamador pidio -- valores que la fila no tiene --
+	// sobre el campo que despues se debita. Mismo criterio que
+	// ErrReservaYaRegistrada: la violacion de la clave primaria es el error,
+	// no una lectura previa.
+	ErrReclamacionYaRegistrada = errors.New("ya existe una reclamacion registrada con ese id")
+
 	// ErrProcesoIDReutilizado: IniciarProceso es idempotente por id -- un
 	// reintento del mismo trabajo (Intentos, no Corrida) tiene que poder
 	// llamarlo dos veces sin reabrir el proceso -- pero solo cuando el
