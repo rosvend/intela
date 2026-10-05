@@ -81,14 +81,17 @@ describe("Layout", () => {
     localStorage.clear();
   });
 
-  it("con rol titular el sidebar tiene un solo enlace (Inicio)", async () => {
+  it("con rol titular el sidebar tiene Inicio y Mis liquidaciones", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValue(respuestaUsuario("titular"));
 
     montar();
 
-    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(2));
     expect(screen.getByRole("link", { name: "Inicio" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Mis liquidaciones" }),
+    ).toBeTruthy();
     expect(screen.queryByText("Configuración")).toBeNull();
   });
 
@@ -300,7 +303,7 @@ describe("Layout", () => {
 
     montar();
 
-    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(2));
     const rutasPedidas = vi
       .mocked(fetch)
       .mock.calls.map(([input]) => urlDe(input));

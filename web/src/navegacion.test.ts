@@ -12,13 +12,22 @@ const TODOS_LOS_ROLES: readonly Rol[] = [
 ];
 
 describe("itemsDeNav", () => {
-  it("el titular ve exactamente un item: Inicio, sin ruta propia mas alla (M-5)", () => {
-    expect(itemsDeNav("titular").map((r) => r.to)).toEqual(["/"]);
+  it("el titular ve Inicio y Mis liquidaciones, y nada del personal", () => {
+    expect(itemsDeNav("titular").map((r) => r.to)).toEqual([
+      "/",
+      "/mis-liquidaciones",
+    ]);
+  });
+
+  it("Mis liquidaciones es solo del titular: el servidor la sirve bajo su grupo", () => {
+    for (const rol of TODOS_LOS_ROLES) {
+      expect(puedeVer(rol, "/mis-liquidaciones"), rol).toBe(rol === "titular");
+    }
   });
 
   it("el administrador ve las once rutas de PRINCIPAL y CONFIGURACION (Inicio incluido)", () => {
     expect(itemsDeNav("administrador").map((r) => r.to)).toEqual(
-      TODAS_LAS_RUTAS,
+      TODAS_LAS_RUTAS.filter((to) => to !== "/mis-liquidaciones"),
     );
   });
 
@@ -103,6 +112,7 @@ describe("itemsDeNav", () => {
   it("cada item trae la seccion correcta segun la tabla del mockup", () => {
     const principal = [
       "/",
+      "/mis-liquidaciones",
       "/ingesta",
       "/catalogo",
       "/titulares",

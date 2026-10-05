@@ -1,3 +1,4 @@
+import { formatearCOP } from "./ui/dinero";
 import type { components } from "./contrato";
 
 export type ValorizacionDeUso = components["schemas"]["ValorizacionDeUso"];
@@ -50,6 +51,12 @@ export type Explicacion = {
     periodo: string;
     circuito: string;
   };
+  /** La bolsa de la que sale la cifra: lo que pago el usuario de recaudo. */
+  bolsa?: {
+    id?: string;
+    usuario_id?: string;
+    bruto: string;
+  };
   reporte: {
     id: string;
     fuente: string;
@@ -69,15 +76,18 @@ export type Explicacion = {
   };
   /** Desglose por uso (#187). Vacio en cifras valorizadas antes de #187. */
   valorizacion: ValorizacionDeUso[];
+  /** Null en la cifra de una obra (sin titular). */
   split: {
     titular_id: string;
     ipi: string;
     porcentaje: string;
     version: number | null;
-  };
+  } | null;
   deducciones: Deduccion[];
   /** Firmas de compuerta de la corrida (RD 13.5), incluidas revisiones rechazadas. */
   firmas: Firma[];
+  /** Eslabones accesorios sin asiento (p. ej. "recaudo.registrado"). */
+  faltantes?: string[];
 };
 
 export type ListaIngresos = {
@@ -140,5 +150,5 @@ export function opcionesFiltro(filas: Ingreso[]): {
 }
 
 export function formatearNeto(neto: string): string {
-  return `$ ${neto}`;
+  return formatearCOP(neto);
 }

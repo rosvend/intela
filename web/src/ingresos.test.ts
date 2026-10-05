@@ -138,7 +138,7 @@ describe("rutas", () => {
 
 describe("formatearNeto", () => {
   it("el headline es el neto, no el bruto", () => {
-    expect(formatearNeto("3600.00")).toBe("$ 3600.00");
+    expect(formatearNeto("3600.00")).toBe("$ 3.600");
     expect(formatearNeto("3600.00")).not.toContain("4800");
   });
 });

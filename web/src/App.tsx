@@ -5,6 +5,7 @@ import EnConstruccion from "./EnConstruccion";
 import Estado from "./Estado";
 import Inicio from "./Inicio";
 import Layout from "./Layout";
+import Liquidaciones from "./Liquidaciones";
 import Login from "./Login";
 import NoEncontrado from "./NoEncontrado";
 import ListadoONI from "./pages/ListadoONI";
@@ -36,6 +37,7 @@ const PANTALLAS: Partial<Record<string, ReactElement>> = {
   "/distribucion": <PanelCorridas />,
   "/anomalias": <TableroAnomalias />,
   "/auditoria": <Auditoria />,
+  "/mis-liquidaciones": <Liquidaciones />,
 };
 
 /**
