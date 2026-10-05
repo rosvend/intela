@@ -89,7 +89,7 @@ describe("TurnoAgente", () => {
   it("un error sin texto nunca queda en blanco", () => {
     render(<TurnoAgente turno={{ ...turnoPendiente(), estado: "error" }} />);
     expect(screen.getByRole("alert").textContent).toBe(
-      "El asistente no está disponible.",
+      "El asistente no está disponible en este momento.",
     );
   });
 

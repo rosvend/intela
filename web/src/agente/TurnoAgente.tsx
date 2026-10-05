@@ -4,7 +4,7 @@ import {
   LockClosedIcon,
   NoSymbolIcon,
 } from "@heroicons/react/24/outline";
-import type { Turno } from "./conversacion";
+import { NO_DISPONIBLE, type Turno } from "./conversacion";
 import { etiquetaHerramienta } from "./herramientas";
 import TextoConCitas from "./TextoConCitas";
 
@@ -101,7 +101,7 @@ function Fallo({ texto }: { texto: string }) {
   return (
     <p className="agente-aviso agente-aviso--fallo" role="alert">
       <NoSymbolIcon className="agente-aviso-icono" aria-hidden="true" />
-      <span>{texto.trim() || "El asistente no está disponible."}</span>
+      <span>{texto.trim() || NO_DISPONIBLE}</span>
     </p>
   );
 }

@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 type Props = { clase: "reglamento" | "asiento"; valor: string };
 
 const AVISOS = {
-  inactivo: "",
   copiada: "Cita copiada",
   seleccionada: "Cita seleccionada: cópiala con Ctrl+C",
 } as const;
@@ -12,7 +11,9 @@ const AVISOS = {
 /** Cita del agente como pildora: se ve distinta del texto, se selecciona y un clic la copia. */
 export default function PildoraCita({ clase, valor }: Props) {
   const texto = useRef<HTMLSpanElement>(null);
-  const [estado, setEstado] = useState<keyof typeof AVISOS>("inactivo");
+  const [estado, setEstado] = useState<"inactivo" | keyof typeof AVISOS>(
+    "inactivo",
+  );
 
   useEffect(() => {
     if (estado === "inactivo") return;
@@ -50,9 +51,10 @@ export default function PildoraCita({ clase, valor }: Props) {
           <CheckIcon className="cita-icono" aria-hidden="true" />
         )}
       </button>
-      <span role="status" className="solo-lector">
-        {AVISOS[estado]}
-      </span>
+      {/* Sin role propio: el contenedor del panel es la unica region aria-live. */}
+      {estado !== "inactivo" && (
+        <span className="solo-lector">{AVISOS[estado]}</span>
+      )}
     </>
   );
 }
