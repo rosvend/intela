@@ -92,12 +92,10 @@ describe("flujo de autenticacion (integracion)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ingresar" }));
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Panel de control" }),
-      ).toBeTruthy(),
+      expect(screen.getByRole("heading", { name: "Hola, Admin" })).toBeTruthy(),
     );
     expect(screen.getByText("Admin Intela")).toBeTruthy();
-    expect(screen.getByText("Cargas pendientes")).toBeTruthy();
+    expect(screen.getByText("Cargas por procesar")).toBeTruthy();
     expect(token()).toBe("tok-flujo");
   });
 
@@ -120,17 +118,13 @@ describe("flujo de autenticacion (integracion)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ingresar" }));
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Mi liquidación" }),
-      ).toBeTruthy(),
+      expect(screen.getByRole("heading", { name: "Hola, Ana" })).toBeTruthy(),
     );
     expect(screen.getAllByText("Ana Escritora").length).toBeGreaterThan(0);
     expect(screen.getByText("Mis obras")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Mis ingresos" })).toBeTruthy();
-    expect(
-      screen.queryByRole("heading", { name: "Panel de control" }),
-    ).toBeNull();
-    expect(screen.queryByText("Cargas pendientes")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Hola, Admin" })).toBeNull();
+    expect(screen.queryByText("Cargas por procesar")).toBeNull();
   });
 
   it("un token que la API ya no reconoce fuerza el re-login sin pantalla en blanco", async () => {

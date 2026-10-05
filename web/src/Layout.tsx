@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRightOnRectangleIcon,
   ArrowUpTrayIcon,
+  BanknotesIcon,
   BookOpenIcon,
   ChartPieIcon,
   ChevronDownIcon,
@@ -53,6 +54,7 @@ const ICONOS_NAV: Record<string, Icono> = {
   "/reportes": DocumentChartBarIcon,
   "/deducciones": ReceiptPercentIcon,
   "/auditoria": ShieldCheckIcon,
+  "/mis-liquidaciones": BanknotesIcon,
 };
 
 // Todo el chrome vive en el sidebar; el guard es cosmetico, la autorizacion real es `requiereRol` en el servidor.
