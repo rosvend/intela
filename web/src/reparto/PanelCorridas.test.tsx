@@ -13,7 +13,7 @@ import { setToken } from "../api";
 import { ProveedorDeSesion, Rol } from "../sesion";
 import PanelCorridas from "./PanelCorridas";
 import { resumenDePrueba } from "./resumenDePrueba";
-import { Proceso, RUTAS_REPARTO } from "./tipos";
+import { INTERVALO_SONDEO_MS, Proceso, RUTAS_REPARTO } from "./tipos";
 
 function json(cuerpo: unknown, status = 200) {
   return new Response(JSON.stringify(cuerpo), {
@@ -75,14 +75,14 @@ describe("PanelCorridas", () => {
     localStorage.clear();
   });
 
-  it("lista cada proceso con su etapa actual", async () => {
+  it("agrupa las corridas por periodo y enlaza cada periodo", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/auth/session") {
         return json(usuario("administrador"));
       }
       if (path === RUTAS_REPARTO.procesos) {
-        return json([nacional, internacional]);
+        return json([internacional, nacional]);
       }
       if (path.startsWith("/api/alertas")) {
         return json(resumenDePrueba());
@@ -92,12 +92,17 @@ describe("PanelCorridas", () => {
 
     montar();
 
-    await waitFor(() => expect(screen.getByText("2025")).toBeTruthy());
-    expect(screen.getByText("2025-06")).toBeTruthy();
-    expect(screen.getAllByText("Verificación").length).toBeGreaterThan(0);
+    const periodos = await screen.findByRole("navigation", {
+      name: "Periodos",
+    });
+    const enlaces = within(periodos).getAllByRole("link");
+    // El mas reciente primero, y es el que se abre sin id.
+    expect(enlaces.map((e) => e.textContent)).toEqual(["2025-06", "2025"]);
+    expect(enlaces[0].getAttribute("aria-current")).toBe("true");
+    const lista = screen.getByRole("list", { name: "Corridas" });
+    expect(within(lista).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(lista).getByText(/Internacional/)).toBeTruthy();
     expect(screen.getAllByText("Recaudo").length).toBeGreaterThan(0);
-    expect(screen.getByText("Nacional")).toBeTruthy();
-    expect(screen.getByText("Internacional")).toBeTruthy();
   });
 
   it("una compuerta muestra firmados y pendientes", async () => {
@@ -407,22 +412,237 @@ describe("PanelCorridas", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("cada corrida es una tarjeta con su periodo, circuito, etapa y bolsa", async () => {
+  describe("con bolsas por pagador", () => {
+    const caracol: Proceso & { bolsa_id: string } = {
+      ...nacional,
+      id: "proc-caracol",
+      periodo: "2025-01",
+      etapa: "verificacion",
+      bolsa_id: "bolsa-caracol",
+    };
+    const rcn: Proceso & { bolsa_id: string } = {
+      ...nacional,
+      id: "proc-rcn",
+      periodo: "2025-01",
+      etapa: "deducciones",
+      bolsa_id: "bolsa-rcn",
+    };
+    const viejo: Proceso & { bolsa_id: string } = {
+      ...nacional,
+      id: "proc-viejo",
+      periodo: "2024-12",
+      etapa: "auditoria",
+      bolsa_id: "bolsa-vieja",
+    };
+    const bolsas = [
+      {
+        id: "bolsa-caracol",
+        usuario_id: "caracol",
+        periodo: "2025-01",
+        circuito: "nacional",
+        bruto: "600000000.00",
+      },
+      {
+        id: "bolsa-rcn",
+        usuario_id: "rcn",
+        periodo: "2025-01",
+        circuito: "nacional",
+        bruto: "400000000.00",
+      },
+      {
+        id: "bolsa-vieja",
+        usuario_id: "netflix",
+        periodo: "2024-12",
+        circuito: "nacional",
+        bruto: "100000000.00",
+      },
+    ];
+
+    function servir(
+      rol: Rol,
+      extra?: (path: string, init?: RequestInit) => Response | undefined,
+    ) {
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const path = String(input);
+        const respuesta = extra?.(path, init);
+        if (respuesta) return respuesta;
+        if (path === "/api/auth/session") return json(usuario(rol));
+        // RCN antes que Caracol: el orden lo pone la bolsa, no la API.
+        if (path === RUTAS_REPARTO.procesos) return json([viejo, rcn, caracol]);
+        if (path === "/api/bolsas") return json(bolsas);
+        if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+        return json({ error: "ruta no encontrada" }, 404);
+      });
+    }
+
+    async function detalle() {
+      return screen.findByRole("region", { name: "Corrida seleccionada" });
+    }
+
+    it("cada corrida se nombra por su pagador, con monto, etapa y avance", async () => {
+      servir("administrador");
+      montar();
+
+      const lista = await screen.findByRole("list", { name: "Corridas" });
+      await within(lista).findByText("Caracol");
+      const items = within(lista).getAllByRole("listitem");
+      expect(items).toHaveLength(2);
+      // Mayor bolsa primero; la de 2024-12 vive en su propio periodo.
+      expect(within(items[0]).getByText("Caracol")).toBeTruthy();
+      expect(within(items[0]).getByText("$ 600 M")).toBeTruthy();
+      expect(within(items[0]).getByText(/Verificación/)).toBeTruthy();
+      expect(within(items[0]).getByLabelText("Etapa 6 de 9")).toBeTruthy();
+      expect(within(items[1]).getByText("RCN")).toBeTruthy();
+      expect(within(items[1]).getByText("$ 400 M")).toBeTruthy();
+      expect(within(lista).queryByText("Netflix")).toBeNull();
+      expect(
+        within(items[0]).getByRole("link").getAttribute("aria-current"),
+      ).toBe("true");
+    });
+
+    it("el resumen del periodo suma las bolsas y las reparte por pagador", async () => {
+      servir("administrador");
+      montar();
+
+      const resumen = await screen.findByRole("region", {
+        name: "Resumen del periodo",
+      });
+      await within(resumen).findByLabelText("$ 1.000.000.000");
+      const barra = within(resumen).getByRole("group", {
+        name: "Bolsas por pagador",
+      });
+      expect(within(barra).getAllByRole("button")).toHaveLength(2);
+    });
+
+    it("la corrida elegida vive en la URL", async () => {
+      servir("administrador");
+      montar("/distribucion/proc-rcn");
+
+      const region = await detalle();
+      await within(region).findByRole("heading", { name: "RCN" });
+      const lista = screen.getByRole("list", { name: "Corridas" });
+      fireEvent.click(within(lista).getByRole("link", { name: /Caracol/ }));
+      await within(await detalle()).findByRole("heading", { name: "Caracol" });
+      expect(
+        within(lista)
+          .getByRole("link", { name: /Caracol/ })
+          .getAttribute("aria-current"),
+      ).toBe("true");
+    });
+
+    it("un tramo de la barra lleva a su corrida", async () => {
+      servir("administrador");
+      montar();
+
+      const barra = await screen.findByRole("group", {
+        name: "Bolsas por pagador",
+      });
+      await waitFor(() =>
+        expect(within(barra).getAllByRole("button")).toHaveLength(2),
+      );
+      fireEvent.click(within(barra).getByRole("button", { name: /^RCN/ }));
+      fireEvent.click(screen.getByRole("link", { name: "Ver corrida de RCN" }));
+      await within(await detalle()).findByRole("heading", { name: "RCN" });
+    });
+
+    it("las cifras de la corrida salen de su bolsa, sin inventar deducciones", async () => {
+      servir("administrador");
+      montar("/distribucion/proc-caracol");
+
+      const region = await detalle();
+      const cifras = await within(region).findByRole("list", {
+        name: "Cifras de la corrida",
+      });
+      await within(cifras).findByText("$ 600.000.000");
+      expect(within(cifras).getByText("60 %")).toBeTruthy();
+      expect(within(cifras).getByText("6 de 9")).toBeTruthy();
+      expect(within(region).queryByText(/Deducciones aplicadas/)).toBeNull();
+    });
+
+    it("cambiar de periodo abre su primera corrida", async () => {
+      servir("administrador");
+      montar();
+
+      await screen.findByRole("list", { name: "Corridas" });
+      fireEvent.click(screen.getByRole("link", { name: "2024-12" }));
+      await within(await detalle()).findByRole("heading", { name: "Netflix" });
+    });
+
+    it("administración avanza la corrida tras confirmar", async () => {
+      servir("administrador", (path, init) => {
+        if (
+          path === `${RUTAS_REPARTO.proceso("proc-rcn")}/avanzar` &&
+          init?.method === "POST"
+        ) {
+          return json({ ...rcn, etapa: "importe_obra" });
+        }
+        return undefined;
+      });
+      montar("/distribucion/proc-rcn");
+
+      const avanzar = await screen.findByRole("button", {
+        name: "Avanzar a Importe de la obra",
+      });
+      fireEvent.click(avanzar);
+      fireEvent.click(screen.getByRole("button", { name: "Confirmar avance" }));
+      await waitFor(() =>
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.some(
+              ([url, init]) =>
+                String(url) ===
+                  `${RUTAS_REPARTO.proceso("proc-rcn")}/avanzar` &&
+                init?.method === "POST",
+            ),
+        ).toBe(true),
+      );
+    });
+
+    it("un 409 al avanzar se muestra junto al botón", async () => {
+      servir("administrador", (path, init) => {
+        if (
+          path === `${RUTAS_REPARTO.proceso("proc-rcn")}/avanzar` &&
+          init?.method === "POST"
+        ) {
+          return json({ error: "hay anomalias criticas" }, 409);
+        }
+        return undefined;
+      });
+      montar("/distribucion/proc-rcn");
+
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "Avanzar a Importe de la obra",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Confirmar avance" }));
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toBe(
+          "hay anomalias criticas",
+        ),
+      );
+    });
+
+    it("no ofrece avanzar a quien no administra ni una compuerta sin firmas", async () => {
+      servir("distribucion");
+      montar("/distribucion/proc-rcn");
+      await within(await detalle()).findByRole("heading", { name: "RCN" });
+      expect(screen.queryByRole("button", { name: /^Avanzar/ })).toBeNull();
+      cleanup();
+
+      servir("administrador");
+      montar("/distribucion/proc-caracol");
+      await within(await detalle()).findByRole("heading", { name: "Caracol" });
+      expect(screen.queryByRole("button", { name: /^Avanzar/ })).toBeNull();
+    });
+  });
+
+  it("sin bolsa, la corrida se nombra por su circuito", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/auth/session") return json(usuario("administrador"));
-      if (path === RUTAS_REPARTO.procesos)
-        return json([{ ...nacional, bolsa_id: "bolsa-1" }, internacional]);
-      if (path === "/api/bolsas")
-        return json([
-          {
-            id: "bolsa-1",
-            usuario_id: "caracol",
-            periodo: "2025",
-            circuito: "nacional",
-            bruto: "600000000.00",
-          },
-        ]);
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
       if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
       return json({ error: "ruta no encontrada" }, 404);
     });
@@ -430,17 +650,34 @@ describe("PanelCorridas", () => {
     montar();
 
     const lista = await screen.findByRole("list", { name: "Corridas" });
-    const tarjetas = within(lista).getAllByRole("listitem");
-    expect(tarjetas).toHaveLength(2);
-    expect(within(tarjetas[0]).getByText("Nacional")).toBeTruthy();
-    expect(within(tarjetas[0]).getByText("Verificación")).toBeTruthy();
-    await within(tarjetas[0]).findByText("$ 600 M");
-    expect(
-      within(tarjetas[0])
-        .getByRole("link", { name: "2025" })
-        .getAttribute("aria-current"),
-    ).toBe("true");
-    expect(within(tarjetas[1]).queryByText(/\$/)).toBeNull();
+    expect(within(lista).getByText("Corrida nacional")).toBeTruthy();
+    expect(within(lista).queryByText(/\$/)).toBeNull();
+  });
+
+  it("vuelve a pedir los procesos cada 15 segundos", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(fetch).mockImplementation(async (input) => {
+        const path = String(input);
+        if (path === "/api/auth/session") return json(usuario("auditor"));
+        if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+        return json({ error: "ruta no encontrada" }, 404);
+      });
+      montar();
+      await screen.findByRole("list", { name: "Corridas" });
+      const pedidos = () =>
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(([url]) => String(url) === RUTAS_REPARTO.procesos)
+          .length;
+      const antes = pedidos();
+      await act(async () => {
+        vi.advanceTimersByTime(INTERVALO_SONDEO_MS);
+      });
+      await waitFor(() => expect(pedidos()).toBe(antes + 1));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("no hay detalle técnico: la trazabilidad vive en Auditoría", async () => {

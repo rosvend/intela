@@ -574,99 +574,283 @@
   }
 }
 
-/* ---------- Distribucion: corridas ---------- */
+/* ---------- Distribucion: maestro-detalle ---------- */
 
-.panel-corridas-cuerpo {
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+/* El detalle llena el ancho: el tope de .tablero dejaba el hueco a los lados. */
+.tablero.panel-corridas {
+  max-width: none;
+}
+
+.panel-corridas .panel-corridas-cuerpo {
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.corridas-maestro {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.corridas-periodos {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  overflow-x: auto;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  background: var(--superficie);
+}
+
+.corridas-periodo {
+  flex: 1 0 auto;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  color: var(--texto-medio);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color var(--dur-rapida) ease;
+}
+
+.corridas-periodo[aria-current="true"] {
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+.corridas-periodo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.corridas-resumen {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.25rem;
+}
+
+.corridas-rotulo {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.corridas-conteo {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+}
+
+.corridas-ver {
+  margin-top: 0.25rem;
+  color: var(--acento);
+  font-weight: 600;
+  text-decoration: none;
 }
 
 .corridas-lista {
   list-style: none;
-  margin: 0;
+  margin: 0.5rem -0.5rem 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 2px;
 }
 
-.corrida-tarjeta {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 0.35rem 0.75rem;
-  padding: 1rem 1.1rem;
-  background: var(--superficie);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio-tarjeta);
+.corrida-item {
   animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+}
+
+.corrida-enlace {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.6rem;
+  border-radius: 10px;
+  color: var(--texto);
+  text-decoration: none;
   transition:
-    border-color var(--dur-rapida) ease,
-    box-shadow var(--dur-rapida) ease,
+    background-color var(--dur-rapida) ease,
     transform var(--dur-rapida) var(--curva-salida);
 }
 
-.corrida-tarjeta:active {
-  transform: scale(0.99);
+.corrida-enlace:active {
+  transform: scale(0.98);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .corrida-tarjeta:hover {
-    box-shadow: var(--sombra-suave);
+  .corrida-enlace:hover {
+    background: var(--fondo);
   }
 }
 
-.corrida-tarjeta-activa {
-  border-color: var(--acento-borde);
-  box-shadow: 0 0 0 3px var(--acento-activo);
+.corrida-item-activa .corrida-enlace {
+  background: var(--acento-activo);
+  box-shadow: inset 0 0 0 1px var(--acento-borde);
 }
 
-.corrida-periodo {
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--texto);
-  text-decoration: none;
+.corrida-enlace:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.corrida-punto {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--color);
+}
+
+.corrida-nombre {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.corrida-nombre > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.corrida-etapa {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--texto-suave);
+}
+
+.corrida-etapa-firma {
+  color: var(--alerta);
+}
+
+.corrida-lado {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.corrida-monto {
+  font-size: 0.88rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* Toda la tarjeta es clicable; el nombre accesible sigue siendo el periodo. */
-.corrida-periodo::after {
+.corrida-avance {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pista de avance: escala la marca sobre transform, no sobre width. */
+.corrida-avance-pista {
+  position: relative;
+  width: 36px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--borde);
+}
+
+.corrida-avance-pista::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  background: var(--acento);
+  transform: scaleX(var(--avance, 0));
+  transform-origin: left center;
+  transition: transform var(--dur-lenta) var(--curva-salida);
 }
 
-.corrida-periodo:focus-visible {
-  outline: none;
+.corrida-detalle .stepper {
+  margin-top: 1.25rem;
 }
 
-.corrida-periodo:focus-visible::after {
-  outline: 2px solid var(--acento);
-  outline-offset: 2px;
+.corrida-cifras {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  background: var(--borde);
 }
 
-.corrida-circuito {
-  grid-column: 1;
-  font-size: 0.85rem;
-  color: var(--texto-medio);
+.corrida-cifras li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem;
+  background: var(--superficie);
 }
 
-.corrida-tarjeta .chip {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-}
-
-.corrida-bolsa {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  font-size: 0.85rem;
+.corrida-cifras-rotulo {
+  font-size: 0.78rem;
   font-weight: 600;
+  color: var(--texto-suave);
+}
+
+.corrida-cifras-valor {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
-  color: var(--texto);
+}
+
+/* La compuerta, fuera del panel de la corrida, es su propia tarjeta. */
+.panel-corridas-detalle > .compuerta-tarjeta {
+  margin-top: 0;
+  padding: 1.5rem;
+  border-radius: var(--radio-tarjeta);
+  background: var(--superficie);
+  box-shadow: var(--sombra-suave);
+}
+
+.corrida-avanzar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+}
+
+.corrida-avanzar-texto p {
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+}
+
+.corrida-avanzar-acciones {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.corrida-avanzar button {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.corrida-avanzar button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.corrida-avanzar-error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .corrida-cabecera {
@@ -935,9 +1119,13 @@
   }
 }
 
-@media (max-width: 860px) {
-  .panel-corridas-cuerpo {
+@media (max-width: 959px) {
+  .panel-corridas .panel-corridas-cuerpo {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .corridas-maestro {
+    position: static;
   }
 }
 
@@ -963,12 +1151,16 @@
   .corrida-alertas-rejilla {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .corrida-avanzar {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .staff .tarjeta,
   .staff-actividad-lista li,
-  .corrida-tarjeta,
+  .corrida-item,
   .compuerta-firmante-hecho .compuerta-avatar,
   .stepper-paso-hecha::before,
   .stepper-paso-actual::before {
@@ -985,7 +1177,9 @@
     animation: none;
   }
 
-  .corrida-tarjeta,
+  .corrida-enlace,
+  .corrida-avance-pista::after,
+  .corrida-avanzar button,
   .staff-pill,
   .boton-enlace,
   .boton-enlace-flecha,
@@ -993,7 +1187,8 @@
     transition: none;
   }
 
-  .corrida-tarjeta:active,
+  .corrida-enlace:active,
+  .corrida-avanzar button:active:not(:disabled),
   .staff-pill:active,
   .boton-enlace:active,
   .compuerta-tarjeta button:active:not(:disabled) {
