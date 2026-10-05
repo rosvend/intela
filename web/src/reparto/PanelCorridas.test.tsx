@@ -315,8 +315,16 @@ describe("PanelCorridas", () => {
           String(url).startsWith("/api/alertas/resumen"),
         ),
     ).toBe(true);
-    // Una tarjeta por tipo de alerta (seis); todas comparten la descripción.
-    expect(screen.getAllByText("Alertas abiertas del periodo")).toHaveLength(6);
+    // Una tarjeta por tipo de alerta (seis), sin descripción repetida.
+    const rejilla = screen.getByRole("region", { name: "Alertas del periodo" });
+    expect(within(rejilla).getAllByRole("article")).toHaveLength(6);
+    expect(screen.queryByText("Alertas abiertas del periodo")).toBeNull();
+    // Una sola acción para resolverlas, como botón.
+    const resolver = within(rejilla).getByRole("link", {
+      name: "Resolver alertas",
+    });
+    expect(resolver.classList.contains("boton-secundario")).toBe(true);
+    expect(resolver.getAttribute("href")).toBe("/anomalias?periodo=2025");
   });
 
   it("si el resumen falla avisa que no se pudo leer el estado de anomalias", async () => {
@@ -435,7 +443,7 @@ describe("PanelCorridas", () => {
     expect(within(tarjetas[1]).queryByText(/\$/)).toBeNull();
   });
 
-  it("el id crudo del proceso queda detras del detalle tecnico", async () => {
+  it("no hay detalle técnico: la trazabilidad vive en Auditoría", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/auth/session") return json(usuario("administrador"));
@@ -444,12 +452,12 @@ describe("PanelCorridas", () => {
       return json({ error: "ruta no encontrada" }, 404);
     });
 
-    montar();
+    const { container } = montar();
 
-    const tecnico = (await screen.findByText("Detalle técnico")).closest(
-      "details",
-    );
-    expect(tecnico?.textContent).toContain("proc-int");
-    expect(tecnico?.hasAttribute("open")).toBe(false);
+    await screen.findByRole("list", { name: "Corridas" });
+    expect(screen.queryByText(/Detalle técnico/)).toBeNull();
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).not.toContain("proc-int");
+    expect(screen.queryByText(/Cada reparto avanza por etapas/)).toBeNull();
   });
 });

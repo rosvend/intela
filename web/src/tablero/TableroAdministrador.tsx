@@ -64,7 +64,6 @@ export default function TableroAdministrador({
       <div className="tablero-kpis staff-kpis">
         <Tarjeta
           titulo="Cargas por procesar"
-          descripcion="Reportes de uso esperando en la cola"
           icono={<InboxArrowDownIcon />}
           to={ve("/ingesta") ? "/ingesta" : undefined}
           etiquetaEnlace="Ir a ingesta"
@@ -75,7 +74,6 @@ export default function TableroAdministrador({
 
         <Tarjeta
           titulo="Obras en reserva"
-          descripcion="Su dinero se retiene hasta corregir la declaración"
           icono={<LockClosedIcon />}
           ayuda="Los porcentajes de la declaración de obra no suman 100%. Mientras no se corrija, no se reparte nada de esa obra: el total queda en reserva (RD 13.1.3)."
           to={ve("/catalogo") ? "/catalogo" : undefined}
@@ -87,7 +85,6 @@ export default function TableroAdministrador({
 
         <Tarjeta
           titulo="Obras sin identificar"
-          descripcion="Usos reportados que aún no cruzan con el catálogo"
           icono={<DocumentMagnifyingGlassIcon />}
           to={ve("/anomalias") ? "/anomalias" : undefined}
           etiquetaEnlace="Ir a anomalías"
@@ -98,21 +95,15 @@ export default function TableroAdministrador({
 
         <Tarjeta
           titulo="Última distribución"
-          descripcion="Etapa del último reparto"
           icono={<ArrowsRightLeftIcon />}
           to={ve("/distribucion") ? "/distribucion" : undefined}
           etiquetaEnlace="Ir a distribución"
           recurso={tablero.ultimaCorrida}
         >
           {(d) => (
-            <>
-              <p className="tarjeta-valor tarjeta-valor-texto">
-                {etiquetaDeEtapa(d.etapa)}
-              </p>
-              <p className="muted staff-sub">
-                Periodo {d.periodo} · {d.estado}
-              </p>
-            </>
+            <p className="tarjeta-valor tarjeta-valor-texto">
+              {etiquetaDeEtapa(d.etapa)}
+            </p>
           )}
         </Tarjeta>
       </div>

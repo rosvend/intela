@@ -1,7 +1,7 @@
-import { Link } from "react-router-dom";
 import { TIPOS_DE_ALERTA, etiquetaDeTipo, plural } from "../reparto/anomalias";
 import { ResumenDeAlertas } from "../reparto/tipos";
 import { formatearEntero } from "./formato";
+import { BotonEnlace } from "./BotonEnlace";
 import { Panel } from "./Panel";
 import { Recurso } from "./tipos";
 
@@ -73,14 +73,12 @@ export function AlertasDelPeriodo({
                 ))}
               </ul>
             )}
-            <footer className="panel-pie">
-              <span>Las críticas frenan el pago</span>
-              <Link
-                className="tarjeta-enlace"
+            <footer className="panel-pie staff-pie-accion">
+              <BotonEnlace
                 to={`/anomalias?periodo=${encodeURIComponent(r.periodo)}`}
               >
                 Resolver alertas
-              </Link>
+              </BotonEnlace>
             </footer>
           </>
         );

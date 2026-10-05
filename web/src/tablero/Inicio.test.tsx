@@ -321,6 +321,54 @@ describe("Inicio de staff", () => {
     ).toBe("/anomalias?periodo=2025");
   });
 
+  it("cada acción de los paneles es un botón, no texto suelto", async () => {
+    servir("administrador", {
+      "/api/procesos": () => json([PROCESO]),
+      "/api/alertas/resumen": () => json(resumenDePrueba()),
+      "/api/auditoria/asientos": () => json([]),
+    });
+
+    montar();
+
+    const distribucion = await encontrar("Distribución en curso");
+    const abrir = await within(distribucion).findByRole("link", {
+      name: "Abrir distribución",
+    });
+    const alertas = await encontrar("Alertas");
+    const resolver = await within(alertas).findByRole("link", {
+      name: "Resolver alertas",
+    });
+    const actividad = await encontrar("Actividad reciente");
+    const bitacora = await within(actividad).findByRole("link", {
+      name: "Ver bitácora",
+    });
+    const ingesta = within(bloque("Cargas por procesar")).getByRole("link", {
+      name: "Ir a ingesta",
+    });
+    for (const cta of [abrir, resolver, bitacora, ingesta]) {
+      expect(cta.classList.contains("boton-secundario")).toBe(true);
+    }
+  });
+
+  it("no pinta subtítulos de relleno ni enums crudos", async () => {
+    servir("administrador", {
+      "/api/tablero/ultima-corrida": () =>
+        json({ periodo: "2025-01", etapa: "verificacion", estado: "en_curso" }),
+      "/api/procesos": () => json([PROCESO]),
+      "/api/auditoria/asientos": () => json([]),
+    });
+
+    montar();
+
+    const ultima = await encontrar("Última distribución");
+    await within(ultima).findByText("Verificación");
+    expect(screen.queryByText(/en_curso/)).toBeNull();
+    expect(screen.queryByText(/no se paga por fila/)).toBeNull();
+    expect(screen.queryByText(/se rastrea hasta su origen/)).toBeNull();
+    expect(screen.queryByText(/Reportes de uso esperando/)).toBeNull();
+    expect(screen.queryByText(/Se actualiza al abrirla/)).toBeNull();
+  });
+
   it("la actividad reciente habla en lenguaje llano y con tiempo relativo", async () => {
     const haceUnRato = new Date(Date.now() - 5 * 60_000).toISOString();
     servir("administrador", {

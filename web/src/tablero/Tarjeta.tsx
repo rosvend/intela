@@ -1,12 +1,11 @@
 import { ReactNode } from "react";
-import { Link } from "react-router-dom";
 import Detalle from "../ui/Detalle";
+import { BotonEnlace } from "./BotonEnlace";
 import { Recurso } from "./tipos";
 import "../staff.css";
 
 type Props<T> = {
   titulo: string;
-  descripcion?: string;
   to?: string;
   etiquetaEnlace?: string;
   recurso: Recurso<T>;
@@ -26,7 +25,6 @@ type Props<T> = {
  */
 export function Tarjeta<T>({
   titulo,
-  descripcion,
   to,
   etiquetaEnlace,
   recurso,
@@ -61,23 +59,13 @@ export function Tarjeta<T>({
       <div className="tarjeta-cuerpo">
         {cuerpo(recurso, mensajeAusente, children)}
       </div>
-      {descripcion && <p className="tarjeta-descripcion">{descripcion}</p>}
-      {to &&
-        (esFragmento(to) ? (
-          <a className="tarjeta-enlace" href={to}>
-            {etiqueta}
-          </a>
-        ) : (
-          <Link className="tarjeta-enlace" to={to}>
-            {etiqueta}
-          </Link>
-        ))}
+      {to && (
+        <div className="tarjeta-accion">
+          <BotonEnlace to={to}>{etiqueta}</BotonEnlace>
+        </div>
+      )}
     </article>
   );
-}
-
-function esFragmento(to: string): boolean {
-  return to.startsWith("#");
 }
 
 function cuerpo<T>(

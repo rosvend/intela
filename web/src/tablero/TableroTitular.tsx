@@ -1,3 +1,4 @@
+import { ArrowRightIcon } from "@heroicons/react/20/solid";
 import { Link } from "react-router-dom";
 import { RUTA_MIS_LIQUIDACIONES, type Liquidacion } from "../Liquidaciones";
 import { PanelIngresos } from "../PanelIngresos";
@@ -33,7 +34,6 @@ export default function TableroTitular({ usuario }: { usuario: Usuario }) {
     <section className="titular">
       <header className="titular-saludo">
         <h1>{nombre ? `Hola, ${nombre}` : "Hola"}</h1>
-        <p>Esto es lo que han generado tus obras y de dónde viene cada peso.</p>
       </header>
 
       <div className="titular-rejilla">
@@ -163,7 +163,10 @@ function IngresosPorObra({ datos }: { datos: Liquidacion }) {
             ? "Basado en 1 liquidación"
             : `Basado en ${datos.lineas.length} liquidaciones`}
         </span>
-        <Link to="/mis-liquidaciones">Ver mis liquidaciones</Link>
+        <Link to="/mis-liquidaciones" className="boton-secundario boton-cta">
+          Ver mis liquidaciones
+          <ArrowRightIcon aria-hidden="true" />
+        </Link>
       </footer>
     </>
   );

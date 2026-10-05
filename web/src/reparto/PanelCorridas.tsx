@@ -4,6 +4,7 @@ import Cargando from "../Cargando";
 import { ApiError } from "../api";
 import { puedeVer } from "../navegacion";
 import { useSesion } from "../sesion";
+import { BotonEnlace } from "../tablero/BotonEnlace";
 import { Tarjeta } from "../tablero/Tarjeta";
 import { formatearEntero } from "../tablero/formato";
 import { useRecurso } from "../tablero/useDashboard";
@@ -124,13 +125,7 @@ export default function PanelCorridas() {
   return (
     <section className="tablero panel-corridas staff">
       <header className="tablero-cabecera">
-        <div>
-          <h1>Distribución</h1>
-          <p className="muted">
-            Cada reparto avanza por etapas. Nada se paga con alertas críticas
-            abiertas ni sin las dos firmas.
-          </p>
-        </div>
+        <h1>Distribución</h1>
       </header>
 
       {procesos.tipo === "cargando" && <Cargando texto="Cargando procesos…" />}
@@ -232,21 +227,6 @@ export default function PanelCorridas() {
                 onFirmar={() => void actuar("firmar")}
                 onRechazar={(motivo) => void actuar("rechazar", motivo)}
               />
-              <details className="detalle-tecnico">
-                <summary>Detalle técnico</summary>
-                <dl>
-                  <dt>Proceso</dt>
-                  <dd>{seleccionado.id}</dd>
-                  <dt>Revisión</dt>
-                  <dd>{seleccionado.revision}</dd>
-                  {bolsaIdDe(seleccionado) && (
-                    <>
-                      <dt>Bolsa</dt>
-                      <dd>{bolsaIdDe(seleccionado)}</dd>
-                    </>
-                  )}
-                </dl>
-              </details>
             </section>
 
             {/*
@@ -260,10 +240,15 @@ export default function PanelCorridas() {
                 aria-label="Alertas del periodo"
               >
                 {abiertas > 0 && (
-                  <Link className="corrida-alertas-aviso" to={enlaceAnomalias}>
-                    Hay {formatearEntero(abiertas)} alertas abiertas en este
-                    periodo. Ir a resolución.
-                  </Link>
+                  <div className="corrida-alertas-aviso">
+                    <span>
+                      {formatearEntero(abiertas)} alertas abiertas en este
+                      periodo
+                    </span>
+                    <BotonEnlace to={enlaceAnomalias}>
+                      Resolver alertas
+                    </BotonEnlace>
+                  </div>
                 )}
                 <div className="corrida-alertas-rejilla">
                   {TIPOS_DE_ALERTA.map((tipo) => (
@@ -271,9 +256,6 @@ export default function PanelCorridas() {
                       key={tipo}
                       className="tarjeta-mini"
                       titulo={etiquetaDeTipo(tipo)}
-                      descripcion="Alertas abiertas del periodo"
-                      to={enlaceAnomalias}
-                      etiquetaEnlace="Ir a resolución"
                       recurso={conteoDeTipo(resumen, tipo)}
                     >
                       {(datos) => (

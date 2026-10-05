@@ -36,6 +36,7 @@ import {
   type EstadoBorrador,
   type MotivoDeDuda,
 } from "./declaracion";
+import { BotonEnlace } from "../tablero/BotonEnlace";
 import { ObraAusente } from "./DetalleObra";
 import { EtiquetaDeEstado } from "./EtiquetaDeDeclaracion";
 import Paginador from "./Paginador";
@@ -1027,14 +1028,14 @@ function PanelDelGuardado({
   // La misma busqueda del catalogo que lleva la ficha viaja al historial: el
   // camino de vuelta no pierde los filtros por pasar por dos pantallas.
   const enlaceAlHistorial = (
-    <p className="detalle-nota">
-      <Link
+    <div className="detalle-acciones">
+      <BotonEnlace
         to={`/catalogo/${encodeURIComponent(obraId)}/historial`}
         state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
       >
         Ver el historial de la declaración
-      </Link>
-    </p>
+      </BotonEnlace>
+    </div>
   );
 
   if (resultado.tipo === "guardada") {
@@ -1127,9 +1128,9 @@ function PanelDelGuardado({
             reintentar con tranquilidad. */}
         <p>{avisoDelRechazo(resultado.status)}</p>
         {resultado.status === 404 && (
-          <p className="detalle-nota">
-            <Link to={volver}>Volver al catálogo</Link>
-          </p>
+          <div className="detalle-acciones">
+            <BotonEnlace to={volver}>Volver al catálogo</BotonEnlace>
+          </div>
         )}
       </section>
     );

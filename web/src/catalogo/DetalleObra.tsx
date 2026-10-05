@@ -1,12 +1,14 @@
 import { Link, useParams } from "react-router-dom";
 import Cargando from "../Cargando";
 import HistorialResoluciones from "../identificacion/HistorialResoluciones";
+import { BotonEnlace } from "../tablero/BotonEnlace";
 import { CLAVE_DE_VUELTA_AL_CATALOGO, useVueltaAlCatalogo } from "./Catalogo";
 import { formatearPorcentaje, formatearTipo } from "./declaracion";
 import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import { TablaDePartes, useNombresDeTitulares } from "./TablaDePartes";
 import { esVersionDeclaracion, type Obra, type Parte } from "./tipos";
 import { useLista } from "./useLista";
+import "./catalogo.css";
 import { conciliarConElHistorial, rutaDelHistorial, useObra } from "./useObra";
 
 /**
@@ -125,9 +127,9 @@ export function ObraAusente({
         El servidor no tiene ninguna obra con el identificador <code>{id}</code>
         .
       </p>
-      <p className="detalle-volver">
-        <Link to={volver}>Volver al catálogo</Link>
-      </p>
+      <div className="detalle-acciones">
+        <BotonEnlace to={volver}>Volver al catálogo</BotonEnlace>
+      </div>
     </section>
   );
 }
@@ -241,17 +243,19 @@ function FichaDeObra({
         {sinDeclaracion ? (
           <p className="muted detalle-nota">{SIN_DECLARACION}</p>
         ) : (
-          <>
-            <PartesDeLaVersionVigente obra={obra} />
-            <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
-          </>
+          <PartesDeLaVersionVigente obra={obra} />
         )}
 
-        <EnlaceAlEditor
-          obraId={obra.id}
-          busqueda={busqueda}
-          hayDeclaracion={!sinDeclaracion}
-        />
+        <div className="detalle-acciones">
+          <EnlaceAlEditor
+            obraId={obra.id}
+            busqueda={busqueda}
+            hayDeclaracion={!sinDeclaracion}
+          />
+          {!sinDeclaracion && (
+            <EnlaceAlHistorial obraId={obra.id} busqueda={busqueda} />
+          )}
+        </div>
       </section>
 
       <HistorialResoluciones obraId={obra.id} />
@@ -289,14 +293,12 @@ function EnlaceAlHistorial({
   busqueda: string;
 }) {
   return (
-    <p className="detalle-nota">
-      <Link
-        to={`/catalogo/${encodeURIComponent(obraId)}/historial`}
-        state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
-      >
-        Ver el historial completo
-      </Link>
-    </p>
+    <BotonEnlace
+      to={`/catalogo/${encodeURIComponent(obraId)}/historial`}
+      state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
+    >
+      Ver el historial completo
+    </BotonEnlace>
   );
 }
 
@@ -330,14 +332,13 @@ function EnlaceAlEditor({
   hayDeclaracion: boolean;
 }) {
   return (
-    <p className="detalle-nota">
-      <Link
-        to={`/catalogo/${encodeURIComponent(obraId)}/declaracion`}
-        state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
-      >
-        {hayDeclaracion ? "Editar el reparto" : "Declarar el reparto"}
-      </Link>
-    </p>
+    <BotonEnlace
+      primario
+      to={`/catalogo/${encodeURIComponent(obraId)}/declaracion`}
+      state={{ [CLAVE_DE_VUELTA_AL_CATALOGO]: busqueda }}
+    >
+      {hayDeclaracion ? "Editar el reparto" : "Declarar el reparto"}
+    </BotonEnlace>
   );
 }
 

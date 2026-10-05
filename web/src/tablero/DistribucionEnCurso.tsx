@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import Pipeline from "../reparto/Pipeline";
 import { ETIQUETA_CIRCUITO, ETIQUETA_ETAPA, etapasDe } from "../reparto/etapas";
 import {
@@ -7,6 +6,7 @@ import {
   rolesPendientes,
 } from "../reparto/firmas";
 import { Proceso } from "../reparto/tipos";
+import { BotonEnlace } from "./BotonEnlace";
 import { Panel } from "./Panel";
 import { Recurso } from "./tipos";
 
@@ -47,7 +47,7 @@ export function DistribucionEnCurso({
                   {ETIQUETA_CIRCUITO[p.circuito].toLowerCase()}
                 </p>
               </div>
-              <span className="chip chip-marca">
+              <span className="chip chip-marca staff-distribucion-paso">
                 Etapa {n} de {pasos.length}
               </span>
             </div>
@@ -60,14 +60,10 @@ export function DistribucionEnCurso({
               </p>
             )}
             {enlace && (
-              <footer className="panel-pie">
-                <span>Se actualiza al abrirla</span>
-                <Link
-                  className="tarjeta-enlace"
-                  to={`/distribucion/${encodeURIComponent(p.id)}`}
-                >
+              <footer className="panel-pie staff-pie-accion">
+                <BotonEnlace to={`/distribucion/${encodeURIComponent(p.id)}`}>
                   Abrir distribución
-                </Link>
+                </BotonEnlace>
               </footer>
             )}
           </>

@@ -1,0 +1,30 @@
+/* Catalogo: ajustes propios sobre las reglas base de styles.css. */
+
+/* Estado y suma en una sola linea: "Completa 100%" nunca se parte. */
+.tabla-catalogo .catalogo-declaracion {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.tabla-catalogo th:last-child,
+.tabla-catalogo td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+/* Con columnas que no se parten, en movil la tabla se desplaza en su caja. */
+.catalogo-caja {
+  overflow-x: auto;
+}
+
+/* Las acciones de la ficha van juntas, la principal primero. */
+.detalle-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}

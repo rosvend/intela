@@ -940,6 +940,7 @@ describe("detalle de obra (integracion con App)", () => {
         name: "Ver el historial completo",
       });
       expect(enlace.getAttribute("href")).toBe(destino);
+      expect(enlace.classList.contains("boton-secundario")).toBe(true);
       expect(destino).toContain(obra.id);
     },
   );

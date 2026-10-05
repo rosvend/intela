@@ -9,7 +9,6 @@ import {
   firmasDeRevision,
   puedeFirmar,
 } from "./firmas";
-import { ETIQUETA_ETAPA } from "./etapas";
 import { Proceso } from "./tipos";
 import "../staff.css";
 
@@ -47,7 +46,6 @@ export default function Compuerta({
   const firmados = new Set(firmas.map((f) => f.rol));
   const total = ROLES_DE_COMPUERTA.length;
   const ofreceAccion = puedeFirmar(rol, proceso);
-  const etapa = ETIQUETA_ETAPA[proceso.etapa];
 
   function confirmarRechazo(evento: FormEvent) {
     evento.preventDefault();
@@ -62,15 +60,7 @@ export default function Compuerta({
         <span className="compuerta-sello" aria-hidden="true">
           <ShieldCheckIcon />
         </span>
-        <div>
-          <h3 className="compuerta-titulo">
-            Esta etapa necesita {total} firmas
-          </h3>
-          <p className="muted">
-            {etapa}: el dinero no avanza sin la firma de Distribución y de
-            Contabilidad.
-          </p>
-        </div>
+        <h3 className="compuerta-titulo">Esta etapa necesita {total} firmas</h3>
         <span
           className={`chip ${firmados.size === total ? "chip-ok" : "chip-marca"}`}
         >
@@ -168,22 +158,6 @@ export default function Compuerta({
           {error}
         </p>
       )}
-
-      <details className="detalle-tecnico">
-        <summary>Detalle técnico de las firmas</summary>
-        <dl>
-          <dt>Proceso</dt>
-          <dd>{proceso.id}</dd>
-          <dt>Revisión</dt>
-          <dd>Revisión {proceso.revision}</dd>
-          {firmas.map((f) => (
-            <div key={f.rol}>
-              <dt>Firma de {ETIQUETA_ROL_FIRMA[f.rol]}</dt>
-              <dd>{f.actor_id}</dd>
-            </div>
-          ))}
-        </dl>
-      </details>
     </article>
   );
 }

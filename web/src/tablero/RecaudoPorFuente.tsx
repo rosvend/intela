@@ -90,10 +90,6 @@ export function RecaudoPorFuente({
                 </li>
               ))}
             </ul>
-            <footer className="panel-pie">
-              Lo cobrado no se paga por fila: los reportes de uso solo deciden
-              cómo se reparte esta bolsa.
-            </footer>
           </>
         );
       }}

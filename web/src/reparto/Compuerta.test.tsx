@@ -135,22 +135,19 @@ describe("Compuerta", () => {
     expect(screen.getByRole("button", { name: "Firmar" })).toBeTruthy();
   });
 
-  it("los ids crudos viven en el detalle tecnico, no en la tarjeta", () => {
-    montar(
+  it("no expone ids crudos ni un detalle técnico", () => {
+    const { container } = montar(
       "administrador",
       proceso({
         revision: 3,
         firmas: [{ rol: "contabilidad", actor_id: "usr-c9", sobre_rev: 3 }],
       }),
     );
-    const tecnico = screen
-      .getByText("Detalle técnico de las firmas")
-      .closest("details");
-    expect(tecnico).toBeTruthy();
-    expect(tecnico?.hasAttribute("open")).toBe(false);
-    expect(tecnico?.textContent).toContain("proc-1");
-    expect(tecnico?.textContent).toContain("usr-c9");
-    expect(tecnico?.textContent).toContain("Revisión 3");
+    expect(container.querySelector("details")).toBeNull();
+    expect(screen.queryByText(/Detalle técnico/)).toBeNull();
+    expect(container.textContent).not.toContain("usr-c9");
+    expect(container.textContent).not.toContain("proc-1");
+    expect(screen.queryByText(/el dinero no avanza/)).toBeNull();
   });
 
   it("mientras se envia la firma los botones se bloquean", () => {

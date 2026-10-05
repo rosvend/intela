@@ -56,6 +56,7 @@ describe("Tarjeta", () => {
     montar(listo, "/anomalias");
     const enlace = screen.getByRole("link");
     expect(enlace.getAttribute("href")).toBe("/anomalias");
+    expect(enlace.classList.contains("boton-secundario")).toBe(true);
   });
 
   it("un destino que es solo fragmento usa un ancla nativa", () => {

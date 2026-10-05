@@ -1,8 +1,8 @@
 import { CSSProperties } from "react";
-import { Link } from "react-router-dom";
 import { Asiento, esAsiento, familiaDeHecho } from "../auditoria/tipos";
 import { describirAsiento } from "./actividad";
 import { formatearInstante, tiempoRelativo } from "./formato";
+import { BotonEnlace } from "./BotonEnlace";
 import { Panel } from "./Panel";
 import { Recurso } from "./tipos";
 
@@ -53,11 +53,8 @@ export function ActividadReciente({
                 ))}
               </ol>
             )}
-            <footer className="panel-pie">
-              <span>Cada cifra se rastrea hasta su origen</span>
-              <Link className="tarjeta-enlace" to="/auditoria">
-                Ver bitácora
-              </Link>
+            <footer className="panel-pie staff-pie-accion">
+              <BotonEnlace to="/auditoria">Ver bitácora</BotonEnlace>
             </footer>
           </>
         );
