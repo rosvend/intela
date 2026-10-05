@@ -8,8 +8,10 @@ import {
   segmentos,
   DEFINICIONES,
   dimensionar,
+  trazo,
   type GameState,
 } from "./snake";
+import { puntoEn } from "./trazoLogo";
 
 const ANCHO = 720;
 const ALTO = 900;
@@ -22,16 +24,17 @@ function correr(segundos: number, hz = 60): GameState {
 }
 
 describe("la escena", () => {
-  it("trae varias serpientes, con figuras distintas", () => {
+  it("trae varias serpientes repartidas por la misma ruta", () => {
     const e = estadoInicial(ANCHO, ALTO);
     expect(e.serpientes.length).toBeGreaterThan(1);
-
-    // Figuras y no la misma desfasada: dos trazos iguales en paralelo se leen
+    // Desfases y velocidades distintas: dos trazos sincronizados se leen
     // como un error de repeticion.
-    const figuras = new Set(
-      e.serpientes.map((s) => `${s.trayectoria.fx}:${s.trayectoria.fy}`),
+    const fases = new Set(e.serpientes.map((s) => s.trayectoria.fase));
+    const velocidades = new Set(
+      e.serpientes.map((s) => s.trayectoria.velocidad),
     );
-    expect(figuras.size).toBe(e.serpientes.length);
+    expect(fases.size).toBe(e.serpientes.length);
+    expect(velocidades.size).toBe(e.serpientes.length);
   });
 
   it("las diferencia por grosor y opacidad, para dar profundidad", () => {
@@ -45,15 +48,13 @@ describe("la escena", () => {
   });
 });
 
-describe("las trayectorias son fijas", () => {
+describe("las trayectorias siguen la marca", () => {
   it("no dependen de nada mas que del instante", () => {
-    // Es lo que hace que el movimiento sea "un conjunto de movimientos fijos":
-    // sin azar y sin entrada, el mismo t da siempre el mismo punto.
     for (const def of DEFINICIONES) {
       const s = dimensionar(def, ANCHO, ALTO);
-      const a = posicion(s.trayectoria, 3.5, ANCHO, ALTO);
-      const b = posicion(s.trayectoria, 3.5, ANCHO, ALTO);
-      expect(a).toEqual(b);
+      expect(posicion(s.trayectoria, 3.5)).toEqual(
+        posicion(s.trayectoria, 3.5),
+      );
     }
   });
 
@@ -64,9 +65,25 @@ describe("las trayectorias son fijas", () => {
     expect(a.serpientes[0].rastro[0]).toEqual(b.serpientes[0].rastro[0]);
   });
 
+  it("la cabeza esta sobre la ruta del logo, escalada al panel", () => {
+    const s = dimensionar(DEFINICIONES[0], ANCHO, ALTO);
+    const tr = s.trayectoria;
+    for (const t of [0, 1.7, 9.3, 40]) {
+      const p = posicion(tr, t);
+      const q = puntoEn(tr.fase + tr.velocidad * t);
+      expect(p.x).toBeCloseTo(tr.x0 + q.x * tr.lado, 6);
+      expect(p.y).toBeCloseTo(tr.y0 + q.y * tr.lado, 6);
+    }
+  });
+
+  it("la marca va grande, cuadrada y centrada en el panel", () => {
+    const tr = dimensionar(DEFINICIONES[0], ANCHO, ALTO).trayectoria;
+    expect(tr.lado).toBeGreaterThan(Math.min(ANCHO, ALTO) * 0.7);
+    expect(tr.x0 + tr.lado / 2).toBeCloseTo(ANCHO / 2, 6);
+    expect(tr.y0 + tr.lado / 2).toBeCloseTo(ALTO / 2, 6);
+  });
+
   it("se quedan dentro del panel", () => {
-    // La razon de elegir una curva cerrada y no una lista de giros: los giros
-    // derivan y hay que envolver por los bordes, que corta el cuerpo.
     const e = correr(30);
     for (const s of e.serpientes) {
       for (const p of s.rastro) {
@@ -78,38 +95,39 @@ describe("las trayectorias son fijas", () => {
     }
   });
 
-  it("recorren la figura entera, no un trozo", () => {
-    const e = correr(60);
-    const s = e.serpientes[0];
-    const puntos = Array.from({ length: 400 }, (_, i) =>
-      posicion(s.trayectoria, (i / 400) * 60, ANCHO, ALTO),
-    );
-    const xs = puntos.map((p) => p.x);
-    const ys = puntos.map((p) => p.y);
-    // Cubre la mayor parte de la amplitud que declara la trayectoria.
-    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(
-      ANCHO * s.trayectoria.rx * 1.5,
-    );
-    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(
-      ALTO * s.trayectoria.ry * 1.5,
-    );
+  it("una vuelta completa vuelve al punto de partida", () => {
+    const tr = dimensionar(DEFINICIONES[0], ANCHO, ALTO).trayectoria;
+    const a = posicion(tr, 0);
+    const b = posicion(tr, 1 / tr.velocidad);
+    expect(b.x).toBeCloseTo(a.x, 6);
+    expect(b.y).toBeCloseTo(a.y, 6);
   });
 
   it("el rumbo apunta hacia donde se mueve la cabeza", () => {
-    const s = dimensionar(DEFINICIONES[0], ANCHO, ALTO);
-    const t = 2.2;
-    const ahora = posicion(s.trayectoria, t, ANCHO, ALTO);
-    const luego = posicion(s.trayectoria, t + 0.01, ANCHO, ALTO);
-    const observado = Math.atan2(luego.y - ahora.y, luego.x - ahora.x);
-    const calculado = rumbo(s.trayectoria, t, ANCHO, ALTO);
+    const tr = dimensionar(DEFINICIONES[0], ANCHO, ALTO).trayectoria;
+    for (const t of [2.2, 7.9, 13.1]) {
+      const ahora = posicion(tr, t);
+      const luego = posicion(tr, t + 0.05);
+      const observado = Math.atan2(luego.y - ahora.y, luego.x - ahora.x);
+      const calculado = rumbo(tr, t);
+      const d = Math.abs(
+        Math.atan2(
+          Math.sin(observado - calculado),
+          Math.cos(observado - calculado),
+        ),
+      );
+      expect(d).toBeLessThan(0.15);
+    }
+  });
 
-    const d = Math.abs(
-      Math.atan2(
-        Math.sin(observado - calculado),
-        Math.cos(observado - calculado),
-      ),
-    );
-    expect(d).toBeLessThan(0.05);
+  it("el trazo de guia es la ruta entera dentro del panel", () => {
+    const tr = dimensionar(DEFINICIONES[0], ANCHO, ALTO).trayectoria;
+    const puntos = trazo(tr);
+    expect(puntos.length).toBeGreaterThan(100);
+    for (const p of puntos) {
+      expect(p.x).toBeGreaterThanOrEqual(tr.x0 - 1e-9);
+      expect(p.x).toBeLessThanOrEqual(tr.x0 + tr.lado + 1e-9);
+    }
   });
 });
 
@@ -188,7 +206,7 @@ describe("dimensionar", () => {
     expect(chico.nodos).toBeLessThan(grande.nodos);
   });
 
-  it("recorta la amplitud para que la cabeza no se salga", () => {
+  it("la cabeza nunca se sale del panel", () => {
     // Se veia cortada por abajo en la captura del movil.
     for (const [ancho, alto] of [
       [720, 900],
@@ -198,7 +216,7 @@ describe("dimensionar", () => {
       for (const def of DEFINICIONES) {
         const s = dimensionar(def, ancho, alto);
         for (let t = 0; t < 40; t += 0.1) {
-          const p = posicion(s.trayectoria, t, ancho, alto);
+          const p = posicion(s.trayectoria, t);
           expect(p.x - s.cabeza / 2).toBeGreaterThanOrEqual(0);
           expect(p.x + s.cabeza / 2).toBeLessThanOrEqual(ancho);
           expect(p.y - s.cabeza / 2).toBeGreaterThanOrEqual(0);
@@ -208,10 +226,9 @@ describe("dimensionar", () => {
     }
   });
 
-  it("nunca deja una amplitud negativa, ni en un panel diminuto", () => {
+  it("nunca deja un lado negativo, ni en un panel diminuto", () => {
     const s = dimensionar(DEFINICIONES[0], 30, 20);
-    expect(s.trayectoria.rx).toBeGreaterThan(0);
-    expect(s.trayectoria.ry).toBeGreaterThan(0);
+    expect(s.trayectoria.lado).toBeGreaterThan(0);
     expect(s.nodos).toBeGreaterThan(0);
     expect(s.grosor).toBeGreaterThan(0);
   });

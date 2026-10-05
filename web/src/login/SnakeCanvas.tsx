@@ -8,12 +8,13 @@ import {
   posicion,
   rumbo,
   segmentos,
+  trazo,
   type GameState,
   type Serpiente,
 } from "./snake";
 
 /**
- * El panel derecho: tres marcas de Intela recorriendo trayectorias fijas.
+ * El panel derecho: marcas de Intela recorriendo la ruta del propio logo.
  *
  * # Adorno, y nada mas
  *
@@ -95,7 +96,7 @@ export default function SnakeCanvas() {
         serpientes: DEFINICIONES.map((def, i) => {
           const s = dimensionar(def, ancho, alto);
           const t = tiempos[i] ?? 0;
-          return { ...s, t, rastro: [posicion(s.trayectoria, t, ancho, alto)] };
+          return { ...s, t, rastro: [posicion(s.trayectoria, t)] };
         }),
       };
     }
@@ -131,8 +132,8 @@ export default function SnakeCanvas() {
       c.stroke();
 
       // La cabeza, girada hacia donde va.
-      const cabeza = posicion(s.trayectoria, s.t, estado.ancho, estado.alto);
-      const angulo = rumbo(s.trayectoria, s.t, estado.ancho, estado.alto);
+      const cabeza = posicion(s.trayectoria, s.t);
+      const angulo = rumbo(s.trayectoria, s.t);
       c.translate(cabeza.x, cabeza.y);
       c.rotate(angulo);
       if (imagen) {
@@ -146,8 +147,30 @@ export default function SnakeCanvas() {
       c.restore();
     }
 
+    /** El nudo entero, muy tenue: las serpientes lo recorren y se lee la marca. */
+    function pintarGuia() {
+      const c = ctx!;
+      const principal = estado.serpientes[0];
+      if (!principal) return;
+      const puntos = trazo(principal.trayectoria);
+      c.save();
+      c.globalAlpha = 0.08;
+      c.strokeStyle = "#ffffff";
+      c.lineCap = "round";
+      c.lineJoin = "round";
+      c.lineWidth = principal.grosor;
+      c.beginPath();
+      c.moveTo(puntos[0].x, puntos[0].y);
+      for (let i = 1; i < puntos.length; i++)
+        c.lineTo(puntos[i].x, puntos[i].y);
+      c.lineTo(puntos[0].x, puntos[0].y);
+      c.stroke();
+      c.restore();
+    }
+
     function pintar() {
       ctx!.clearRect(0, 0, estado.ancho, estado.alto);
+      pintarGuia();
       // De la mas tenue a la mas opaca, para que la principal quede encima.
       for (let i = estado.serpientes.length - 1; i >= 0; i--) {
         pintarSerpiente(estado.serpientes[i]);

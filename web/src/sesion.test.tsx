@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProveedorDeSesion, ResultadoDeSalida, useSesion } from "./sesion";
+import { ProveedorDeSesion, useSesion } from "./sesion";
 import { setToken } from "./api";
 
 function Sonda() {
@@ -40,9 +40,9 @@ function respuestaUsuario(nombre: string) {
   );
 }
 
-/** Monta, espera a que resuelva la sesion, pulsa salir y devuelve el resultado. */
+/** Monta, espera a que resuelva la sesion, pulsa salir y espera a que termine. */
 async function montarYSalir() {
-  let resultado: ResultadoDeSalida | undefined;
+  let termino = false;
 
   function ConBotonDeSalida() {
     const { salir, cargando } = useSesion();
@@ -50,7 +50,7 @@ async function montarYSalir() {
     return (
       <button
         onClick={() => {
-          void salir().then((r) => (resultado = r));
+          void salir().then(() => (termino = true));
         }}
       >
         salir
@@ -68,8 +68,7 @@ async function montarYSalir() {
 
   await waitFor(() => expect(screen.getByText("salir")).toBeTruthy());
   fireEvent.click(screen.getByText("salir"));
-  await waitFor(() => expect(resultado).toBeDefined());
-  return { resultado };
+  await waitFor(() => expect(termino).toBe(true));
 }
 
 describe("ProveedorDeSesion", () => {
@@ -201,53 +200,30 @@ describe("salir()", () => {
     localStorage.clear();
   });
 
-  it("con el servidor respondiendo, limpia el token y reporta que revoco", async () => {
+  it("pide la revocacion al servidor y limpia el token", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
     vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-    const { resultado } = await montarYSalir();
+    await montarYSalir();
 
-    expect(resultado?.revocadaEnServidor).toBe(true);
+    const [ruta, init] = vi.mocked(fetch).mock.calls[1];
+    expect(String(ruta)).toContain("/api/auth/session");
+    expect(init?.method).toBe("DELETE");
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
 
-  it("si el servidor no responde, sale igual en local pero avisa que NO revoco", async () => {
-    // El logout local tiene que funcionar sin red. Pero la sesion sigue viva
-    // en el servidor, y eso hay que poder decirlo: en un equipo compartido
-    // importa.
+  it("si el servidor no responde, sale igual en local", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
-    const { resultado } = await montarYSalir();
+    await montarYSalir();
 
-    expect(resultado?.revocadaEnServidor).toBe(false);
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
 
-  it("un 401 en el DELETE no es una falsa alarma: significa que el servidor SI la considera muerta", async () => {
-    // Reproduce lo que se vio en vivo: DELETE FROM sesiones en el servidor,
-    // luego pulsar Salir. El DELETE devuelve 401 -la sesion ya no existe alla,
-    // que es justo lo que se queria lograr- y eso no puede leerse como "no se
-    // pudo revocar": un aviso de seguridad que salta en falso en cada logout
-    // rutinario (sesion caducada con la pestana abierta) es uno que se
-    // aprende a ignorar.
-    setToken("tok");
-    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: "sesion invalida o expirada" }), {
-        status: 401,
-      }),
-    );
-
-    const { resultado } = await montarYSalir();
-
-    expect(resultado?.revocadaEnServidor).toBe(true);
-    expect(localStorage.getItem("intela.token")).toBeNull();
-  });
-
-  it("un 500 en el DELETE SI cuenta como no revocada: ahi la incertidumbre es real", async () => {
+  it("un 500 en el DELETE tampoco deja el token en el equipo", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -256,8 +232,8 @@ describe("salir()", () => {
       }),
     );
 
-    const { resultado } = await montarYSalir();
+    await montarYSalir();
 
-    expect(resultado?.revocadaEnServidor).toBe(false);
+    expect(localStorage.getItem("intela.token")).toBeNull();
   });
 });

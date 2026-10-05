@@ -37,7 +37,7 @@ type Modo = "entrar" | "crear";
  * de login, no lo elige quien rellena el formulario (M-2).
  */
 export default function Login() {
-  const { usuario, entrar, salidaSinRevocar } = useSesion();
+  const { usuario, entrar } = useSesion();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -134,19 +134,6 @@ export default function Login() {
           {creando && (
             <p className="acceso-entradilla">
               El alta de titulares de REDES SGC.
-            </p>
-          )}
-
-          {/*
-            Se llego aqui tras un "Salir" en el que el servidor no confirmo la
-            revocacion: en este equipo la sesion se cerro, pero alla sigue viva.
-            En un equipo compartido eso hay que decirlo, no tragarselo.
-          */}
-          {salidaSinRevocar && (
-            <p role="alert" className="acceso-aviso">
-              Se cerró la sesión en este equipo, pero el servidor no confirmó la
-              revocación. Si estás en un equipo compartido, avísale a un
-              administrador.
             </p>
           )}
 

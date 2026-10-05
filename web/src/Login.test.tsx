@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Login from "./Login";
 import { token } from "./api";
-import { ProveedorDeSesion, useSesion } from "./sesion";
+import { ProveedorDeSesion } from "./sesion";
 
 /** Expone la URL actual completa para poder afirmar sobre query y fragmento. */
 function Ubicacion() {
@@ -164,43 +164,10 @@ describe("Login", () => {
     );
   });
 
-  it("avisa si la salida anterior no fue revocada por el servidor", async () => {
-    // El aviso vive en el contexto de sesion, no en Layout: al salir, Layout
-    // se desmonta y nadie alcanzaria a leerlo. Se muestra aqui, que es donde
-    // se aterriza despues de salir.
-    function ConSalida() {
-      const { salir, salidaSinRevocar } = useSesion();
-      return (
-        <>
-          <button onClick={() => void salir()}>forzar salida</button>
-          {salidaSinRevocar && <Login />}
-        </>
-      );
-    }
-
-    // El DELETE falla: el servidor no confirma la revocacion.
-    vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
-
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <ProveedorDeSesion>
-          <ConSalida />
-        </ProveedorDeSesion>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByText("forzar salida"));
-
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toContain(
-        "no confirmó la revocación",
-      ),
-    );
-  });
-
-  it("no muestra el aviso de revocacion en un login normal", async () => {
+  it("no muestra ningun aviso de revocacion al llegar", () => {
     montar();
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/revocación/)).toBeNull();
   });
 
   it("identifica la marca por nombre accesible", () => {

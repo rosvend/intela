@@ -7,7 +7,6 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ApiError,
   api,
   clearToken,
   setToken,
@@ -52,28 +51,11 @@ export const sesionActual = (): Promise<Usuario> =>
 export const cerrarSesion = (): Promise<Response> =>
   api("/api/auth/session", { method: "DELETE" }) as Promise<Response>;
 
-/**
- * Resultado de cerrar sesion.
- *
- * `salir()` limpia el estado local pase lo que pase -pulsar "Salir" tiene que
- * sacarte de esta maquina aunque no haya red-, pero si el servidor no alcanzo
- * a revocar la sesion sigue viva alla. En un equipo compartido eso importa, y
- * quien llama necesita poder decirlo.
- */
-export type ResultadoDeSalida = { revocadaEnServidor: boolean };
-
 type ContextoSesion = {
   usuario: Usuario | null;
   cargando: boolean;
-  /**
-   * La ultima salida limpio el estado local pero el servidor no confirmo la
-   * revocacion. Vive aqui y no en `Layout` porque al salir `usuario` pasa a
-   * null y `Layout` se desmonta: el aviso tiene que sobrevivir a eso para que
-   * alguien llegue a leerlo, y donde se lee es en la pantalla de login.
-   */
-  salidaSinRevocar: boolean;
   entrar: (email: string, clave: string) => Promise<void>;
-  salir: () => Promise<ResultadoDeSalida>;
+  salir: () => Promise<void>;
 };
 
 const ContextoSesion = createContext<ContextoSesion | null>(null);
@@ -81,7 +63,6 @@ const ContextoSesion = createContext<ContextoSesion | null>(null);
 export function ProveedorDeSesion({ children }: { children: ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [cargando, setCargando] = useState(true);
-  const [salidaSinRevocar, setSalidaSinRevocar] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -151,36 +132,21 @@ export function ProveedorDeSesion({ children }: { children: ReactNode }) {
     // El usuario ya viene en la respuesta del login: no hace falta un GET
     // adicional a /auth/session para pintar la sesion recien abierta.
     setUsuario(sesion.usuario);
-    setSalidaSinRevocar(false);
   }
 
-  async function salir(): Promise<ResultadoDeSalida> {
-    let revocadaEnServidor = true;
+  async function salir() {
+    // Se sale en local aunque el servidor no responda: "Salir" no depende de la red.
     try {
       await cerrarSesion();
-    } catch (err) {
-      // Un 401 no es "no se pudo revocar": es el servidor diciendo que esa
-      // sesion ya no vale, que es exactamente lo que se queria lograr. La
-      // incertidumbre real es de red (ErrorDeRed) o un 5xx -ahi si el
-      // servidor pudo no haberse enterado-. Sin esta distincion, la sesion
-      // que caduca con la pestana abierta dispara el aviso de "el servidor
-      // no confirmo la revocacion" en cada logout normal, y un aviso de
-      // seguridad que salta en falso con frecuencia es uno que se aprende a
-      // ignorar.
-      if (!(err instanceof ApiError && err.status === 401)) {
-        revocadaEnServidor = false;
-      }
+    } catch {
+      // Sin aviso: lo que importa es que el token ya no viva en este equipo.
     }
     clearToken();
     setUsuario(null);
-    setSalidaSinRevocar(!revocadaEnServidor);
-    return { revocadaEnServidor };
   }
 
   return (
-    <ContextoSesion.Provider
-      value={{ usuario, cargando, salidaSinRevocar, entrar, salir }}
-    >
+    <ContextoSesion.Provider value={{ usuario, cargando, entrar, salir }}>
       {children}
     </ContextoSesion.Provider>
   );
