@@ -11,7 +11,7 @@
 -- Es un indice derivado de docs/reglamentos/: cmd/indexadorreglamento lo
 -- reemplaza entero. Sin dinero ni asientos (ADR 0006 no aplica).
 --
--- COORDINACION DE NUMERO: 00029, primero libre sobre 00028 en main al abrir la
+-- COORDINACION DE NUMERO: 00030, primero libre sobre 00029 en main al rebasar la
 -- rama. Si otra rama lo toma antes, pasar al primero libre (allowMissing=false).
 
 -- +goose Up

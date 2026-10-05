@@ -66,7 +66,7 @@ func init() {
 }
 
 const (
-	// La misma que docker-compose.yml: PostgreSQL 16 con pgvector (#67, migracion 00029).
+	// La misma que docker-compose.yml: PostgreSQL 16 con pgvector (#67, migracion 00030).
 	// Probar contra otra version mayor no prueba nada.
 	imagen = "pgvector/pgvector:0.8.1-pg16"
 
