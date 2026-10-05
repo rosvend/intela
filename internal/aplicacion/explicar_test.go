@@ -3,6 +3,7 @@ package aplicacion
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -477,7 +478,7 @@ func TestExplicarDosPagosDeLaMismaRefSuman(t *testing.T) {
 
 func TestExplicarUnRendimientoNombraOrigenYDestino(t *testing.T) {
 	t.Parallel()
-	payload := []byte(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"internacional"},"circuito":"nacional","vigencia":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"40.00"}]}`)
+	payload := []byte(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"nacional"},"circuito":"nacional","vigencia":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"40.00"}]}`)
 	b := &bitacoraFalsa{asientos: []Asiento{{
 		Hecho: HechoRendimientosDistribuidos, RefTipo: RefProceso, RefID: "p2",
 		Payload: payload,
@@ -488,10 +489,123 @@ func TestExplicarUnRendimientoNombraOrigenYDestino(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if x.Origen == nil || x.Destino == nil || x.Origen.ProcesoID != "p1" || x.Destino.Circuito != "internacional" {
+	if x.Origen == nil || x.Destino == nil || x.Origen.ProcesoID != "p1" || x.Destino.ProcesoID != "p2" {
 		t.Fatalf("origen/destino = %+v / %+v", x.Origen, x.Destino)
 	}
 	if !x.Neto.Equal(decimal.RequireFromString("40.00")) {
 		t.Fatalf("neto = %s", x.Neto)
+	}
+}
+
+// asientoAccesorio cuelga de p2 un pago de la linea obra-1/titular-1 repartido sobre origen.
+func asientoAccesorio(hecho, origen, importe string) Asiento {
+	payload := fmt.Sprintf(`{"origen":{"proceso_id":%q,"periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"nacional"},"circuito":"nacional","vigencia":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-1","ipi":"111","porcentaje":"40","importe":%q}]}`, origen, importe)
+	return Asiento{Hecho: hecho, RefTipo: RefProceso, RefID: "p2", Payload: []byte(payload)}
+}
+
+// Las proporciones de una cifra accesoria salen de la corrida de origen, asi
+// que regla, obra, identificacion y reportes son los de su valorizacion: los
+// mismos que explica la linea de esa corrida.
+func TestExplicarUnaCifraAccesoriaTraeLaReglaYLaObraDeLaCorridaDeOrigen(t *testing.T) {
+	t.Parallel()
+	b := corridaAsentada(t)
+	deOrigen, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, "proc-1:obra-1:titular-1")
+	if err != nil {
+		t.Fatalf("explicar la linea de origen: %v", err)
+	}
+	b.asientos = append(b.asientos,
+		asientoAccesorio(HechoReservaLiberada, "proc-1", "20.00"),
+		asientoAccesorio(HechoRendimientosDistribuidos, "proc-1", "7.00"))
+
+	for _, ref := range []string{
+		FormarRefReservaLiberada("proc-1", "p2", "obra-1", "titular-1"),
+		FormarRefRendimiento("proc-1", "p2", "obra-1", "titular-1"),
+	} {
+		x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if x.Regla != deOrigen.Regla || x.Regla.SnapshotID == "" || x.Regla.Reglamento == "" {
+			t.Fatalf("%s: regla = %+v, se esperaba la de proc-1 %+v", ref, x.Regla, deOrigen.Regla)
+		}
+		if x.Obra != deOrigen.Obra || x.Obra.Escalon == "" {
+			t.Fatalf("%s: obra = %+v, se esperaba la de proc-1 %+v", ref, x.Obra, deOrigen.Obra)
+		}
+		if len(x.Identificacion) == 0 || len(x.Reportes) != len(deOrigen.Reportes) || x.Reporte != deOrigen.Reporte {
+			t.Fatalf("%s: identificacion/reportes = %+v / %+v", ref, x.Identificacion, x.Reportes)
+		}
+		if len(x.Faltantes) != 0 {
+			t.Fatalf("%s: faltantes = %v, la cadena de origen esta asentada", ref, x.Faltantes)
+		}
+	}
+
+	reserva, _ := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, FormarRefReservaLiberada("proc-1", "p2", "obra-1", "titular-1"))
+	if reserva.Bolsa.ID != deOrigen.Bolsa.ID || reserva.Bolsa.Recaudo == nil {
+		t.Fatalf("bolsa de la reserva = %+v, se esperaba la de proc-1", reserva.Bolsa)
+	}
+	rendimiento, _ := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, FormarRefRendimiento("proc-1", "p2", "obra-1", "titular-1"))
+	if rendimiento.Bolsa.ID != "" || rendimiento.Bolsa.Recaudo != nil {
+		t.Fatalf("bolsa del rendimiento = %+v, un rendimiento no sale de una bolsa", rendimiento.Bolsa)
+	}
+}
+
+// Sin la valorizacion de origen la cifra se sigue explicando, pero faltantes
+// lo dice: una lista vacia afirmaria que no falta nada.
+func TestExplicarUnaCifraAccesoriaSinValorizacionDeOrigenLaNombra(t *testing.T) {
+	t.Parallel()
+	b := &bitacoraFalsa{asientos: []Asiento{asientoDeLiberacion("20.00")}}
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-a"))
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	for _, hecho := range []string{HechoRepartoValorizado, HechoRepartoObraValorizada, HechoObraRegistrada} {
+		if !slices.Contains(x.Faltantes, hecho) {
+			t.Errorf("faltantes = %v, falta %q", x.Faltantes, hecho)
+		}
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("20.00")) {
+		t.Fatalf("neto = %s, la cifra no se oculta", x.Neto)
+	}
+}
+
+// La suma por ref depende de dos filtros. Sin el de origen, la ref de p1
+// sumaria lo liberado desde otra corrida y pagado en p2; sin el de hecho, la
+// reserva sumaria el rendimiento del mismo par.
+func TestExplicarUnaRefAccesoriaSumaSoloSuOrigenYSuHecho(t *testing.T) {
+	t.Parallel()
+	b := &bitacoraFalsa{asientos: []Asiento{
+		asientoAccesorio(HechoReservaLiberada, "p1", "20.00"),
+		asientoAccesorio(HechoReservaLiberada, "p0", "300.00"),
+		asientoAccesorio(HechoRendimientosDistribuidos, "p1", "5.00"),
+	}}
+	casos := map[string]string{
+		FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-1"): "20.00",
+		FormarRefReservaLiberada("p0", "p2", "obra-1", "titular-1"): "300.00",
+		FormarRefRendimiento("p1", "p2", "obra-1", "titular-1"):     "5.00",
+	}
+	for ref, esperado := range casos {
+		x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if !x.Neto.Equal(decimal.RequireFromString(esperado)) {
+			t.Errorf("%s: neto = %s, se esperaba %s", ref, x.Neto, esperado)
+		}
+	}
+}
+
+// Un importe que no se lee no se salta: la suma saldria menor sin aviso.
+func TestExplicarUnImporteAccesorioIlegibleEsLinajeIncompleto(t *testing.T) {
+	t.Parallel()
+	for _, importe := range []string{"no-es-numero", "-5.00"} {
+		b := &bitacoraFalsa{asientos: []Asiento{
+			asientoAccesorio(HechoReservaLiberada, "p1", "20.00"),
+			asientoAccesorio(HechoReservaLiberada, "p1", importe),
+		}}
+		_, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-1"))
+		if !errors.Is(err, ErrLinajeIncompleto) {
+			t.Errorf("importe %q: error = %v, se esperaba ErrLinajeIncompleto", importe, err)
+		}
 	}
 }

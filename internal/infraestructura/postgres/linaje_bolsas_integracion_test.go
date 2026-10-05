@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
@@ -96,6 +98,24 @@ func TestLiberarSinAsientoNoLiberaYExplicarNombraLasDosCorridas(t *testing.T) {
 	}
 	if !x.Neto.Equal(nuevas[0].Importe) {
 		t.Fatalf("neto = %s, se esperaba %s", x.Neto, nuevas[0].Importe)
+	}
+	// La corrida se congelo con GuardarResultado, sin valorizar: faltantes lo nombra.
+	if !slices.Contains(x.Faltantes, aplicacion.HechoRepartoValorizado) {
+		t.Fatalf("faltantes = %v, la valorizacion de origen no esta asentada", x.Faltantes)
+	}
+	asientos, err = s.De(ctx, aplicacion.RefProceso, "proceso-2")
+	if err != nil || len(asientos) != 1 {
+		t.Fatalf("asientos del destino = %d, err = %v", len(asientos), err)
+	}
+	var desglose struct {
+		SaldoReserva  string `json:"saldo_reserva"`
+		SaldoRestante string `json:"saldo_restante"`
+	}
+	if err := json.Unmarshal(asientos[0].Payload, &desglose); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if desglose.SaldoReserva != "50.00" || desglose.SaldoRestante != "0.00" {
+		t.Fatalf("desglose = %+v, se esperaba 50.00 liberado y 0.00 restante", desglose)
 	}
 }
 

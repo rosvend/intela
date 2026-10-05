@@ -274,7 +274,8 @@ func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
 	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
 		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
 	}}
-	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, &bitacoraFalsa{})
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, libro)
 
 	// RD 10.4: el rendimiento acumulado sobre la reserva se incluye al liberarla.
 	nuevas, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.RequireFromString("10.00"), "actor-1")
@@ -284,6 +285,16 @@ func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
 	suma := nuevas[0].Importe.Add(nuevas[1].Importe)
 	if !suma.Equal(decimal.RequireFromString("60.00")) {
 		t.Fatalf("suma repartida = %s, se esperaba 60.00 (50.00 de saldo + 10.00 de rendimiento)", suma)
+	}
+	// El importe de cada linea mezcla reserva y rendimiento; el asiento dice
+	// cuanto puso cada uno y que quedo, sin recalcular.
+	var payload asientoReservaLiberada
+	if err := json.Unmarshal(libro.asientos[0].Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.SaldoReserva != "50.00" || payload.RendimientoSumado != "10.00" || payload.SaldoRestante != "0.00" {
+		t.Fatalf("desglose = saldo %q, rendimiento %q, restante %q; se esperaba 50.00/10.00/0.00",
+			payload.SaldoReserva, payload.RendimientoSumado, payload.SaldoRestante)
 	}
 }
 
@@ -592,8 +603,9 @@ func (c *corridasFalso) ProcesoPorID(_ context.Context, id string) (ProcesoVista
 
 func corridasDePrueba() *corridasFalso {
 	return &corridasFalso{porID: map[string]ProcesoVista{
-		"p1": {ID: "p1", Periodo: "2026-01", Circuito: reparto.Nacional},
-		"p2": {ID: "p2", Periodo: "2027-01", Circuito: reparto.Nacional},
+		"p1":    {ID: "p1", Periodo: "2026-01", Circuito: reparto.Nacional},
+		"p2":    {ID: "p2", Periodo: "2027-01", Circuito: reparto.Nacional},
+		"p-int": {ID: "p-int", Periodo: "2027-01", Circuito: reparto.Internacional},
 	}}
 }
 
@@ -641,4 +653,82 @@ func cablearBolsas(b BolsasAccesorias, libro *bitacoraFalsa) BolsasAccesorias {
 	b.Unidad = unidadDirecta{}
 	b.Reloj = relojFijo{instante: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)}
 	return b
+}
+
+func TestLiberarYDistribuirSinActorNoTocanNada(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
+	}}
+	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
+		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
+	}}
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas, Rendimientos: rendimientos}, libro)
+	ctx := context.Background()
+
+	for _, actor := range []string{"", "   "} {
+		if _, _, err := b.LiberarReservaPrescrita(ctx, "p1", "p2", "2026", decimal.Zero, actor); !errors.Is(err, ErrActorAusente) {
+			t.Fatalf("liberar con actor %q: error = %v, se esperaba ErrActorAusente", actor, err)
+		}
+		if _, _, err := b.DistribuirRendimiento(ctx, "p1", "p2", reparto.Nacional, "2026", actor); !errors.Is(err, ErrActorAusente) {
+			t.Fatalf("distribuir con actor %q: error = %v, se esperaba ErrActorAusente", actor, err)
+		}
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("saldo = %s, sin actor no se libera", reservas.porProc["p1"].Saldo)
+	}
+	if monto := rendimientos.porClave[claveRendimiento(reparto.Nacional, "2026")].Monto; !monto.Equal(decimal.RequireFromString("100.00")) {
+		t.Fatalf("monto = %s, sin actor no se debita", monto)
+	}
+	if len(libro.asientos) != 0 {
+		t.Fatalf("asientos = %+v, sin actor no se asienta", libro.asientos)
+	}
+}
+
+// RD 14.5.4: la reserva es solo nacional, asi que no se paga en una corrida internacional.
+func TestLiberarReservaPrescritaRechazaUnDestinoInternacional(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
+	}}
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, libro)
+
+	if _, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p-int", "2026", decimal.Zero, "actor-1"); !errors.Is(err, reparto.ErrReservaInternacional) {
+		t.Fatalf("error = %v, se esperaba ErrReservaInternacional (RD 14.5.4)", err)
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) || len(libro.asientos) != 0 {
+		t.Fatalf("saldo = %s, asientos = %d; el rechazo no debio liberar ni asentar", reservas.porProc["p1"].Saldo, len(libro.asientos))
+	}
+}
+
+// RD 10.3: un rendimiento se reparte sobre una corrida de su circuito y se paga en otra del mismo.
+func TestDistribuirRendimientoRechazaCruzarCircuitos(t *testing.T) {
+	t.Parallel()
+	casos := []struct {
+		nombre, origen, destino string
+		circuito                reparto.Circuito
+	}{
+		{"internacional sobre origen nacional", "p1", "p-int", reparto.Internacional},
+		{"nacional pagado en destino internacional", "p1", "p-int", reparto.Nacional},
+		{"nacional sobre origen internacional", "p-int", "p2", reparto.Nacional},
+	}
+	for _, c := range casos {
+		resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{c.origen: resultadoConDosTitulares()}}
+		rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
+			claveRendimiento(c.circuito, "2026"): {Circuito: c.circuito, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
+		}}
+		libro := &bitacoraFalsa{}
+		b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}, libro)
+
+		if _, _, err := b.DistribuirRendimiento(context.Background(), c.origen, c.destino, c.circuito, "2026", "actor-1"); !errors.Is(err, reparto.ErrCircuitoCruzado) {
+			t.Fatalf("%s: error = %v, se esperaba ErrCircuitoCruzado (RD 10.3)", c.nombre, err)
+		}
+		if monto := rendimientos.porClave[claveRendimiento(c.circuito, "2026")].Monto; !monto.Equal(decimal.RequireFromString("100.00")) || len(libro.asientos) != 0 {
+			t.Fatalf("%s: monto = %s, asientos = %d; el rechazo no debio debitar ni asentar", c.nombre, monto, len(libro.asientos))
+		}
+	}
 }

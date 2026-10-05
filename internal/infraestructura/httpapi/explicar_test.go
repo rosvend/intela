@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -214,5 +215,67 @@ func TestExplicarUnaCifraLiberadaIncluyeOrigenYDestino(t *testing.T) {
 	destino, _ := cuerpo["destino"].(map[string]any)
 	if origen["proceso_id"] != "p1" || origen["periodo"] != "2026-01" || destino["proceso_id"] != "p2" || destino["periodo"] != "2027-01" {
 		t.Fatalf("origen/destino = %v / %v", cuerpo["origen"], cuerpo["destino"])
+	}
+}
+
+// bitacoraDeAsientos solo responde De; lo demas de la bitacora no lo usa Explicar.
+type bitacoraDeAsientos struct {
+	aplicacion.BitacoraAuditoria
+	asientos []aplicacion.Asiento
+}
+
+func (b bitacoraDeAsientos) De(_ context.Context, refTipo, refID string) ([]aplicacion.Asiento, error) {
+	var out []aplicacion.Asiento
+	for _, a := range b.asientos {
+		if a.RefTipo == refTipo && a.RefID == refID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// El 200 de una cifra accesoria pasa por el caso de uso real, no por un
+// doble: Redocly valida el documento, no los cuerpos, y un escalon fuera del
+// enum o un faltantes vacio con eslabones ausentes saldrian en verde.
+func TestExplicarUnaCifraAccesoriaRespetaSuEsquema(t *testing.T) {
+	bitacora := bitacoraDeAsientos{asientos: []aplicacion.Asiento{{
+		Hecho: aplicacion.HechoReservaLiberada, RefTipo: aplicacion.RefProceso, RefID: "p2",
+		Payload: []byte(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"nacional"},"lineas":[{"obra_id":"obra-1","titular_id":"titular-1","ipi":"111","porcentaje":"40","importe":"20.00"}]}`),
+	}}}
+	auditor := aplicacion.Usuario{ID: "usr-aud", Rol: aplicacion.RolAuditor}
+	servidor := Nueva(Casos{Auth: &autenticacionFalsa{usuario: auditor}, Explicar: aplicacion.ExplicarCifra{Bitacora: bitacora}}, Opciones{}).Router()
+
+	rec := pedir(t, servidor, http.MethodGet, "/explicar/reserva:p1:p2:obra-1:titular-1", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var cuerpo struct {
+		Obra      struct{ Escalon string } `json:"obra"`
+		Faltantes []string                 `json:"faltantes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("cuerpo no es JSON: %v", err)
+	}
+
+	esquema := bloqueDelContrato(t, lineasDelContrato(t), "    Explicacion:")
+	escalon := bloqueDelContrato(t, bloqueDelContrato(t, esquema, "        obra:"), "            escalon:")
+	var enum string
+	for _, l := range escalon {
+		if strings.HasPrefix(strings.TrimSpace(l), "enum:") {
+			enum = strings.TrimSpace(l)
+		}
+	}
+	permitidos := strings.Split(strings.Trim(strings.TrimPrefix(enum, "enum:"), " []"), ",")
+	valido := false
+	for _, p := range permitidos {
+		if strings.Trim(strings.TrimSpace(p), `"`) == cuerpo.Obra.Escalon {
+			valido = true
+		}
+	}
+	if !valido {
+		t.Fatalf("obra.escalon = %q, fuera del enum del contrato %q", cuerpo.Obra.Escalon, enum)
+	}
+	if !slices.Contains(cuerpo.Faltantes, aplicacion.HechoRepartoValorizado) || !slices.Contains(cuerpo.Faltantes, aplicacion.HechoRepartoObraValorizada) {
+		t.Fatalf("faltantes = %v, sin la valorizacion de origen tiene que nombrarla", cuerpo.Faltantes)
 	}
 }

@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shopspring/decimal"
-
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -43,11 +41,17 @@ type LineaDosCorridas struct {
 	Importe    string `json:"importe"`
 }
 
-// asientoReservaLiberada es el payload de reserva.liberada.
+// asientoReservaLiberada es el payload de reserva.liberada. El importe de
+// cada linea mezcla reserva y rendimiento; SaldoReserva, RendimientoSumado y
+// SaldoRestante dicen de donde salio sin recalcular: el saldo que tenia la
+// reserva, el rendimiento sumado y lo que quedo en ella tras la liberacion.
 type asientoReservaLiberada struct {
 	Origen              CorridaAsentada    `json:"origen"`
 	Destino             CorridaAsentada    `json:"destino"`
 	VigenciaRendimiento string             `json:"vigencia_rendimiento,omitempty"`
+	SaldoReserva        string             `json:"saldo_reserva"`
+	RendimientoSumado   string             `json:"rendimiento_sumado"`
+	SaldoRestante       string             `json:"saldo_restante"`
 	Lineas              []LineaDosCorridas `json:"lineas"`
 }
 
@@ -186,9 +190,4 @@ func lineaDeAsiento(payload []byte, obra, titular string) (LineaDosCorridas, Cor
 		}
 	}
 	return LineaDosCorridas{}, CorridaAsentada{}, CorridaAsentada{}, false
-}
-
-func importePositivo(s string) bool {
-	d, err := decimal.NewFromString(s)
-	return err == nil && d.IsPositive()
 }

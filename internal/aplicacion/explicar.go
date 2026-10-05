@@ -441,21 +441,26 @@ func firmasDe(delProceso []Asiento) []FirmaLinaje {
 // explicarAccesoria lee reserva.liberada o rendimientos.distribuidos. La
 // ref nombra las dos corridas; el asiento, colgado de la de destino, trae
 // periodo y circuito de las dos. No se recalcula nada.
+//
+// La cifra la explica el asiento accesorio. Regla, obra, identificacion y
+// reportes salen de la valorizacion de la corrida de origen, que es la que
+// fijo las proporciones; si esa valorizacion no esta asentada, se nombra en
+// faltantes y la cifra no se oculta. Las firmas son las de la corrida que
+// paga.
 func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref string, acc refAccesoria) (Explicacion, error) {
 	delDestino, err := e.Bitacora.De(ctx, RefProceso, acc.destino)
 	if err != nil {
 		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
 	}
-	linea, origen, destino, ok := lineaAccesoria(delDestino, acc)
+	linea, importe, origen, destino, ok, err := lineaAccesoria(delDestino, acc)
+	if err != nil {
+		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
+	}
 	if !ok {
 		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, ErrNoEncontrado)
 	}
 	if !SoloPropiasObras(actor, []string{acc.titular}) {
 		return Explicacion{}, ErrNoAutorizado
-	}
-	importe, err := decimal.NewFromString(linea.Importe)
-	if err != nil {
-		return Explicacion{}, fmt.Errorf("explicar %q: importe: %w", ref, ErrLinajeIncompleto)
 	}
 	porcentaje, err := decimal.NewFromString(linea.Porcentaje)
 	if err != nil {
@@ -463,23 +468,67 @@ func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref
 	}
 	origenL := CorridaLinaje(origen)
 	destinoL := CorridaLinaje(destino)
-	if origenL.ProcesoID != acc.origen || destinoL.ProcesoID != acc.destino {
-		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, ErrNoEncontrado)
-	}
-	return Explicacion{
+	x := Explicacion{
 		Ref: ref, TitularID: acc.titular,
 		Neto: importe, Bruto: importe,
 		Corrida: destinoL,
 		Origen:  &origenL, Destino: &destinoL,
-		Obra:           ObraLinaje{ID: acc.obra},
 		Split:          &SplitLinaje{TitularID: acc.titular, IPI: linea.IPI, Porcentaje: porcentaje},
 		Reportes:       []ReporteAsentado{},
 		Identificacion: []IdentificacionDeUso{},
 		Valorizacion:   []ValorizacionDeUso{},
 		Deducciones:    []DeduccionLinaje{},
-		Firmas:         []FirmaLinaje{},
+		Firmas:         firmasDe(delDestino),
 		Faltantes:      []string{},
-	}, nil
+	}
+	if err := e.proporcionesDeOrigen(ctx, &x, acc); err != nil {
+		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
+	}
+	return x, nil
+}
+
+// proporcionesDeOrigen llena regla, obra, identificacion y reportes con la
+// valorizacion de la corrida de origen. La bolsa solo en una liberacion: la
+// reserva se retuvo de la bolsa de esa corrida (RD 14). Un rendimiento son
+// rendimientos financieros (RD 10), no una bolsa, y la deja vacia.
+func (e ExplicarCifra) proporcionesDeOrigen(ctx context.Context, x *Explicacion, acc refAccesoria) error {
+	delOrigen, err := e.Bitacora.De(ctx, RefProceso, acc.origen)
+	if err != nil {
+		return err
+	}
+	var corrida AsientoValorizacion
+	hayCorrida := ultimo(delOrigen, HechoRepartoValorizado, &corrida, func() bool { return true })
+	if hayCorrida {
+		x.Regla = ReglaLinaje{SnapshotID: corrida.SnapshotID, Reglamento: corrida.Reglamento}
+		if acc.hecho == HechoReservaLiberada {
+			if x.Bolsa, x.Faltantes, err = e.bolsaDe(ctx, corrida.Bolsa, x.Faltantes); err != nil {
+				return err
+			}
+		}
+	} else {
+		x.Faltantes = append(x.Faltantes, HechoRepartoValorizado)
+	}
+
+	deLaObra, err := e.Bitacora.De(ctx, RefObra, acc.obra)
+	if err != nil {
+		return err
+	}
+	var obra AsientoObraValorizada
+	if !ultimo(deLaObra, HechoRepartoObraValorizada, &obra, func() bool { return obra.ProcesoID == acc.origen }) {
+		obra = AsientoObraValorizada{}
+		x.Faltantes = append(x.Faltantes, HechoRepartoObraValorizada)
+	}
+	x.Obra, x.Faltantes = obraLinaje(acc.obra, obra.Usos, deLaObra, x.Faltantes)
+	x.Obra.Puntos = obra.Puntos
+	if len(obra.Usos) > 0 {
+		x.Identificacion = obra.Usos
+	}
+	x.Valorizacion = append(x.Valorizacion, obra.Valorizacion...)
+	if hayCorrida {
+		x.Reportes = reportesDeLaObra(obra.Usos, corrida.Reportes)
+		x.Reporte = reportePrincipal(obra.Usos, x.Reportes)
+	}
+	return nil
 }
 
 // lineaAccesoria suma los importes positivos que comparten la ref. Dos pagos
@@ -488,14 +537,19 @@ func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref
 // cero no esconde lo ya pagado. El porcentaje y el IPI salen del asiento
 // positivo de mayor indice, que es el mas reciente si la bitacora viene en
 // orden cronologico; la suma no depende de ese orden.
-func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, CorridaAsentada, CorridaAsentada, bool) {
+//
+// Sumar es correcto porque cada asiento acompana un debito real del ledger
+// y ningun importe es negativo: DistribuirSobreProporciones los rechaza y
+// saldo y monto tienen CHECK (>= 0). Tampoco existe un hecho que anule
+// reserva.liberada o rendimientos.distribuidos. Si algun dia se agrega un
+// reverso, esta suma tiene que restarlo; descartarlo inflaria la cifra. Por
+// eso un importe que no parsea o es negativo no se salta: es linaje
+// incompleto.
+func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, decimal.Decimal, CorridaAsentada, CorridaAsentada, bool, error) {
 	var suma decimal.Decimal
-	var positiva LineaDosCorridas
-	var origenPos, destinoPos CorridaAsentada
-	hayPositiva := false
-	var cero LineaDosCorridas
-	var origenCero, destinoCero CorridaAsentada
-	hayCero := false
+	var elegida LineaDosCorridas
+	var origenElegido, destinoElegido CorridaAsentada
+	hayPositiva, hayLinea := false, false
 	for _, a := range asientos {
 		if a.Hecho != acc.hecho {
 			continue
@@ -504,27 +558,23 @@ func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, Cor
 		if !ok || origen.ProcesoID != acc.origen || destino.ProcesoID != acc.destino {
 			continue
 		}
-		if importePositivo(linea.Importe) {
-			importe, err := decimal.NewFromString(linea.Importe)
-			if err != nil {
-				continue
-			}
+		importe, err := decimal.NewFromString(linea.Importe)
+		if err != nil || importe.IsNegative() {
+			return LineaDosCorridas{}, decimal.Zero, CorridaAsentada{}, CorridaAsentada{}, false,
+				fmt.Errorf("importe %q del asiento %q: %w", linea.Importe, a.ID, ErrLinajeIncompleto)
+		}
+		if importe.IsPositive() {
 			suma = suma.Add(importe)
-			positiva = linea
-			origenPos, destinoPos = origen, destino
-			hayPositiva = true
+			elegida, origenElegido, destinoElegido = linea, origen, destino
+			hayPositiva, hayLinea = true, true
 			continue
 		}
-		cero, origenCero, destinoCero, hayCero = linea, origen, destino, true
+		if !hayPositiva {
+			elegida, origenElegido, destinoElegido = linea, origen, destino
+			hayLinea = true
+		}
 	}
-	if hayPositiva {
-		positiva.Importe = suma.StringFixed(2)
-		return positiva, origenPos, destinoPos, true
-	}
-	if hayCero {
-		return cero, origenCero, destinoCero, true
-	}
-	return LineaDosCorridas{}, CorridaAsentada{}, CorridaAsentada{}, false
+	return elegida, suma, origenElegido, destinoElegido, hayLinea, nil
 }
 
 func (e ExplicarCifra) bolsaDe(ctx context.Context, b BolsaAsentada, faltantes []string) (BolsaLinaje, []string, error) {
