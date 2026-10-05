@@ -47,10 +47,10 @@ type CoincidenciaReglamento struct {
 
 // AlmacenVectorial persiste y consulta secciones por similitud; separado del motor para que la herramienta no vea la BD.
 type AlmacenVectorial interface {
-	// Reemplazar sustituye atomicamente todo el indice de un modelo: sin numerales huerfanos tras reindexar.
-	Reemplazar(ctx context.Context, modelo string, secciones []SeccionIndexada) error
-	// Buscar devuelve hasta topK secciones del mismo modelo, de mas a menos similar.
-	Buscar(ctx context.Context, e Embedding, topK int) ([]CoincidenciaReglamento, error)
+	// IndexarSecciones sustituye atomicamente todo el indice de un modelo: sin numerales huerfanos tras reindexar.
+	IndexarSecciones(ctx context.Context, modelo string, secciones []SeccionIndexada) error
+	// BuscarSecciones devuelve hasta topK secciones del mismo modelo, de mas a menos similar.
+	BuscarSecciones(ctx context.Context, e Embedding, topK int) ([]CoincidenciaReglamento, error)
 }
 
 // RespuestaReglamento: o secciones con su cita por encima del piso, o Encontrado=false con Mensaje.
@@ -81,7 +81,7 @@ func (c ConsultarReglamento) Consultar(ctx context.Context, actor Usuario, pregu
 	if err != nil {
 		return RespuestaReglamento{}, fmt.Errorf("embeber la pregunta: %w", err)
 	}
-	cs, err := c.Almacen.Buscar(ctx, e, TopKReglamento)
+	cs, err := c.Almacen.BuscarSecciones(ctx, e, TopKReglamento)
 	if err != nil {
 		return RespuestaReglamento{}, fmt.Errorf("buscar en el reglamento: %w", err)
 	}
@@ -137,7 +137,7 @@ func (ix IndexarReglamento) Indexar(ctx context.Context, secciones []SeccionRegl
 		modelo = e.Modelo
 		out = append(out, SeccionIndexada{SeccionReglamento: s, Vector: e.Vector})
 	}
-	if err := ix.Almacen.Reemplazar(ctx, modelo, out); err != nil {
+	if err := ix.Almacen.IndexarSecciones(ctx, modelo, out); err != nil {
 		return 0, fmt.Errorf("guardar el indice: %w", err)
 	}
 	return len(out), nil
