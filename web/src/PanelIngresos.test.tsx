@@ -214,6 +214,15 @@ describe("PanelExplicacion: la historia de la cifra", () => {
     );
   });
 
+  it("el disparador de tu parte va en su propia linea, fuera del parrafo", () => {
+    render(<PanelExplicacion cifra={linaje} />);
+    const boton = screen.getByRole("button", {
+      name: "¿De dónde sale tu parte?",
+    });
+    expect(boton.closest("p")).toBeNull();
+    expect(boton.closest(".historia-mas")).toBeTruthy();
+  });
+
   it("al titular no le muestra jerga tecnica ni el detalle tecnico", () => {
     render(<PanelExplicacion cifra={linaje} />);
     const texto =
@@ -237,29 +246,6 @@ describe("PanelExplicacion: la historia de la cifra", () => {
   it("sin firmas no promete una aprobacion", () => {
     render(<PanelExplicacion cifra={{ ...linaje, firmas: [] }} />);
     expect(screen.queryByText(/Revisado y aprobado/)).toBeNull();
-  });
-
-  it("el personal ve un detalle tecnico plegado con el linaje completo", () => {
-    render(<PanelExplicacion cifra={linaje} tecnico />);
-    const boton = screen.getByRole("button", { name: "Ver detalle técnico" });
-    expect(boton.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText(/snap-2026-01/)).toBeNull();
-
-    fireEvent.click(boton);
-    const tecnico = screen.getByRole("region", { name: "Detalle técnico" });
-    for (const dato of [
-      "proc-2026-01",
-      "rpt-caracol-2026-01",
-      "aaaa1111",
-      "escalón alias",
-      "snap-2026-01",
-      "IPI-00000001",
-      "declaración v1",
-      "user-distribucion-1",
-      "Cifra provisional de siembra",
-    ]) {
-      expect(tecnico.textContent, dato).toContain(dato);
-    }
   });
 
   it("una obra retenida se muestra en reserva, con el motivo llano y que hacer", () => {
@@ -318,7 +304,9 @@ describe("PanelExplicacion: la historia de la cifra", () => {
     render(<PanelExplicacion cifra={{ ...linaje, valorizacion: usos }} />);
     const lista = () => screen.getByRole("list", { name: "Usos de tu obra" });
     expect(within(lista()).getAllByRole("button")).toHaveLength(5);
-    fireEvent.click(screen.getByRole("button", { name: "Ver los 7 usos" }));
+    const mas = screen.getByRole("button", { name: "Ver los 7 usos" });
+    expect(mas.className).toContain("boton-secundario");
+    fireEvent.click(mas);
     expect(within(lista()).getAllByRole("button")).toHaveLength(7);
   });
 
@@ -448,15 +436,16 @@ describe("PanelIngresos", () => {
     ).toBe("true");
   });
 
-  it("el personal ve el detalle tecnico y el titular no", async () => {
+  it("nadie ve un detalle tecnico, tampoco el personal", async () => {
     comoRol("auditor");
     render(<PanelIngresos />);
     fireEvent.click(
       await screen.findByRole("button", { name: /La Casa de las Dos Palmas/ }),
     );
+    await screen.findByRole("region", { name: "Cómo se calculó tu pago" });
     expect(
-      await screen.findByRole("button", { name: "Ver detalle técnico" }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: /detalle técnico/ }),
+    ).toBeNull();
   });
 
   it("pedir una cifra ajena muestra el error, no sus datos", async () => {

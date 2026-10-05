@@ -10,7 +10,6 @@ import {
   type Ingreso,
   type ListaIngresos,
 } from "./ingresos";
-import { useSesion } from "./sesion";
 import EsqueletoFilas from "./titular/Esqueleto";
 import HistoriaCifra from "./titular/HistoriaCifra";
 import {
@@ -29,8 +28,6 @@ import "./titular.css";
  * Ingresos.tsx e ingresos.ts son el mismo path.
  */
 export function PanelIngresos() {
-  const { usuario } = useSesion();
-  const tecnico = !!usuario && usuario.rol !== "titular";
   const [catalogo, setCatalogo] = useState<Ingreso[]>([]);
   const [visibles, setVisibles] = useState<Ingreso[] | null>(null);
   const [filtro, setFiltro] = useState<FiltroIngresos>({
@@ -89,8 +86,7 @@ export function PanelIngresos() {
             Mis ingresos
           </h2>
           <p className="muted ingresos-ayuda">
-            Lo que recibiste por cada obra. Pulsa una fila para ver cómo se
-            calculó.
+            Pulsa una fila para ver cómo se calculó.
           </p>
         </div>
       </header>
@@ -108,7 +104,7 @@ export function PanelIngresos() {
           ) : filas.length === 0 ? (
             <Vacio filtrando={!filtroVacio} />
           ) : (
-            <TablaIngresos filas={filas} tecnico={tecnico} />
+            <TablaIngresos filas={filas} />
           )}
         </>
       )}
@@ -187,13 +183,7 @@ function Filtros({
   );
 }
 
-export function TablaIngresos({
-  filas,
-  tecnico = false,
-}: {
-  filas: Ingreso[];
-  tecnico?: boolean;
-}) {
+export function TablaIngresos({ filas }: { filas: Ingreso[] }) {
   const [abierta, setAbierta] = useState<string>("");
   const [explicacion, setExplicacion] = useState<Explicacion | null>(null);
   const [errorExplicar, setErrorExplicar] = useState("");
@@ -239,7 +229,6 @@ export function TablaIngresos({
             explicacion={abierta === fila.ref ? explicacion : null}
             error={abierta === fila.ref ? errorExplicar : ""}
             cargando={abierta === fila.ref && cargandoExplicar}
-            tecnico={tecnico}
             onExplicar={() => pedirExplicacion(fila.ref)}
           />
         </li>
@@ -254,7 +243,6 @@ export function FilaIngreso({
   explicacion,
   error,
   cargando,
-  tecnico = false,
   onExplicar,
 }: {
   fila: Ingreso;
@@ -262,7 +250,6 @@ export function FilaIngreso({
   explicacion: Explicacion | null;
   error: string;
   cargando: boolean;
-  tecnico?: boolean;
   onExplicar: () => void;
 }) {
   const id = useId();
@@ -293,9 +280,7 @@ export function FilaIngreso({
                 No pudimos explicar esta cifra: {error}
               </p>
             )}
-            {explicacion && (
-              <PanelExplicacion cifra={explicacion} tecnico={tecnico} />
-            )}
+            {explicacion && <PanelExplicacion cifra={explicacion} />}
           </div>
         </div>
       )}
@@ -303,12 +288,6 @@ export function FilaIngreso({
   );
 }
 
-export function PanelExplicacion({
-  cifra,
-  tecnico = false,
-}: {
-  cifra: Explicacion;
-  tecnico?: boolean;
-}) {
-  return <HistoriaCifra cifra={cifra} tecnico={tecnico} />;
+export function PanelExplicacion({ cifra }: { cifra: Explicacion }) {
+  return <HistoriaCifra cifra={cifra} />;
 }

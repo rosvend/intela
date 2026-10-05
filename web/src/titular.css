@@ -245,7 +245,7 @@
 
 .ingresos-item {
   border-top: 1px solid var(--borde);
-  animation: fila-entrar var(--dur-media) var(--curva-salida) both;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
   animation-delay: calc(var(--indice, 0) * 40ms);
 }
 
@@ -320,28 +320,40 @@
   transform: rotate(225deg) translateY(-2px);
 }
 
-/* Despliegue: filas de grid 0fr -> 1fr con opacidad; sin medir alturas en JS. */
+/* Despliegue solo con opacidad y transform: sin overflow que recorte los popovers. */
 .desplegable {
-  display: grid;
-  grid-template-rows: 1fr;
   animation: desplegar var(--dur-media) var(--curva-salida);
 }
 
 .desplegable-interior {
-  min-height: 0;
-  overflow: hidden;
   padding: 0.25rem 0 1.25rem;
 }
 
 @keyframes desplegar {
   from {
-    grid-template-rows: 0fr;
     opacity: 0;
+    transform: translateY(-4px);
   }
   to {
-    grid-template-rows: 1fr;
     opacity: 1;
+    transform: none;
   }
+}
+
+/*
+ * Cada fila y cada paso entra con una animacion de transform (fill both), que
+ * los vuelve contextos de apilamiento: un popover abierto quedaria debajo del
+ * paso siguiente. La fila que lo contiene sube por encima de sus hermanas.
+ */
+.ingresos-item,
+.liquidacion-fila {
+  position: relative;
+}
+
+.ingresos-item:has(.detalle-panel),
+.historia-paso:has(.detalle-panel),
+.liquidacion-fila:has(.detalle-panel) {
+  z-index: 5;
 }
 
 /* ---------- historia de la cifra ---------- */
@@ -363,7 +375,7 @@
   position: relative;
   padding: 0 0 1.4rem 2.1rem;
   counter-increment: paso;
-  animation: fila-entrar var(--dur-media) var(--curva-salida) both;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
 }
 
 .historia-paso:nth-child(2) {
@@ -448,6 +460,11 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+/* El "¿de donde sale?" va en su propia linea, nunca a media frase. */
+.historia-mas {
+  margin-top: 0.5rem;
 }
 
 .historia-leyenda {
@@ -636,61 +653,47 @@
   color: var(--texto-suave);
 }
 
-.enlace-pastilla {
-  margin-top: 0.75rem;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.35rem 0.85rem;
-  border: 1px solid var(--borde);
+/* "Ver los N usos": boton real, no texto pulsable. */
+.historia-boton,
+.boton-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.95rem;
   border-radius: 99px;
-  background: var(--superficie);
-  color: var(--texto-medio);
-  cursor: pointer;
+  text-decoration: none;
   transition:
     border-color var(--dur-rapida),
     transform var(--dur-rapida) var(--curva-salida);
 }
 
-.enlace-pastilla:hover {
-  border-color: var(--texto-suave);
+.historia-boton {
+  margin-top: 0.75rem;
 }
 
-.enlace-pastilla:active {
+.historia-boton svg,
+.boton-cta svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.historia-boton:active,
+.boton-cta:active {
   transform: scale(0.97);
 }
 
-.historia-tecnico {
-  margin-top: 1rem;
+@media (hover: hover) and (pointer: fine) {
+  .historia-boton:hover,
+  .boton-cta:hover {
+    border-color: var(--texto-suave);
+  }
 }
 
-.tecnico-lista {
-  margin: 0.75rem 0 0;
-  font-size: 0.8rem;
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
-  color: var(--texto-medio);
-}
-
-.tecnico-lista dt {
-  font-family: inherit;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--texto-suave);
-}
-
-.tecnico-lista dd {
-  margin: 0 0 0.6rem;
-  word-break: break-word;
-}
-
-.tecnico-lista ul {
-  margin: 0;
-  padding-left: 1rem;
-}
-
-.tecnico-cita {
-  margin: 0 0 0.35rem;
+.panel-pie .boton-cta,
+.panel-pie .boton-cta:hover {
+  text-decoration: none;
+  color: var(--texto);
 }
 
 /* ---------- mis liquidaciones ---------- */
@@ -765,7 +768,7 @@
   gap: 0.25rem 1rem;
   padding: 1rem 0;
   border-top: 1px solid var(--borde);
-  animation: fila-entrar var(--dur-media) var(--curva-salida) both;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
   animation-delay: calc(var(--indice, 0) * 40ms);
 }
 
@@ -777,8 +780,40 @@
   text-align: right;
 }
 
-.liquidacion-fila .liquidacion-desglose {
+.liquidacion-reparto {
   grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.liquidacion-leyenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  font-size: 0.8rem;
+  color: var(--texto-medio);
+}
+
+.liquidacion-leyenda li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.liquidacion-leyenda .leyenda-punto {
+  width: 8px;
+  height: 8px;
+}
+
+.liquidacion-leyenda-cifra {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--texto);
 }
 
 @media (max-width: 760px) {

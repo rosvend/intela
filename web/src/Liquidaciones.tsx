@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, descargar } from "./api";
 import EsqueletoFilas from "./titular/Esqueleto";
 import { nombrePeriodo } from "./titular/presentacion";
+import BarraApilada from "./ui/BarraApilada";
 import Cifra from "./ui/Cifra";
 import { formatearCOP } from "./ui/dinero";
 import "./ui/ui.css";
@@ -81,10 +82,6 @@ export default function Liquidaciones() {
     <section className="titular">
       <header className="titular-saludo">
         <h1>Mis liquidaciones</h1>
-        <p>
-          Lo que recibiste por cada obra y los descuentos de ley. El archivo
-          descargado lleva las mismas cifras.
-        </p>
       </header>
 
       <div className="liquidaciones-barra">
@@ -185,18 +182,66 @@ export default function Liquidaciones() {
                     de {formatearCOP(l.bruto)}
                   </span>
                 </span>
-                <p className="liquidacion-desglose">
-                  <span>Gastos administrativos {formatearCOP(l.admin)}</span>
-                  <span>Bienestar social {formatearCOP(l.social)}</span>
-                  <span>
-                    Reserva para errores técnicos {formatearCOP(l.reserva)}
-                  </span>
-                </p>
+                <RepartoDeLinea linea={l} />
               </li>
             ))}
           </ul>
         </article>
       )}
     </section>
+  );
+}
+
+/** El bruto de una linea partido en lo que recibes y cada descuento; las partes suman el bruto. */
+export function partesDeLinea(l: TotalesLiquidacion) {
+  return [
+    {
+      id: "neto",
+      etiqueta: "Tú recibes",
+      valor: l.neto,
+      color: "var(--serie-1)",
+    },
+    {
+      id: "admin",
+      etiqueta: "Gastos administrativos",
+      valor: l.admin,
+      color: "var(--serie-5)",
+    },
+    {
+      id: "social",
+      etiqueta: "Bienestar social",
+      valor: l.social,
+      color: "var(--serie-4)",
+    },
+    {
+      id: "reserva",
+      etiqueta: "Reserva",
+      valor: l.reserva,
+      color: "var(--serie-3)",
+    },
+  ];
+}
+
+function RepartoDeLinea({ linea }: { linea: LineaLiquidacion }) {
+  const partes = partesDeLinea(linea);
+  const etiqueta = `Reparto de ${linea.titulo}`;
+  return (
+    <div className="liquidacion-reparto">
+      <BarraApilada etiqueta={etiqueta} segmentos={partes} />
+      <ul className="liquidacion-leyenda" aria-label={etiqueta}>
+        {partes.map((p) => (
+          <li key={p.id}>
+            <span
+              className="leyenda-punto"
+              style={{ "--color": p.color } as React.CSSProperties}
+            />
+            <span className="liquidacion-leyenda-nombre">{p.etiqueta}</span>
+            <span className="liquidacion-leyenda-cifra">
+              {formatearCOP(p.valor)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

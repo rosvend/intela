@@ -172,9 +172,17 @@ describe("TableroTitular", () => {
     const dialogo = screen.getByRole("dialog", { name: "El Último Plano" });
     expect(dialogo.textContent).toContain("$ 500.000");
     expect(dialogo.textContent).toMatch(/20,41 %/);
-    expect(
-      within(tarjeta).getByRole("link", { name: /Ver mis liquidaciones/ }),
-    ).toBeTruthy();
+    const cta = within(tarjeta).getByRole("link", {
+      name: /Ver mis liquidaciones/,
+    });
+    expect(cta.className).toContain("boton-secundario");
+  });
+
+  it("el saludo no lleva un subtitulo de relleno", async () => {
+    conRespuestas();
+    montar();
+    await screen.findByText("Sketch de Medianoche");
+    expect(screen.queryByText(/Esto es lo que han generado/)).toBeNull();
   });
 
   it("mis obras: lista para pagar o en reserva, con el porque en lenguaje llano", async () => {

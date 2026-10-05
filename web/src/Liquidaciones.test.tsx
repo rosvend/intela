@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import Liquidaciones from "./Liquidaciones";
 
@@ -58,11 +59,46 @@ describe("Liquidaciones", () => {
     expect(fila?.textContent).toContain("enero 2026");
     expect(fila?.textContent).toContain("$ 3.900");
     expect(fila?.textContent).toContain("$ 6.000");
-    expect(fila?.textContent).toContain("Gastos administrativos $ 1.200");
-    expect(fila?.textContent).toContain("Bienestar social $ 600");
-    expect(fila?.textContent).toContain("Reserva para errores técnicos $ 300");
+    const leyenda = within(fila as HTMLElement).getByRole("list", {
+      name: "Reparto de La Casa de las Dos Palmas",
+    });
+    const items = within(leyenda)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(items).toEqual([
+      "Tú recibes$ 3.900",
+      "Gastos administrativos$ 1.200",
+      "Bienestar social$ 600",
+      "Reserva$ 300",
+    ]);
     expect(screen.getByLabelText("$ 3.900")).toBeTruthy();
     expect(vi.mocked(api)).toHaveBeenCalledWith("/api/mis-liquidaciones/obras");
+  });
+
+  it("bajo el titulo de cada obra pinta su bruto partido en una barra proporcional", async () => {
+    render(<Liquidaciones />);
+    const fila = (await screen.findByText("La Casa de las Dos Palmas")).closest(
+      "li",
+    ) as HTMLElement;
+    const barra = within(fila).getByRole("group", {
+      name: "Reparto de La Casa de las Dos Palmas",
+    });
+    const segmentos = within(barra).getAllByRole("button");
+    expect(segmentos.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Tú recibes: $ 3.900 (65 %)",
+      "Gastos administrativos: $ 1.200 (20 %)",
+      "Bienestar social: $ 600 (10 %)",
+      "Reserva: $ 300 (5 %)",
+    ]);
+    expect(
+      (segmentos[0].style as CSSStyleDeclaration).getPropertyValue("--color"),
+    ).toBe("var(--serie-1)");
+  });
+
+  it("no lleva un subtitulo de relleno bajo el titulo", async () => {
+    render(<Liquidaciones />);
+    await screen.findByText("La Casa de las Dos Palmas");
+    expect(screen.queryByText(/El archivo descargado lleva/)).toBeNull();
   });
 
   it("no usa clases que no existen", async () => {

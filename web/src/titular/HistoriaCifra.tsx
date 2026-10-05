@@ -1,11 +1,12 @@
+import { ArrowRightIcon } from "@heroicons/react/20/solid";
 import { useState } from "react";
 import type { Explicacion, ValorizacionDeUso } from "../ingresos";
-import { citarReglamento, citaDeRetencion } from "../reglamento";
+import { citaDeRetencion } from "../reglamento";
 import BarraApilada from "../ui/BarraApilada";
 import Cifra from "../ui/Cifra";
 import Detalle from "../ui/Detalle";
 import { aNumero, formatearCOP } from "../ui/dinero";
-import { USOS_VISIBLES, lineaDeValorizacion } from "../valorizacion";
+import { USOS_VISIBLES } from "../valorizacion";
 import {
   fechaDeAprobacion,
   fraseDeUso,
@@ -13,7 +14,6 @@ import {
   partesDelBruto,
 } from "./explicacion";
 import {
-  fechaLlana,
   nombreFuente,
   nombrePeriodo,
   numeroLlano,
@@ -23,12 +23,10 @@ import "../titular.css";
 
 type Props = {
   cifra: Explicacion;
-  /** Personal de REDES: ve el linaje completo plegado (auditoria). */
-  tecnico?: boolean;
 };
 
 /** ExplicarCifra contado como historia: recaudo -> tu parte -> descuentos -> lo que recibes. */
-export default function HistoriaCifra({ cifra, tecnico = false }: Props) {
+export default function HistoriaCifra({ cifra }: Props) {
   const aprobado = fechaDeAprobacion(cifra.firmas);
   return (
     <section
@@ -60,7 +58,9 @@ export default function HistoriaCifra({ cifra, tecnico = false }: Props) {
               <p className="historia-texto">
                 {cifra.split
                   ? `Tu obra generó una parte de esa bolsa y a ti te corresponde el ${porcentajeLlano(cifra.split.porcentaje)}, antes de descuentos.`
-                  : "Lo que generó la obra antes de descuentos."}{" "}
+                  : "Lo que generó la obra antes de descuentos."}
+              </p>
+              <div className="historia-mas">
                 <Detalle
                   disparador="¿De dónde sale tu parte?"
                   titulo="Tu parte"
@@ -71,7 +71,7 @@ export default function HistoriaCifra({ cifra, tecnico = false }: Props) {
                     contratos lo cambian.
                   </span>
                 </Detalle>
-              </p>
+              </div>
             </div>
           </div>
         </Paso>
@@ -134,8 +134,6 @@ export default function HistoriaCifra({ cifra, tecnico = false }: Props) {
           Revisado y aprobado por REDES SGC el {aprobado}
         </p>
       )}
-
-      {tecnico && <DetalleTecnico cifra={cifra} />}
     </section>
   );
 }
@@ -265,132 +263,14 @@ function Usos({
       {valorizacion.length > USOS_VISIBLES && (
         <button
           type="button"
-          className="enlace-pastilla"
+          className="boton-secundario historia-boton"
           aria-expanded={todos}
           onClick={() => setTodos((t) => !t)}
         >
           {todos ? "Ver menos" : `Ver los ${valorizacion.length} usos`}
+          {!todos && <ArrowRightIcon aria-hidden="true" />}
         </button>
       )}
     </>
-  );
-}
-
-function DetalleTecnico({ cifra }: { cifra: Explicacion }) {
-  const [abierto, setAbierto] = useState(false);
-  return (
-    <div className="historia-tecnico">
-      <button
-        type="button"
-        className="enlace-pastilla"
-        aria-expanded={abierto}
-        onClick={() => setAbierto((a) => !a)}
-      >
-        {abierto ? "Ocultar detalle técnico" : "Ver detalle técnico"}
-      </button>
-      {abierto && (
-        <div role="region" aria-label="Detalle técnico" className="desplegable">
-          <dl className="tecnico-lista">
-            <dt>Corrida</dt>
-            <dd>
-              {cifra.corrida.proceso_id} · {cifra.corrida.periodo} ·{" "}
-              {cifra.corrida.circuito}
-            </dd>
-            <dt>Reporte de origen</dt>
-            <dd>
-              {cifra.reporte.fuente || "—"} · {cifra.reporte.id || "—"}
-              {cifra.reporte.sha256 ? ` · sha256 ${cifra.reporte.sha256}` : ""}
-            </dd>
-            {cifra.bolsa?.id && (
-              <>
-                <dt>Bolsa</dt>
-                <dd>
-                  {cifra.bolsa.id} · {cifra.bolsa.bruto}
-                </dd>
-              </>
-            )}
-            <dt>Obra y match</dt>
-            <dd>
-              {cifra.obra.titulo} · escalón {cifra.obra.escalon || "—"} ·
-              puntaje {cifra.obra.puntaje}
-            </dd>
-            <dt>Regla y snapshot</dt>
-            <dd>
-              {cifra.regla.reglamento} · snapshot {cifra.regla.snapshot_id}
-            </dd>
-            <dt>Split</dt>
-            <dd>
-              {cifra.split
-                ? `${cifra.split.porcentaje}% · IPI ${cifra.split.ipi}${
-                    typeof cifra.split.version === "number"
-                      ? ` · declaración v${cifra.split.version}`
-                      : ""
-                  }`
-                : "—"}
-            </dd>
-            <dt>Bruto → neto</dt>
-            <dd>
-              {cifra.bruto} →{" "}
-              {cifra.deducciones
-                .map((d) => `${d.concepto} ${d.porcentaje}% = ${d.monto}`)
-                .join(" · ") || "sin deducciones"}{" "}
-              → {cifra.neto}
-            </dd>
-            {cifra.retenida && (
-              <>
-                <dt>Retención</dt>
-                <dd>{cifra.motivo || "retenida"} (RD 13.1.3)</dd>
-              </>
-            )}
-            {cifra.firmas.length > 0 && (
-              <>
-                <dt>Firmas</dt>
-                <dd>
-                  <ul>
-                    {cifra.firmas.map((f) => (
-                      <li
-                        key={`${f.rol}-${f.etapa}-${f.sobre_revision}-${f.cuando}`}
-                      >
-                        {f.rol} · {f.actor_id} · {f.etapa} · revisión{" "}
-                        {f.sobre_revision} · {fechaLlana(f.cuando)}
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
-              </>
-            )}
-            {(cifra.faltantes ?? []).length > 0 && (
-              <>
-                <dt>Eslabones sin asiento</dt>
-                <dd>{(cifra.faltantes ?? []).join(" · ")}</dd>
-              </>
-            )}
-            {cifra.valorizacion.length > 0 && (
-              <>
-                <dt>Valorización</dt>
-                <dd>
-                  <ul>
-                    {cifra.valorizacion.map((v) => (
-                      <li key={v.uso_id}>
-                        {v.uso_id} · {lineaDeValorizacion(v)}
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
-              </>
-            )}
-            <dt>Reglamento</dt>
-            <dd>
-              {citarReglamento(cifra.regla.reglamento).map((c) => (
-                <p key={c.token} className="tecnico-cita">
-                  <strong>{c.titulo}</strong>
-                  {c.texto ? <> — {c.texto}</> : null}
-                </p>
-              ))}
-            </dd>
-          </dl>
-        </div>
-      )}
-    </div>
   );
 }
