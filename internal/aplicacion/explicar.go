@@ -51,11 +51,12 @@ type Explicacion struct {
 	Destino *CorridaLinaje
 }
 
-// CorridaLinaje es la corrida que produjo la cifra.
+// CorridaLinaje es la corrida que produjo la cifra. Las etiquetas coinciden
+// con CorridaAsentada: el asiento y la explicacion son la misma forma.
 type CorridaLinaje struct {
-	ProcesoID string
-	Periodo   string
-	Circuito  string
+	ProcesoID string `json:"proceso_id"`
+	Periodo   string `json:"periodo"`
+	Circuito  string `json:"circuito"`
 }
 
 // BolsaLinaje es la bolsa repartida y, si se asento, su recaudo de origen.
@@ -460,8 +461,8 @@ func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref
 	if err != nil {
 		return Explicacion{}, fmt.Errorf("explicar %q: porcentaje: %w", ref, ErrLinajeIncompleto)
 	}
-	origenL := CorridaLinaje{ProcesoID: origen.ProcesoID, Periodo: origen.Periodo, Circuito: origen.Circuito}
-	destinoL := CorridaLinaje{ProcesoID: destino.ProcesoID, Periodo: destino.Periodo, Circuito: destino.Circuito}
+	origenL := CorridaLinaje(origen)
+	destinoL := CorridaLinaje(destino)
 	if origenL.ProcesoID != acc.origen || destinoL.ProcesoID != acc.destino {
 		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, ErrNoEncontrado)
 	}
