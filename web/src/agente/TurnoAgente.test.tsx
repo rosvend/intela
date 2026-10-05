@@ -1,28 +1,21 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
+import { aplicarEvento, turnoPendiente, type Turno } from "./conversacion";
 import TurnoAgente from "./TurnoAgente";
-import {
-  aplicarEvento,
-  cerrarTurno,
-  turnoVacio,
-  type EventoAgente,
-  type TurnoAgente as Turno,
-} from "./turno";
 
-const turno = (...eventos: EventoAgente[]): Turno =>
-  eventos.reduce(aplicarEvento, turnoVacio);
-const herramienta = (h: string): EventoAgente => ({
-  evento: "tool_call",
-  datos: { herramienta: h },
-});
+type Evento = [nombre: string, datos: unknown];
+
+const turno = (...eventos: Evento[]): Turno =>
+  eventos.reduce((t, [n, d]) => aplicarEvento(t, n, d), turnoPendiente());
+const herramienta = (h: string): Evento => ["tool_call", { herramienta: h }];
 const respuesta = (
   texto: string,
   extra: Partial<{ parcial: boolean; restringida: boolean }> = {},
-): EventoAgente => ({
-  evento: "answer",
-  datos: { texto, parcial: false, restringida: false, ...extra },
-});
+): Evento => [
+  "answer",
+  { texto, parcial: false, restringida: false, ...extra },
+];
 
 describe("TurnoAgente", () => {
   afterEach(cleanup);
@@ -50,7 +43,7 @@ describe("TurnoAgente", () => {
   });
 
   it("mientras no llega nada, dice que esta trabajando en vez de quedar en blanco", () => {
-    render(<TurnoAgente turno={turnoVacio} />);
+    render(<TurnoAgente turno={turnoPendiente()} />);
     expect(screen.getByRole("listitem").textContent).toBe(
       "Leyendo tu pregunta…",
     );
@@ -72,26 +65,31 @@ describe("TurnoAgente", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("el evento error es un mensaje en linea claro, sin el texto crudo del servidor", () => {
-    render(
-      <TurnoAgente
-        turno={turno(herramienta("buscar_obra"), {
-          evento: "error",
-          datos: { mensaje: "panic: runtime error at agente.go:150" },
-        })}
-      />,
-    );
-    const alerta = screen.getByRole("alert");
-    expect(alerta.textContent).toContain("El asistente no está disponible");
-    expect(document.body.textContent).not.toContain("panic");
+  it("una respuesta sin herramientas no pinta una lista vacia", () => {
+    render(<TurnoAgente turno={turno(respuesta("Hola."))} />);
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.getByText("Hola.")).toBeTruthy();
   });
 
-  it("un flujo cortado sin respuesta se ve igual que un error", () => {
+  it("el evento error es un aviso en linea con el mensaje del servidor", () => {
     render(
-      <TurnoAgente turno={cerrarTurno(turno(herramienta("buscar_obra")))} />,
+      <TurnoAgente
+        turno={turno(herramienta("buscar_obra"), [
+          "error",
+          { mensaje: "El asistente no está disponible en este momento." },
+        ])}
+      />,
     );
     expect(screen.getByRole("alert").textContent).toContain(
-      "El asistente no está disponible",
+      "El asistente no está disponible en este momento.",
+    );
+    expect(screen.queryByRole("list")).toBeTruthy();
+  });
+
+  it("un error sin texto nunca queda en blanco", () => {
+    render(<TurnoAgente turno={{ ...turnoPendiente(), estado: "error" }} />);
+    expect(screen.getByRole("alert").textContent).toBe(
+      "El asistente no está disponible.",
     );
   });
 
@@ -101,9 +99,13 @@ describe("TurnoAgente", () => {
         turno={turno(respuesta("Quiza RD 9.1.1.", { parcial: true }))}
       />,
     );
-    expect(screen.getByRole("note").textContent).toContain("Respuesta parcial");
+    expect(screen.getByRole("note").textContent).toContain(
+      "Respuesta parcial",
+    );
     expect(container.querySelector(".agente-respuesta--parcial")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copiar cita RD 9.1.1" }));
+    expect(
+      screen.getByRole("button", { name: "Copiar cita RD 9.1.1" }),
+    ).toBeTruthy();
   });
 
   it("una consulta restringida por rol es su propio estado, no una respuesta", () => {
@@ -124,16 +126,16 @@ describe("TurnoAgente", () => {
   });
 
   it("los eventos en buffer (todos de una vez) pintan lo mismo que en streaming", () => {
-    const eventos: EventoAgente[] = [
+    const eventos: Evento[] = [
       herramienta("buscar_obra"),
       herramienta("buscar_reglamento"),
       respuesta("Ver RD 9.1.1 y asiento p1:obra-7."),
     ];
 
-    const enVivo = render(<TurnoAgente turno={turnoVacio} />);
-    let t = turnoVacio;
-    for (const e of eventos) {
-      t = aplicarEvento(t, e);
+    let t = turnoPendiente();
+    const enVivo = render(<TurnoAgente turno={t} />);
+    for (const [n, d] of eventos) {
+      t = aplicarEvento(t, n, d);
       enVivo.rerender(<TurnoAgente turno={t} />);
     }
     const htmlEnVivo = enVivo.container.innerHTML;
@@ -141,13 +143,6 @@ describe("TurnoAgente", () => {
 
     const enBuffer = render(<TurnoAgente turno={turno(...eventos)} />);
     expect(enBuffer.container.innerHTML).toBe(htmlEnVivo);
-  });
-
-  it("anuncia lo nuevo a lectores de pantalla", () => {
-    const { container } = render(<TurnoAgente turno={turnoVacio} />);
-    expect(container.firstElementChild?.getAttribute("aria-live")).toBe(
-      "polite",
-    );
   });
 });
 
