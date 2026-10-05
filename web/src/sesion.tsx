@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  ApiError,
   api,
   clearToken,
   setToken,
@@ -50,6 +51,24 @@ export const sesionActual = (): Promise<Usuario> =>
 
 export const cerrarSesion = (): Promise<Response> =>
   api("/api/auth/session", { method: "DELETE" }) as Promise<Response>;
+
+// Esperas antes del segundo y del tercer DELETE (ADR 0025): cortas, para que "Salir" no se note.
+const ESPERAS_REINTENTO_SALIDA_MS = [300, 800];
+
+/** Pide la revocacion con el token aun guardado; un 4xx no se reintenta (401 = ya revocada). */
+async function revocarConReintentos() {
+  for (const espera of [...ESPERAS_REINTENTO_SALIDA_MS, null]) {
+    try {
+      await cerrarSesion();
+      return;
+    } catch (err) {
+      const definitivo =
+        err instanceof ApiError && err.status >= 400 && err.status < 500;
+      if (definitivo || espera === null) return;
+      await new Promise((r) => setTimeout(r, espera));
+    }
+  }
+}
 
 type ContextoSesion = {
   usuario: Usuario | null;
@@ -135,12 +154,10 @@ export function ProveedorDeSesion({ children }: { children: ReactNode }) {
   }
 
   async function salir() {
-    // Se sale en local aunque el servidor no responda: "Salir" no depende de la red.
-    try {
-      await cerrarSesion();
-    } catch {
-      // Sin aviso a proposito: ADR 0025 acepta el riesgo de que el servidor no revoque.
-    }
+    // Se sale en local aunque el servidor no confirme: "Salir" no depende de la red.
+    // Sin aviso a proposito (ADR 0025): el servidor cubre el resto con la caducidad
+    // por inactividad y revocando las sesiones previas en el siguiente login.
+    await revocarConReintentos();
     clearToken();
     setUsuario(null);
   }

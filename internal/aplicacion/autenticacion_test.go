@@ -47,31 +47,36 @@ func (h *hasherEspia) Hash(clave string) (string, error) { return clave, nil }
 func (h *hasherEspia) EsHash(posible string) bool { return posible != "" }
 
 type sesionesMemoria struct {
-	guardadas map[string]string
-	expira    map[string]time.Time
-	usuario   Usuario
-	errCrear  error
-	errPor    error
-	revocados []string
+	guardadas   map[string]string
+	expira      map[string]time.Time
+	creada      map[string]time.Time
+	inactividad time.Duration
+	usuario     Usuario
+	errCrear    error
+	errPor      error
+	revocados   []string
 }
 
 func nuevasSesiones() *sesionesMemoria {
 	return &sesionesMemoria{
 		guardadas: map[string]string{},
 		expira:    map[string]time.Time{},
+		creada:    map[string]time.Time{},
 	}
 }
 
-func (s *sesionesMemoria) Crear(_ context.Context, token, usuarioID string, expira time.Time) error {
+func (s *sesionesMemoria) Crear(_ context.Context, token, usuarioID string, ahora, expira time.Time) error {
 	if s.errCrear != nil {
 		return s.errCrear
 	}
 	s.guardadas[token] = usuarioID
 	s.expira[token] = expira
+	s.creada[token] = ahora
 	return nil
 }
 
-func (s *sesionesMemoria) PorToken(_ context.Context, token string, ahora time.Time) (Usuario, error) {
+func (s *sesionesMemoria) PorToken(_ context.Context, token string, ahora time.Time, inactividad time.Duration) (Usuario, error) {
+	s.inactividad = inactividad
 	if s.errPor != nil {
 		return Usuario{}, s.errPor
 	}
@@ -143,6 +148,10 @@ func TestIniciarSesionDevuelveTokenConCredencialesValidas(t *testing.T) {
 	}
 	if s.guardadas["token-de-prueba"] != "usr-1" {
 		t.Fatalf("la sesion no quedo guardada: %v", s.guardadas)
+	}
+	// El ultimo uso arranca en el reloj inyectado: la inactividad se mide desde ahi (ASVS V3.3.2).
+	if !s.creada["token-de-prueba"].Equal(momento) {
+		t.Fatalf("creada = %v, se esperaba %v", s.creada["token-de-prueba"], momento)
 	}
 	// El hash que se verifica es el que vino del repositorio, no otro.
 	if h.ultimoHash != "$2a$10$hash-almacenado" {
@@ -259,7 +268,7 @@ func TestResolverSesion(t *testing.T) {
 	repo := repoUsuarios{}
 	a := nuevaAutenticacion(repo, &hasherEspia{}, s)
 
-	if err := s.Crear(context.Background(), "tok", "usr-1", momento.Add(time.Hour)); err != nil {
+	if err := s.Crear(context.Background(), "tok", "usr-1", momento, momento.Add(time.Hour)); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 
@@ -290,6 +299,29 @@ func TestResolverSesion(t *testing.T) {
 			t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 		}
 	})
+}
+
+// La inactividad maxima viaja al puerto; sin configurar vale 30 minutos (ASVS V3.3.2).
+func TestResolverSesionPasaLaInactividad(t *testing.T) {
+	casos := []struct {
+		nombre      string
+		configurada time.Duration
+		quiere      time.Duration
+	}{
+		{"sin configurar", 0, 30 * time.Minute},
+		{"configurada", 10 * time.Minute, 10 * time.Minute},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			s := nuevasSesiones()
+			a := nuevaAutenticacion(repoUsuarios{}, &hasherEspia{}, s)
+			a.Inactividad = c.configurada
+			_, _ = a.ResolverSesion(context.Background(), "tok")
+			if s.inactividad != c.quiere {
+				t.Fatalf("inactividad = %v, se esperaba %v", s.inactividad, c.quiere)
+			}
+		})
+	}
 }
 
 func TestCerrarSesionRevocaElToken(t *testing.T) {

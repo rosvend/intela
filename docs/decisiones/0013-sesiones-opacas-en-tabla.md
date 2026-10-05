@@ -1,7 +1,8 @@
 # 0013 La sesion es un token opaco en tabla, no un JWT
 
 Fecha: 2026-08-30
-Estado: Vigente
+Estado: Vigente, enmendada por [0025](0025-salir-sin-aviso-de-revocacion.md) (caducidad por
+inactividad y una sola sesion viva por usuario)
 
 ## Contexto
 

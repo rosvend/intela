@@ -165,6 +165,7 @@ npm --prefix web run dev                            # http://localhost:5173
 | `WORKER_ESPERA_TECHO` | `10m` | Tope de esa espera. `0` significa sin tope |
 | `SCHEDULER_INTERVALO` | `1m` | Cada cuanto el scheduler revisa el calendario |
 | `SESION_TTL` | `12h` | Caducidad de una sesion |
+| `SESION_INACTIVIDAD` | `30m` | Inactividad maxima de una sesion (ASVS V3.3.2, ADR 0025) |
 | `ONI_DIRECCION_FISICA` | *(vacia)* | Direccion fisica del listado ONI (RD 13.8.4.3). Sin ella no se puede publicar |
 | `ONI_DIRECCION_ELECTRONICA` | *(vacia)* | Direccion electronica del listado ONI (RD 13.8.4.3). Sin ella no se puede publicar |
 | `SEED_TIMEOUT` | `2m` | Tope para la corrida entera del seed. Si expira, la carga se corta a medias y la siguiente pide `SEED_RESET=true` |

@@ -212,28 +212,113 @@ describe("salir()", () => {
     expect(init?.method).toBe("DELETE");
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
+});
 
-  it("si el servidor no responde, sale igual en local", async () => {
+// ADR 0025: el DELETE se reintenta dos veces (300 y 800 ms) ANTES de borrar el token local.
+describe("salir() con reintentos", () => {
+  let salir: () => Promise<void> = () => Promise.resolve();
+
+  function Captura() {
+    salir = useSesion().salir;
+    return null;
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    // Sin token al montar: no hay GET /auth/session y cada llamada a fetch es un DELETE.
+    render(
+      <MemoryRouter>
+        <ProveedorDeSesion>
+          <Captura />
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
     setToken("tok");
-    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
-    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    vi.useFakeTimers();
+  });
 
-    await montarYSalir();
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
 
+  async function salirYEsperar() {
+    let termino = false;
+    const enCurso = act(() => salir().then(() => void (termino = true)));
+    await vi.advanceTimersByTimeAsync(2000);
+    await enCurso;
+    expect(termino).toBe(true);
+  }
+
+  it("un fallo de red seguido de exito: dos DELETE y el token fuera", async () => {
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await salirYEsperar();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(init?.method).toBe("DELETE");
+    }
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
 
-  it("un 500 en el DELETE tampoco deja el token en el equipo", async () => {
-    setToken("tok");
-    vi.mocked(fetch).mockResolvedValueOnce(respuestaUsuario("Admin"));
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: "error interno" }), {
-        status: 500,
+  it("reintenta con el token todavia guardado", async () => {
+    const tokenEnCadaIntento: (string | null)[] = [];
+    vi.mocked(fetch).mockImplementation(() => {
+      tokenEnCadaIntento.push(localStorage.getItem("intela.token"));
+      return Promise.reject(new TypeError("Failed to fetch"));
+    });
+
+    await salirYEsperar();
+
+    expect(tokenEnCadaIntento).toEqual(["tok", "tok", "tok"]);
+  });
+
+  it("tres fallos: tres DELETE, sin aviso, y el token fuera igual", async () => {
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "x" }), { status: 503 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "x" }), { status: 500 }),
+      );
+
+    await salirYEsperar();
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+
+  it("espera entre intentos en vez de reintentar de golpe", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const enCurso = act(() => salir());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    await enCurso;
+  });
+
+  it("un 401 ya esta revocado: un solo DELETE", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "sesion invalida" }), {
+        status: 401,
       }),
     );
 
-    await montarYSalir();
+    await salirYEsperar();
 
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("intela.token")).toBeNull();
   });
 });

@@ -84,6 +84,12 @@ variable "session_ttl" {
   default     = "12h"
 }
 
+variable "session_idle_timeout" {
+  description = "Value for SESION_INACTIVIDAD (ASVS V3.3.2, ADR 0025). Go duration syntax."
+  type        = string
+  default     = "30m"
+}
+
 variable "cors_origins" {
   description = "Value for CORS_ORIGENES. Empty disables CORS entirely, which is correct while the SPA and the API share an origin. Never '*'."
   type        = string

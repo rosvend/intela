@@ -164,12 +164,6 @@ describe("Login", () => {
     );
   });
 
-  it("no muestra ningun aviso de revocacion al llegar", () => {
-    montar();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByText(/revocación/)).toBeNull();
-  });
-
   it("identifica la marca por nombre accesible", () => {
     montar();
     // Quien no ve la imagen igual sabe de que sistema es esta pantalla: sin

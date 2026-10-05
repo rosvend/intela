@@ -213,9 +213,13 @@ type RepositorioProvisionInicial interface {
 
 // Sesiones tiene TTL por contrato: una sesion sin expiracion es una
 // credencial permanente que nadie puede revocar.
+//
+// Crear revoca las sesiones previas del usuario en el mismo acto (ADR 0025).
+// PorToken rechaza tambien la sesion sin uso durante `inactividad` y anota el
+// uso con `ahora` (ASVS V3.3.2).
 type Sesiones interface {
-	Crear(ctx context.Context, token, usuarioID string, expira time.Time) error
-	PorToken(ctx context.Context, token string, ahora time.Time) (Usuario, error)
+	Crear(ctx context.Context, token, usuarioID string, ahora, expira time.Time) error
+	PorToken(ctx context.Context, token string, ahora time.Time, inactividad time.Duration) (Usuario, error)
 	Revocar(ctx context.Context, token string) error
 }
 

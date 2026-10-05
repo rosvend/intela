@@ -54,6 +54,9 @@ type Autenticacion struct {
 
 	// TTL de una sesion. Cero no significa "eterna": ver IniciarSesion.
 	TTL time.Duration
+
+	// Inactividad maxima entre dos usos de una sesion (ASVS V3.3.2). Cero vale 30 minutos.
+	Inactividad time.Duration
 }
 
 // ttl evita que una configuracion vacia emita credenciales permanentes.
@@ -67,6 +70,14 @@ func (a Autenticacion) ttl() time.Duration {
 		return 12 * time.Hour
 	}
 	return a.TTL
+}
+
+// inactividad aplica el mismo criterio que ttl: un campo sin cablear no apaga la caducidad.
+func (a Autenticacion) inactividad() time.Duration {
+	if a.Inactividad <= 0 {
+		return 30 * time.Minute
+	}
+	return a.Inactividad
 }
 
 // IniciarSesion valida unas credenciales y emite una sesion.
@@ -103,8 +114,10 @@ func (a Autenticacion) IniciarSesion(ctx context.Context, email, clave string) (
 		return Sesion{}, fmt.Errorf("generar token de sesion: %w", err)
 	}
 
-	expira := a.Reloj.Ahora().Add(a.ttl())
-	if err := a.Sesiones.Crear(ctx, token, usuario.ID, expira); err != nil {
+	// Crear revoca las sesiones previas del usuario (ADR 0025).
+	ahora := a.Reloj.Ahora()
+	expira := ahora.Add(a.ttl())
+	if err := a.Sesiones.Crear(ctx, token, usuario.ID, ahora, expira); err != nil {
 		return Sesion{}, fmt.Errorf("crear sesion: %w", err)
 	}
 
@@ -113,7 +126,7 @@ func (a Autenticacion) IniciarSesion(ctx context.Context, email, clave string) (
 
 // ResolverSesion traduce un token en el Usuario que lo presenta.
 //
-// Un token desconocido, revocado o caducado sale como ErrNoEncontrado, que es
+// Un token desconocido, revocado, caducado o inactivo sale como ErrNoEncontrado, que es
 // lo que el adaptador convierte en 401. Cualquier otro error sube con su causa
 // y acaba en 500: son cosas distintas y tratarlas igual esconde una caida.
 //
@@ -123,7 +136,7 @@ func (a Autenticacion) ResolverSesion(ctx context.Context, token string) (Usuari
 	if token == "" {
 		return Usuario{}, ErrNoEncontrado
 	}
-	usuario, err := a.Sesiones.PorToken(ctx, token, a.Reloj.Ahora())
+	usuario, err := a.Sesiones.PorToken(ctx, token, a.Reloj.Ahora(), a.inactividad())
 	if err != nil {
 		return Usuario{}, err
 	}

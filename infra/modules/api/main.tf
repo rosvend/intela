@@ -24,6 +24,7 @@ module "function" {
   environment = {
     DATABASE_URL              = var.database_url
     SESION_TTL                = var.session_ttl
+    SESION_INACTIVIDAD        = var.session_idle_timeout
     CORS_ORIGENES             = var.cors_origins
     LOG_FORMATO               = var.log_format
     ONI_DIRECCION_FISICA      = var.oni_direccion_fisica

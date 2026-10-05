@@ -24,7 +24,7 @@ proposito.
 | [0010 Stack de aplicacion: Go](0010-stack-go.md) | Vigente |
 | [0011 La verificacion del diagrama avisa, no bloquea](0011-verificacion-del-diagrama-como-aviso.md) | Sustituida por 0012 |
 | [0012 La frontera se verifica sobre el codigo, no sobre el diagrama](0012-la-frontera-se-verifica-sobre-el-codigo.md) | Vigente |
-| [0013 La sesion es un token opaco en tabla, no un JWT](0013-sesiones-opacas-en-tabla.md) | Vigente |
+| [0013 La sesion es un token opaco en tabla, no un JWT](0013-sesiones-opacas-en-tabla.md) | Vigente, enmendada por 0025 |
 | [0014 La infraestructura de ejecucion es AWS serverless, descrita en Terraform](0014-infraestructura-serverless-en-aws.md) | Vigente |
 | [0015 La cola de trabajos es una tabla propia, no River](0015-cola-de-trabajos-en-tabla-propia.md) | Vigente |
 | [0016 El log de rechazos de la ingesta vive en una tabla aparte](0016-log-de-rechazos-en-tabla-aparte.md) | Vigente |
@@ -36,7 +36,7 @@ proposito.
 | [0022 Descartar un caso de identificacion es un escalon propio](0022-descartar-caso-de-identificacion.md) | Vigente |
 | [0023 La boveda de produccion es S3 con Object Lock GOVERNANCE a diez anos](0023-boveda-s3-con-object-lock-governance.md) | Vigente (provisional) |
 | [0024 La liquidacion se emite al entrar a `liquidacion_final` y espera a todas las corridas del periodo](0024-liquidacion-al-entrar-a-liquidacion-final.md) | Vigente |
-| [0025 "Salir" no avisa si el servidor no confirmo la revocacion](0025-salir-sin-aviso-de-revocacion.md) | Vigente |
+| [0025 "Salir" no avisa si el servidor no confirmo la revocacion; el servidor cubre el riesgo](0025-salir-sin-aviso-de-revocacion.md) | Vigente, enmienda 0013 |
 
 Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
 nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico
