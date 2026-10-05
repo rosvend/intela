@@ -35,10 +35,24 @@ describe("partirCitas", () => {
     ]);
   });
 
-  it("reconoce Asiento con mayuscula", () => {
-    expect(partirCitas("Asiento 42")).toEqual([
-      { tipo: "cita", clase: "asiento", valor: "42" },
+  it("reconoce Asiento con mayuscula y una ref sin punto final", () => {
+    expect(partirCitas("Asiento p1:obra-7")).toEqual([
+      { tipo: "cita", clase: "asiento", valor: "p1:obra-7" },
     ]);
+    expect(partirCitas("asiento p1:obra-7.")).toEqual([
+      { tipo: "cita", clase: "asiento", valor: "p1:obra-7" },
+      { tipo: "texto", texto: "." },
+    ]);
+  });
+
+  it.each([
+    "Toda cifra se explica hasta su asiento de auditoria.",
+    "Revisa el asiento que firmo Contabilidad.",
+    "Asiento contable del proceso p1.",
+    "Asiento 42",
+    "asiento a:b:c:d",
+  ])("no hace pildora de una palabra suelta tras asiento: %s", (texto) => {
+    expect(partirCitas(texto)).toEqual([{ tipo: "texto", texto }]);
   });
 
   it("no confunde siglas dentro de otras palabras ni un RD sin numeral", () => {
