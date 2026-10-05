@@ -119,10 +119,14 @@ func pendienteDe(p reparto.ProcesoDeReparto, e EstadoCorrida) string {
 	case e.SiguienteEtapa == "":
 		return "Nada: es la última etapa. La corrida queda cerrada para la auditoría del Revisor Fiscal."
 	case e.Compuerta && len(e.FirmasFaltantes) > 0:
+		var nombres []string
+		for _, rol := range p.FirmasFaltantes() {
+			nombres = append(nombres, rolesFirmantes[rol])
+		}
 		return fmt.Sprintf("Es una compuerta de doble firma (RD 13.5): falta la firma de %s sobre la revisión %d. Con las dos firmas, el administrador puede avanzarla a %s.",
-			strings.Join(e.FirmasFaltantes, " y "), e.Revision, siguiente)
+			strings.Join(nombres, " y "), e.Revision, siguiente)
 	case e.Compuerta:
-		return fmt.Sprintf("Ya tiene las firmas de distribución y contabilidad; falta que el administrador la avance a %s.", siguiente)
+		return fmt.Sprintf("Ya tiene las firmas de Distribución y Contabilidad; falta que el administrador la avance a %s.", siguiente)
 	case p.Etapa == reparto.EtapaDeducciones || reparto.Etapa(e.SiguienteEtapa) == reparto.EtapaVerificacion:
 		return fmt.Sprintf("Falta que el administrador la avance a %s. Antes se revisa que el periodo no tenga anomalías críticas abiertas; si las tiene, no avanza hasta resolverlas.", siguiente)
 	case p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaLiquidacionFinal:
@@ -130,6 +134,12 @@ func pendienteDe(p reparto.ProcesoDeReparto, e EstadoCorrida) string {
 	default:
 		return fmt.Sprintf("Falta que el administrador la avance a %s.", siguiente)
 	}
+}
+
+// rolesFirmantes nombra para personas los roles de la compuerta; los codigos van solo en FirmasFaltantes.
+var rolesFirmantes = map[reparto.RolAcompuerta]string{
+	reparto.RolDistribucion: "Distribución",
+	reparto.RolContabilidad: "Contabilidad",
 }
 
 var circuitosExplicados = map[reparto.Circuito]string{

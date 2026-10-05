@@ -35,7 +35,7 @@ func TestEstadoCorridaNacionalEnVerificacionNombraLasFirmasQueFaltan(t *testing.
 	if !e.Compuerta || !slices.Equal(e.FirmasFaltantes, []string{"contabilidad"}) {
 		t.Fatalf("compuerta=%v faltantes=%v: la firma de contabilidad es de otra revision y no cuenta", e.Compuerta, e.FirmasFaltantes)
 	}
-	if e.SiguienteEtapa != "liquidacion_final" || !strings.Contains(e.Pendiente, "contabilidad") {
+	if e.SiguienteEtapa != "liquidacion_final" || !strings.Contains(e.Pendiente, "Contabilidad") {
 		t.Fatalf("siguiente=%q pendiente=%q", e.SiguienteEtapa, e.Pendiente)
 	}
 	if e.EtapaExplicada == "" || e.CircuitoExplicado == "" {
@@ -54,6 +54,9 @@ func TestEstadoCorridaInternacionalTieneSuPropioRecorrido(t *testing.T) {
 	}
 	if !slices.Equal(e.FirmasFaltantes, []string{"distribucion", "contabilidad"}) {
 		t.Fatalf("faltantes = %v", e.FirmasFaltantes)
+	}
+	if !strings.Contains(e.Pendiente, "Distribución y Contabilidad") || strings.Contains(e.Pendiente, "distribucion") {
+		t.Fatalf("pendiente = %q: nombres de rol para personas, los codigos solo en firmas_faltantes", e.Pendiente)
 	}
 }
 
