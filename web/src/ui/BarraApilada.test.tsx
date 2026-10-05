@@ -15,9 +15,8 @@ describe("BarraApilada", () => {
     render(<BarraApilada etiqueta="Reparto" segmentos={segmentos} />);
     const botones = screen.getAllByRole("button");
     expect(botones).toHaveLength(3);
-    expect((botones[0] as HTMLElement).style.getPropertyValue("--ancho")).toBe(
-      "65%",
-    );
+    const tramo = botones[0].parentElement as HTMLElement;
+    expect(tramo.style.getPropertyValue("--peso")).toBe("65");
   });
 
   it("cada segmento se nombra con su etiqueta e importe", () => {

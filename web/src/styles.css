@@ -1057,23 +1057,23 @@ table button {
   cursor: pointer;
   color: var(--texto-suave);
 }
-.revision {
+dl.revision {
   display: grid;
   grid-template-columns: 11rem 1fr;
   gap: 0.35rem 1rem;
   margin: 0;
 }
-.revision dt {
+dl.revision dt {
   color: var(--texto-suave);
 }
-.revision dd {
+dl.revision dd {
   margin: 0;
 }
 .acciones {
   display: flex;
   gap: 0.6rem;
 }
-.alerta {
+p.alerta {
   color: #7a2a22;
   background: #f8ebe6;
   border: 1px solid #e3c7be;

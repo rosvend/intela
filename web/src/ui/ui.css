@@ -78,24 +78,25 @@
 
 /* ---- barra apilada ---- */
 
+/* Largo de cada tramo = su porcentaje; uniones rectas con hueco fino y solo los extremos redondeados. */
 .barra-apilada {
   display: flex;
-  gap: 3px;
+  gap: 2px;
   width: 100%;
-  height: 12px;
+  height: 14px;
 }
 
 .barra-apilada > .detalle {
-  flex: 0 0 var(--ancho);
-  min-width: 6px;
+  flex: var(--peso) 1 0;
+  min-width: 4px;
 }
 
 .barra-segmento {
   width: 100%;
-  height: 12px;
+  height: 14px;
   border: none;
   padding: 0;
-  border-radius: 99px;
+  border-radius: 2px;
   background: var(--color);
   cursor: pointer;
   transform-origin: left center;
@@ -106,10 +107,21 @@
     transform var(--dur-rapida);
 }
 
+.barra-apilada > .detalle:first-child .barra-segmento {
+  border-radius: 99px 2px 2px 99px;
+}
+
+.barra-apilada > .detalle:last-child .barra-segmento {
+  border-radius: 2px 99px 99px 2px;
+}
+
+.barra-apilada > .detalle:only-child .barra-segmento {
+  border-radius: 99px;
+}
+
 .barra-segmento:hover,
 .barra-segmento[aria-expanded="true"] {
-  filter: brightness(1.08) saturate(1.1);
-  transform: scaleY(1.35);
+  filter: brightness(1.1) saturate(1.1);
 }
 
 .barra-segmento:focus-visible {
@@ -143,7 +155,7 @@
   padding: 0.85rem 0;
   border-top: 1px solid var(--borde);
   font-size: 0.92rem;
-  animation: fila-entrar var(--dur-media) var(--curva-salida) both;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
 }
 
 .leyenda-fila:first-child {
@@ -223,7 +235,7 @@
   border-radius: var(--radio-tarjeta);
   padding: 1.5rem;
   box-shadow: var(--sombra-suave);
-  animation: fila-entrar var(--dur-media) var(--curva-salida) both;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
 }
 
 .panel-cabecera {

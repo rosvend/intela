@@ -8,6 +8,7 @@ type Props = {
   claseDisparador?: string;
   estiloDisparador?: React.CSSProperties;
   etiquetaDisparador?: string;
+  estiloRaiz?: React.CSSProperties;
 };
 
 /** Popover accesible: el texto tecnico vive aqui, no en la pantalla. */
@@ -18,6 +19,7 @@ export default function Detalle({
   claseDisparador = "detalle-disparador",
   estiloDisparador,
   etiquetaDisparador,
+  estiloRaiz,
 }: Props) {
   const [abierto, setAbierto] = useState(false);
   const raiz = useRef<HTMLSpanElement>(null);
@@ -40,7 +42,7 @@ export default function Detalle({
   }, [abierto]);
 
   return (
-    <span className="detalle" ref={raiz}>
+    <span className="detalle" ref={raiz} style={estiloRaiz}>
       <button
         type="button"
         className={claseDisparador}

@@ -46,6 +46,7 @@ export default function BarraApilada({
           titulo={s.etiqueta}
           claseDisparador="barra-segmento"
           etiquetaDisparador={`${s.etiqueta}: ${formatear(s.valor)} (${anchos[i].toLocaleString("es-CO")} %)`}
+          estiloRaiz={{ "--peso": anchos[i] } as React.CSSProperties}
           estiloDisparador={
             {
               "--ancho": `${anchos[i]}%`,
