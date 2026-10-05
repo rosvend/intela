@@ -1,64 +1,54 @@
-import { ArrowRightIcon } from "@heroicons/react/20/solid";
-import { useEffect, useId, useRef, useState, type ReactElement } from "react";
+import { ArrowLeftIcon, ArrowRightIcon } from "@heroicons/react/20/solid";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { Link } from "react-router-dom";
 import "../revision.css";
-import Detalle from "../ui/Detalle";
+import "./fusion.css";
 import { useApi } from "../useApi";
-import Dialogo from "./Dialogo";
-import {
-  IconoCheck,
-  IconoChispa,
-  IconoDescartar,
-  IconoLupa,
-  IconoPantalla,
-  IconoPregunta,
-  IconoTodoEnOrden,
-} from "./iconos";
-import MedidorConfianza from "./MedidorConfianza";
-import PanelResolucion, { type ModoResolucion } from "./PanelResolucion";
+import { posicionEnCola, vecinoEnCola } from "./cola";
+import { IconoCheck, IconoTodoEnOrden } from "./iconos";
 import { useFijarPendientes } from "./pendientes";
+import { formatearPeriodo, nombreDeFuente } from "./presentacion";
 import {
   LIMITE_BANDEJA,
   RUTAS_IDENTIFICACION,
   esPaginaDeCasos,
-  etiquetaDeModalidad,
-  type CandidatoIdentificacion,
   type CasoIdentificacion,
-  type SugerenciaIdentificacion,
 } from "./tipos";
-import {
-  explicarCandidata,
-  formatearPeriodo,
-  nombreDeFuente,
-  prefiereQuieto,
-} from "./presentacion";
-
-/** El caso sobre el que se abrio el panel, y en que modo. */
-type PanelAbierto = { caso: CasoIdentificacion; modo: ModoResolucion };
+import VistaFusion from "./VistaFusion";
 
 /** El aviso de exito, `role="status"` durante 4 segundos (plano seccion 5). */
 type Aviso = { detalle: string };
 
 const DURACION_AVISO_MS = 4000;
 
-/** Lo que dura la salida animada de una tarjeta (revision.css, `caso-salir`). */
-const DURACION_SALIDA_MS = 220;
-
 /**
- * Bandeja de identificacion (`/identificacion`): los casos ONI pendientes,
- * uno por tarjeta, con sus obras candidatas.
+ * Bandeja de identificacion (`/identificacion`): los casos pendientes, uno a
+ * la vez, como una union entre lo reportado y la obra del catalogo.
  *
  * Es solo el envoltorio que fuerza la recarga completa (D2, D3): `useApi` no
  * vuelve a pedir el mismo path, asi que "Intentar de nuevo", "Cargar los
  * siguientes casos" y "Recargar caso" incrementan `recarga`, que via `key`
- * remonta `Contenido` entero -useApi pide de nuevo, y el estado local de la
- * lista (`fuera`, el panel abierto, el aviso) arranca limpio, que es
- * exactamente lo que "recargar desde el principio de la cola" quiere decir.
+ * remonta `Contenido` entero y su estado local arranca limpio.
  */
 export default function BandejaIdentificacion(): ReactElement {
   const [recarga, setRecarga] = useState(0);
   return (
     <Contenido key={recarga} onRecargar={() => setRecarga((r) => r + 1)} />
+  );
+}
+
+/** Un evento de teclado que nace en un campo es de ese campo, no de la cola. */
+function esDeUnCampo(destino: EventTarget | null): boolean {
+  if (!(destino instanceof HTMLElement)) return false;
+  return (
+    destino.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(destino.tagName)
   );
 }
 
@@ -71,31 +61,40 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     }),
   );
 
-  // Remocion optimista (D3): los ids que ya salieron de la vista, sea porque
-  // el servidor confirmo la resolucion o porque quedaron fuera mientras se
-  // reintenta. `Set`, no filtrar el array de `useApi`: la pagina que trajo
-  // `useApi` no cambia con la recarga optimista, solo lo que se PINTA de ella.
+  // Remocion optimista (D3): los ids que ya salieron de la cola, por
+  // resolverse o mientras se guardan. Lo que cambia es lo que se PINTA de la
+  // pagina, no la pagina.
   const [fuera, setFuera] = useState<Set<string>>(new Set());
-  // Las tarjetas que se estan yendo: siguen pintadas mientras dura la salida.
-  const [saliendo, setSaliendo] = useState<Set<string>>(new Set());
-  const temporizadores = useRef(new Map<string, number>());
-  const [panel, setPanel] = useState<PanelAbierto | null>(null);
+  // El caso en escena. Puede estar fuera de la cola (guardandose, o tras un
+  // 409 que lo saco) y seguir en escena con su error.
+  const [foco, setFoco] = useState<string | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
+  const [trasUnion, setTrasUnion] = useState(false);
   const [aviso, setAviso] = useState<Aviso | null>(null);
-  const idTituloPanel = useId();
 
   const pagina =
     !lectura.cargando && !lectura.error && esPaginaDeCasos(lectura.datos)
       ? lectura.datos
       : null;
+  const ids = pagina ? pagina.casos.map((c) => c.id) : [];
+  const visibles = new Set(ids.filter((id) => !fuera.has(id)));
   const casosVisibles = pagina
-    ? pagina.casos.filter((c) => !fuera.has(c.id))
+    ? pagina.casos.filter((c) => visibles.has(c.id))
     : [];
-  // `pagina.pendientes` es el conteo del servidor al momento de la carga;
-  // restarle lo que ya salio lo mantiene en vivo sin pedir de nuevo.
+  const enEscena: CasoIdentificacion | null =
+    pagina?.casos.find((c) => c.id === foco) ?? casosVisibles[0] ?? null;
+  // `pagina.pendientes` es el conteo del servidor al cargar; restarle lo que
+  // ya salio lo mantiene en vivo sin pedir de nuevo.
   const conteo = pagina
-    ? Math.max(pagina.pendientes - fuera.size - saliendo.size, 0)
+    ? Math.max(pagina.pendientes - fuera.size, 0)
     : undefined;
+  const posicion = enEscena ? posicionEnCola(ids, visibles, enEscena.id) : null;
+  const anterior = enEscena
+    ? vecinoEnCola(ids, visibles, enEscena.id, -1)
+    : null;
+  const siguiente = enEscena
+    ? vecinoEnCola(ids, visibles, enEscena.id, 1)
+    : null;
 
   useEffect(() => {
     if (conteo !== undefined) fijarPendientes(conteo);
@@ -109,9 +108,31 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     return () => clearTimeout(temporizador);
   }, [aviso]);
 
+  function irA(id: string | null) {
+    if (id === null || bloqueado) return;
+    setTrasUnion(false);
+    setFoco(id);
+  }
+
+  // Las flechas pasan de caso. Sin animacion: es una accion de teclado que se
+  // repite decenas de veces seguidas. Un solo listener; los vecinos vigentes
+  // llegan por ref, fijada en el commit para que no haya tecla entre medias.
+  const navegacion = useRef({ anterior, siguiente, irA });
+  useLayoutEffect(() => {
+    navegacion.current = { anterior, siguiente, irA };
+  });
   useEffect(() => {
-    const pendientes = temporizadores.current;
-    return () => pendientes.forEach((t) => window.clearTimeout(t));
+    function alPulsar(e: KeyboardEvent) {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (esDeUnCampo(e.target)) return;
+      const { anterior, siguiente, irA } = navegacion.current;
+      if (e.key === "ArrowRight") irA(siguiente);
+      else if (e.key === "ArrowLeft") irA(anterior);
+      else return;
+      e.preventDefault();
+    }
+    window.addEventListener("keydown", alPulsar);
+    return () => window.removeEventListener("keydown", alPulsar);
   }, []);
 
   function conId(previos: Set<string>, id: string, poner: boolean) {
@@ -119,32 +140,6 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     if (poner) siguientes.add(id);
     else siguientes.delete(id);
     return siguientes;
-  }
-
-  function marcarFuera(id: string) {
-    if (prefiereQuieto()) {
-      setFuera((p) => conId(p, id, true));
-      return;
-    }
-    setSaliendo((p) => conId(p, id, true));
-    const t = window.setTimeout(() => {
-      temporizadores.current.delete(id);
-      setSaliendo((p) => conId(p, id, false));
-      setFuera((p) => conId(p, id, true));
-    }, DURACION_SALIDA_MS);
-    temporizadores.current.set(id, t);
-  }
-
-  function devolverALaLista(id: string) {
-    window.clearTimeout(temporizadores.current.get(id));
-    temporizadores.current.delete(id);
-    setSaliendo((p) => conId(p, id, false));
-    setFuera((p) => conId(p, id, false));
-  }
-
-  function cerrarPanel() {
-    if (bloqueado) return;
-    setPanel(null);
   }
 
   return (
@@ -164,7 +159,7 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
           </Link>
         </div>
         <p className="revision-intro">
-          Elige la obra correcta de cada uso o descártalo.
+          Une cada uso reportado con su obra, o descártalo.
         </p>
       </header>
 
@@ -201,99 +196,123 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
         </p>
       )}
 
-      {pagina !== null && (
-        <>
-          {casosVisibles.length === 0 && (conteo ?? 0) === 0 && (
-            <EstadoVacio
-              titulo="Todo en orden: no hay usos pendientes por identificar"
-              texto={
-                fuera.size > 0
-                  ? "Cada decisión quedó registrada con su nota."
-                  : "Cuando llegue un uso dudoso, aparecerá aquí."
-              }
-            />
-          )}
-
-          {casosVisibles.length > 0 && (
-            <ul className="casos">
-              {casosVisibles.map((caso, i) => (
-                <TarjetaCaso
-                  key={caso.id}
-                  caso={caso}
-                  indice={i}
-                  saliendo={saliendo.has(caso.id)}
-                  onAsignarCandidata={(candidato) =>
-                    setPanel({
-                      caso,
-                      modo: {
-                        tipo: "candidata",
-                        obraId: candidato.obra_id,
-                        obraTitulo: candidato.titulo,
-                        obraAnio: candidato.anio,
-                        obraGenero: candidato.genero,
-                        puntaje: candidato.puntaje,
-                      },
-                    })
-                  }
-                  onBuscarOtraObra={() =>
-                    setPanel({ caso, modo: { tipo: "busqueda" } })
-                  }
-                  onDescartar={() =>
-                    setPanel({ caso, modo: { tipo: "descarte" } })
-                  }
-                />
-              ))}
-            </ul>
-          )}
-
-          {conteo !== undefined && conteo > casosVisibles.length && (
-            <div className="revision-mas">
-              <p>
-                Se muestran {casosVisibles.length} de {conteo}, en orden de
-                llegada.
-              </p>
-              <button
-                type="button"
-                className="boton-secundario"
-                onClick={onRecargar}
-              >
-                Cargar los siguientes casos
-              </button>
-            </div>
-          )}
-        </>
+      {pagina !== null && !enEscena && (
+        <EstadoVacio
+          titulo="Todo en orden: no hay usos pendientes por identificar"
+          texto={
+            fuera.size > 0
+              ? "Cada decisión quedó registrada con su nota."
+              : "Cuando llegue un uso dudoso, aparecerá aquí."
+          }
+        />
       )}
 
-      <Dialogo
-        abierto={panel !== null}
-        variante="lateral"
-        idTitulo={idTituloPanel}
-        bloqueado={bloqueado}
-        onCerrar={cerrarPanel}
-      >
-        {panel && (
-          <PanelResolucion
-            idTitulo={idTituloPanel}
-            caso={panel.caso}
-            modo={panel.modo}
-            onCancelar={cerrarPanel}
-            onEnviandoCambia={setBloqueado}
-            onEnviarInicio={() => marcarFuera(panel.caso.id)}
-            onFalla={(volvioALaLista) => {
-              if (volvioALaLista) devolverALaLista(panel.caso.id);
-            }}
-            onExito={({ obraTitulo, esDescarte }) => {
-              setPanel(null);
-              setAviso({
-                detalle: esDescarte
-                  ? `Registro “${panel.caso.titulo}” descartado`
-                  : `Registro asignado a “${obraTitulo}”`,
-              });
-            }}
-            onRecargarTodo={onRecargar}
-          />
-        )}
-      </Dialogo>
+      {pagina !== null && enEscena && (
+        <div className="bandeja-fusion">
+          <aside className="bandeja-cola">
+            <div className="bandeja-progreso">
+              {posicion !== null && conteo !== undefined && (
+                <span className="bandeja-progreso-texto">
+                  Caso {posicion} de {conteo}
+                </span>
+              )}
+              <span className="bandeja-pasos">
+                <button
+                  type="button"
+                  className="bandeja-paso"
+                  aria-label="Caso anterior"
+                  aria-keyshortcuts="ArrowLeft"
+                  disabled={anterior === null || bloqueado}
+                  onClick={() => irA(anterior)}
+                >
+                  <ArrowLeftIcon aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="bandeja-paso"
+                  aria-label="Caso siguiente"
+                  aria-keyshortcuts="ArrowRight"
+                  disabled={siguiente === null || bloqueado}
+                  onClick={() => irA(siguiente)}
+                >
+                  <ArrowRightIcon aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+            {casosVisibles.length > 0 && (
+              <nav aria-label="Cola de casos">
+                <ol className="cola">
+                  {casosVisibles.map((caso) => (
+                    <li key={caso.id}>
+                      <button
+                        type="button"
+                        className="cola-caso"
+                        aria-current={caso.id === enEscena.id || undefined}
+                        disabled={bloqueado}
+                        onClick={() => irA(caso.id)}
+                      >
+                        <span className="cola-titulo">{caso.titulo}</span>
+                        <span className="cola-meta">
+                          {nombreDeFuente(caso.fuente)} ·{" "}
+                          {formatearPeriodo(caso.periodo)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+            )}
+            {conteo !== undefined && conteo > casosVisibles.length && (
+              <div className="cola-mas">
+                <p>
+                  Se muestran {casosVisibles.length} de {conteo}, en orden de
+                  llegada.
+                </p>
+                <button
+                  type="button"
+                  className="boton-secundario"
+                  onClick={onRecargar}
+                >
+                  Cargar los siguientes casos
+                </button>
+              </div>
+            )}
+            <p className="bandeja-atajo" aria-hidden="true">
+              <kbd>←</kbd> <kbd>→</kbd> para pasar de caso
+            </p>
+          </aside>
+
+          <div
+            className={`bandeja-escena${trasUnion ? " bandeja-escena-entra" : ""}`}
+          >
+            <VistaFusion
+              key={enEscena.id}
+              caso={enEscena}
+              onEnviandoCambia={setBloqueado}
+              onEnviarInicio={() => {
+                setFoco(enEscena.id);
+                setFuera((p) => conId(p, enEscena.id, true));
+              }}
+              onFalla={(volvioALaLista) => {
+                if (volvioALaLista) {
+                  setFuera((p) => conId(p, enEscena.id, false));
+                }
+              }}
+              onExito={({ obraTitulo, esDescarte }) => {
+                setAviso({
+                  detalle: esDescarte
+                    ? `Registro “${enEscena.titulo}” descartado`
+                    : `Registro asignado a “${obraTitulo}”`,
+                });
+                setTrasUnion(true);
+                // `enEscena` ya salio de `visibles`: sus vecinos son los que siguen.
+                setFoco(siguiente ?? anterior);
+              }}
+              onRecargarTodo={onRecargar}
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -338,117 +357,4 @@ export function EstadoVacio({
       {texto && <p className="revision-vacio-texto">{texto}</p>}
     </div>
   );
-}
-
-function TarjetaCaso({
-  caso,
-  indice,
-  saliendo,
-  onAsignarCandidata,
-  onBuscarOtraObra,
-  onDescartar,
-}: {
-  caso: CasoIdentificacion;
-  indice: number;
-  saliendo: boolean;
-  onAsignarCandidata: (candidato: CandidatoIdentificacion) => void;
-  onBuscarOtraObra: () => void;
-  onDescartar: () => void;
-}): ReactElement {
-  const sugerenciaTexto = textoDeSugerencia(caso.sugerencia);
-
-  return (
-    <li
-      className={`caso${saliendo ? " caso-saliendo" : ""}`}
-      style={{ "--indice": Math.min(indice, 8) } as React.CSSProperties}
-      aria-hidden={saliendo || undefined}
-    >
-      <header className="caso-cabecera">
-        <span className="caso-icono">
-          <IconoPantalla />
-        </span>
-        <div className="caso-reportado">
-          <h2 className="caso-titulo">{caso.titulo}</h2>
-          <p className="caso-meta">
-            {nombreDeFuente(caso.fuente)} · {formatearPeriodo(caso.periodo)}
-          </p>
-        </div>
-        <span className="chip">{etiquetaDeModalidad(caso.modalidad)}</span>
-      </header>
-
-      {sugerenciaTexto && (
-        <p className="caso-sugerencia">
-          <IconoChispa />
-          <span>{sugerenciaTexto}</span>
-        </p>
-      )}
-
-      {caso.candidatos.length === 0 ? (
-        <p className="caso-sin-candidatas">
-          No encontramos obras parecidas en el catálogo. Búscala a mano o
-          descarta el uso.
-        </p>
-      ) : (
-        <ul className="candidatas" aria-label="Obras posibles">
-          {caso.candidatos.map((candidato) => (
-            <li key={candidato.obra_id} className="candidata">
-              <div className="candidata-obra">
-                <span className="candidata-titulo">{candidato.titulo}</span>
-                <span className="candidata-meta">
-                  {candidato.anio} · {candidato.genero}
-                </span>
-              </div>
-              <MedidorConfianza puntaje={candidato.puntaje} />
-              <Detalle
-                titulo={`Por qué ${candidato.titulo} es candidata`}
-                etiquetaDisparador={`Por qué ${candidato.titulo} es candidata`}
-                claseDisparador="revision-icono-boton"
-                disparador={<IconoPregunta />}
-              >
-                <span className="detalle-texto">
-                  {explicarCandidata(candidato)}
-                </span>
-              </Detalle>
-              <button
-                type="button"
-                className="boton-una"
-                aria-label={`Es esta obra: ${candidato.titulo}`}
-                onClick={() => onAsignarCandidata(candidato)}
-              >
-                <IconoCheck tamano={16} />
-                Es esta obra
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <footer className="caso-pie">
-        <button
-          type="button"
-          className="boton-fantasma"
-          onClick={onBuscarOtraObra}
-        >
-          <IconoLupa />
-          Buscar otra obra
-        </button>
-        <button type="button" className="boton-fantasma" onClick={onDescartar}>
-          <IconoDescartar />
-          Descartar
-        </button>
-      </footer>
-    </li>
-  );
-}
-
-/** Texto de la propuesta. `null` si no hay con que sugerir: no se pinta un aviso vacio. */
-function textoDeSugerencia(
-  sugerencia: SugerenciaIdentificacion,
-): string | null {
-  if (sugerencia.decision === "ninguna") return null;
-  if (sugerencia.decision === "descartar") {
-    return "Sugerencia: descartar este registro.";
-  }
-  const nombre = sugerencia.titulo || sugerencia.obra_id;
-  return `Sugerencia: asignar a ${nombre}.`;
 }

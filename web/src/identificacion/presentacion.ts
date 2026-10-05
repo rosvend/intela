@@ -1,7 +1,10 @@
-import type {
-  CandidatoIdentificacion,
-  CasoIdentificacion,
-  EstadoDeCaso,
+import {
+  etiquetaDeModalidad,
+  idsDeFuente,
+  type CandidatoIdentificacion,
+  type CasoIdentificacion,
+  type EstadoDeCaso,
+  type SugerenciaIdentificacion,
 } from "./tipos";
 
 /**
@@ -135,4 +138,112 @@ export function prefiereQuieto(): boolean {
     !window.matchMedia ||
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+}
+
+/** Texto de la propuesta del rankeador; `null` si no hay con que sugerir. */
+export function textoDeSugerencia(
+  sugerencia: SugerenciaIdentificacion,
+): string | null {
+  if (sugerencia.decision === "ninguna") return null;
+  if (sugerencia.decision === "descartar") {
+    return "Sugerencia: descartar este registro.";
+  }
+  return `Sugerencia: asignar a ${sugerencia.titulo || sugerencia.obra_id}.`;
+}
+
+/** La obra del lado del catalogo: una candidata o un resultado de la busqueda. */
+export type ObraComparada = {
+  id: string;
+  titulo: string;
+  anio?: number;
+  genero?: string;
+};
+
+export type CampoComparado =
+  "titulo" | "anio" | "genero" | "modalidad" | "periodo" | "ids";
+
+/** `null` mientras no hay obra elegida: sin obra no hay nada que juzgar. */
+export type EstadoDeFila = "coincide" | "distinto" | "falta" | null;
+
+export type FilaDeComparacion = {
+  campo: CampoComparado;
+  etiqueta: string;
+  reportado: string | null;
+  catalogo: string | null;
+  estado: EstadoDeFila;
+};
+
+/**
+ * Los campos del contrato que lee la comparacion, por lado. `contrato.test.ts`
+ * comprueba que siguen siendo obligatorios en `api/openapi.yaml`.
+ */
+export const CAMPOS_LEIDOS = {
+  CasoIdentificacion: [
+    "titulo",
+    "titulo_original",
+    "fuente",
+    "modalidad",
+    "periodo",
+    "ids_fuente",
+  ],
+  CandidatoIdentificacion: ["titulo", "anio", "genero", "puntaje"],
+} as const;
+
+function normalizarTexto(texto: string): string {
+  return texto
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function estadoDeFila(
+  obra: ObraComparada | null,
+  reportado: string | null,
+  catalogo: string | null,
+): EstadoDeFila {
+  if (!obra) return null;
+  if (reportado === null || catalogo === null) return "falta";
+  return reportado === catalogo ? "coincide" : "distinto";
+}
+
+/**
+ * Las filas alineadas de la vista de union, siempre en el mismo orden. Solo el
+ * titulo existe en los dos lados: el resto lo trae uno solo, y el otro pinta
+ * "—" en vez de inventarlo.
+ */
+export function filasDeComparacion(
+  caso: CasoIdentificacion,
+  obra: ObraComparada | null,
+): FilaDeComparacion[] {
+  const titulos = [caso.titulo, caso.titulo_original]
+    .filter((t) => t !== "")
+    .map(normalizarTexto);
+  const tituloCoincide =
+    obra !== null && titulos.includes(normalizarTexto(obra.titulo));
+  const ids = idsDeFuente(caso.ids_fuente).map((l) => l.replace("=", ": "));
+  const otras: [CampoComparado, string, string | null, string | null][] = [
+    ["anio", "Año", null, obra?.anio !== undefined ? String(obra.anio) : null],
+    ["genero", "Género", null, obra?.genero ?? null],
+    ["modalidad", "Modalidad", etiquetaDeModalidad(caso.modalidad), null],
+    ["periodo", "Periodo", formatearPeriodo(caso.periodo), null],
+    ["ids", "ID en la fuente", ids.length > 0 ? ids.join("\n") : null, null],
+  ];
+  return [
+    {
+      campo: "titulo",
+      etiqueta: "Título",
+      reportado: caso.titulo,
+      catalogo: obra?.titulo ?? null,
+      estado: obra ? (tituloCoincide ? "coincide" : "distinto") : null,
+    },
+    ...otras.map(([campo, etiqueta, reportado, catalogo]) => ({
+      campo,
+      etiqueta,
+      reportado,
+      catalogo,
+      estado: estadoDeFila(obra, reportado, catalogo),
+    })),
+  ];
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import CONTRATO from "../../../api/openapi.yaml?raw";
 import { ApiError } from "../api";
 import { RUTAS } from "../navegacion";
+import { CAMPOS_LEIDOS } from "./presentacion";
 import { MAX_NOTA, causaDelConflicto } from "./resolucion";
 import { ESTADOS_DE_CASO } from "./tipos";
 
@@ -58,6 +59,14 @@ describe("contrato de identificacion (api/openapi.yaml)", () => {
     expect(RUTA_RESOLUCION).toContain("x-required-roles: [administrador]");
     for (const to of ["/identificacion", "/lista-oni"]) {
       expect(RUTAS.find((r) => r.to === to)?.roles).toEqual(["administrador"]);
+    }
+  });
+
+  it("la vista de union solo lee campos obligatorios del contrato", () => {
+    for (const [esquema, campos] of Object.entries(CAMPOS_LEIDOS)) {
+      const requeridos = /required: \[(.+)\]/.exec(bloque(`    ${esquema}:`));
+      const lista = (requeridos?.[1] ?? "").split(/,\s*/);
+      for (const campo of campos) expect(lista, esquema).toContain(campo);
     }
   });
 });

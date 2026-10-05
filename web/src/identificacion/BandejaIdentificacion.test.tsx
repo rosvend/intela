@@ -1,5 +1,4 @@
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -9,8 +8,6 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Obra } from "../catalogo/tipos";
-import { DEBOUNCE_TECLEO_MS } from "../useValorDiferido";
 import BandejaIdentificacion from "./BandejaIdentificacion";
 import type { ContextoIdentificacion } from "./pendientes";
 import type { CandidatoIdentificacion, CasoIdentificacion } from "./tipos";
@@ -70,18 +67,6 @@ const casoUno = {
   },
 } satisfies CasoIdentificacion;
 
-const obraDeBusqueda = {
-  id: "obra-9",
-  titulo: "Otra Novela",
-  genero: "Drama",
-  anio: 2020,
-  tipo: "serie",
-  coautores: [],
-  estado_declaracion: "completa",
-  suma_porcentajes: 100,
-  version_vigente: 1,
-} satisfies Obra;
-
 type Resolutor = (id: string, cuerpo: unknown) => Response | Promise<Response>;
 
 /** Un servidor falso minimo: la cola de casos, la resolucion y la busqueda. */
@@ -89,7 +74,6 @@ function instalarServidor(opciones: {
   casos: CasoIdentificacion[];
   pendientes?: number;
   resolver?: Resolutor;
-  obras?: Obra[];
 }) {
   vi.stubGlobal(
     "fetch",
@@ -110,10 +94,6 @@ function instalarServidor(opciones: {
         const id = resolucion[1];
         const cuerpo: unknown = JSON.parse(String(init?.body));
         return opciones.resolver ? opciones.resolver(id, cuerpo) : json({});
-      }
-
-      if (metodo === "GET" && url.startsWith("/api/obras")) {
-        return json(opciones.obras ?? []);
       }
 
       throw new Error(`peticion no manejada en el test: ${metodo} ${url}`);
@@ -149,9 +129,37 @@ function montar(fijarPendientes: (valor: number) => void = () => {}) {
   );
 }
 
-/** El titulo del caso es un <h2>: unico en la tarjeta, no en el panel (que lo pinta como <p>). */
-function tituloDeLaTarjeta() {
-  return screen.queryByRole("heading", { level: 2, name: "La Niña T3 E12" });
+const casoDos = {
+  ...casoUno,
+  id: "caso-2",
+  titulo: "Otra Novela T1 E01",
+  titulo_original: "",
+  candidatos: [],
+} satisfies CasoIdentificacion;
+
+/** El caso en foco: su titulo es el unico <h2> de la bandeja. */
+function enFoco(): string | null {
+  return screen.queryByRole("heading", { level: 2 })?.textContent ?? null;
+}
+
+/** Los titulos que la cola lateral lista, en orden. */
+function cola(): string[] {
+  const nav = screen.queryByRole("navigation", { name: "Cola de casos" });
+  if (!nav) return [];
+  return within(nav)
+    .queryAllByRole("button")
+    .map((b) => b.querySelector(".cola-titulo")?.textContent ?? "");
+}
+
+/** Elige la primera candidata, escribe la nota y pulsa la accion. */
+function resolver(accion: "Unir con esta obra" | "No es ninguna", nota = "x") {
+  if (accion === "Unir con esta obra") {
+    fireEvent.click(screen.getByRole("radio", { name: /La Niña/ }));
+  }
+  fireEvent.change(screen.getByLabelText("Nota para la bitácora"), {
+    target: { value: nota },
+  });
+  fireEvent.click(screen.getByRole("button", { name: accion }));
 }
 
 afterEach(() => {
@@ -175,7 +183,7 @@ describe("BandejaIdentificacion", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Elige la obra correcta de cada uso o descártalo."),
+      screen.getByText("Une cada uso reportado con su obra, o descártalo."),
     ).not.toBeNull();
     expect(await screen.findByText("3 por revisar")).not.toBeNull();
     // `.revision` es el grid 11rem/1fr del <dl> de afiliacion en styles.css.
@@ -195,54 +203,62 @@ describe("BandejaIdentificacion", () => {
     expect(enlace.className).toContain("boton-secundario");
   });
 
-  it("cada caso muestra lo reportado, sus candidatas con medidor de parecido y ninguna preseleccionada", async () => {
-    instalarServidor({ casos: [casoUno] });
+  it("un caso a la vez: el primero en foco, la cola al lado y el progreso", async () => {
+    instalarServidor({ casos: [casoUno, casoDos] });
     montar();
 
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(screen.getByText("Caso 1 de 2")).not.toBeNull();
+    expect(cola()).toEqual(["La Niña T3 E12", "Otra Novela T1 E01"]);
     expect(
-      await screen.findByRole("heading", { level: 2, name: "La Niña T3 E12" }),
+      screen.getByRole("button", { name: /La Niña T3 E12/, current: true }),
     ).not.toBeNull();
-    expect(screen.getByText("Caracol Televisión · nov 2024")).not.toBeNull();
-
-    // El medidor: barra con su lectura accesible y la cifra decimal visible.
-    const medidores = screen.getAllByRole("meter");
-    expect(medidores).toHaveLength(2);
-    expect(medidores[0].getAttribute("aria-valuetext")).toBe(
-      "Coincidencia alta, 0,71",
-    );
-    expect(medidores[1].getAttribute("aria-valuetext")).toBe(
-      "Coincidencia baja, 0,43",
-    );
-    expect(screen.getByText("0,71")).not.toBeNull();
-    expect(screen.getByText("0,43")).not.toBeNull();
-    expect(screen.getByText("Sugerencia: asignar a La Niña.")).not.toBeNull();
-
-    // ADR 0007: las dos candidatas ofrecen el mismo boton, sin "recomendada".
-    const botones = screen.getAllByRole("button", { name: /^Es esta obra:/ });
-    expect(botones).toHaveLength(2);
+    // ADR 0007: ninguna candidata llega elegida.
     expect(
-      screen.getByRole("button", { name: "Es esta obra: La Promesa" }),
-    ).not.toBeNull();
+      screen
+        .getAllByRole("radio")
+        .every((r) => !(r as HTMLInputElement).checked),
+    ).toBe(true);
   });
 
-  it("no muestra ids internos ni un Detalle tecnico; el por que sigue a mano", async () => {
-    instalarServidor({ casos: [casoUno] });
+  it("las flechas del teclado y los botones pasan de caso; dentro de un campo no", async () => {
+    instalarServidor({ casos: [casoUno, casoDos] });
     montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
 
-    await screen.findByRole("heading", { level: 2, name: "La Niña T3 E12" });
-    expect(screen.queryByText("caso-1")).toBeNull();
-    expect(screen.queryByText("ID_Ficha=48213")).toBeNull();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(enFoco()).toBe("Otra Novela T1 E01");
+    expect(screen.getByText("Caso 2 de 2")).not.toBeNull();
+    // En el extremo no da la vuelta.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(enFoco()).toBe("Otra Novela T1 E01");
+
+    fireEvent.click(screen.getByRole("button", { name: "Caso anterior" }));
+    expect(enFoco()).toBe("La Niña T3 E12");
     expect(
-      screen.queryByRole("button", { name: "Detalle técnico" }),
-    ).toBeNull();
+      (
+        screen.getByRole("button", {
+          name: "Caso anterior",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Por qué La Niña es candidata" }),
-    );
-    const porque = screen.getByRole("dialog", {
-      name: "Por qué La Niña es candidata",
-    });
-    expect(porque.textContent).toContain("se parece mucho");
+    const nota = screen.getByLabelText("Nota para la bitácora");
+    fireEvent.keyDown(nota, { key: "ArrowRight" });
+    expect(enFoco()).toBe("La Niña T3 E12");
+
+    fireEvent.click(screen.getByRole("button", { name: "Caso siguiente" }));
+    expect(enFoco()).toBe("Otra Novela T1 E01");
+  });
+
+  it("elegir un caso de la cola lo pone en foco", async () => {
+    instalarServidor({ casos: [casoUno, casoDos] });
+    montar();
+    await waitFor(() => expect(cola()).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /Otra Novela T1 E01/ }));
+    expect(enFoco()).toBe("Otra Novela T1 E01");
   });
 
   it("mientras carga pinta esqueletos con un estado accesible", () => {
@@ -255,7 +271,7 @@ describe("BandejaIdentificacion", () => {
     expect(
       screen.getByRole("status", { name: "Cargando los casos pendientes" }),
     ).not.toBeNull();
-    expect(tituloDeLaTarjeta()).toBeNull();
+    expect(enFoco()).toBeNull();
   });
 
   it("sin casos pendientes muestra el estado vacio amable", async () => {
@@ -269,7 +285,30 @@ describe("BandejaIdentificacion", () => {
     ).not.toBeNull();
   });
 
-  it("asignar desde una candidata: POST a la ruta del caso con decision=asignar, su obra_id y la nota recortada", async () => {
+  it("si la cola no llega legible lo dice", async () => {
+    instalarServidor({ casos: [{ ...casoUno, estado: "raro" } as never] });
+    montar();
+
+    expect(
+      await screen.findByText(
+        "La bandeja no llegó como una lista de casos legibles.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("si la carga falla ofrece intentar de nuevo", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ error: "caido" }, 500)),
+    );
+    montar();
+
+    expect(
+      await screen.findByRole("button", { name: "Intentar de nuevo" }),
+    ).not.toBeNull();
+  });
+
+  it("unir: POST a la ruta del caso con la obra elegida, la nota recortada y el sello", async () => {
     let capturado: { id: string; cuerpo: unknown } | null = null;
     instalarServidor({
       casos: [casoUno],
@@ -279,19 +318,9 @@ describe("BandejaIdentificacion", () => {
       },
     });
     montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
 
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Es esta obra: La Niña",
-      }),
-    );
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "  coincide la ficha tecnica  " },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Asignar a La Niña" }),
-    );
+    resolver("Unir con esta obra", "  coincide la ficha tecnica  ");
 
     await waitFor(() => expect(capturado).not.toBeNull());
     expect(capturado).toEqual({
@@ -305,158 +334,77 @@ describe("BandejaIdentificacion", () => {
     });
   });
 
-  it("buscar otra obra: espera el debounce, pide /api/obras?titulo=&limite=5 y al elegir hace POST con ese obra_id", async () => {
-    let capturado: { id: string; cuerpo: unknown } | null = null;
-    instalarServidor({
-      casos: [casoUno],
-      obras: [obraDeBusqueda],
-      resolver: (id, cuerpo) => {
-        capturado = { id, cuerpo };
-        return json({});
-      },
-    });
-    montar();
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Buscar otra obra" }),
-    );
-    const dialogo = await screen.findByRole("dialog");
-    const campo = within(dialogo).getByLabelText("Título de la obra");
-
-    // Los temporizadores falsos SOLO alrededor del tecleo y su avance: un
-    // `findBy`/`waitFor` de testing-library con temporizadores falsos activos
-    // encolaria su sondeo en el mismo reloj congelado y colgaria el test.
-    vi.useFakeTimers();
-    fireEvent.change(campo, { target: { value: "Otra" } });
-    // Nada llega mientras el debounce no vence.
-    expect(within(dialogo).queryByText("Otra Novela")).toBeNull();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(DEBOUNCE_TECLEO_MS);
-    });
-    vi.useRealTimers();
-
-    const peticionesDeObras = vi
-      .mocked(fetch)
-      .mock.calls.map(([entrada]) => String(entrada))
-      .filter((url) => url.startsWith("/api/obras"));
-    expect(peticionesDeObras).toContain("/api/obras?titulo=Otra&limite=5");
-
-    fireEvent.click(
-      await within(dialogo).findByRole("button", { name: /Otra Novela/ }),
-    );
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "obra correcta del catálogo" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Asignar a Otra Novela" }),
-    );
-
-    await waitFor(() => expect(capturado).not.toBeNull());
-    expect(capturado).toEqual({
-      id: "caso-1",
-      cuerpo: {
-        decision: "asignar",
-        obra_id: "obra-9",
-        nota: "obra correcta del catálogo",
-        sello: "sello-mostrado",
-      },
-    });
-  });
-
-  it("descartar: POST con decision=descartar, sin obra_id, y la nota recortada", async () => {
-    let capturado: { id: string; cuerpo: unknown } | null = null;
-    instalarServidor({
-      casos: [casoUno],
-      resolver: (id, cuerpo) => {
-        capturado = { id, cuerpo };
-        return json({});
-      },
-    });
-    montar();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: " no es del repertorio " },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
-
-    await waitFor(() => expect(capturado).not.toBeNull());
-    expect(capturado).toEqual({
-      id: "caso-1",
-      cuerpo: {
-        decision: "descartar",
-        nota: "no es del repertorio",
-        sello: "sello-mostrado",
-      },
-    });
-  });
-
-  it("remocion optimista: el caso sale de la lista en cuanto se envia, sin esperar la respuesta", async () => {
+  it("remocion optimista: sale de la cola y del conteo al enviar; al confirmar avisa y sube el siguiente", async () => {
     let liberar: (respuesta: Response) => void = () => {};
-    const enVuelo = new Promise<Response>((resolver) => {
-      liberar = resolver;
+    const enVuelo = new Promise<Response>((r) => {
+      liberar = r;
     });
-    instalarServidor({ casos: [casoUno], resolver: () => enVuelo });
-    montar();
+    const fijarPendientes = vi.fn();
+    instalarServidor({ casos: [casoUno, casoDos], resolver: () => enVuelo });
+    montar(fijarPendientes);
+    await waitFor(() => expect(fijarPendientes).toHaveBeenCalledWith(2));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "en revision" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
+    resolver("Unir con esta obra");
 
-    // La tarjeta de fondo ya no esta, aunque la red no ha contestado: la
-    // unica mencion del titulo que queda es la del panel abierto.
-    await waitFor(() => expect(tituloDeLaTarjeta()).toBeNull());
-    expect(
-      within(dialogo).getByRole("button", { name: "Guardando…" }),
-    ).not.toBeNull();
+    // Antes de que conteste la red: fuera de la cola, el conteo baja, y el
+    // caso sigue en escena mientras se guarda.
+    await waitFor(() => expect(cola()).toEqual(["Otra Novela T1 E01"]));
+    expect(fijarPendientes).toHaveBeenCalledWith(1);
+    expect(enFoco()).toBe("La Niña T3 E12");
+    expect(screen.getByRole("button", { name: "Guardando…" })).not.toBeNull();
 
     liberar(json({}));
 
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      await screen.findByText("Registro asignado a “La Niña”"),
+    ).not.toBeNull();
+    await waitFor(() => expect(enFoco()).toBe("Otra Novela T1 E01"));
+  });
+
+  it("resolver el ultimo deja el estado vacio con el apoyo de lo registrado", async () => {
+    instalarServidor({ casos: [casoUno] });
+    montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
+
+    resolver("No es ninguna");
+
     expect(
       await screen.findByText("Registro “La Niña T3 E12” descartado"),
     ).not.toBeNull();
+    expect(
+      await screen.findByText("Cada decisión quedó registrada con su nota."),
+    ).not.toBeNull();
+    expect(enFoco()).toBeNull();
   });
 
-  it("si falla por un error de red, el caso vuelve a la lista y el panel conserva la nota", async () => {
+  it("si falla por un error de red, el caso vuelve a la cola y conserva la nota", async () => {
     instalarServidor({
-      casos: [casoUno],
+      casos: [casoUno, casoDos],
       resolver: () => {
         throw new TypeError("Failed to fetch");
       },
     });
     montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "nota de prueba" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
+    resolver("No es ninguna", "nota de prueba");
 
-    await within(dialogo).findByText(
-      "No pudimos guardar la resolución. Revisa tu conexión e inténtalo de nuevo; tu nota sigue aquí.",
-    );
-
-    expect(tituloDeLaTarjeta()).not.toBeNull();
     expect(
-      (within(dialogo).getByLabelText("Nota *") as HTMLTextAreaElement).value,
+      await screen.findByText(
+        "No pudimos guardar la decisión. Revisa tu conexión e inténtalo de nuevo; tu nota sigue aquí.",
+      ),
+    ).not.toBeNull();
+    expect(cola()).toEqual(["La Niña T3 E12", "Otra Novela T1 E01"]);
+    expect(enFoco()).toBe("La Niña T3 E12");
+    expect(
+      (screen.getByLabelText("Nota para la bitácora") as HTMLInputElement)
+        .value,
     ).toBe("nota de prueba");
   });
 
-  it('409 "ya resuelto": el panel ofrece "Recargar caso" y el caso NO vuelve a la lista', async () => {
+  it('409 "ya resuelto": ofrece "Recargar caso" y el caso NO vuelve a la cola', async () => {
     instalarServidor({
-      casos: [casoUno],
+      casos: [casoUno, casoDos],
       resolver: () =>
         json(
           {
@@ -467,55 +415,24 @@ describe("BandejaIdentificacion", () => {
         ),
     });
     montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
+    resolver("No es ninguna");
 
     expect(
-      await within(dialogo).findByText("Otra persona resolvió este caso antes"),
+      await screen.findByText("Otra persona resolvió este caso antes"),
     ).not.toBeNull();
     expect(
-      within(dialogo).getByRole("button", { name: "Recargar caso" }),
+      screen.getByRole("button", { name: "Recargar caso" }),
     ).not.toBeNull();
-    expect(tituloDeLaTarjeta()).toBeNull();
+    expect(cola()).toEqual(["Otra Novela T1 E01"]);
+    // Sin posicion en la cola, el progreso no inventa una.
+    expect(screen.queryByText(/^Caso \d+ de/)).toBeNull();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(enFoco()).toBe("Otra Novela T1 E01");
   });
 
-  it('409 "no pendiente": el panel ofrece "Recargar caso" y el caso NO vuelve a la lista', async () => {
-    instalarServidor({
-      casos: [casoUno],
-      resolver: () =>
-        json(
-          { error: 'el caso ya no esta pendiente: el caso esta en "difuso"' },
-          409,
-        ),
-    });
-    montar();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
-
-    expect(
-      await within(dialogo).findByText("Este caso ya no está pendiente"),
-    ).not.toBeNull();
-    expect(
-      within(dialogo).getByRole("button", { name: "Recargar caso" }),
-    ).not.toBeNull();
-    expect(tituloDeLaTarjeta()).toBeNull();
-  });
-
-  it('409 de alias: el panel explica el conflicto SIN "Recargar caso", y el caso SI vuelve a la lista', async () => {
+  it('409 de alias: lo explica sin "Recargar caso", y el caso SI vuelve a la cola', async () => {
     instalarServidor({
       casos: [casoUno],
       resolver: () =>
@@ -528,79 +445,26 @@ describe("BandejaIdentificacion", () => {
         ),
     });
     montar();
+    await waitFor(() => expect(enFoco()).toBe("La Niña T3 E12"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
+    resolver("No es ninguna");
 
     expect(
-      await within(dialogo).findByText(
-        "Ese identificador ya apunta a otra obra",
-      ),
+      await screen.findByText("Ese identificador ya apunta a otra obra"),
     ).not.toBeNull();
-    expect(
-      within(dialogo).queryByRole("button", { name: "Recargar caso" }),
-    ).toBeNull();
-    expect(tituloDeLaTarjeta()).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Recargar caso" })).toBeNull();
+    expect(cola()).toEqual(["La Niña T3 E12"]);
   });
 
-  it("un 409 sin causa reconocida: el panel dice el mensaje del servidor, ofrece recargar y el caso SI vuelve a la lista", async () => {
-    // El cuarto desenlace del 409 (plano seccion 5), el que no se puede
-    // confundir con "ya resuelto": el servidor no dijo que el caso este fuera
-    // de la cola, asi que sacarlo de la lista afirmaria algo que nadie dijo.
-    instalarServidor({
-      casos: [casoUno],
-      resolver: () =>
-        json({ error: "el uso tiene una marca de auditoria inesperada" }, 409),
-    });
+  it("con mas pendientes que los cargados ofrece cargar los siguientes", async () => {
+    instalarServidor({ casos: [casoUno], pendientes: 40 });
     montar();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
-
     expect(
-      await within(dialogo).findByText("El caso cambió mientras lo revisabas"),
+      await screen.findByRole("button", {
+        name: "Cargar los siguientes casos",
+      }),
     ).not.toBeNull();
-    expect(
-      within(dialogo).getByText(
-        "el uso tiene una marca de auditoria inesperada",
-      ),
-    ).not.toBeNull();
-    expect(
-      within(dialogo).getByRole("button", { name: "Recargar caso" }),
-    ).not.toBeNull();
-    expect(tituloDeLaTarjeta()).not.toBeNull();
-  });
-
-  it("empuja el conteo de pendientes al shell (useFijarPendientes) al cargar y al remover un caso", async () => {
-    const fijarPendientes = vi.fn();
-    instalarServidor({ casos: [casoUno], pendientes: 3 });
-    montar(fijarPendientes);
-
-    await waitFor(() => expect(tituloDeLaTarjeta()).not.toBeNull());
-    await waitFor(() => expect(fijarPendientes).toHaveBeenCalledWith(3));
-
-    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
-    const dialogo = await screen.findByRole("dialog");
-    fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
-      target: { value: "x" },
-    });
-    fireEvent.click(
-      within(dialogo).getByRole("button", { name: "Descartar registro" }),
-    );
-
-    // La remocion optimista baja el conteo ANTES de que conteste la red.
-    await waitFor(() => expect(fijarPendientes).toHaveBeenCalledWith(2));
+    expect(screen.getByText("Caso 1 de 40")).not.toBeNull();
   });
 });
