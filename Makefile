@@ -1,4 +1,4 @@
-.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api seed lambda tf-fmt plan aplicar
+.PHONY: verificar tidy build vet fmt fmt-check test prueba-rapida api seed indexar-reglamento lambda tf-fmt plan aplicar
 
 # La puerta que pide la revision de #6: lo mismo que corre CI, en local.
 verificar: tidy build vet fmt-check test
@@ -39,6 +39,11 @@ api:
 
 seed:
 	go run ./cmd/seed
+
+# Reindexa docs/reglamentos para buscar_reglamento (#67). Deliberado, nunca al arrancar la API.
+# Necesita DATABASE_URL y EMBEDDINGS_PROVEEDOR (falso | bedrock).
+indexar-reglamento:
+	go run ./cmd/indexadorreglamento -dir docs/reglamentos
 
 # --- Despliegue -------------------------------------------------------------
 
