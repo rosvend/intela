@@ -74,25 +74,31 @@ variable "budget_notification_emails" {
 }
 
 variable "monthly_budget_usd" {
-  description = "Monthly ceiling in USD."
+  description = "Monthly ceiling in USD. The NAT Gateway (about USD 32 a month plus traffic) is why the example uses 45 instead of 20: a user-approved overage (ADR 0026). Without the NAT, 20 is enough."
   type        = number
-  default     = 20
+  default     = 45
 }
 
 variable "anthropic_api_key" {
-  description = "Key for the assistant's optional direct Anthropic provider (#66). Comes from the ANTHROPIC_API_KEY secret; only read when agente_proveedor = \"anthropic\"."
+  description = "Key for the assistant's Anthropic provider (#66), the production default. Comes from the ANTHROPIC_API_KEY secret; only read when agente_proveedor = \"anthropic\"."
   type        = string
   default     = ""
   sensitive   = true
 }
 
 variable "agente_proveedor" {
-  description = "Value for AGENTE_PROVEEDOR. bedrock is the production path (ADR 0025); anthropic needs the key AND a route to the internet, which these subnets do not have."
+  description = "Value for AGENTE_PROVEEDOR. anthropic is the production path (ADR 0026): it needs the key AND enable_nat. bedrock needs the account's Anthropic use-case form; falso is a deterministic stub."
   type        = string
-  default     = "bedrock"
+  default     = "anthropic"
 
   validation {
     condition     = contains(["bedrock", "anthropic", "falso"], var.agente_proveedor)
     error_message = "agente_proveedor must be bedrock, anthropic or falso."
   }
+}
+
+variable "enable_nat" {
+  description = "One NAT Gateway for outbound internet from the private subnets (about USD 32 a month plus traffic). Needed by agente_proveedor = \"anthropic\" and by Titan embeddings. Turn off after switching to bedrock with the use-case form submitted."
+  type        = bool
+  default     = true
 }

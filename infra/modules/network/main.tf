@@ -36,9 +36,9 @@ resource "aws_subnet" "private" {
   }
 }
 
-# An explicit route table with no default route. The only entry it ever gets is
-# the S3 gateway endpoint below, which is what "private, but can still reach the
-# object store" means without paying for a NAT Gateway.
+# An explicit route table. Its entries are the S3 gateway endpoint below and,
+# only when var.enable_nat is true, a default route through the NAT Gateway.
+# With the toggle off there is no route to the internet at all.
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
@@ -54,8 +54,7 @@ resource "aws_route_table_association" "private" {
 
 # Gateway endpoints are free. Interface endpoints are not -- they bill about
 # $7.20 per month per AZ, which is why nothing in this design reads SSM or
-# Secrets Manager at runtime from inside the VPC. The one exception is Bedrock,
-# below, which the assistant cannot do without.
+# Secrets Manager at runtime from inside the VPC.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
@@ -75,11 +74,24 @@ resource "aws_security_group" "lambda" {
   tags = { Name = "${var.name_prefix}-lambda" }
 }
 
-resource "aws_vpc_security_group_egress_rule" "lambda_all" {
+# Egress is narrowed to what the functions use: PostgreSQL inside the VPC and
+# HTTPS (S3 gateway endpoint, and the assistant's model API through the NAT).
+resource "aws_vpc_security_group_egress_rule" "lambda_https" {
   security_group_id = aws_security_group.lambda.id
-  description       = "Outbound to PostgreSQL, the S3 gateway endpoint and the Bedrock interface endpoint. There is no route to the internet from these subnets."
-  ip_protocol       = "-1"
+  description       = "HTTPS to the S3 gateway endpoint and, with the NAT, the assistant's model API"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_vpc_security_group_egress_rule" "lambda_postgres" {
+  security_group_id            = aws_security_group.lambda.id
+  description                  = "PostgreSQL to the database security group"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.database.id
 }
 
 resource "aws_security_group" "database" {
@@ -101,44 +113,76 @@ resource "aws_vpc_security_group_ingress_rule" "database_from_lambda" {
   referenced_security_group_id = aws_security_group.lambda.id
 }
 
-# The assistant's model (#66, ADR 0025). Bedrock is reached through an interface
-# endpoint so the API keeps having no route to the internet. The alternative, a
-# NAT Gateway, is about USD 32 a month plus traffic and opens egress for the
-# whole API.
-#
-# One subnet, on purpose: an interface endpoint bills about USD 7.20 a month
-# PER AZ plus USD 0.01 per GB. A Lambda in the other AZ still reaches it, with
-# cross-AZ traffic that is negligible for chat-sized payloads. The price is that
-# losing this AZ takes the assistant down; nothing else depends on it.
-#
-# Private DNS makes bedrock-runtime.<region>.amazonaws.com resolve to the
-# endpoint, so the SDK needs no custom endpoint URL.
-resource "aws_vpc_endpoint" "bedrock_runtime" {
-  vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-runtime"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private[0].id]
-  security_group_ids  = [aws_security_group.bedrock_endpoint.id]
-  private_dns_enabled = true
+# Outbound internet for the private subnets (#66, ADR 0026). The assistant calls
+# the Anthropic API, and Titan embeddings (#67) go to the public Bedrock endpoint.
+# One NAT Gateway in one AZ, on purpose: it bills about USD 32 a month plus USD
+# 0.045 per GB, per gateway. If its AZ is lost the assistant goes down; the
+# database and the rest of the API do not use it. Turn it off with
+# enable_nat = false.
+resource "aws_subnet" "public" {
+  count = var.enable_nat ? 1 : 0
 
-  tags = { Name = "${var.name_prefix}-bedrock-runtime" }
+  vpc_id            = aws_vpc.this.id
+  cidr_block        = cidrsubnet(var.cidr_block, 8, 200)
+  availability_zone = data.aws_availability_zones.available.names[0]
+
+  tags = { Name = "${var.name_prefix}-public" }
 }
 
-# The Lambda side needs no new rule: lambda_all already allows all egress, and
-# the subnets still have no route out of the VPC.
-resource "aws_security_group" "bedrock_endpoint" {
-  name        = "${var.name_prefix}-bedrock-endpoint"
-  description = "Bedrock runtime interface endpoint. HTTPS from the Intela Lambdas only."
-  vpc_id      = aws_vpc.this.id
+resource "aws_internet_gateway" "this" {
+  count = var.enable_nat ? 1 : 0
 
-  tags = { Name = "${var.name_prefix}-bedrock-endpoint" }
+  vpc_id = aws_vpc.this.id
+
+  tags = { Name = var.name_prefix }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "bedrock_from_lambda" {
-  security_group_id            = aws_security_group.bedrock_endpoint.id
-  description                  = "HTTPS from the Intela Lambdas"
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.lambda.id
+resource "aws_route_table" "public" {
+  count = var.enable_nat ? 1 : 0
+
+  vpc_id = aws_vpc.this.id
+
+  tags = { Name = "${var.name_prefix}-public" }
+}
+
+resource "aws_route" "public_internet" {
+  count = var.enable_nat ? 1 : 0
+
+  route_table_id         = aws_route_table.public[0].id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.this[0].id
+}
+
+resource "aws_route_table_association" "public" {
+  count = var.enable_nat ? 1 : 0
+
+  subnet_id      = aws_subnet.public[0].id
+  route_table_id = aws_route_table.public[0].id
+}
+
+resource "aws_eip" "nat" {
+  count = var.enable_nat ? 1 : 0
+
+  domain = "vpc"
+
+  tags       = { Name = "${var.name_prefix}-nat" }
+  depends_on = [aws_internet_gateway.this]
+}
+
+resource "aws_nat_gateway" "this" {
+  count = var.enable_nat ? 1 : 0
+
+  allocation_id = aws_eip.nat[0].id
+  subnet_id     = aws_subnet.public[0].id
+
+  tags       = { Name = var.name_prefix }
+  depends_on = [aws_internet_gateway.this]
+}
+
+resource "aws_route" "private_internet" {
+  count = var.enable_nat ? 1 : 0
+
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.this[0].id
 }

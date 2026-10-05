@@ -39,6 +39,9 @@ module "network" {
   source = "../../modules/network"
 
   name_prefix = var.name_prefix
+  # The Anthropic API (agente_proveedor = "anthropic") and Titan embeddings need
+  # outbound internet: one NAT Gateway, about USD 32 a month (ADR 0026).
+  enable_nat = var.enable_nat
 }
 
 module "database" {
@@ -96,9 +99,9 @@ module "api" {
   oni_direccion_fisica      = "Carrera 14 No. 99-33, Oficina 602, Torre REM, Bogota D.C."
   oni_direccion_electronica = "redescritorescolombia@redescritores.com"
 
-  # The assistant (#66, ADR 0025): Bedrock through the VPC endpoint. The
-  # Anthropic key stays wired for agente_proveedor = "anthropic", which cannot
-  # reach api.anthropic.com from these subnets.
+  # The assistant (#66, ADR 0026): the Anthropic API through the NAT Gateway,
+  # because Bedrock's Anthropic use-case form is still pending for this account.
+  # The Bedrock policy below stays for Titan embeddings and a later switch.
   agente_proveedor    = var.agente_proveedor
   anthropic_api_key   = var.anthropic_api_key
   bedrock_policy_json = data.aws_iam_policy_document.bedrock.json
@@ -134,9 +137,10 @@ module "budget" {
   notification_emails = var.budget_notification_emails
 }
 
-# Least privilege for the assistant: the Haiku inference profile, the foundation
-# model behind it only when called THROUGH that profile, and Titan embeddings
-# (#67). Converse is authorized as bedrock:InvokeModel; no streaming is used.
+# Least privilege for Bedrock: Titan embeddings (#67, used now, no use-case form
+# needed) and the Haiku inference profile plus the foundation model behind it
+# only when called THROUGH that profile (kept for a future agente_proveedor =
+# "bedrock"). Converse is authorized as bedrock:InvokeModel; no streaming.
 data "aws_iam_policy_document" "bedrock" {
   statement {
     sid       = "HaikuInferenceProfile"
