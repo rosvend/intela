@@ -1,8 +1,10 @@
 package aplicacion
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -70,6 +72,28 @@ func TestConsultarReglamentoDiceNoEncontradoAntesQueUnaCoincidenciaDebil(t *test
 	}
 	if r.Encontrado || len(r.Secciones) != 0 || !strings.Contains(r.Mensaje, "No encontré") {
 		t.Fatalf("se esperaba 'no encontrado' explicito; got %+v", r)
+	}
+}
+
+func TestConsultarReglamentoAvisaSiElIndiceDelModeloEstaVacio(t *testing.T) {
+	var buf bytes.Buffer
+	uc := ConsultarReglamento{Motor: motorFijo{}, Almacen: &almacenFijo{}, Piso: 0.3, Log: slog.New(slog.NewTextHandler(&buf, nil))}
+
+	r, err := uc.Consultar(t.Context(), staff, "prescripcion")
+	if err != nil || r.Encontrado {
+		t.Fatalf("r=%+v err=%v", r, err)
+	}
+	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "modelo=fijo") {
+		t.Errorf("un indice vacio tiene que dejar un WARN con el modelo; log = %q", buf.String())
+	}
+
+	buf.Reset()
+	uc.Almacen = &almacenFijo{coincidencias: []CoincidenciaReglamento{{Seccion: SeccionReglamento{Cita: "RT 3.1"}, Similitud: 0.1}}}
+	if _, err := uc.Consultar(t.Context(), staff, "receta de arepas"); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("nada sobre el piso no es un indice vacio; log = %q", buf.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package aplicacion
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 )
@@ -66,6 +67,8 @@ type ConsultarReglamento struct {
 	Almacen AlmacenVectorial
 	// Piso es la similitud coseno minima; depende del modelo de embeddings.
 	Piso float64
+	// Log recibe el aviso de indice vacio; nil = slog.Default().
+	Log *slog.Logger
 }
 
 // Consultar embebe la pregunta y devuelve las secciones con cita que superan el piso.
@@ -85,6 +88,10 @@ func (c ConsultarReglamento) Consultar(ctx context.Context, actor Usuario, pregu
 	if err != nil {
 		return RespuestaReglamento{}, fmt.Errorf("buscar en el reglamento: %w", err)
 	}
+	if len(cs) == 0 {
+		// Sin ninguna fila no es "nada supera el piso": nadie indexo este modelo o la API y el indexador difieren.
+		c.log().WarnContext(ctx, "reglamento: indice vacio para el modelo; correr make indexar-reglamento con el mismo proveedor", slog.String("modelo", e.Modelo))
+	}
 	var r RespuestaReglamento
 	for _, co := range cs {
 		if co.Similitud >= c.Piso && co.Seccion.Cita != "" {
@@ -96,6 +103,13 @@ func (c ConsultarReglamento) Consultar(ctx context.Context, actor Usuario, pregu
 	}
 	r.Encontrado = true
 	return r, nil
+}
+
+func (c ConsultarReglamento) log() *slog.Logger {
+	if c.Log != nil {
+		return c.Log
+	}
+	return slog.Default()
 }
 
 // rolConocido falla cerrado: el usuario cero o un rol fuera de la matriz no leen nada.
