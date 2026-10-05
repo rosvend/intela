@@ -1,0 +1,855 @@
+/* Experiencia del titular (escritor): Inicio, Mis ingresos, historia de la cifra, Mis liquidaciones. */
+
+/* ---------- tablero del titular ---------- */
+
+.titular {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 1040px;
+}
+
+.titular-saludo h1 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.1rem);
+  letter-spacing: -0.02em;
+}
+
+.titular-saludo p {
+  margin: 0;
+  color: var(--texto-medio);
+}
+
+.titular-rejilla {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.titular-rejilla > .panel:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.titular-rejilla > .panel:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.titular-heroe {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.titular-heroe .cifra-valor {
+  font-size: clamp(1.6rem, 12cqi, 3.4rem);
+}
+
+.titular-eyebrow {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--texto-medio);
+}
+
+.titular-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.titular-total {
+  margin: 0 0 1rem;
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.titular-total-sub {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--texto-suave);
+}
+
+.titular-total + .barra-apilada {
+  margin-bottom: 1rem;
+}
+
+.panel-pie a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.panel-pie a:hover {
+  text-decoration: underline;
+}
+
+.obras-lista .leyenda-fila {
+  grid-template-columns: 1fr auto;
+}
+
+.obras-lista .detalle-panel {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+
+.chip-boton {
+  border: none;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: transform var(--dur-rapida) var(--curva-salida);
+}
+
+.chip-boton:active {
+  transform: scale(0.97);
+}
+
+.chip-boton:focus-visible {
+  outline: 2px solid var(--alerta);
+  outline-offset: 2px;
+}
+
+.titular-error {
+  margin: 0;
+  color: var(--error);
+}
+
+/* ---------- vacios y esqueletos ---------- */
+
+.vacio {
+  padding: 1.5rem 0 0.5rem;
+  text-align: left;
+}
+
+.vacio-titulo {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+.vacio .muted {
+  margin: 0;
+  max-width: 46ch;
+  line-height: 1.55;
+}
+
+.esqueleto-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+}
+
+.esqueleto {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    var(--fondo) 0%,
+    var(--borde) 50%,
+    var(--fondo) 100%
+  );
+  background-size: 200% 100%;
+  animation: esqueleto-brillo 1.4s ease-in-out infinite;
+}
+
+.esqueleto-fila {
+  height: 2.75rem;
+}
+
+.esqueleto-cifra {
+  width: 14rem;
+  max-width: 70%;
+  height: 3rem;
+}
+
+.esqueleto-linea {
+  width: 9rem;
+  height: 0.9rem;
+}
+
+@keyframes esqueleto-brillo {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* ---------- mis ingresos ---------- */
+
+.ingresos-cabecera {
+  align-items: flex-start;
+}
+
+.ingresos-ayuda {
+  margin: 0.25rem 0 0;
+  font-size: 0.88rem;
+}
+
+.filtros-pastilla {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.pastilla-select {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--texto);
+  padding: 0.45rem 2rem 0.45rem 0.9rem;
+  border: 1px solid var(--borde);
+  border-radius: 99px;
+  background-color: var(--superficie);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--texto-suave) 50%),
+    linear-gradient(135deg, var(--texto-suave) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 52%,
+    calc(100% - 10px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  appearance: none;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-rapida),
+    background-color var(--dur-rapida);
+}
+
+.pastilla-select:hover {
+  border-color: var(--texto-suave);
+}
+
+.pastilla-select:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.ingresos-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ingresos-item {
+  border-top: 1px solid var(--borde);
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+  animation-delay: calc(var(--indice, 0) * 40ms);
+}
+
+.ingresos-item:first-child {
+  border-top: none;
+}
+
+.ingreso-fila {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 1rem;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.95rem 0.5rem;
+  margin: 0 -0.5rem;
+  box-sizing: content-box;
+  max-width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-rapida);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ingreso-fila:hover {
+    background: var(--fondo);
+  }
+}
+
+.ingreso-fila:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.ingreso-obra {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ingreso-titulo {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingreso-sub {
+  font-size: 0.82rem;
+  color: var(--texto-suave);
+}
+
+.ingreso-monto {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.ingreso-chevron {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--texto-suave);
+  border-bottom: 2px solid var(--texto-suave);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform var(--dur-media) var(--curva-salida);
+}
+
+.ingreso-fila[aria-expanded="true"] .ingreso-chevron {
+  transform: rotate(225deg) translateY(-2px);
+}
+
+/* Despliegue solo con opacidad y transform: sin overflow que recorte los popovers. */
+.desplegable {
+  animation: desplegar var(--dur-media) var(--curva-salida);
+}
+
+.desplegable-interior {
+  padding: 0.25rem 0 1.25rem;
+}
+
+@keyframes desplegar {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Cada fila y cada paso entra con una animacion de transform (fill both), que
+ * los vuelve contextos de apilamiento: un popover abierto quedaria debajo del
+ * paso siguiente. La fila que lo contiene sube por encima de sus hermanas.
+ */
+.ingresos-item,
+.liquidacion-fila {
+  position: relative;
+}
+
+.ingresos-item:has(.detalle-panel),
+.historia-paso:has(.detalle-panel),
+.liquidacion-fila:has(.detalle-panel) {
+  z-index: 5;
+}
+
+/* ---------- historia de la cifra ---------- */
+
+.historia {
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: var(--fondo);
+}
+
+.historia-pasos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: paso;
+}
+
+.historia-paso {
+  position: relative;
+  padding: 0 0 1.4rem 2.1rem;
+  counter-increment: paso;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+}
+
+.historia-paso:nth-child(2) {
+  animation-delay: 60ms;
+}
+.historia-paso:nth-child(3) {
+  animation-delay: 120ms;
+}
+.historia-paso:nth-child(4) {
+  animation-delay: 180ms;
+}
+.historia-paso:nth-child(5) {
+  animation-delay: 240ms;
+}
+
+/* Numero del paso y linea que une la historia de arriba abajo. */
+.historia-paso::before {
+  content: counter(paso);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.35rem;
+  height: 1.35rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--texto-medio);
+}
+
+.historia-paso::after {
+  content: "";
+  position: absolute;
+  left: calc(0.675rem - 0.5px);
+  top: 1.6rem;
+  bottom: 0.25rem;
+  width: 1px;
+  background: var(--borde);
+}
+
+.historia-paso:last-child {
+  padding-bottom: 0;
+}
+
+.historia-paso:last-child::after {
+  display: none;
+}
+
+.historia-paso-marca::before {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: white;
+}
+
+.historia-titulo {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--texto-medio);
+}
+
+.historia-cifra {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.historia-texto {
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--texto-medio);
+  max-width: 60ch;
+}
+
+.historia-parte {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* El "¿de donde sale?" va en su propia linea, nunca a media frase. */
+.historia-mas {
+  margin-top: 0.5rem;
+}
+
+.historia-leyenda {
+  margin-top: 0.75rem;
+}
+
+.historia-leyenda .leyenda-fila {
+  padding: 0.55rem 0;
+  font-size: 0.86rem;
+}
+
+.historia-cita {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+}
+
+.historia-paso-marca .cifra-valor {
+  color: var(--acento);
+}
+
+.historia-reserva {
+  padding: 1rem 1rem 1rem 3.1rem;
+  margin: 0 0 1.4rem;
+  border-radius: 12px;
+  background: var(--alerta-fondo);
+  border: 1px solid color-mix(in srgb, var(--alerta) 25%, transparent);
+}
+
+.historia-reserva::before {
+  content: "!";
+  left: 1rem;
+  top: 1rem;
+  background: var(--alerta);
+  border-color: var(--alerta);
+  color: white;
+}
+
+.historia-reserva::after {
+  display: none;
+}
+
+.historia-reserva .historia-titulo,
+.historia-reserva .historia-cifra {
+  color: var(--alerta);
+}
+
+.historia-reserva .historia-texto {
+  color: var(--texto);
+}
+
+.historia-reserva .detalle {
+  margin-top: 0.6rem;
+}
+
+.historia-reserva .detalle-disparador {
+  color: var(--alerta);
+}
+
+.historia-aprobado {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+  font-size: 0.85rem;
+  color: var(--texto-medio);
+}
+
+.historia-check {
+  display: grid;
+  place-items: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--ok-fondo);
+  color: var(--ok);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Anillo de "tu parte": un solo arco de marca sobre una pista gris. */
+.anillo {
+  width: 3.5rem;
+  height: 3.5rem;
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.anillo circle {
+  fill: none;
+  stroke-width: 5;
+}
+
+.anillo-fondo {
+  stroke: var(--borde);
+}
+
+.anillo-valor {
+  stroke: var(--serie-1);
+  stroke-linecap: round;
+  animation: anillo-llenar var(--dur-lenta) var(--curva-salida) both;
+}
+
+.anillo-texto {
+  transform: rotate(90deg);
+  transform-origin: 24px 24px;
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--texto);
+}
+
+@keyframes anillo-llenar {
+  from {
+    stroke-dasharray: 0 100;
+  }
+}
+
+/* Usos: barras horizontales finas, ancho por puntos relativo al mayor. */
+.usos {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.uso {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+}
+
+.uso-nombre {
+  color: var(--texto-medio);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uso .detalle {
+  display: block;
+}
+
+.uso-barra {
+  display: block;
+  width: 100%;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.uso-relleno {
+  display: block;
+  width: var(--ancho);
+  min-width: 4px;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: var(--serie-1);
+  opacity: 0.85;
+  transform-origin: left center;
+  animation: segmento-crecer var(--dur-lenta) var(--curva-salida) both;
+  animation-delay: var(--retardo, 0ms);
+  transition: opacity var(--dur-rapida);
+}
+
+.uso-barra:hover .uso-relleno,
+.uso-barra[aria-expanded="true"] .uso-relleno {
+  opacity: 1;
+}
+
+.uso-barra:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 3px;
+}
+
+.uso-puntos {
+  font-variant-numeric: tabular-nums;
+  color: var(--texto-suave);
+}
+
+/* "Ver los N usos": boton real, no texto pulsable. */
+.historia-boton,
+.boton-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.95rem;
+  border-radius: 99px;
+  text-decoration: none;
+  transition:
+    border-color var(--dur-rapida),
+    transform var(--dur-rapida) var(--curva-salida);
+}
+
+.historia-boton {
+  margin-top: 0.75rem;
+}
+
+.historia-boton svg,
+.boton-cta svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.historia-boton:active,
+.boton-cta:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .historia-boton:hover,
+  .boton-cta:hover {
+    border-color: var(--texto-suave);
+  }
+}
+
+.panel-pie .boton-cta,
+.panel-pie .boton-cta:hover {
+  text-decoration: none;
+  color: var(--texto);
+}
+
+/* ---------- mis liquidaciones ---------- */
+
+.liquidaciones-barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.liquidaciones-barra form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pastilla-campo {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--borde);
+  border-radius: 99px;
+  width: 9rem;
+  background: var(--superficie);
+}
+
+.pastilla-campo:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.liquidaciones-barra .boton-secundario,
+.liquidaciones-barra .boton-primario {
+  padding: 0.5rem 1rem;
+  font-size: 0.88rem;
+  transition: transform var(--dur-rapida) var(--curva-salida);
+}
+
+.liquidaciones-barra .boton-secundario:active,
+.liquidaciones-barra .boton-primario:active {
+  transform: scale(0.97);
+}
+
+.liquidaciones-exportar {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.liquidacion-desglose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+
+.liquidaciones-lista {
+  margin-top: 1rem;
+}
+
+.ingreso-sub-bloque {
+  display: block;
+  font-weight: 500;
+}
+
+.liquidacion-fila {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--borde);
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+  animation-delay: calc(var(--indice, 0) * 40ms);
+}
+
+.liquidacion-fila:first-child {
+  border-top: none;
+}
+
+.liquidacion-fila .ingreso-monto {
+  text-align: right;
+}
+
+.liquidacion-reparto {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.liquidacion-leyenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  font-size: 0.8rem;
+  color: var(--texto-medio);
+}
+
+.liquidacion-leyenda li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.liquidacion-leyenda .leyenda-punto {
+  width: 8px;
+  height: 8px;
+}
+
+.liquidacion-leyenda-cifra {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+@media (max-width: 760px) {
+  .titular-rejilla {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .uso {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .uso .detalle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .liquidaciones-exportar {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ingresos-item,
+  .historia-paso,
+  .desplegable,
+  .anillo-valor,
+  .uso-relleno,
+  .liquidacion-fila {
+    animation: none;
+  }
+
+  .esqueleto {
+    animation: none;
+  }
+
+  .ingreso-chevron {
+    transition: none;
+  }
+}

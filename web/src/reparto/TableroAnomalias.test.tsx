@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,8 @@ const proc2025: Proceso = {
   circuito: "nacional",
   etapa: "verificacion",
   periodo: "2025",
+  bolsa_id: "bolsa-1",
+  snapshot_id: "snap-1",
   revision: 1,
   firmas: [],
 };
@@ -63,15 +66,44 @@ const alertas: Alerta[] = [
   alerta({
     id: "al-1",
     tipo: "oni",
-    detalle: "Título no identificado",
+    detalle:
+      'la cascada no reconocio "La reina del flow" (fuente "caracol", entrega "r-1"): queda en la cola manual',
     referencia: "uso:uso-9",
+    ref_id: "uso-9",
   }),
-  alerta({ id: "al-2", tipo: "oni", detalle: "Otra ONI" }),
+  alerta({ id: "al-2", tipo: "oni", detalle: "Otra ONI", ref_id: "u-2" }),
   alerta({
     id: "al-3",
     tipo: "duplicado_archivo",
     detalle: "Mismo SHA-256",
+    ref_tipo: "reporte",
+    ref_id: "rep-1",
     critica: true,
+  }),
+];
+
+const RESERVA_60 =
+  'la declaracion vigente de la obra "obra-serie" no esta completa: lo declarado suma 60% en 1 parte(s) y R-04 exige 100 exactos';
+const COAUTOR =
+  'el coautor con IPI IPI-00000002 figura en el catalogo de la obra "obra-serie" y no tiene parte en la declaracion vigente';
+
+const deSerieY: Alerta[] = [
+  alerta({
+    id: "s-1",
+    tipo: "reserva_declaracion_incompleta",
+    detalle: RESERVA_60,
+    ref_tipo: "obra",
+    ref_id: "obra-serie",
+    ref_titulo: "Serie Y",
+  }),
+  alerta({
+    id: "s-2",
+    tipo: "titular_sin_porcentaje",
+    detalle: COAUTOR,
+    ref_tipo: "obra",
+    ref_id: "obra-serie",
+    ref_titular: "ipi:IPI-00000002",
+    ref_titulo: "Serie Y",
   }),
 ];
 
@@ -134,46 +166,307 @@ describe("TableroAnomalias", () => {
     localStorage.clear();
   });
 
-  it("muestra las seis tarjetas con los conteos del resumen y enlaza a resolucion", async () => {
+  it("resume en chips cuantas bloquean y cuantas avisan, con la barra por tipo", async () => {
     servir();
 
     montar();
 
-    await screen.findByText("Título no identificado");
-    expect(screen.getAllByText("ONI").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Duplicado de archivo").length).toBeGreaterThan(
-      0,
-    );
+    await screen.findByText("La reina del flow");
+    const totales = screen.getByRole("group", { name: "Totales del periodo" });
+    expect(within(totales).getByText("1 bloquea")).toBeTruthy();
+    expect(within(totales).getByText("2 avisos")).toBeTruthy();
+
+    const barra = screen.getByRole("group", { name: "Alertas por tipo" });
+    // Solo los tipos con abiertas tienen segmento.
+    expect(within(barra).getAllByRole("button")).toHaveLength(2);
+
+    const leyenda = screen.getByRole("list", { name: "Tipos de alerta" });
+    expect(within(leyenda).getAllByRole("listitem")).toHaveLength(6);
+    // Los tres tipos criticos llevan el candado, sin subtitulo.
     expect(
-      screen.getAllByText("Tipo de obra sin mapear").length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("link", { name: "Ir a resolución" }),
-    ).toHaveLength(6);
-    expect(screen.getAllByText("Abiertas · bloquean la corrida")).toHaveLength(
-      3,
-    );
-    expect(screen.getByText(/1 crítica abierta bloquea/)).toBeTruthy();
-    expect(
-      screen.getAllByRole("link", { name: "Resolver" }).length,
-    ).toBeGreaterThan(0);
+      within(leyenda).getAllByRole("img", { name: "Bloquea el reparto" }),
+    ).toHaveLength(3);
+    expect(screen.queryByText("Bloquea el reparto")).toBeNull();
+    expect(screen.queryByText(/crítica abierta bloquea/)).toBeNull();
   });
 
-  it("Resolver no descarta el ?periodo ni repuebla la bandeja con otro", async () => {
+  it("sin criticas el resumen dice que nada bloquea", async () => {
+    servir({
+      resumen: () =>
+        json(resumenDePrueba({ abiertas: 2, porTipo: { oni: 2 } })),
+    });
+
+    montar();
+
+    const totales = await screen.findByRole("group", {
+      name: "Totales del periodo",
+    });
+    expect(within(totales).getByText("Nada bloquea")).toBeTruthy();
+    expect(within(totales).getByText("2 avisos")).toBeTruthy();
+  });
+
+  it("cada tipo explica que significa y que hacer en un Detalle", async () => {
     servir();
 
     montar();
 
-    await screen.findByText("Título no identificado");
-    const resolver = screen.getAllByRole("link", { name: "Resolver" })[0];
-    expect(resolver?.getAttribute("href")).toBe("#bandeja");
+    await screen.findByText("La reina del flow");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Qué significa: Declaración que no suma 100 %",
+      }),
+    );
+    const detalle = screen.getByRole("dialog", {
+      name: "Declaración que no suma 100 %",
+    });
+    expect(detalle.textContent).toContain("Qué hacer");
+    expect(detalle.textContent).toContain("reserva");
+  });
 
-    fireEvent.click(resolver as HTMLElement);
+  it("agrupa por obra con su titulo real y un chip por problema", async () => {
+    servir({ lista: () => json(deSerieY) });
 
-    expect(screen.getByText("Título no identificado")).toBeTruthy();
+    montar();
+
+    const titulo = await screen.findByRole("heading", { name: "Serie Y" });
+    const tarjeta = titulo.closest("li") as HTMLElement;
+    expect(within(tarjeta).getByText("Declaración al 60 %")).toBeTruthy();
+    expect(within(tarjeta).getByText("Coautor sin porcentaje")).toBeTruthy();
+    expect(
+      within(tarjeta).getByRole("img", { name: "60 de 100 % declarado" }),
+    ).toBeTruthy();
+    expect(
+      within(tarjeta).getByRole("img", {
+        name: "IPI-00000002: porcentaje sin declarar",
+      }),
+    ).toBeTruthy();
+
+    const lista = screen.getByRole("list", { name: "Registros afectados" });
+    expect(lista.querySelectorAll(":scope > li")).toHaveLength(1);
+  });
+
+  it("la frase del servidor no se pinta: vive en el Detalle de cada problema", async () => {
+    servir({ lista: () => json(deSerieY) });
+
+    montar();
+
+    await screen.findByRole("heading", { name: "Serie Y" });
+    expect(screen.queryByText(RESERVA_60)).toBeNull();
+    expect(screen.queryByText("obra:obra-serie")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Detalle: Declaración al 60 %" }),
+    );
+    expect(screen.getByRole("dialog").textContent).toContain(RESERVA_60);
+  });
+
+  it("sin titulo en el catalogo la tarjeta usa el id de la obra", async () => {
+    servir({
+      lista: () => json(deSerieY.map((a) => ({ ...a, ref_titulo: undefined }))),
+    });
+
+    montar();
+
+    expect(
+      await screen.findByRole("heading", { name: "obra-serie" }),
+    ).toBeTruthy();
+  });
+
+  it("la declaracion y el coautor llevan a abrir la declaracion de la obra", async () => {
+    servir({ lista: () => json(deSerieY) });
+
+    montar();
+
+    await screen.findByRole("heading", { name: "Serie Y" });
+    const enlaces = screen.getAllByRole("link", { name: "Abrir declaración" });
+    expect(enlaces).toHaveLength(1);
+    expect(enlaces[0].getAttribute("href")).toBe(
+      "/catalogo/obra-serie/declaracion",
+    );
+  });
+
+  // I4 (PR #215): GET /api/obras/{id} es solo de administrador; el titulo
+  // llega en la alerta y la tarjeta no pide nada por su cuenta.
+  it.each([
+    "administrador",
+    "distribucion",
+    "contabilidad",
+    "auditor",
+  ] as const)(
+    "con rol %s el titulo sale de la alerta, sin pedir /api/obras",
+    async (rol) => {
+      servir({ rol, lista: () => json(deSerieY) });
+
+      montar();
+
+      expect(
+        await screen.findByRole("heading", { name: "Serie Y" }),
+      ).toBeTruthy();
+      const aObras = vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith("/api/obras"));
+      expect(aObras).toHaveLength(0);
+    },
+  );
+
+  // I5 (PR #215): sin acceso a la pantalla de destino, no hay boton.
+  it.each(["distribucion", "contabilidad", "auditor"] as const)(
+    "con rol %s no ofrece acciones hacia pantallas de administrador",
+    async (rol) => {
+      servir({ rol, lista: () => json([...alertas, ...deSerieY]) });
+
+      montar();
+
+      await screen.findByRole("heading", { name: "Serie Y" });
+      for (const nombre of [
+        "Identificar",
+        "Revisar en Ingesta",
+        "Abrir declaración",
+      ]) {
+        expect(screen.queryByRole("link", { name: nombre })).toBeNull();
+      }
+    },
+  );
+
+  // I6 (PR #215): por encima de 100 es un error, no una barra llena.
+  it("una declaracion al 150 % se pinta como error, no como completa", async () => {
+    servir({
+      lista: () =>
+        json([
+          alerta({
+            id: "x-1",
+            tipo: "reserva_declaracion_incompleta",
+            detalle:
+              'la declaracion vigente de la obra "obra-x" no esta completa: lo declarado suma 150% en 2 parte(s) y R-04 exige 100 exactos',
+            ref_tipo: "obra",
+            ref_id: "obra-x",
+            ref_titulo: "Obra X",
+          }),
+        ]),
+    });
+
+    montar();
+
+    const titulo = await screen.findByRole("heading", { name: "Obra X" });
+    const tarjeta = titulo.closest("li") as HTMLElement;
+    expect(within(tarjeta).getByText("Declaración al 150 %")).toBeTruthy();
+    expect(
+      within(tarjeta).queryByRole("img", { name: "100 de 100 % declarado" }),
+    ).toBeNull();
+    const barra = within(tarjeta).getByRole("img", {
+      name: "150 % declarado: excede el 100 %",
+    });
+    expect(barra.className).toContain("problema-progreso-excede");
+    expect(barra.textContent).toContain("150/100");
+  });
+
+  it("una declaracion por debajo de 100 no lleva el estado de exceso", async () => {
+    servir({ lista: () => json(deSerieY) });
+
+    montar();
+
+    const barra = await screen.findByRole("img", {
+      name: "60 de 100 % declarado",
+    });
+    expect(barra.className).not.toContain("problema-progreso-excede");
+  });
+
+  it("lo que bloquea va primero, con borde de acento y chip relleno con candado", async () => {
+    servir();
+
+    montar();
+
+    const lista = await screen.findByRole("list", {
+      name: "Registros afectados",
+    });
+    const tarjetas = Array.from(
+      lista.querySelectorAll<HTMLElement>(":scope > li"),
+    );
+    expect(tarjetas).toHaveLength(3);
+    expect(within(tarjetas[0]).getByRole("heading").textContent).toBe("rep-1");
+    expect(tarjetas[0].className).toContain("afectado-bloquea");
+    expect(tarjetas[1].className).not.toContain("afectado-bloquea");
+
+    const chip = within(tarjetas[0]).getByText("Archivo duplicado");
+    expect(chip.closest(".chip")?.className).toContain("problema-chip-bloquea");
+    expect(
+      within(tarjetas[0]).getByRole("img", { name: "Bloquea el reparto" }),
+    ).toBeTruthy();
+    const aviso = within(tarjetas[1]).getByText("Sin obra identificada");
+    expect(aviso.closest(".chip")?.className).toContain("chip-alerta");
+  });
+
+  it("no hereda la clase .revision del <dl> de afiliacion, que lo parte en una columna de 11rem", async () => {
+    servir();
+
+    const { container } = montar();
+
+    await screen.findByText("La reina del flow");
+    const pantalla = container.querySelector("section.anomalias");
+    expect(pantalla?.classList.contains("revision")).toBe(false);
+    expect(pantalla?.classList.contains("revision-pantalla")).toBe(true);
+  });
+
+  it("no pone subtitulo de relleno ni la linea de corridas del periodo", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("La reina del flow");
+    expect(screen.queryByText(/Lo que conviene revisar/)).toBeNull();
+    expect(screen.queryByText(/Corridas del periodo/)).toBeNull();
+  });
+
+  it("el panel de corridas es una pildora secundaria en la cabecera", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("La reina del flow");
+    const volver = screen.getByRole("link", { name: "Panel de corridas" });
+    expect(volver.getAttribute("href")).toBe("/distribucion");
+    expect(volver.className).toContain("boton-secundario");
+    expect(volver.closest("header")).not.toBeNull();
+  });
+
+  it("una ONI enlaza a la bandeja de identificacion sin perder el periodo de la vista", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("La reina del flow");
+    const enlaces = screen.getAllByRole("link", { name: "Identificar" });
+    expect(enlaces).toHaveLength(2);
+    expect(enlaces[0]?.getAttribute("href")).toBe("/identificacion");
+    expect(
+      screen
+        .getByRole("link", { name: "Revisar en Ingesta" })
+        .getAttribute("href"),
+    ).toBe("/ingesta");
     expect((screen.getByLabelText("Periodo") as HTMLSelectElement).value).toBe(
       "2025",
     );
+  });
+
+  it("una alerta resuelta se ve apagada y sin accion", async () => {
+    servir({
+      lista: () =>
+        json([
+          alerta({
+            id: "al-9",
+            tipo: "oni",
+            detalle: 'la cascada no reconocio "Ya cerrada" (fuente "x")',
+            resuelta: true,
+          }),
+        ]),
+    });
+
+    montar();
+
+    const texto = await screen.findByText("Ya cerrada");
+    const tarjeta = texto.closest("li") as HTMLElement;
+    expect(tarjeta.className).toContain("afectado-cerrado");
+    expect(within(tarjeta).getByText("Resuelta")).toBeTruthy();
+    expect(within(tarjeta).queryByRole("link")).toBeNull();
   });
 
   it("sin ?periodo no pide las alertas de todos los periodos", async () => {
@@ -189,7 +482,7 @@ describe("TableroAnomalias", () => {
 
     montar("/anomalias");
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     const pedidas = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain(RUTAS_REPARTO.alertas());
     expect(pedidas).not.toContain(RUTAS_REPARTO.resumenAlertas(""));
@@ -205,13 +498,12 @@ describe("TableroAnomalias", () => {
     montar("/anomalias");
 
     await waitFor(() =>
-      expect(screen.getAllByText("Sin datos todavía").length).toBeGreaterThan(
+      expect(screen.getAllByText("Sin datos todavía.").length).toBeGreaterThan(
         0,
       ),
     );
     const pedidas = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain(RUTAS_REPARTO.alertas());
-    expect(screen.getAllByText("Abiertas").length).toBeGreaterThan(0);
   });
 
   it("un periodo sin evaluar no se presenta como limpio", async () => {
@@ -223,7 +515,7 @@ describe("TableroAnomalias", () => {
     montar();
 
     await screen.findByText(/no se ha evaluado todavía: los conteos/);
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
     expect(
       screen.getByText("Este periodo no se ha evaluado todavía."),
     ).toBeTruthy();
@@ -268,7 +560,7 @@ describe("TableroAnomalias", () => {
       await screen.findByRole("button", { name: "Evaluar periodo" }),
     );
 
-    await screen.findByText(/1 crítica abierta bloquea/);
+    await screen.findByText("1 bloquea");
     const post = llamadas(RUTAS_REPARTO.evaluarAlertas)[0];
     expect(post?.[1]?.method).toBe("POST");
     expect(post?.[1]?.body).toBe('{"periodo":"2025"}');
@@ -305,7 +597,7 @@ describe("TableroAnomalias", () => {
       expect(screen.getAllByRole("alert").length).toBeGreaterThan(0),
     );
     expect(screen.queryByText("Sin datos todavía.")).toBeNull();
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
   });
 
   it("no dice 'No hay alertas' mientras el resumen no ha llegado", async () => {
@@ -327,10 +619,12 @@ describe("TableroAnomalias", () => {
       ).toBe(true),
     );
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
 
     resolver(json(resumenDePrueba({ periodo: "2025" })));
-    await screen.findByText("No hay alertas abiertas en este periodo.");
+    await screen.findByText(
+      "Todo en orden: no hay alertas abiertas en este periodo",
+    );
   });
 
   it("cuenta en singular una crítica aceptada sin corregir", async () => {

@@ -10,6 +10,8 @@ function proceso(parcial: Partial<Proceso> = {}): Proceso {
     circuito: "nacional",
     etapa: "verificacion",
     periodo: "2025",
+    bolsa_id: "bolsa-1",
+    snapshot_id: "snap-1",
     revision: 1,
     firmas: [],
     ...parcial,
@@ -50,7 +52,7 @@ describe("Compuerta", () => {
     montar(
       "administrador",
       proceso({
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(
@@ -76,7 +78,7 @@ describe("Compuerta", () => {
     montar(
       "distribucion",
       proceso({
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(screen.queryByRole("button", { name: "Firmar" })).toBeNull();
@@ -108,5 +110,65 @@ describe("Compuerta", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar rechazo" }));
     expect(onRechazar).toHaveBeenCalledWith("cifras no cuadran");
+  });
+
+  it("dice en claro cuantas firmas pide la etapa y cuantas lleva", () => {
+    montar(
+      "administrador",
+      proceso({
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Esta etapa necesita 2 firmas" }),
+    ).toBeTruthy();
+    expect(screen.getByText("1 de 2")).toBeTruthy();
+  });
+
+  it("una firma de una revision anterior no cuenta", () => {
+    montar(
+      "distribucion",
+      proceso({
+        revision: 2,
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
+      }),
+    );
+    expect(screen.getByText("0 de 2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Firmar" })).toBeTruthy();
+  });
+
+  it("no expone ids crudos ni un detalle técnico", () => {
+    const { container } = montar(
+      "administrador",
+      proceso({
+        revision: 3,
+        firmas: [{ rol: "contabilidad", actor_id: "usr-c9", revision: 3 }],
+      }),
+    );
+    expect(container.querySelector("details")).toBeNull();
+    expect(screen.queryByText(/Detalle técnico/)).toBeNull();
+    expect(container.textContent).not.toContain("usr-c9");
+    expect(container.textContent).not.toContain("proc-1");
+    expect(screen.queryByText(/el dinero no avanza/)).toBeNull();
+  });
+
+  it("mientras se envia la firma los botones se bloquean", () => {
+    render(
+      <Compuerta
+        proceso={proceso()}
+        rol="distribucion"
+        enviando
+        onFirmar={vi.fn()}
+        onRechazar={vi.fn()}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: /Firmando/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Rechazar" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 });

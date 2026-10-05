@@ -1,3 +1,7 @@
+import { formatearCOP } from "../ui/dinero";
+
+// Formatos de pantalla (enteros, instantes, importes); el dinero se formatea siempre con ui/dinero.
+
 export function formatearEntero(n: number): string {
   return new Intl.NumberFormat("es-CO").format(n);
 }
@@ -30,15 +34,25 @@ export function formatearInstante(iso: string): string {
     : FORMATO_DE_INSTANTE.format(fecha);
 }
 
-/**
- * Importe neto como string decimal. Agrupa miles y antepone `$` sin
- * convertirlo a number: el tablero no hace aritmetica sobre la cifra.
- */
+/** Importe neto como string decimal, en pesos colombianos. */
 export function formatearImporte(neto: string): string {
-  const negativo = neto.startsWith("-");
-  const absoluto = negativo ? neto.slice(1) : neto;
-  const [entero = "0", fraccion] = absoluto.split(".");
-  const agrupado = entero.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  const decimales = fraccion !== undefined ? `,${fraccion}` : "";
-  return `${negativo ? "-" : ""}$ ${agrupado}${decimales}`;
+  return formatearCOP(neto);
+}
+
+const RELATIVO = new Intl.RelativeTimeFormat("es-CO", { numeric: "auto" });
+const MINUTO = 60_000;
+const HORA = 60 * MINUTO;
+const DIA = 24 * HORA;
+
+/** "hace 5 minutos", "ayer"; pasada una semana, la fecha. `ahora` entra por parametro. */
+export function tiempoRelativo(iso: string, ahora: Date): string {
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return iso;
+  const delta = ahora.getTime() - fecha.getTime();
+  if (delta < MINUTO) return "hace un momento";
+  if (delta < HORA)
+    return RELATIVO.format(-Math.floor(delta / MINUTO), "minute");
+  if (delta < DIA) return RELATIVO.format(-Math.floor(delta / HORA), "hour");
+  if (delta < 7 * DIA) return RELATIVO.format(-Math.floor(delta / DIA), "day");
+  return formatearInstante(iso);
 }

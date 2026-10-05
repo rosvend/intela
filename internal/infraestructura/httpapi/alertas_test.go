@@ -290,6 +290,43 @@ func TestListarAlertasSirveLaBandeja(t *testing.T) {
 	}
 }
 
+// I4 (PR #215): el titulo de la obra viaja en la bandeja para TODOS los roles
+// que la leen; GET /obras/{id} es solo de administrador y no sirve de respaldo.
+// Una alerta sin titulo (sobre un uso) no lleva la clave.
+func TestListarAlertasTraeElTituloATodosLosRolesDeLectura(t *testing.T) {
+	conTitulo := alertaDeEjemplo()
+	conTitulo.RefTitulo = "La Casa de las Dos Palmas"
+	sobreUso := alertaDeEjemplo()
+	sobreUso.ID, sobreUso.Tipo, sobreUso.RefTipo, sobreUso.RefID, sobreUso.RefTitular =
+		"3f1d0a4e-0000-4000-8000-000000000002", anomalias.TipoONI, "uso", "u-1", ""
+
+	for _, rol := range []aplicacion.Rol{
+		aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+		aplicacion.RolContabilidad, aplicacion.RolAuditor,
+	} {
+		t.Run(string(rol), func(t *testing.T) {
+			falso := &anomaliasFalsas{alertas: []aplicacion.Alerta{conTitulo, sobreUso}}
+			rec := pedir(t, servidorConAnomalias(t, rol, falso), http.MethodGet, "/alertas", "", "tok")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			var cuerpo []map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+				t.Fatalf("respuesta: %v", err)
+			}
+			if got := cuerpo[0]["ref_titulo"]; got != "La Casa de las Dos Palmas" {
+				t.Fatalf("ref_titulo = %v", got)
+			}
+			if cuerpo[0]["ref_id"] != "obra-1" {
+				t.Fatalf("el titulo no sustituye al ref_id: %v", cuerpo[0]["ref_id"])
+			}
+			if _, hay := cuerpo[1]["ref_titulo"]; hay {
+				t.Fatalf("una alerta sin titulo no debe llevar ref_titulo: %v", cuerpo[1])
+			}
+		})
+	}
+}
+
 // Sin coincidencias sale [] y no null, o el tablero que itera la respuesta
 // revienta.
 func TestListarAlertasVaciaDevuelveArrayYNoNull(t *testing.T) {

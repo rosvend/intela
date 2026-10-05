@@ -612,6 +612,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tablero/cargas-pendientes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reportes con filas sin procesar
+         * @description Reportes de uso con al menos una fila en escalon `pendiente`: la
+         *     cascada de identificacion todavia no paso por ellas.
+         */
+        get: operations["tableroCargasPendientes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tablero/obras-en-reserva": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Obras del catalogo con declaracion incompleta
+         * @description Obras del catalogo cuyo estado es `incompleta`: sin ninguna
+         *     declaracion, porcentajes que no suman 100%, o una parte sin IPI. Se
+         *     retiene el total en reserva (`R-04`, `RD 13.1.3`). Es el mismo
+         *     criterio del motor de reparto, de las anomalias y del catalogo.
+         */
+        get: operations["tableroObrasEnReserva"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tablero/oni": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Casos ONI pendientes
+         * @description Usos en escalon `oni`: el mismo total que
+         *     `/identificacion/casos?estado=pendiente`.
+         */
+        get: operations["tableroONI"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tablero/ultima-corrida": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * La corrida mas reciente
+         * @description La corrida del periodo mas reciente (a igual periodo, la ultima
+         *     abierta). `estado` resume la etapa: `cerrada` en la terminal,
+         *     `en_firma` en una compuerta (`RD 13.5`), `en_curso` en otro caso.
+         */
+        get: operations["tableroUltimaCorrida"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tablero/mis-obras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Obras donde el titular de la sesion tiene parte declarada
+         * @description Obras con una parte vigente del titular autenticado y el estado de
+         *     su declaracion (`completa` o `incompleta`, el mismo vocabulario que
+         *     `estado_declaracion` del catalogo). Un `titular_id` en la query no
+         *     cambia a quien se consulta.
+         */
+        get: operations["tableroMisObras"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tablero/ultima-liquidacion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resumen del ultimo periodo liquidado del titular
+         * @description Neto sumado y numero de obras del ultimo periodo con ordenes de pago
+         *     del titular autenticado. La fuente es `ordenes_pago`, la misma que
+         *     `/mis-liquidaciones`: un periodo solo tiene ordenes cuando TODAS sus
+         *     corridas llegaron a `liquidacion_final` (ADR 0024), asi que un periodo
+         *     a medias no cuenta y se muestra el anterior. El neto incluye las
+         *     ordenes `diferida` y los arrastres de `R-11`. Una obra repartida por
+         *     dos bolsas del periodo cuenta una vez. Sin ordenes, 404.
+         */
+        get: operations["tableroUltimaLiquidacion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explicar/{ref}": {
         parameters: {
             query?: never;
@@ -2242,6 +2378,15 @@ export interface components {
              */
             ref_titular?: string;
             /**
+             * @description Titulo VIGENTE de la obra referida, solo cuando `ref_tipo` es
+             *     `obra` (se ausenta en los demas). Es para pintar: la referencia
+             *     sigue siendo `ref_id`. Viaja en el listado para que la bandeja no
+             *     pida `GET /obras/{id}` por tarjeta, ruta que solo sirve a
+             *     administrador.
+             * @example La Casa de las Dos Palmas
+             */
+            ref_titulo?: string;
+            /**
              * @description Si este tipo BLOQUEA la distribucion del periodo. Es DERIVADO del
              *     tipo, no un dato guardado: persistirlo congelaria la clasificacion
              *     en el momento de detectar.
@@ -2720,6 +2865,36 @@ export interface components {
              * @example 2026-04-02T10:30:00Z
              */
             cuando: string;
+        };
+        ConteoTablero: {
+            total: number;
+        };
+        UltimaCorrida: {
+            /** @example 2026-01 */
+            periodo: string;
+            /**
+             * @description Etapa de `RD 13.5`, igual que en `Proceso`.
+             * @enum {string}
+             */
+            etapa: "recaudo" | "deducciones" | "importe_obra" | "importe_titular" | "liquidacion_parcial" | "verificacion" | "liquidacion_final" | "pago_registro" | "fees_in_error" | "auditoria";
+            /** @enum {string} */
+            estado: "en_curso" | "en_firma" | "cerrada";
+        };
+        ObraResumen: {
+            id: string;
+            titulo: string;
+            /** @enum {string} */
+            estado: "completa" | "incompleta";
+        };
+        MisObras: {
+            obras: components["schemas"]["ObraResumen"][];
+        };
+        UltimaLiquidacion: {
+            /** @example 2026-01 */
+            periodo: string;
+            neto: components["schemas"]["Monto"];
+            /** @description Obras distintas del titular en las corridas de esas ordenes. */
+            obras: number;
         };
         ListaIngresos: {
             /**
@@ -5000,6 +5175,446 @@ export interface operations {
                     /**
                      * @example {
                      *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroCargasPendientes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conteo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "total": 2
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConteoTablero"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es de staff. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroObrasEnReserva: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conteo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "total": 3
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConteoTablero"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es de staff. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroONI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conteo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "total": 7
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConteoTablero"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es de staff. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroUltimaCorrida: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumen de la corrida. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2026-01",
+                     *       "etapa": "verificacion",
+                     *       "estado": "en_firma"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["UltimaCorrida"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es de staff. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay ninguna corrida. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no encontrado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroMisObras: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lista de obras. Vacia si no declara en ninguna. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "obras": [
+                     *         {
+                     *           "id": "obra-completa",
+                     *           "titulo": "La Casa de las Dos Palmas",
+                     *           "estado": "completa"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MisObras"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    tableroUltimaLiquidacion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumen del periodo. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "periodo": "2026-01",
+                     *       "neto": "3600.00",
+                     *       "obras": 1
+                     *     }
+                     */
+                    "application/json": components["schemas"]["UltimaLiquidacion"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no es titular. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El titular no tiene ordenes de pago emitidas. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no encontrado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El binario no cableo el tablero. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el tablero no esta configurado en esta instalacion"
                      *     }
                      */
                     "application/json": components["schemas"]["Error"];

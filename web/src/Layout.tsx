@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRightOnRectangleIcon,
   ArrowUpTrayIcon,
+  BanknotesIcon,
   BookOpenIcon,
   ChartPieIcon,
   ChevronDownIcon,
@@ -18,6 +19,7 @@ import {
   UsersIcon,
 } from "@heroicons/react/24/outline";
 import { usePendientesDeIdentificacion } from "./identificacion/pendientes";
+import ErrorBoundary from "./ErrorBoundary";
 import { iniciales } from "./iniciales";
 import logo from "./logo-intela.png";
 import { RUTAS, Seccion, itemsDeNav, puedeVer } from "./navegacion";
@@ -53,6 +55,7 @@ const ICONOS_NAV: Record<string, Icono> = {
   "/reportes": DocumentChartBarIcon,
   "/deducciones": ReceiptPercentIcon,
   "/auditoria": ShieldCheckIcon,
+  "/mis-liquidaciones": BanknotesIcon,
 };
 
 // Todo el chrome vive en el sidebar; el guard es cosmetico, la autorizacion real es `requiereRol` en el servidor.
@@ -231,7 +234,10 @@ export default function Layout() {
         </div>
       </aside>
       <main className="contenido">
-        {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
+        {/* Un fallo de render se queda en su pagina; la clave por ruta lo limpia al navegar. */}
+        <ErrorBoundary key={location.pathname}>
+          {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
+        </ErrorBoundary>
       </main>
     </div>
   );

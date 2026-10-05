@@ -50,13 +50,21 @@ func resumir(token string) string {
 // `creada` se deja en su DEFAULT now(): el CHECK sesion_expira_despues compara
 // las dos columnas, asi que rellenarla desde el reloj inyectado mientras la
 // otra viene del servidor es pedir que una diferencia de reloj rechace un
-// login legitimo.
-func (s *Store) Crear(ctx context.Context, token, usuarioID string, expira time.Time) error {
+// login legitimo. `ultimo_uso` no tiene CHECK y sale del reloj inyectado, el
+// mismo con el que PorToken mide la inactividad.
+//
+// Borra antes las sesiones previas del usuario (ADR 0025): una sola sentencia,
+// asi que el borrado y el alta son atomicos sin transaccion explicita.
+func (s *Store) Crear(ctx context.Context, token, usuarioID string, ahora, expira time.Time) error {
 	_, err := s.ejecutorDe(ctx).Exec(ctx,
-		`INSERT INTO sesiones (token, usuario_id, expira) VALUES ($1, $2, $3)`,
-		resumir(token), usuarioID, expira)
+		`WITH previas AS (DELETE FROM sesiones WHERE usuario_id = $2)
+		 INSERT INTO sesiones (token, usuario_id, expira, ultimo_uso) VALUES ($1, $2, $3, $4)`,
+		resumir(token), usuarioID, expira, ahora)
 	return traducirError(err, "crear sesion de %q", usuarioID)
 }
+
+// toqueMinimo limita la escritura de ultimo_uso a una por minuto y sesion.
+const toqueMinimo = time.Minute
 
 // PorToken resuelve un token vigente al Usuario que lo presenta.
 //
@@ -79,12 +87,23 @@ func (s *Store) Crear(ctx context.Context, token, usuarioID string, expira time.
 // Subconsulta y no JOIN para poder reutilizar columnasUsuario tal cual: con un
 // JOIN habria que calificar las cinco columnas con el alias de la tabla, y esa
 // proyeccion se comparte con afiliacion.go justamente para que no diverjan.
-func (s *Store) PorToken(ctx context.Context, token string, ahora time.Time) (aplicacion.Usuario, error) {
+//
+// La inactividad (ASVS V3.3.2) va en el mismo WHERE: ultimo_uso tiene que ser
+// posterior a ahora-inactividad. El toque de ultimo_uso es un CTE de escritura,
+// que PostgreSQL ejecuta aunque la consulta principal no lo lea; solo escribe si
+// el ultimo toque tiene mas de [toqueMinimo].
+func (s *Store) PorToken(ctx context.Context, token string, ahora time.Time, inactividad time.Duration) (aplicacion.Usuario, error) {
 	fila := s.ejecutorDe(ctx).QueryRow(ctx,
-		`SELECT `+columnasUsuario+` FROM usuarios
-		  WHERE id = (SELECT usuario_id FROM sesiones
-		               WHERE token = $1 AND expira > $2)`,
-		resumir(token), ahora)
+		`WITH viva AS (
+		   SELECT usuario_id FROM sesiones
+		    WHERE token = $1 AND expira > $2 AND ultimo_uso > $3
+		 ), toque AS (
+		   UPDATE sesiones SET ultimo_uso = $2
+		    WHERE token = $1 AND ultimo_uso < $4 AND EXISTS (SELECT 1 FROM viva)
+		 )
+		 SELECT `+columnasUsuario+` FROM usuarios
+		  WHERE id = (SELECT usuario_id FROM viva)`,
+		resumir(token), ahora, ahora.Add(-inactividad), ahora.Add(-toqueMinimo))
 
 	u, err := escanearUsuario(fila, nil)
 	if err != nil {

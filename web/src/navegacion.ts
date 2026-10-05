@@ -36,6 +36,14 @@ export const RUTAS: readonly ItemDeNav[] = [
     seccion: "principal",
   },
   {
+    // Solo titular: el servidor sirve /mis-liquidaciones/obras y /export bajo
+    // el grupo del titular (httpapi/server.go); el personal tiene /reportes.
+    to: "/mis-liquidaciones",
+    label: "Mis liquidaciones",
+    roles: ["titular"],
+    seccion: "principal",
+  },
+  {
     // Solo administrador: el servidor protege /reportes con
     // requiereRol(administrador) (#25) y #29 fija que la pantalla de ingesta
     // es solo suya.

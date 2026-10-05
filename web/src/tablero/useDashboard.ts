@@ -5,8 +5,12 @@ import {
   esRespuestaSinJson,
   MENSAJE_RESPUESTA_SIN_JSON,
 } from "../api";
+import { Asiento, RUTAS_AUDITORIA } from "../auditoria/tipos";
+import { puedeVer } from "../navegacion";
+import { Proceso, ResumenDeAlertas, RUTAS_REPARTO } from "../reparto/tipos";
 import { Rol } from "../sesion";
 import { esAusente } from "./ausente";
+import { Bolsa } from "./recaudo";
 import {
   Conteo,
   MisObras,
@@ -23,7 +27,16 @@ export type Tablero = {
   ultimaCorrida: Recurso<UltimaCorrida>;
   misObras: Recurso<MisObras>;
   ultimaLiquidacion: Recurso<UltimaLiquidacion>;
+  procesos: Recurso<Proceso[]>;
+  bolsas: Recurso<Bolsa[]>;
+  resumenAlertas: Recurso<ResumenDeAlertas>;
+  asientos: Recurso<Asiento[]>;
+  /** Periodo de la corrida mas reciente; contexto del panel de staff. */
+  periodo?: string;
 };
+
+/** Actividad reciente del panel: la bitacora es larga, el tablero no. */
+export const RUTA_ACTIVIDAD = `${RUTAS_AUDITORIA.asientos}?limite=5`;
 
 /**
  * Hook de datos del tablero. Un recurso por widget, en paralelo, para que
@@ -56,7 +69,28 @@ export function useDashboard(rol: Rol): Tablero {
     esTitular,
   );
 
+  const procesos = useRecurso<Proceso[]>(RUTAS_REPARTO.procesos, !esTitular);
+  const bolsas = useRecurso<Bolsa[]>("/api/bolsas", !esTitular);
+  const asientos = useRecurso<Asiento[]>(
+    RUTA_ACTIVIDAD,
+    puedeVer(rol, "/auditoria"),
+  );
+  // /api/procesos lista la mas reciente primero (PanelCorridas toma [0]).
+  const periodo =
+    procesos.tipo === "listo" && Array.isArray(procesos.datos)
+      ? procesos.datos[0]?.periodo
+      : undefined;
+  const resumenAlertas = useRecurso<ResumenDeAlertas>(
+    RUTAS_REPARTO.resumenAlertas(periodo ?? ""),
+    !esTitular && Boolean(periodo) && puedeVer(rol, "/anomalias"),
+  );
+
   return {
+    procesos,
+    bolsas,
+    asientos,
+    resumenAlertas,
+    periodo,
     cargasPendientes,
     obrasEnReserva,
     oni,

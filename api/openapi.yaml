@@ -189,6 +189,12 @@ tags:
       El rol con el que se firma sale de la sesion del actor autenticado,
       nunca de un campo del cuerpo.
 
+  - name: tablero
+    description: |
+      Tarjetas del panel de inicio. Conteos de staff (`administrador`,
+      `distribucion`, `contabilidad`, `auditor`) y resumenes del titular, que
+      se recortan por el titular de la sesion, nunca por un parametro.
+
 paths:
   /health:
     get:
@@ -1802,6 +1808,309 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: no autorizado
+
+  /tablero/cargas-pendientes:
+    get:
+      tags: [tablero]
+      summary: Reportes con filas sin procesar
+      description: |
+        Reportes de uso con al menos una fila en escalon `pendiente`: la
+        cascada de identificacion todavia no paso por ellas.
+      operationId: tableroCargasPendientes
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Conteo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConteoTablero"
+              example:
+                total: 2
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es de staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
+
+  /tablero/obras-en-reserva:
+    get:
+      tags: [tablero]
+      summary: Obras del catalogo con declaracion incompleta
+      description: |
+        Obras del catalogo cuyo estado es `incompleta`: sin ninguna
+        declaracion, porcentajes que no suman 100%, o una parte sin IPI. Se
+        retiene el total en reserva (`R-04`, `RD 13.1.3`). Es el mismo
+        criterio del motor de reparto, de las anomalias y del catalogo.
+      operationId: tableroObrasEnReserva
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Conteo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConteoTablero"
+              example:
+                total: 3
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es de staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
+
+  /tablero/oni:
+    get:
+      tags: [tablero]
+      summary: Casos ONI pendientes
+      description: |
+        Usos en escalon `oni`: el mismo total que
+        `/identificacion/casos?estado=pendiente`.
+      operationId: tableroONI
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Conteo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConteoTablero"
+              example:
+                total: 7
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es de staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
+
+  /tablero/ultima-corrida:
+    get:
+      tags: [tablero]
+      summary: La corrida mas reciente
+      description: |
+        La corrida del periodo mas reciente (a igual periodo, la ultima
+        abierta). `estado` resume la etapa: `cerrada` en la terminal,
+        `en_firma` en una compuerta (`RD 13.5`), `en_curso` en otro caso.
+      operationId: tableroUltimaCorrida
+      security:
+        - bearerAuth: []
+      x-required-roles: [administrador, distribucion, contabilidad, auditor]
+      responses:
+        "200":
+          description: Resumen de la corrida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UltimaCorrida"
+              example:
+                periodo: "2026-01"
+                etapa: verificacion
+                estado: en_firma
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es de staff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay ninguna corrida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no encontrado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
+
+  /tablero/mis-obras:
+    get:
+      tags: [tablero, titular]
+      summary: Obras donde el titular de la sesion tiene parte declarada
+      description: |
+        Obras con una parte vigente del titular autenticado y el estado de
+        su declaracion (`completa` o `incompleta`, el mismo vocabulario que
+        `estado_declaracion` del catalogo). Un `titular_id` en la query no
+        cambia a quien se consulta.
+      operationId: tableroMisObras
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      responses:
+        "200":
+          description: Lista de obras. Vacia si no declara en ninguna.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MisObras"
+              example:
+                obras:
+                  - id: obra-completa
+                    titulo: La Casa de las Dos Palmas
+                    estado: completa
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
+
+  /tablero/ultima-liquidacion:
+    get:
+      tags: [tablero, titular]
+      summary: Resumen del ultimo periodo liquidado del titular
+      description: |
+        Neto sumado y numero de obras del ultimo periodo con ordenes de pago
+        del titular autenticado. La fuente es `ordenes_pago`, la misma que
+        `/mis-liquidaciones`: un periodo solo tiene ordenes cuando TODAS sus
+        corridas llegaron a `liquidacion_final` (ADR 0024), asi que un periodo
+        a medias no cuenta y se muestra el anterior. El neto incluye las
+        ordenes `diferida` y los arrastres de `R-11`. Una obra repartida por
+        dos bolsas del periodo cuenta una vez. Sin ordenes, 404.
+      operationId: tableroUltimaLiquidacion
+      security:
+        - bearerAuth: []
+      x-required-roles: [titular]
+      responses:
+        "200":
+          description: Resumen del periodo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UltimaLiquidacion"
+              example:
+                periodo: "2026-01"
+                neto: "3600.00"
+                obras: 1
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: Autenticado, pero el rol no es titular.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: El titular no tiene ordenes de pago emitidas.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no encontrado
+        "503":
+          description: El binario no cableo el tablero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: el tablero no esta configurado en esta instalacion
 
   /explicar/{ref}:
     get:
@@ -5606,6 +5915,15 @@ components:
             identidad es (obra, titular). Con la obra sola, dos coautores
             ausentes de la misma obra serian la misma alerta.
           example: IPI-00000002
+        ref_titulo:
+          type: string
+          description: |
+            Titulo VIGENTE de la obra referida, solo cuando `ref_tipo` es
+            `obra` (se ausenta en los demas). Es para pintar: la referencia
+            sigue siendo `ref_id`. Viaja en el listado para que la bandeja no
+            pida `GET /obras/{id}` por tarjeta, ruta que solo sirve a
+            administrador.
+          example: La Casa de las Dos Palmas
         critica:
           type: boolean
           description: |
@@ -6210,6 +6528,76 @@ components:
           format: date-time
           description: Instante del hecho.
           example: "2026-04-02T10:30:00Z"
+
+    ConteoTablero:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+
+    UltimaCorrida:
+      type: object
+      required: [periodo, etapa, estado]
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: "2026-01"
+        etapa:
+          type: string
+          enum:
+            - recaudo
+            - deducciones
+            - importe_obra
+            - importe_titular
+            - liquidacion_parcial
+            - verificacion
+            - liquidacion_final
+            - pago_registro
+            - fees_in_error
+            - auditoria
+          description: Etapa de `RD 13.5`, igual que en `Proceso`.
+        estado:
+          type: string
+          enum: [en_curso, en_firma, cerrada]
+
+    ObraResumen:
+      type: object
+      required: [id, titulo, estado]
+      properties:
+        id:
+          type: string
+        titulo:
+          type: string
+        estado:
+          type: string
+          enum: [completa, incompleta]
+
+    MisObras:
+      type: object
+      required: [obras]
+      properties:
+        obras:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObraResumen"
+
+    UltimaLiquidacion:
+      type: object
+      required: [periodo, neto, obras]
+      properties:
+        periodo:
+          type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
+          example: "2026-01"
+        neto:
+          $ref: "#/components/schemas/Monto"
+        obras:
+          type: integer
+          minimum: 0
+          description: Obras distintas del titular en las corridas de esas ordenes.
 
     ListaIngresos:
       type: object

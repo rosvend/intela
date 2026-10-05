@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import Pipeline from "./Pipeline";
 import {
@@ -36,4 +36,45 @@ describe("Pipeline", () => {
       cleanup();
     },
   );
+
+  it("cada paso dice su estado al lector: hecha, en curso o pendiente", () => {
+    render(<Pipeline circuito="nacional" etapa="deducciones" />);
+    expect(
+      screen.getByRole("button", { name: "Recaudo: completada" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Deducciones: en curso" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Auditoría: pendiente" }),
+    ).toBeTruthy();
+  });
+
+  it("el detalle de una compuerta explica la etapa y quien firma", () => {
+    render(<Pipeline circuito="nacional" etapa="verificacion" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Verificación: en curso" }),
+    );
+    const detalle = screen.getByRole("dialog", { name: "Verificación" });
+    expect(detalle.textContent).toMatch(/revisan las cifras/);
+    expect(detalle.textContent).toContain(
+      "Firman: Distribución y Contabilidad",
+    );
+  });
+
+  it("una etapa sin compuerta dice que no necesita firmas", () => {
+    render(<Pipeline circuito="nacional" etapa="recaudo" />);
+    fireEvent.click(screen.getByRole("button", { name: "Recaudo: en curso" }));
+    expect(screen.getByRole("dialog").textContent).toContain(
+      "No necesita firmas.",
+    );
+  });
+
+  it("compacto no ofrece detalles: es un resumen, no un control", () => {
+    render(<Pipeline circuito="nacional" etapa="verificacion" compacto />);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("listitem", { current: "step" }).textContent).toBe(
+      "Verificación",
+    );
+  });
 });

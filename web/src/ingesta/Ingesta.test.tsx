@@ -853,6 +853,16 @@ describe("pantalla de ingesta (integracion con App)", () => {
     await screen.findByText("Aún no hay cargas registradas.");
   });
 
+  it("los títulos van sin subtítulos de relleno", async () => {
+    simularServidor({ rol: "administrador" });
+
+    montarApp("/ingesta");
+
+    await screen.findByRole("heading", { name: "Importar reporte" });
+    expect(screen.queryByText(/ponderan el reparto/)).toBeNull();
+    expect(screen.queryByText(/suelta el archivo y súbelo/)).toBeNull();
+  });
+
   it("una subida OK manda fuente, periodo y archivo en un FormData, muestra los recuentos y vuelve a pedir el listado", async () => {
     let cargas: Carga[] = [];
     simularServidor({

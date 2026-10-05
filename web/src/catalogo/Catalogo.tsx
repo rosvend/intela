@@ -9,6 +9,7 @@ import { EtiquetaDeDeclaracion } from "./EtiquetaDeDeclaracion";
 import Paginador from "./Paginador";
 import { esObra, type Obra } from "./tipos";
 import { useLista } from "./useLista";
+import "./catalogo.css";
 
 /**
  * Cuantas obras se piden por pagina. El servidor tiene su propio tope por

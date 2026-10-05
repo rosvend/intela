@@ -22,6 +22,9 @@ import (
 // hasta 999 ns anterior a lo que se mando. En las pruebas del borde exacto eso
 // es la diferencia entre comparar dos instantes iguales y compararlos
 // desiguales, es decir, entre una prueba y una moneda al aire.
+// sinInactividad deja fuera de juego la caducidad por inactividad en las pruebas que miran otra cosa.
+const sinInactividad = 24 * time.Hour
+
 func enUnaHora() time.Time {
 	return time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
 }
@@ -30,11 +33,11 @@ func TestSesionCrearYResolver(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
 
-	if err := s.Crear(ctx, "token-en-claro", usuarioAdmin, enUnaHora()); err != nil {
+	if err := s.Crear(ctx, "token-en-claro", usuarioAdmin, time.Now().UTC(), enUnaHora()); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 
-	u, err := s.PorToken(ctx, "token-en-claro", time.Now().UTC())
+	u, err := s.PorToken(ctx, "token-en-claro", time.Now().UTC(), sinInactividad)
 	if err != nil {
 		t.Fatalf("PorToken: %v", err)
 	}
@@ -60,7 +63,7 @@ func TestSesionGuardaElTokenHasheado(t *testing.T) {
 	ctx := t.Context()
 
 	const claro = "token-en-claro-que-no-debe-aparecer"
-	if err := s.Crear(ctx, claro, usuarioAdmin, enUnaHora()); err != nil {
+	if err := s.Crear(ctx, claro, usuarioAdmin, time.Now().UTC(), enUnaHora()); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 
@@ -92,11 +95,11 @@ func TestSesionCaducadaEsNoEncontrada(t *testing.T) {
 	ctx := t.Context()
 
 	expira := enUnaHora()
-	if err := s.Crear(ctx, "token", usuarioAdmin, expira); err != nil {
+	if err := s.Crear(ctx, "token", usuarioAdmin, time.Now().UTC(), expira); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 
-	_, err := s.PorToken(ctx, "token", expira.Add(time.Second))
+	_, err := s.PorToken(ctx, "token", expira.Add(time.Second), sinInactividad)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("un token caducado tiene que ser ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -109,11 +112,11 @@ func TestSesionEnElInstanteDeCaducidadYaNoVale(t *testing.T) {
 	ctx := t.Context()
 
 	expira := enUnaHora()
-	if err := s.Crear(ctx, "token", usuarioAdmin, expira); err != nil {
+	if err := s.Crear(ctx, "token", usuarioAdmin, time.Now().UTC(), expira); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 
-	if _, err := s.PorToken(ctx, "token", expira); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+	if _, err := s.PorToken(ctx, "token", expira, sinInactividad); !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("justo en expira la sesion ya no vale, se obtuvo %v", err)
 	}
 }
@@ -121,7 +124,7 @@ func TestSesionEnElInstanteDeCaducidadYaNoVale(t *testing.T) {
 func TestSesionDesconocidaEsNoEncontrada(t *testing.T) {
 	s, _ := sembrar(t)
 
-	_, err := s.PorToken(t.Context(), "jamas-emitido", time.Now().UTC())
+	_, err := s.PorToken(t.Context(), "jamas-emitido", time.Now().UTC(), sinInactividad)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("se esperaba ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -131,14 +134,14 @@ func TestSesionRevocada(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
 
-	if err := s.Crear(ctx, "token", usuarioAdmin, enUnaHora()); err != nil {
+	if err := s.Crear(ctx, "token", usuarioAdmin, time.Now().UTC(), enUnaHora()); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 	if err := s.Revocar(ctx, "token"); err != nil {
 		t.Fatalf("Revocar: %v", err)
 	}
 
-	_, err := s.PorToken(ctx, "token", time.Now().UTC())
+	_, err := s.PorToken(ctx, "token", time.Now().UTC(), sinInactividad)
 	if !errors.Is(err, aplicacion.ErrNoEncontrado) {
 		t.Fatalf("un token revocado tiene que ser ErrNoEncontrado, se obtuvo %v", err)
 	}
@@ -150,7 +153,7 @@ func TestRevocarEsIdempotente(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
 
-	if err := s.Crear(ctx, "token", usuarioAdmin, enUnaHora()); err != nil {
+	if err := s.Crear(ctx, "token", usuarioAdmin, time.Now().UTC(), enUnaHora()); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
 	if err := s.Revocar(ctx, "token"); err != nil {
@@ -173,7 +176,7 @@ func TestRevocarEsIdempotente(t *testing.T) {
 func TestCrearRechazaUnaSesionYaCaducada(t *testing.T) {
 	s, _ := sembrar(t)
 
-	err := s.Crear(t.Context(), "token", usuarioAdmin, time.Now().UTC().Add(-time.Hour))
+	err := s.Crear(t.Context(), "token", usuarioAdmin, time.Now().UTC(), time.Now().UTC().Add(-time.Hour))
 	if err == nil {
 		t.Fatal("el CHECK sesion_expira_despues tenia que rechazar el INSERT")
 	}
@@ -187,7 +190,7 @@ func TestCrearRechazaUnaSesionYaCaducada(t *testing.T) {
 func TestCrearConUsuarioInexistenteNoEsNoEncontrado(t *testing.T) {
 	s, _ := sembrar(t)
 
-	err := s.Crear(t.Context(), "token", "usr-que-no-existe", enUnaHora())
+	err := s.Crear(t.Context(), "token", "usr-que-no-existe", time.Now().UTC(), enUnaHora())
 	if err == nil {
 		t.Fatal("la clave ajena tenia que rechazar el INSERT")
 	}
@@ -207,7 +210,7 @@ func TestLosErroresDeSesionNoLlevanElToken(t *testing.T) {
 	s, _ := sembrar(t)
 	const token = "token-secretisimo-que-no-debe-aparecer"
 
-	_, err := s.PorToken(t.Context(), token, time.Now().UTC())
+	_, err := s.PorToken(t.Context(), token, time.Now().UTC(), sinInactividad)
 	if err == nil {
 		t.Fatal("se esperaba un error")
 	}
@@ -216,23 +219,90 @@ func TestLosErroresDeSesionNoLlevanElToken(t *testing.T) {
 	}
 }
 
-// Dos sesiones del mismo usuario conviven: alguien con el portatil y el movil
-// no deberia echarse a si mismo al entrar por el segundo.
-func TestVariasSesionesPorUsuario(t *testing.T) {
+// Un login nuevo revoca las sesiones previas del usuario (ADR 0025): un token que quedo vivo tras
+// un logout fallido muere en cuanto su dueno vuelve a entrar. Las de otros usuarios no se tocan.
+func TestCrearRevocaLasSesionesPreviasDelUsuario(t *testing.T) {
 	s, _ := sembrar(t)
 	ctx := t.Context()
+	ahora := time.Now().UTC()
 
-	if err := s.Crear(ctx, "portatil", usuarioAdmin, enUnaHora()); err != nil {
-		t.Fatalf("Crear portatil: %v", err)
-	}
-	if err := s.Crear(ctx, "movil", usuarioAdmin, enUnaHora()); err != nil {
-		t.Fatalf("Crear movil: %v", err)
+	for _, c := range []struct{ token, usuario string }{
+		{"portatil", usuarioAdmin}, {"de-ana", usuarioTitular}, {"movil", usuarioAdmin},
+	} {
+		if err := s.Crear(ctx, c.token, c.usuario, ahora, enUnaHora()); err != nil {
+			t.Fatalf("Crear %s: %v", c.token, err)
+		}
 	}
 
-	if err := s.Revocar(ctx, "movil"); err != nil {
-		t.Fatalf("Revocar: %v", err)
+	if _, err := s.PorToken(ctx, "portatil", ahora, sinInactividad); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("la sesion anterior tenia que quedar revocada, se obtuvo %v", err)
 	}
-	if _, err := s.PorToken(ctx, "portatil", time.Now().UTC()); err != nil {
-		t.Fatalf("cerrar sesion en el movil no puede cerrar la del portatil: %v", err)
+	if _, err := s.PorToken(ctx, "movil", ahora, sinInactividad); err != nil {
+		t.Fatalf("la sesion nueva tiene que valer: %v", err)
+	}
+	if _, err := s.PorToken(ctx, "de-ana", ahora, sinInactividad); err != nil {
+		t.Fatalf("el login de otro usuario no puede revocar la sesion de Ana: %v", err)
+	}
+}
+
+// Una sesion sin uso durante la inactividad maxima ya no vale (ASVS V3.3.2). El borde es estricto,
+// como el de expira.
+func TestSesionInactivaCaduca(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	creada := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.Crear(ctx, "token", usuarioAdmin, creada, enUnaHora()); err != nil {
+		t.Fatalf("Crear: %v", err)
+	}
+
+	if _, err := s.PorToken(ctx, "token", creada.Add(30*time.Minute), 30*time.Minute); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("tras 30 min sin uso la sesion ya no vale, se obtuvo %v", err)
+	}
+}
+
+// Cada uso corre la ventana: una sesion usada cada 20 minutos sigue viva pasada la media hora.
+func TestSesionActivaNoCaduca(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	creada := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.Crear(ctx, "token", usuarioAdmin, creada, enUnaHora()); err != nil {
+		t.Fatalf("Crear: %v", err)
+	}
+
+	for _, minuto := range []time.Duration{20, 40} {
+		if _, err := s.PorToken(ctx, "token", creada.Add(minuto*time.Minute), 30*time.Minute); err != nil {
+			t.Fatalf("usada en el minuto %d la sesion tiene que valer: %v", minuto, err)
+		}
+	}
+}
+
+// El toque de ultimo_uso se limita a uno por minuto: cada peticion autenticada no es una escritura.
+func TestSesionTocaElUltimoUsoComoMuchoUnaVezPorMinuto(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+	creada := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.Crear(ctx, "token", usuarioAdmin, creada, enUnaHora()); err != nil {
+		t.Fatalf("Crear: %v", err)
+	}
+	ultimoUso := func() time.Time {
+		t.Helper()
+		var u time.Time
+		if err := pool.QueryRow(ctx, `SELECT ultimo_uso FROM sesiones`).Scan(&u); err != nil {
+			t.Fatalf("leer ultimo_uso: %v", err)
+		}
+		return u.UTC()
+	}
+
+	if _, err := s.PorToken(ctx, "token", creada.Add(30*time.Second), 30*time.Minute); err != nil {
+		t.Fatalf("PorToken: %v", err)
+	}
+	if u := ultimoUso(); !u.Equal(creada) {
+		t.Fatalf("ultimo_uso = %v, a los 30 s no se tenia que tocar (%v)", u, creada)
+	}
+	if _, err := s.PorToken(ctx, "token", creada.Add(2*time.Minute), 30*time.Minute); err != nil {
+		t.Fatalf("PorToken: %v", err)
+	}
+	if u := ultimoUso(); !u.Equal(creada.Add(2 * time.Minute)) {
+		t.Fatalf("ultimo_uso = %v, se esperaba el minuto 2", u)
 	}
 }

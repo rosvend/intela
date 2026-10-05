@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Asiento } from "../auditoria/tipos";
 import HistorialResoluciones from "./HistorialResoluciones";
@@ -153,12 +153,12 @@ describe("HistorialResoluciones", () => {
 
     expect(
       await screen.findByText(
-        "Asignó “Serie de Prueba T3 E12” de canal-prueba, 2024-11, a esta obra.",
+        "Asignó “Serie de Prueba T3 E12” de Canal Prueba, nov 2024, a esta obra.",
       ),
     ).toBeTruthy();
   });
 
-  it("la nota y la referencia de origen (uso_id · reporte_id) son visibles", async () => {
+  it("la nota es visible y la referencia de origen (uso_id · reporte_id) espera en un Detalle", async () => {
     simularServidor(() => json([ANTIGUO]));
 
     montar();
@@ -166,6 +166,10 @@ describe("HistorialResoluciones", () => {
     expect(
       await screen.findByText("coincide la ficha técnica y el elenco"),
     ).toBeTruthy();
+    expect(screen.queryByText("uso-1 · rep-1")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Referencia de origen" }),
+    );
     expect(screen.getByText("uso-1 · rep-1")).toBeTruthy();
   });
 

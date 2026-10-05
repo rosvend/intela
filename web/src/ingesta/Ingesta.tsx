@@ -265,20 +265,11 @@ export default function Ingesta() {
     <section className="ingesta">
       <header className="ingesta-cabecera">
         <h1>Ingesta de reportes</h1>
-        <p className="muted">
-          Sube los reportes de uso que ponderan el reparto de la bolsa
-          recaudada.
-        </p>
       </header>
 
       <form className="ingesta-formulario" onSubmit={(e) => void subir(e)}>
         <div className="ingesta-tarjeta-cabecera">
-          <div>
-            <h2>Importar reporte</h2>
-            <p className="muted">
-              Elige el periodo y la fuente, suelta el archivo y súbelo.
-            </p>
-          </div>
+          <h2>Importar reporte</h2>
         </div>
 
         <div className="ingesta-campos">

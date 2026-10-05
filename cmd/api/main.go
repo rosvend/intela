@@ -85,6 +85,8 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:    reloj.Sistema{},
 		Tokens:   cripto.TokensAleatorios{},
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
+		// ASVS V3.3.2: sin uso durante este lapso la sesion caduca en el servidor (ADR 0025).
+		Inactividad: config.Duracion("SESION_INACTIVIDAD", 30*time.Minute),
 	}
 
 	admision := aplicacion.Admision{
@@ -272,6 +274,7 @@ func ejecutar(log *slog.Logger) error {
 		},
 		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
+		Tablero:  aplicacion.Tablero{Repo: store},
 		Bolsas:   bolsas,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),

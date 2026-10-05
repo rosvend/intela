@@ -99,7 +99,9 @@ unica forma de comprobar que el valor punto de `RD 9.1.1` se calcula por canal y
 Una corrida es una bolsa (ADR 0019), asi que dos canales son dos corridas y dos valor punto
 independientes.
 
-Rangos: importes redondos del orden de $200.000 a $1.000.000 COP. Son redondos a proposito.
+Rangos: importes redondos, sinteticos y dimensionados como un periodo real: cientos de millones
+de COP por pagador ($600.000.000 cada canal de TV, $350.000.000 Netflix, $200.000.000 Procinal,
+$100.000.000 la internacional, $40.000.000 transporte). Son redondos a proposito.
 
 Alcance (P-08): Intela **recibe** el importe cobrado; no lo calcula ni factura. La bolsa es un
 dato de entrada, no un resultado. Por eso no hay fixture de tarifa ni de convenio como

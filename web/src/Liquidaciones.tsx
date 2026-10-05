@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, descargar } from "./api";
+import EsqueletoFilas from "./titular/Esqueleto";
+import { nombrePeriodo } from "./titular/presentacion";
+import BarraApilada from "./ui/BarraApilada";
+import Cifra from "./ui/Cifra";
+import { formatearCOP } from "./ui/dinero";
+import "./ui/ui.css";
+import "./titular.css";
 
 export type TotalesLiquidacion = {
   bruto: string;
@@ -22,11 +29,14 @@ export type Liquidacion = {
   totales: TotalesLiquidacion;
 };
 
+export const RUTA_MIS_LIQUIDACIONES = "/api/mis-liquidaciones/obras";
+
 function queryPeriodo(periodo: string) {
   const p = periodo.trim();
   return p ? `periodo=${encodeURIComponent(p)}` : "";
 }
 
+/** "Mis liquidaciones" (titular): neto por obra, descuentos de ley y exportacion PDF/XLSX. */
 export default function Liquidaciones() {
   const [periodo, setPeriodo] = useState("");
   const [filtro, setFiltro] = useState("");
@@ -38,7 +48,7 @@ export default function Liquidaciones() {
     setError("");
     const q = queryPeriodo(p);
     const data = (await api(
-      `/api/mis-liquidaciones/obras${q ? `?${q}` : ""}`,
+      `${RUTA_MIS_LIQUIDACIONES}${q ? `?${q}` : ""}`,
     )) as Liquidacion;
     setLiq(data);
   }, []);
@@ -66,90 +76,172 @@ export default function Liquidaciones() {
     }
   }
 
+  const hayLineas = !!liq && liq.lineas.length > 0;
+
   return (
-    <section>
-      <h1>Mis liquidaciones</h1>
-      <p className="muted">
-        Bruto, deducciones y neto por obra. El archivo exportado lleva las
-        mismas cifras y se puede abrir sin conexion.
-      </p>
+    <section className="titular">
+      <header className="titular-saludo">
+        <h1>Mis liquidaciones</h1>
+      </header>
 
-      <form
-        className="card"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setFiltro(periodo.trim());
-        }}
-      >
-        <label htmlFor="periodo">Periodo</label>{" "}
-        <input
-          id="periodo"
-          name="periodo"
-          placeholder="2026-01"
-          value={periodo}
-          onChange={(e) => setPeriodo(e.target.value)}
-        />
-        <button type="submit">Filtrar</button>{" "}
-        <button
-          type="button"
-          onClick={() => exportar("pdf")}
-          disabled={!!exportando}
+      <div className="liquidaciones-barra">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setFiltro(periodo.trim());
+          }}
         >
-          Exportar PDF
-        </button>{" "}
-        <button
-          type="button"
-          onClick={() => exportar("xlsx")}
-          disabled={!!exportando}
-        >
-          Exportar Excel
-        </button>
-      </form>
+          <input
+            className="pastilla-campo"
+            aria-label="Periodo"
+            name="periodo"
+            placeholder="AAAA-MM"
+            value={periodo}
+            onChange={(e) => setPeriodo(e.target.value)}
+          />
+          <button type="submit" className="boton-secundario">
+            Filtrar
+          </button>
+        </form>
+        {hayLineas && (
+          <div className="liquidaciones-exportar">
+            <button
+              type="button"
+              className="boton-secundario"
+              onClick={() => exportar("pdf")}
+              disabled={!!exportando}
+            >
+              Descargar PDF
+            </button>
+            <button
+              type="button"
+              className="boton-secundario"
+              onClick={() => exportar("xlsx")}
+              disabled={!!exportando}
+            >
+              Descargar Excel
+            </button>
+          </div>
+        )}
+      </div>
 
-      {error ? <p role="alert">{error}</p> : null}
+      {error && (
+        <p role="alert" className="titular-error">
+          {error}
+        </p>
+      )}
 
-      {liq ? (
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Periodo</th>
-                <th>Obra</th>
-                <th>Bruto</th>
-                <th>Admin</th>
-                <th>Social</th>
-                <th>Reserva</th>
-                <th>Neto</th>
-              </tr>
-            </thead>
-            <tbody>
-              {liq.lineas.map((l) => (
-                <tr key={`${l.periodo}-${l.obra_id}`}>
-                  <td>{l.periodo}</td>
-                  <td>{l.titulo}</td>
-                  <td>{l.bruto}</td>
-                  <td>{l.admin}</td>
-                  <td>{l.social}</td>
-                  <td>{l.reserva}</td>
-                  <td>{l.neto}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <th colSpan={2}>Totales</th>
-                <th>{liq.totales.bruto}</th>
-                <th>{liq.totales.admin}</th>
-                <th>{liq.totales.social}</th>
-                <th>{liq.totales.reserva}</th>
-                <th>{liq.totales.neto}</th>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      ) : error ? null : (
-        <p>Consultando...</p>
+      {!liq ? (
+        error ? null : (
+          <article className="panel">
+            <EsqueletoFilas />
+          </article>
+        )
+      ) : !hayLineas ? (
+        <article className="panel">
+          <div className="vacio">
+            <p className="vacio-titulo">Todavía no tienes liquidaciones</p>
+            <p className="muted">
+              {filtro
+                ? `No hay pagos en ${nombrePeriodo(filtro)}. Prueba con otro periodo.`
+                : "Cuando REDES SGC reparta un periodo en el que se usaron tus obras, aparecerá aquí."}
+            </p>
+          </div>
+        </article>
+      ) : (
+        <article className="panel">
+          <header className="panel-cabecera">
+            <h2 className="panel-titulo">
+              {filtro
+                ? `Recibiste en ${nombrePeriodo(filtro)}`
+                : "Recibiste en total"}
+            </h2>
+          </header>
+          <Cifra valor={liq.totales.neto} />
+          <p className="liquidacion-desglose">
+            <span>
+              De {formatearCOP(liq.totales.bruto)} antes de descuentos
+            </span>
+          </p>
+          <ul className="ingresos-lista liquidaciones-lista">
+            {liq.lineas.map((l, i) => (
+              <li
+                key={`${l.periodo}-${l.obra_id}`}
+                className="liquidacion-fila"
+                style={{ "--indice": i } as React.CSSProperties}
+              >
+                <span className="ingreso-obra">
+                  <span className="ingreso-titulo">{l.titulo}</span>
+                  <span className="ingreso-sub">
+                    {nombrePeriodo(l.periodo)}
+                  </span>
+                </span>
+                <span className="ingreso-monto">
+                  {formatearCOP(l.neto)}
+                  <span className="ingreso-sub ingreso-sub-bloque">
+                    de {formatearCOP(l.bruto)}
+                  </span>
+                </span>
+                <RepartoDeLinea linea={l} />
+              </li>
+            ))}
+          </ul>
+        </article>
       )}
     </section>
+  );
+}
+
+/** El bruto de una linea partido en lo que recibes y cada descuento; las partes suman el bruto. */
+export function partesDeLinea(l: TotalesLiquidacion) {
+  return [
+    {
+      id: "neto",
+      etiqueta: "Tú recibes",
+      valor: l.neto,
+      color: "var(--serie-1)",
+    },
+    {
+      id: "admin",
+      etiqueta: "Gastos administrativos",
+      valor: l.admin,
+      color: "var(--serie-5)",
+    },
+    {
+      id: "social",
+      etiqueta: "Bienestar social",
+      valor: l.social,
+      color: "var(--serie-4)",
+    },
+    {
+      id: "reserva",
+      etiqueta: "Reserva",
+      valor: l.reserva,
+      color: "var(--serie-3)",
+    },
+  ];
+}
+
+function RepartoDeLinea({ linea }: { linea: LineaLiquidacion }) {
+  const partes = partesDeLinea(linea);
+  const etiqueta = `Reparto de ${linea.titulo}`;
+  return (
+    <div className="liquidacion-reparto">
+      <BarraApilada etiqueta={etiqueta} segmentos={partes} />
+      <ul className="liquidacion-leyenda" aria-label={etiqueta}>
+        {partes.map((p) => (
+          <li key={p.id}>
+            <span
+              className="leyenda-punto"
+              style={{ "--color": p.color } as React.CSSProperties}
+            />
+            <span className="liquidacion-leyenda-nombre">{p.etiqueta}</span>
+            <span className="liquidacion-leyenda-cifra">
+              {formatearCOP(p.valor)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

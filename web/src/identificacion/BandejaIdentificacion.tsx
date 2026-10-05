@@ -1,24 +1,26 @@
-import { useEffect, useId, useState, type ReactElement } from "react";
+import { ArrowLeftIcon, ArrowRightIcon } from "@heroicons/react/20/solid";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { Link } from "react-router-dom";
-import Cargando from "../Cargando";
+import "../revision.css";
+import "./fusion.css";
 import { useApi } from "../useApi";
-import Dialogo from "./Dialogo";
-import PanelResolucion, { type ModoResolucion } from "./PanelResolucion";
+import { posicionEnCola, vecinoEnCola } from "./cola";
+import { IconoCheck, IconoTodoEnOrden } from "./iconos";
 import { useFijarPendientes } from "./pendientes";
+import { formatearPeriodo, nombreDeFuente } from "./presentacion";
 import {
   LIMITE_BANDEJA,
   RUTAS_IDENTIFICACION,
   esPaginaDeCasos,
-  etiquetaDeModalidad,
-  formatearPuntaje,
-  idsDeFuente,
-  type CandidatoIdentificacion,
   type CasoIdentificacion,
-  type SugerenciaIdentificacion,
 } from "./tipos";
-
-/** El caso sobre el que se abrio el panel, y en que modo. */
-type PanelAbierto = { caso: CasoIdentificacion; modo: ModoResolucion };
+import VistaFusion from "./VistaFusion";
 
 /** El aviso de exito, `role="status"` durante 4 segundos (plano seccion 5). */
 type Aviso = { detalle: string };
@@ -26,20 +28,27 @@ type Aviso = { detalle: string };
 const DURACION_AVISO_MS = 4000;
 
 /**
- * Bandeja de identificacion (`/identificacion`): los casos ONI pendientes,
- * uno por tarjeta, con sus obras candidatas.
+ * Bandeja de identificacion (`/identificacion`): los casos pendientes, uno a
+ * la vez, como una union entre lo reportado y la obra del catalogo.
  *
  * Es solo el envoltorio que fuerza la recarga completa (D2, D3): `useApi` no
  * vuelve a pedir el mismo path, asi que "Intentar de nuevo", "Cargar los
  * siguientes casos" y "Recargar caso" incrementan `recarga`, que via `key`
- * remonta `Contenido` entero -useApi pide de nuevo, y el estado local de la
- * lista (`fuera`, el panel abierto, el aviso) arranca limpio, que es
- * exactamente lo que "recargar desde el principio de la cola" quiere decir.
+ * remonta `Contenido` entero y su estado local arranca limpio.
  */
 export default function BandejaIdentificacion(): ReactElement {
   const [recarga, setRecarga] = useState(0);
   return (
     <Contenido key={recarga} onRecargar={() => setRecarga((r) => r + 1)} />
+  );
+}
+
+/** Un evento de teclado que nace en un campo es de ese campo, no de la cola. */
+function esDeUnCampo(destino: EventTarget | null): boolean {
+  if (!(destino instanceof HTMLElement)) return false;
+  return (
+    destino.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(destino.tagName)
   );
 }
 
@@ -52,35 +61,44 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     }),
   );
 
-  // Remocion optimista (D3): los ids que ya salieron de la vista, sea porque
-  // el servidor confirmo la resolucion o porque quedaron fuera mientras se
-  // reintenta. `Set`, no filtrar el array de `useApi`: la pagina que trajo
-  // `useApi` no cambia con la recarga optimista, solo lo que se PINTA de ella.
+  // Remocion optimista (D3): los ids que ya salieron de la cola, por
+  // resolverse o mientras se guardan. Lo que cambia es lo que se PINTA de la
+  // pagina, no la pagina.
   const [fuera, setFuera] = useState<Set<string>>(new Set());
-  const [panel, setPanel] = useState<PanelAbierto | null>(null);
+  // El caso en escena. Puede estar fuera de la cola (guardandose, o tras un
+  // 409 que lo saco) y seguir en escena con su error.
+  const [foco, setFoco] = useState<string | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
+  const [trasUnion, setTrasUnion] = useState(false);
   const [aviso, setAviso] = useState<Aviso | null>(null);
-  const idTituloPanel = useId();
 
   const pagina =
     !lectura.cargando && !lectura.error && esPaginaDeCasos(lectura.datos)
       ? lectura.datos
       : null;
+  const ids = pagina ? pagina.casos.map((c) => c.id) : [];
+  const visibles = new Set(ids.filter((id) => !fuera.has(id)));
   const casosVisibles = pagina
-    ? pagina.casos.filter((c) => !fuera.has(c.id))
+    ? pagina.casos.filter((c) => visibles.has(c.id))
     : [];
-  // `pagina.pendientes` es el conteo del servidor al momento de la carga;
-  // restarle `fuera.size` lo mantiene en vivo sin pedir de nuevo el recurso
-  // -el mismo criterio que `usePendientesDeIdentificacion` aplica del lado
-  // del badge, aqui del lado de quien lo alimenta.
+  const enEscena: CasoIdentificacion | null =
+    pagina?.casos.find((c) => c.id === foco) ?? casosVisibles[0] ?? null;
+  // `pagina.pendientes` es el conteo del servidor al cargar; restarle lo que
+  // ya salio lo mantiene en vivo sin pedir de nuevo.
   const conteo = pagina
     ? Math.max(pagina.pendientes - fuera.size, 0)
     : undefined;
+  const posicion = enEscena ? posicionEnCola(ids, visibles, enEscena.id) : null;
+  const anterior = enEscena
+    ? vecinoEnCola(ids, visibles, enEscena.id, -1)
+    : null;
+  const siguiente = enEscena
+    ? vecinoEnCola(ids, visibles, enEscena.id, 1)
+    : null;
 
   useEffect(() => {
     if (conteo !== undefined) fijarPendientes(conteo);
-    // `fijarPendientes` es estable (viene de `useFijarPendientes`, que la
-    // memoiza); solo `conteo` decide cuando volver a empujar.
+    // `fijarPendientes` es estable (memoizada en `useFijarPendientes`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conteo]);
 
@@ -90,57 +108,77 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     return () => clearTimeout(temporizador);
   }, [aviso]);
 
-  function marcarFuera(id: string) {
-    setFuera((previos) => {
-      const siguientes = new Set(previos);
-      siguientes.add(id);
-      return siguientes;
-    });
+  function irA(id: string | null) {
+    if (id === null || bloqueado) return;
+    setTrasUnion(false);
+    setFoco(id);
   }
 
-  function devolverALaLista(id: string) {
-    setFuera((previos) => {
-      const siguientes = new Set(previos);
-      siguientes.delete(id);
-      return siguientes;
-    });
-  }
+  // Las flechas pasan de caso. Sin animacion: es una accion de teclado que se
+  // repite decenas de veces seguidas. Un solo listener; los vecinos vigentes
+  // llegan por ref, fijada en el commit para que no haya tecla entre medias.
+  const navegacion = useRef({ anterior, siguiente, irA });
+  useLayoutEffect(() => {
+    navegacion.current = { anterior, siguiente, irA };
+  });
+  useEffect(() => {
+    function alPulsar(e: KeyboardEvent) {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (esDeUnCampo(e.target)) return;
+      const { anterior, siguiente, irA } = navegacion.current;
+      if (e.key === "ArrowRight") irA(siguiente);
+      else if (e.key === "ArrowLeft") irA(anterior);
+      else return;
+      e.preventDefault();
+    }
+    window.addEventListener("keydown", alPulsar);
+    return () => window.removeEventListener("keydown", alPulsar);
+  }, []);
 
-  function cerrarPanel() {
-    if (bloqueado) return;
-    setPanel(null);
+  function conId(previos: Set<string>, id: string, poner: boolean) {
+    const siguientes = new Set(previos);
+    if (poner) siguientes.add(id);
+    else siguientes.delete(id);
+    return siguientes;
   }
 
   return (
-    <section className="bandeja" aria-label="Bandeja de identificación">
-      <header className="bandeja-cabecera">
-        <div className="bandeja-titulo-fila">
+    <section
+      className="bandeja revision-pantalla"
+      aria-label="Bandeja de identificación"
+    >
+      <header className="revision-cabecera">
+        <div className="revision-titulo-fila">
           <h1>Bandeja de identificación</h1>
-          {conteo !== undefined && (
-            <span className="pastilla-conteo">
-              {conteo === 1 ? "1 caso pendiente" : `${conteo} casos pendientes`}
-            </span>
+          {conteo !== undefined && conteo > 0 && (
+            <span className="chip chip-marca">{conteo} por revisar</span>
           )}
+          <Link to="/lista-oni" className="boton-secundario boton-enlace">
+            Ver lista ONI
+            <ArrowRightIcon aria-hidden="true" />
+          </Link>
         </div>
-        <p className="bandeja-intro">
-          Revisa la evidencia y decide la obra correcta. Intela nunca asigna un
-          registro a ciegas.
+        <p className="revision-intro">
+          Une cada uso reportado con su obra, o descártalo.
         </p>
-        <Link to="/lista-oni" className="boton-secundario">
-          Ver lista ONI
-        </Link>
       </header>
 
       {aviso && (
-        <p className="bandeja-aviso" role="status">
-          <strong>Decisión registrada</strong> {aviso.detalle}
-        </p>
+        <div className="revision-toast" role="status">
+          <span className="revision-toast-icono">
+            <IconoCheck tamano={16} />
+          </span>
+          <strong>Decisión registrada</strong>
+          <span>{aviso.detalle}</span>
+        </div>
       )}
 
-      {lectura.cargando && <Cargando texto="Cargando los casos pendientes…" />}
+      {lectura.cargando && (
+        <EsqueletoDeCasos etiqueta="Cargando los casos pendientes" />
+      )}
 
       {!lectura.cargando && lectura.error && (
-        <div className="bandeja-error" role="alert">
+        <div className="revision-aviso-error" role="alert">
           <p>No pudimos cargar los casos: {lectura.error.message}</p>
           <button
             type="button"
@@ -153,266 +191,170 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
       )}
 
       {!lectura.cargando && !lectura.error && pagina === null && (
-        <p className="bandeja-error" role="alert">
+        <p className="revision-aviso-error" role="alert">
           La bandeja no llegó como una lista de casos legibles.
         </p>
       )}
 
-      {pagina !== null && (
-        <>
-          {casosVisibles.length === 0 && (conteo ?? 0) === 0 && (
-            <div className="bandeja-vacia">
-              <p>No hay casos pendientes</p>
-              <p className="muted">
-                {fuera.size > 0
-                  ? "Todas las entradas fueron asignadas o descartadas con trazabilidad."
-                  : "La cascada de identificación procesó todos los registros disponibles."}
-              </p>
-            </div>
-          )}
-
-          {casosVisibles.length > 0 && (
-            <ul className="bandeja-lista">
-              {casosVisibles.map((caso) => (
-                <TarjetaCaso
-                  key={caso.id}
-                  caso={caso}
-                  onAsignarCandidata={(candidato) =>
-                    setPanel({
-                      caso,
-                      modo: {
-                        tipo: "candidata",
-                        obraId: candidato.obra_id,
-                        obraTitulo: candidato.titulo,
-                        obraAnio: candidato.anio,
-                        obraGenero: candidato.genero,
-                        puntaje: candidato.puntaje,
-                      },
-                    })
-                  }
-                  onBuscarOtraObra={() =>
-                    setPanel({ caso, modo: { tipo: "busqueda" } })
-                  }
-                  onDescartar={() =>
-                    setPanel({ caso, modo: { tipo: "descarte" } })
-                  }
-                />
-              ))}
-            </ul>
-          )}
-
-          {conteo !== undefined && conteo > casosVisibles.length && (
-            <div className="bandeja-mas">
-              <p>
-                Se muestran {casosVisibles.length} de {conteo} casos pendientes,
-                en orden de llegada del reporte.
-              </p>
-              <button
-                type="button"
-                className="boton-secundario"
-                onClick={onRecargar}
-              >
-                Cargar los siguientes casos
-              </button>
-            </div>
-          )}
-        </>
+      {pagina !== null && !enEscena && (
+        <EstadoVacio
+          titulo="Todo en orden: no hay usos pendientes por identificar"
+          texto={
+            fuera.size > 0
+              ? "Cada decisión quedó registrada con su nota."
+              : "Cuando llegue un uso dudoso, aparecerá aquí."
+          }
+        />
       )}
 
-      <Dialogo
-        abierto={panel !== null}
-        variante="lateral"
-        idTitulo={idTituloPanel}
-        bloqueado={bloqueado}
-        onCerrar={cerrarPanel}
-      >
-        {panel && (
-          <PanelResolucion
-            idTitulo={idTituloPanel}
-            caso={panel.caso}
-            modo={panel.modo}
-            onCancelar={cerrarPanel}
-            onEnviandoCambia={setBloqueado}
-            onEnviarInicio={() => marcarFuera(panel.caso.id)}
-            onFalla={(volvioALaLista) => {
-              if (volvioALaLista) devolverALaLista(panel.caso.id);
-            }}
-            onExito={({ obraTitulo, esDescarte }) => {
-              setPanel(null);
-              setAviso({
-                detalle: esDescarte
-                  ? `Registro “${panel.caso.titulo}” descartado`
-                  : `Registro asignado a “${obraTitulo}”`,
-              });
-            }}
-            onRecargarTodo={onRecargar}
-          />
-        )}
-      </Dialogo>
+      {pagina !== null && enEscena && (
+        <div className="bandeja-fusion">
+          <aside className="bandeja-cola">
+            <div className="bandeja-progreso">
+              {posicion !== null && conteo !== undefined && (
+                <span className="bandeja-progreso-texto">
+                  Caso {posicion} de {conteo}
+                </span>
+              )}
+              <span className="bandeja-pasos">
+                <button
+                  type="button"
+                  className="bandeja-paso"
+                  aria-label="Caso anterior"
+                  aria-keyshortcuts="ArrowLeft"
+                  disabled={anterior === null || bloqueado}
+                  onClick={() => irA(anterior)}
+                >
+                  <ArrowLeftIcon aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="bandeja-paso"
+                  aria-label="Caso siguiente"
+                  aria-keyshortcuts="ArrowRight"
+                  disabled={siguiente === null || bloqueado}
+                  onClick={() => irA(siguiente)}
+                >
+                  <ArrowRightIcon aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+            {casosVisibles.length > 0 && (
+              <nav aria-label="Cola de casos">
+                <ol className="cola">
+                  {casosVisibles.map((caso) => (
+                    <li key={caso.id}>
+                      <button
+                        type="button"
+                        className="cola-caso"
+                        aria-current={caso.id === enEscena.id || undefined}
+                        disabled={bloqueado}
+                        onClick={() => irA(caso.id)}
+                      >
+                        <span className="cola-titulo">{caso.titulo}</span>
+                        <span className="cola-meta">
+                          {nombreDeFuente(caso.fuente)} ·{" "}
+                          {formatearPeriodo(caso.periodo)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+            )}
+            {conteo !== undefined && conteo > casosVisibles.length && (
+              <div className="cola-mas">
+                <p>
+                  Se muestran {casosVisibles.length} de {conteo}, en orden de
+                  llegada.
+                </p>
+                <button
+                  type="button"
+                  className="boton-secundario"
+                  onClick={onRecargar}
+                >
+                  Cargar los siguientes casos
+                </button>
+              </div>
+            )}
+            <p className="bandeja-atajo" aria-hidden="true">
+              <kbd>←</kbd> <kbd>→</kbd> para pasar de caso
+            </p>
+          </aside>
+
+          <div
+            className={`bandeja-escena${trasUnion ? " bandeja-escena-entra" : ""}`}
+          >
+            <VistaFusion
+              key={enEscena.id}
+              caso={enEscena}
+              onEnviandoCambia={setBloqueado}
+              onEnviarInicio={() => {
+                setFoco(enEscena.id);
+                setFuera((p) => conId(p, enEscena.id, true));
+              }}
+              onFalla={(volvioALaLista) => {
+                if (volvioALaLista) {
+                  setFuera((p) => conId(p, enEscena.id, false));
+                }
+              }}
+              onExito={({ obraTitulo, esDescarte }) => {
+                setAviso({
+                  detalle: esDescarte
+                    ? `Registro “${enEscena.titulo}” descartado`
+                    : `Registro asignado a “${obraTitulo}”`,
+                });
+                setTrasUnion(true);
+                // `enEscena` ya salio de `visibles`: sus vecinos son los que siguen.
+                setFoco(siguiente ?? anterior);
+              }}
+              onRecargarTodo={onRecargar}
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-function TarjetaCaso({
-  caso,
-  onAsignarCandidata,
-  onBuscarOtraObra,
-  onDescartar,
+/** Esqueleto de carga: la forma de las tarjetas, sin texto que leer. */
+export function EsqueletoDeCasos({
+  etiqueta,
 }: {
-  caso: CasoIdentificacion;
-  onAsignarCandidata: (candidato: CandidatoIdentificacion) => void;
-  onBuscarOtraObra: () => void;
-  onDescartar: () => void;
+  etiqueta: string;
 }): ReactElement {
-  // Expandida por defecto (plano seccion 5): nadie tiene que abrir la
-  // tarjeta para ver por que un registro esta en la bandeja.
-  const [expandida, setExpandida] = useState(true);
-  const idCuerpo = useId();
-  const sugerenciaTexto = textoDeSugerencia(caso.sugerencia);
-
   return (
-    <li className="bandeja-caso">
-      <button
-        type="button"
-        className="bandeja-caso-cabecera"
-        aria-expanded={expandida}
-        aria-controls={idCuerpo}
-        onClick={() => setExpandida((v) => !v)}
-      >
-        <div className="bandeja-caso-titulo-fila">
-          <h2>{caso.titulo}</h2>
-          <span className="etiqueta-modalidad">
-            {etiquetaDeModalidad(caso.modalidad)}
-          </span>
-          <span className="etiqueta-id">{caso.id}</span>
+    <div
+      className="esqueletos"
+      role="status"
+      aria-label={etiqueta}
+      aria-busy="true"
+    >
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="esqueleto-caso" aria-hidden="true">
+          <span className="esqueleto esqueleto-titulo" />
+          <span className="esqueleto esqueleto-linea" />
+          <span className="esqueleto esqueleto-barra" />
         </div>
-        <p className="muted">
-          {caso.fuente} · {caso.periodo} · Entrega {caso.reporte_id}
-        </p>
-      </button>
-
-      {expandida && (
-        <div id={idCuerpo} className="bandeja-caso-cuerpo">
-          <div className="bandeja-caso-datos">
-            <section className="bandeja-caso-entrada">
-              <h3>Entrada del reporte</h3>
-              <dl>
-                <div>
-                  <dt>Título emitido</dt>
-                  <dd>{caso.titulo}</dd>
-                </div>
-                <div>
-                  <dt>Título original</dt>
-                  <dd>{caso.titulo_original || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Fuente</dt>
-                  <dd>{caso.fuente}</dd>
-                </div>
-              </dl>
-            </section>
-            <section className="bandeja-caso-evidencia">
-              <h3>Evidencia del sistema</h3>
-              <ul className="bandeja-fichas">
-                {idsDeFuente(caso.ids_fuente).map((id) => (
-                  <li key={id} className="ficha">
-                    {id}
-                  </li>
-                ))}
-              </ul>
-              <p>{caso.evidencia}</p>
-            </section>
-          </div>
-
-          <section className="bandeja-candidatas">
-            {sugerenciaTexto && (
-              <p className="bandeja-sugerencia" role="status">
-                <strong>{sugerenciaTexto}</strong>
-                <span>Confírmala o elige otra. Nada se asigna solo.</span>
-                {caso.sugerencia.motivo !== "" && (
-                  <span className="muted">{caso.sugerencia.motivo}</span>
-                )}
-              </p>
-            )}
-            <div className="bandeja-candidatas-cabecera">
-              <div>
-                <h3>Obras candidatas</h3>
-                <p className="muted">
-                  Ordenadas por puntaje. Ninguna se asigna automáticamente.
-                </p>
-              </div>
-              <span className="muted">
-                {caso.candidatos.length} coincidencias
-              </span>
-            </div>
-
-            {caso.candidatos.length === 0 ? (
-              <div className="bandeja-sin-candidatas">
-                <p>No encontramos obras candidatas</p>
-                <p className="muted">
-                  Busca manualmente en el catálogo o descarta el registro.
-                </p>
-              </div>
-            ) : (
-              <ul className="bandeja-lista-candidatas">
-                {caso.candidatos.map((candidato) => (
-                  <li key={candidato.obra_id} className="bandeja-candidato">
-                    <div className="bandeja-candidato-cabecera">
-                      <span className="bandeja-candidato-titulo">
-                        {candidato.titulo}
-                      </span>
-                      <span className="pastilla-puntaje">
-                        {formatearPuntaje(candidato.puntaje)}
-                      </span>
-                    </div>
-                    <p className="muted">
-                      {candidato.anio} · {candidato.genero} · Comparado con “
-                      {candidato.titulo_consultado}”
-                    </p>
-                    <button
-                      type="button"
-                      className="boton-primario"
-                      aria-label={`Asignar a esta obra: ${candidato.titulo}`}
-                      onClick={() => onAsignarCandidata(candidato)}
-                    >
-                      Asignar a esta obra
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <div className="bandeja-caso-pie">
-            <button
-              type="button"
-              className="boton-secundario"
-              onClick={onBuscarOtraObra}
-            >
-              Buscar otra obra
-            </button>
-            <button
-              type="button"
-              className="boton-secundario"
-              onClick={onDescartar}
-            >
-              Descartar registro
-            </button>
-          </div>
-        </div>
-      )}
-    </li>
+      ))}
+    </div>
   );
 }
 
-/** Texto de la propuesta. `null` si no hay con que sugerir: no se pinta un aviso vacio. */
-function textoDeSugerencia(
-  sugerencia: SugerenciaIdentificacion,
-): string | null {
-  if (sugerencia.decision === "ninguna") return null;
-  if (sugerencia.decision === "descartar") {
-    return "Sugerencia: descartar este registro.";
-  }
-  const nombre = sugerencia.titulo || sugerencia.obra_id;
-  return `Sugerencia: asignar a ${nombre}.`;
+export function EstadoVacio({
+  titulo,
+  texto,
+}: {
+  titulo: string;
+  texto?: string;
+}): ReactElement {
+  return (
+    <div className="revision-vacio">
+      <span className="revision-vacio-icono">
+        <IconoTodoEnOrden />
+      </span>
+      <p className="revision-vacio-titulo">{titulo}</p>
+      {texto && <p className="revision-vacio-texto">{texto}</p>}
+    </div>
+  );
 }

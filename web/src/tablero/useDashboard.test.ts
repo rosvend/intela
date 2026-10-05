@@ -221,4 +221,61 @@ describe("useDashboard", () => {
     expect(paths).not.toContain(RUTAS_TABLERO.oni);
     expect(result.current.oni.tipo).toBe("inactivo");
   });
+
+  it("el administrador pide procesos, bolsas y la bitacora; el resumen de alertas espera al periodo", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/procesos") {
+        return json([
+          {
+            id: "p1",
+            circuito: "nacional",
+            etapa: "verificacion",
+            periodo: "2025",
+            revision: 1,
+          },
+        ]);
+      }
+      if (path.startsWith("/api/alertas/resumen")) return json({ abiertas: 3 });
+      return json([]);
+    });
+
+    const { result } = renderHook(() => useDashboard("administrador"));
+
+    await waitFor(() =>
+      expect(result.current.resumenAlertas.tipo).toBe("listo"),
+    );
+    const paths = vi.mocked(fetch).mock.calls.map(([path]) => String(path));
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "/api/procesos",
+        "/api/bolsas",
+        "/api/auditoria/asientos?limite=5",
+        "/api/alertas/resumen?periodo=2025",
+      ]),
+    );
+    expect(result.current.periodo).toBe("2025");
+  });
+
+  it("contabilidad no pide la bitacora: /auditoria no es suya", async () => {
+    vi.mocked(fetch).mockImplementation(async () => json([]));
+
+    const { result } = renderHook(() => useDashboard("contabilidad"));
+
+    await waitFor(() => expect(result.current.procesos.tipo).toBe("listo"));
+    const paths = vi.mocked(fetch).mock.calls.map(([path]) => String(path));
+    expect(paths.some((p) => p.startsWith("/api/auditoria"))).toBe(false);
+    expect(result.current.asientos.tipo).toBe("inactivo");
+  });
+
+  it("el titular no pide nada del panel de staff", async () => {
+    vi.mocked(fetch).mockImplementation(async () => json({}));
+
+    const { result } = renderHook(() => useDashboard("titular"));
+
+    await waitFor(() => expect(result.current.misObras.tipo).toBe("listo"));
+    expect(result.current.procesos.tipo).toBe("inactivo");
+    expect(result.current.bolsas.tipo).toBe("inactivo");
+    expect(result.current.resumenAlertas.tipo).toBe("inactivo");
+  });
 });

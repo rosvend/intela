@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SnakeCanvas from "./SnakeCanvas";
 import { DEFINICIONES } from "./snake";
@@ -6,7 +6,36 @@ import { DEFINICIONES } from "./snake";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.clear();
 });
+
+const CLAVE_PAUSA = "intela.acceso.serpientes-pausadas";
+
+function conMovimientoReducido(reducido: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((consulta: string) => ({
+      matches: reducido && consulta.includes("reduce"),
+      media: consulta,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
+}
+
+/** Captura los frames pedidos sin ejecutarlos. */
+function framesCapturados() {
+  const pedidos: FrameRequestCallback[] = [];
+  const pedir = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((cb) => {
+      pedidos.push(cb);
+      return pedidos.length;
+    });
+  const cancelar = vi.spyOn(window, "cancelAnimationFrame");
+  return { pedidos, pedir, cancelar };
+}
 
 /**
  * jsdom no implementa el contexto 2D, asi que sin doble `getContext` devuelve
@@ -173,5 +202,89 @@ describe("SnakeCanvas", () => {
     // por serpiente como maximo.
     expect(ctx.stroke.mock.calls.length).toBeGreaterThan(0);
     expect(ctx.arc.mock.calls.length).toBeLessThanOrEqual(DEFINICIONES.length);
+  });
+
+  describe("control de pausa (WCAG 2.2.2)", () => {
+    it("ofrece un boton de teclado para pausar, que detiene el bucle", () => {
+      contexto2DFalso();
+      const { pedidos, cancelar } = framesCapturados();
+      render(<SnakeCanvas />);
+
+      const boton = screen.getByRole("button", { name: "Pausar animación" });
+      expect(boton.getAttribute("type")).toBe("button");
+      boton.focus();
+      expect(document.activeElement).toBe(boton);
+
+      fireEvent.click(boton);
+
+      expect(cancelar).toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Reanudar animación" }),
+      ).toBeTruthy();
+      // Un frame que ya estaba en vuelo no vuelve a pedir otro.
+      const antes = pedidos.length;
+      pedidos[pedidos.length - 1]?.(16);
+      expect(pedidos.length).toBe(antes);
+    });
+
+    it("reanudar vuelve a pedir frames", () => {
+      contexto2DFalso();
+      const { pedir } = framesCapturados();
+      render(<SnakeCanvas />);
+      fireEvent.click(screen.getByRole("button", { name: "Pausar animación" }));
+      pedir.mockClear();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reanudar animación" }),
+      );
+
+      expect(pedir).toHaveBeenCalled();
+    });
+
+    it("recuerda la pausa entre visitas", () => {
+      contexto2DFalso();
+      const { pedir } = framesCapturados();
+      const { unmount } = render(<SnakeCanvas />);
+      fireEvent.click(screen.getByRole("button", { name: "Pausar animación" }));
+      expect(localStorage.getItem(CLAVE_PAUSA)).toBe("1");
+      unmount();
+      pedir.mockClear();
+
+      render(<SnakeCanvas />);
+
+      expect(
+        screen.getByRole("button", { name: "Reanudar animación" }),
+      ).toBeTruthy();
+      expect(pedir).not.toHaveBeenCalled();
+    });
+
+    it("si el almacenamiento falla, anima igual y el boton sigue sirviendo", () => {
+      contexto2DFalso();
+      const { pedir } = framesCapturados();
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new DOMException("bloqueado", "SecurityError");
+      });
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new DOMException("bloqueado", "SecurityError");
+      });
+
+      render(<SnakeCanvas />);
+      expect(pedir).toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Pausar animación" }));
+      expect(
+        screen.getByRole("button", { name: "Reanudar animación" }),
+      ).toBeTruthy();
+    });
+
+    it("con movimiento reducido no hay bucle ni boton que ofrecer", () => {
+      contexto2DFalso();
+      conMovimientoReducido(true);
+      const { pedir } = framesCapturados();
+
+      render(<SnakeCanvas />);
+
+      expect(pedir).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button")).toBeNull();
+    });
   });
 });

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ErrorDeRed } from "../api";
 import {
   causaDelConflicto,
+  clasificarError,
+  debeVolverALaLista,
   resolverCaso,
   type ResolucionDeCaso,
 } from "./resolucion";
@@ -110,5 +112,47 @@ describe("causaDelConflicto", () => {
     ).toBeNull();
     expect(causaDelConflicto(new ErrorDeRed(new TypeError("x")))).toBeNull();
     expect(causaDelConflicto("409")).toBeNull();
+  });
+});
+
+describe("clasificarError", () => {
+  it("separa los cuatro 409, un 4xx con mensaje, y todo lo demas como conexion", () => {
+    expect(
+      clasificarError(new ApiError(409, "otra persona ya resolvio este caso")),
+    ).toEqual({ tipo: "ya_resuelto" });
+    expect(
+      clasificarError(new ApiError(409, "el caso ya no esta pendiente: x")),
+    ).toEqual({ tipo: "no_pendiente" });
+    expect(
+      clasificarError(
+        new ApiError(409, "ese identificador ya apunta a otra obra"),
+      ),
+    ).toEqual({
+      tipo: "alias",
+      mensaje: "ese identificador ya apunta a otra obra",
+    });
+    expect(clasificarError(new ApiError(409, "raro"))).toEqual({
+      tipo: "desconocido",
+      mensaje: "raro",
+    });
+    expect(clasificarError(new ApiError(400, "nota vacia"))).toEqual({
+      tipo: "api",
+      mensaje: "nota vacia",
+    });
+    expect(clasificarError(new ApiError(503, "caido"))).toEqual({
+      tipo: "conexion",
+    });
+    expect(clasificarError(new TypeError("Failed to fetch"))).toEqual({
+      tipo: "conexion",
+    });
+  });
+});
+
+describe("debeVolverALaLista", () => {
+  it("solo los dos 409 que dicen que el caso salio de la cola lo dejan fuera", () => {
+    expect(debeVolverALaLista({ tipo: "ya_resuelto" })).toBe(false);
+    expect(debeVolverALaLista({ tipo: "no_pendiente" })).toBe(false);
+    expect(debeVolverALaLista({ tipo: "conexion" })).toBe(true);
+    expect(debeVolverALaLista({ tipo: "alias", mensaje: "x" })).toBe(true);
   });
 });

@@ -1,0 +1,321 @@
+/* Primitivas compartidas del rediseño (feature/ui-overhaul). Tokens en styles.css :root. */
+
+.detalle {
+  position: relative;
+  display: inline-flex;
+}
+
+.detalle-disparador {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--acento);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.detalle-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 0.85rem 1rem;
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  box-shadow: var(--sombra-flotante);
+  color: var(--texto);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  text-align: left;
+  animation: detalle-entrar var(--dur-media) var(--curva-salida);
+  transform-origin: top left;
+}
+
+.detalle-titulo {
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+  font-weight: 600;
+}
+
+.detalle-cuerpo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.detalle-cifra {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.detalle-pct {
+  color: var(--texto-medio);
+}
+
+.detalle-texto {
+  color: var(--texto-medio);
+}
+
+@keyframes detalle-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- barra apilada ---- */
+
+/* Largo de cada tramo = su porcentaje; uniones rectas con hueco fino y solo los extremos redondeados. */
+.barra-apilada {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  height: 14px;
+}
+
+.barra-apilada > .detalle {
+  flex: var(--peso) 1 0;
+  min-width: 4px;
+}
+
+.barra-segmento {
+  width: 100%;
+  height: 14px;
+  border: none;
+  padding: 0;
+  border-radius: 2px;
+  background: var(--color);
+  cursor: pointer;
+  transform-origin: left center;
+  animation: segmento-crecer var(--dur-lenta) var(--curva-salida) both;
+  animation-delay: var(--retardo, 0ms);
+  transition:
+    filter var(--dur-rapida),
+    transform var(--dur-rapida);
+}
+
+.barra-apilada > .detalle:first-child .barra-segmento {
+  border-radius: 99px 2px 2px 99px;
+}
+
+.barra-apilada > .detalle:last-child .barra-segmento {
+  border-radius: 2px 99px 99px 2px;
+}
+
+.barra-apilada > .detalle:only-child .barra-segmento {
+  border-radius: 99px;
+}
+
+.barra-segmento:hover,
+.barra-segmento[aria-expanded="true"] {
+  filter: brightness(1.1) saturate(1.1);
+}
+
+.barra-segmento:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 3px;
+}
+
+@keyframes segmento-crecer {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* Leyenda tipo lista (punto de color, nombre, cifra), como la tarjeta de referencia. */
+.leyenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.leyenda-fila {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--borde);
+  font-size: 0.92rem;
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+}
+
+.leyenda-fila:first-child {
+  border-top: none;
+}
+
+.leyenda-punto {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--color);
+}
+
+.leyenda-cifra {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+.leyenda-sub {
+  display: block;
+  color: var(--texto-suave);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+@keyframes fila-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- cifra ---- */
+
+/* Contenedor de tamano: la cifra se encoge con su tarjeta, no con la ventana (B3).
+   width: 100% porque inline-size anula el ancho intrinseco. */
+.cifra {
+  container-type: inline-size;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+/* 11cqi deja "$ 1.890.000.000" en una linea en una tarjeta de ~280px; partir es el ultimo recurso. */
+.cifra-valor {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.1rem, 11cqi, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto);
+}
+
+.cifra-variacion {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 99px;
+}
+
+.cifra-sube {
+  color: var(--ok);
+  background: var(--ok-fondo);
+}
+
+.cifra-baja {
+  color: var(--error);
+  background: var(--error-fondo);
+}
+
+/* ---- panel tipo tarjeta (Wise/Ramp) ---- */
+
+.panel {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-tarjeta);
+  padding: 1.5rem;
+  box-shadow: var(--sombra-suave);
+  animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
+}
+
+.panel-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel-titulo {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--texto);
+  letter-spacing: 0;
+}
+
+.panel-pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1.25rem -1.5rem -1.5rem;
+  padding: 0.85rem 1.5rem;
+  background: var(--fondo);
+  border-top: 1px solid var(--borde);
+  border-radius: 0 0 var(--radio-tarjeta) var(--radio-tarjeta);
+  color: var(--texto-medio);
+  font-size: 0.85rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--fondo);
+  color: var(--texto-medio);
+}
+
+.chip-ok {
+  background: var(--ok-fondo);
+  color: var(--ok);
+}
+
+.chip-alerta {
+  background: var(--alerta-fondo);
+  color: var(--alerta);
+}
+
+.chip-error {
+  background: var(--error-fondo);
+  color: var(--error);
+}
+
+.chip-marca {
+  background: var(--acento-activo);
+  color: var(--acento);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detalle-panel,
+  .barra-segmento,
+  .leyenda-fila,
+  .panel {
+    animation: none;
+  }
+  .barra-segmento {
+    transition: none;
+  }
+}

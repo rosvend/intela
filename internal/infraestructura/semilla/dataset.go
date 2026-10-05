@@ -519,12 +519,12 @@ func (d *Dataset) bolsas() {
 	// bolsas DISTINTAS aunque el periodo sea el mismo: `RD 9.1` reparte el
 	// dinero de cada canal de manera independiente.
 	d.Bolsas = []aplicacion.BolsaPersistida{
-		bolsa("bolsa-caracol-"+Periodo+"-nacional", FuenteTV, recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-rcn-"+Periodo+"-nacional", FuenteTVSegundo, recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-procinal-"+Periodo+"-nacional", PagadorCine, recaudo.Nacional, "1000000.00"),
-		bolsa("bolsa-netflix-"+Periodo+"-nacional", FuenteOTT, recaudo.Nacional, "500000.00"),
-		bolsa("bolsa-transporte-"+Periodo+"-nacional", FuenteTransporte, recaudo.Nacional, "120000.00"),
-		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "200000.00"),
+		bolsa("bolsa-caracol-"+Periodo+"-nacional", FuenteTV, recaudo.Nacional, "600000000.00"),
+		bolsa("bolsa-rcn-"+Periodo+"-nacional", FuenteTVSegundo, recaudo.Nacional, "600000000.00"),
+		bolsa("bolsa-procinal-"+Periodo+"-nacional", PagadorCine, recaudo.Nacional, "200000000.00"),
+		bolsa("bolsa-netflix-"+Periodo+"-nacional", FuenteOTT, recaudo.Nacional, "350000000.00"),
+		bolsa("bolsa-transporte-"+Periodo+"-nacional", FuenteTransporte, recaudo.Nacional, "40000000.00"),
+		bolsa("bolsa-dago-"+Periodo+"-internacional", "dago-films", recaudo.Internacional, "100000000.00"),
 	}
 }
 

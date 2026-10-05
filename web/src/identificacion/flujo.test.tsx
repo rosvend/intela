@@ -23,7 +23,7 @@ import {
 
 /**
  * El recorrido completo de #39 sobre `<App />` con un servidor falso CON
- * ESTADO (plano, seccion 6): resolver un caso de la bandeja, verlo salir de
+ * ESTADO (plano, seccion 6): unir un caso de la bandeja con su obra, verlo salir de
  * ella y del badge, encontrarlo asignado y con su responsable en la lista ONI,
  * abrir su historial, saltar a la obra y leer la resolucion -usuario, fecha,
  * decision y nota- en la bitacora de la obra.
@@ -271,7 +271,7 @@ function montar() {
   );
 }
 
-/** El titulo del caso en la bandeja: un `<h2>`, no el `<p>` del panel abierto. */
+/** El titulo del caso en escena: el unico `<h2>` de la bandeja. */
 function tituloEnLaBandeja(titulo: string): HTMLElement | null {
   return screen.queryByRole("heading", { level: 2, name: titulo });
 }
@@ -302,7 +302,7 @@ describe("flujo de identificacion (integracion con App)", () => {
     instalarServidor({ casos: [CASO_PENDIENTE] });
     montar();
 
-    // 1. La bandeja lista el pendiente con sus candidatas, y el sidebar cuenta
+    // 1. La bandeja pone el pendiente en escena con sus candidatas, y el sidebar cuenta
     //    lo mismo que la bandeja tiene delante.
     expect(
       await screen.findByRole("heading", {
@@ -320,40 +320,32 @@ describe("flujo de identificacion (integracion con App)", () => {
     expect(screen.getByText("0,71")).toBeTruthy();
     await waitFor(() => expect(textoDelBadge()).toBe("1 pendientes"));
 
-    // 2. Asignar a la candidata: el panel abre con la obra elegida y el boton
-    //    principal no se puede pulsar sin nota (es obligatoria).
+    // 2. Unir con la candidata: ninguna llega elegida (ADR 0007), y el boton
+    //    principal no se puede pulsar sin obra ni sin nota (es obligatoria).
+    const unir = screen.getByRole("button", { name: "Unir con esta obra" });
+    expect(unir).toHaveProperty("disabled", true);
     fireEvent.click(
-      screen.getByRole("button", {
-        name: `Asignar a esta obra: ${OBRA.titulo}`,
-      }),
+      screen.getByRole("radio", { name: new RegExp(OBRA.titulo) }),
     );
-    const panel = await screen.findByRole("dialog");
-    expect(
-      within(panel).getByRole("heading", { name: "Asignar obra" }),
-    ).toBeTruthy();
-    const enviar = within(panel).getByRole("button", {
-      name: `Asignar a ${OBRA.titulo}`,
-    });
-    expect(enviar).toHaveProperty("disabled", true);
+    expect(unir).toHaveProperty("disabled", true);
 
-    fireEvent.change(within(panel).getByLabelText("Nota *"), {
+    fireEvent.change(screen.getByLabelText("Nota para la bitácora"), {
       // Con espacios a los lados: la nota viaja recortada.
       target: { value: `  ${NOTA}  ` },
     });
-    fireEvent.click(enviar);
+    fireEvent.click(unir);
 
     // 3. El aviso de exito, el caso fuera de la bandeja y el badge sin numero
     //    -con cero no se pinta-.
     expect(
       await screen.findByText(`Registro asignado a “${OBRA.titulo}”`),
     ).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(tituloEnLaBandeja(CASO_PENDIENTE.titulo)).toBeNull();
-    expect(screen.getByText("No hay casos pendientes")).toBeTruthy();
     expect(
-      screen.getByText(
-        "Todas las entradas fueron asignadas o descartadas con trazabilidad.",
-      ),
+      screen.getByText("Todo en orden: no hay usos pendientes por identificar"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Cada decisión quedó registrada con su nota."),
     ).toBeTruthy();
     await waitFor(() => expect(textoDelBadge()).toBeNull());
 
@@ -409,9 +401,13 @@ describe("flujo de identificacion (integracion con App)", () => {
 
     expect(entrada.textContent).toContain(ACTOR);
     expect(entrada.textContent).toContain(
-      `Asignó “${CASO_PENDIENTE.titulo}” de ${CASO_PENDIENTE.fuente}, ${CASO_PENDIENTE.periodo}, a esta obra.`,
+      `Asignó “${CASO_PENDIENTE.titulo}” de ${CASO_PENDIENTE.fuente}, sep 2026, a esta obra.`,
     );
     expect(entrada.textContent).toContain(NOTA);
+    // La referencia de origen espera detras de su Detalle.
+    fireEvent.click(
+      within(entrada).getByRole("button", { name: "Referencia de origen" }),
+    );
     expect(entrada.textContent).toContain(
       `${CASO_PENDIENTE.id} · ${CASO_PENDIENTE.reporte_id}`,
     );
@@ -434,21 +430,18 @@ describe("flujo de identificacion (integracion con App)", () => {
     await waitFor(() => expect(textoDelBadge()).toBe("2 pendientes"));
 
     fireEvent.click(
-      screen.getByRole("button", {
-        name: `Asignar a esta obra: ${OBRA.titulo}`,
-      }),
+      screen.getByRole("radio", { name: new RegExp(OBRA.titulo) }),
     );
-    const panel = await screen.findByRole("dialog");
-    fireEvent.change(within(panel).getByLabelText("Nota *"), {
+    fireEvent.change(screen.getByLabelText("Nota para la bitácora"), {
       target: { value: NOTA },
     });
-    fireEvent.click(
-      within(panel).getByRole("button", { name: `Asignar a ${OBRA.titulo}` }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Unir con esta obra" }));
 
     await waitFor(() => expect(textoDelBadge()).toBe("1 pendientes"));
-    // Y el otro caso sigue donde estaba: el conteo baja por el que se resolvio.
-    expect(tituloEnLaBandeja(OTRO_CASO.titulo)).not.toBeNull();
+    // Y el otro caso sube a escena: el conteo baja por el que se resolvio.
+    await waitFor(() =>
+      expect(tituloEnLaBandeja(OTRO_CASO.titulo)).not.toBeNull(),
+    );
     expect(tituloEnLaBandeja(CASO_PENDIENTE.titulo)).toBeNull();
   });
 });

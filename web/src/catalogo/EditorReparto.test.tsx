@@ -1400,9 +1400,11 @@ describe("editor de reparto (integracion con App)", () => {
     expect(hayAvisoDeVersion()).toBe(false);
 
     // Y el enlace al historial lleva a la version anterior, que sigue ahi.
-    fireEvent.click(
-      screen.getByRole("link", { name: "Ver el historial de la declaración" }),
-    );
+    const alHistorial = screen.getByRole("link", {
+      name: "Ver el historial de la declaración",
+    });
+    expect(alHistorial.classList.contains("boton-secundario")).toBe(true);
+    fireEvent.click(alHistorial);
 
     await screen.findByRole("heading", { name: "Historial de la declaración" });
     await screen.findByText("Versión 4");
@@ -2013,6 +2015,8 @@ describe("el detalle de obra lleva al editor (S4, alcanzable por un enlace real)
 
       const enlace = screen.getByRole("link", { name: texto });
       expect(enlace.getAttribute("href")).toBe(destino);
+      // Es la accion principal de la ficha: un boton, no texto suelto.
+      expect(enlace.classList.contains("boton-primario")).toBe(true);
       // El destino lleva el `id` de la obra que se esta viendo: un enlace al
       // editor de otra obra pasaria un test que solo mirara el texto.
       expect(destino).toContain(obra.id);

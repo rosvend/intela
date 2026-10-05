@@ -1,5 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PauseIcon, PlayIcon } from "@heroicons/react/24/outline";
 import marca from "../marca-intela.png";
+import "./login.css";
 import {
   avanzar,
   DEFINICIONES,
@@ -8,12 +10,13 @@ import {
   posicion,
   rumbo,
   segmentos,
+  trazo,
   type GameState,
   type Serpiente,
 } from "./snake";
 
 /**
- * El panel derecho: tres marcas de Intela recorriendo trayectorias fijas.
+ * El panel derecho: marcas de Intela recorriendo, cada una, una hebra del logo.
  *
  * # Adorno, y nada mas
  *
@@ -26,6 +29,9 @@ import {
  * con el, asi que anunciarlo o darle una parada de tabulador seria mandar a
  * quien navega con teclado o con lector de pantalla a un sitio sin salida. La
  * marca ya la nombra el logo del formulario.
+ *
+ * Lo unico interactivo es el boton de pausa (WCAG 2.2.2): la animacion dura
+ * indefinidamente, asi que tiene que poder detenerse. La eleccion se recuerda.
  *
  * # Por que la logica esta en otro fichero
  *
@@ -45,9 +51,39 @@ function cargarMarca(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
+const CLAVE_PAUSA = "intela.acceso.serpientes-pausadas";
+
+// El almacenamiento puede lanzar (modo privado, sitio bloqueado): sin el, la pausa no se recuerda y ya.
+function leerPausa(): boolean {
+  try {
+    return localStorage.getItem(CLAVE_PAUSA) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function guardarPausa(pausado: boolean) {
+  try {
+    if (pausado) localStorage.setItem(CLAVE_PAUSA, "1");
+    else localStorage.removeItem(CLAVE_PAUSA);
+  } catch {
+    // Sin almacenamiento la pausa vale para esta visita.
+  }
+}
+
+function prefiereQuieto(): boolean {
+  return Boolean(
+    window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches,
+  );
+}
+
 export default function SnakeCanvas() {
   const lienzoRef = useRef<HTMLCanvasElement | null>(null);
   const contenedorRef = useRef<HTMLDivElement | null>(null);
+  const [quieto] = useState(prefiereQuieto);
+  const [pausado, setPausado] = useState(leerPausa);
+  // Lo fija el efecto del lienzo; null si no hay contexto 2D.
+  const moverRef = useRef<((enMarcha: boolean) => void) | null>(null);
 
   useEffect(() => {
     const lienzo = lienzoRef.current;
@@ -59,8 +95,6 @@ export default function SnakeCanvas() {
     // correcto en un navegador donde el lienzo este deshabilitado.
     const ctx: CanvasRenderingContext2D | null = lienzo.getContext("2d");
     if (!ctx) return;
-
-    const quietud = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 
     let estado: GameState = estadoInicial(
       Math.max(1, contenedor.clientWidth),
@@ -95,7 +129,7 @@ export default function SnakeCanvas() {
         serpientes: DEFINICIONES.map((def, i) => {
           const s = dimensionar(def, ancho, alto);
           const t = tiempos[i] ?? 0;
-          return { ...s, t, rastro: [posicion(s.trayectoria, t, ancho, alto)] };
+          return { ...s, t, rastro: [posicion(s.trayectoria, t)] };
         }),
       };
     }
@@ -131,8 +165,8 @@ export default function SnakeCanvas() {
       c.stroke();
 
       // La cabeza, girada hacia donde va.
-      const cabeza = posicion(s.trayectoria, s.t, estado.ancho, estado.alto);
-      const angulo = rumbo(s.trayectoria, s.t, estado.ancho, estado.alto);
+      const cabeza = posicion(s.trayectoria, s.t);
+      const angulo = rumbo(s.trayectoria, s.t);
       c.translate(cabeza.x, cabeza.y);
       c.rotate(angulo);
       if (imagen) {
@@ -146,8 +180,30 @@ export default function SnakeCanvas() {
       c.restore();
     }
 
+    /** Todas las hebras, muy tenues: las serpientes las recorren y se lee la marca. */
+    function pintarGuia() {
+      const c = ctx!;
+      c.save();
+      c.globalAlpha = 0.08;
+      c.strokeStyle = "#ffffff";
+      c.lineCap = "round";
+      c.lineJoin = "round";
+      for (const s of estado.serpientes) {
+        const puntos = trazo(s.trayectoria);
+        c.lineWidth = s.grosor;
+        c.beginPath();
+        c.moveTo(puntos[0].x, puntos[0].y);
+        for (let i = 1; i < puntos.length; i++)
+          c.lineTo(puntos[i].x, puntos[i].y);
+        c.lineTo(puntos[0].x, puntos[0].y);
+        c.stroke();
+      }
+      c.restore();
+    }
+
     function pintar() {
       ctx!.clearRect(0, 0, estado.ancho, estado.alto);
+      pintarGuia();
       // De la mas tenue a la mas opaca, para que la principal quede encima.
       for (let i = estado.serpientes.length - 1; i >= 0; i--) {
         pintarSerpiente(estado.serpientes[i]);
@@ -155,7 +211,7 @@ export default function SnakeCanvas() {
     }
 
     function bucle(ahora: number) {
-      if (!vivo) return;
+      if (!vivo || frame === 0) return;
       // El primer frame no tiene anterior con el que comparar, y dt se acota:
       // al volver de una pestana en segundo plano vendria un salto de varios
       // segundos que partiria el rastro.
@@ -167,16 +223,34 @@ export default function SnakeCanvas() {
       frame = window.requestAnimationFrame(bucle);
     }
 
+    // `frame === 0` marca el bucle detenido: pausado o con movimiento reducido.
+    function mover(enMarcha: boolean) {
+      if (enMarcha && frame === 0) {
+        anterior = 0;
+        frame = window.requestAnimationFrame(bucle);
+      } else if (!enMarcha && frame !== 0) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    }
+
     // ResizeObserver es lo correcto -- mide el contenedor, no la ventana, asi
     // que tambien acierta cuando el panel cambia sin que cambie la ventana --
     // pero se usa con guarda: si no existe, se cae al evento `resize`. Una
     // pantalla de acceso no puede quedarse en blanco por una API ausente.
+    // Redimensionar borra el lienzo; detenido, nadie mas lo repinta.
+    function alRedimensionar() {
+      medir();
+      if (frame === 0) pintar();
+    }
     const hayObservador = typeof ResizeObserver !== "undefined";
-    const observador = hayObservador ? new ResizeObserver(medir) : null;
+    const observador = hayObservador
+      ? new ResizeObserver(alRedimensionar)
+      : null;
     if (observador) {
       observador.observe(contenedor);
     } else {
-      window.addEventListener("resize", medir);
+      window.addEventListener("resize", alRedimensionar);
     }
     medir();
 
@@ -185,29 +259,41 @@ export default function SnakeCanvas() {
       // sobre un lienzo que ya no esta en el documento.
       if (!vivo) return;
       imagen = img;
-      // Con movimiento reducido no hay bucle que la recoja, asi que se repinta
-      // el fotograma quieto en cuanto la imagen esta.
-      if (quietud?.matches) pintar();
+      // Detenido no hay bucle que la recoja, asi que se repinta el fotograma
+      // quieto en cuanto la imagen esta.
+      if (frame === 0) pintar();
     });
 
-    if (quietud?.matches) {
-      // Un fotograma y quieto: el panel no se ve vacio y nada se mueve sin que
-      // nadie lo haya pedido.
-      pintar();
-    } else {
-      frame = window.requestAnimationFrame(bucle);
-    }
+    // Un fotograma siempre: pausado o con movimiento reducido el panel no se
+    // ve vacio. El bucle lo arranca el efecto de la pausa.
+    pintar();
+    moverRef.current = mover;
 
     return () => {
       vivo = false;
+      moverRef.current = null;
       window.cancelAnimationFrame(frame);
       if (observador) {
         observador.disconnect();
       } else {
-        window.removeEventListener("resize", medir);
+        window.removeEventListener("resize", alRedimensionar);
       }
     };
   }, []);
+
+  // Declarado despues del efecto del lienzo: al montar, `moverRef` ya existe.
+  useEffect(() => {
+    moverRef.current?.(!pausado && !quieto);
+  }, [pausado, quieto]);
+
+  function alternar() {
+    setPausado((previo) => {
+      guardarPausa(!previo);
+      return !previo;
+    });
+  }
+
+  const Icono = pausado ? PlayIcon : PauseIcon;
 
   return (
     <div className="acceso-juego" ref={contenedorRef}>
@@ -217,6 +303,18 @@ export default function SnakeCanvas() {
         ninguna accion es una trampa. La marca la nombra el logo del formulario.
       */}
       <canvas ref={lienzoRef} className="acceso-lienzo" aria-hidden="true" />
+      {/* Con movimiento reducido nada se mueve, asi que no hay nada que pausar. */}
+      {!quieto && (
+        <button
+          type="button"
+          className="acceso-pausa"
+          onClick={alternar}
+          aria-label={pausado ? "Reanudar animación" : "Pausar animación"}
+          title={pausado ? "Reanudar animación" : "Pausar animación"}
+        >
+          <Icono className="acceso-pausa-icono" aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

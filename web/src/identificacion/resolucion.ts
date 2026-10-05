@@ -76,3 +76,36 @@ export function causaDelConflicto(error: unknown): CausaDeConflicto | null {
   }
   return "desconocida";
 }
+
+/**
+ * Los desenlaces de enviar una resolucion que la pantalla distingue: decide el
+ * texto del error y si hace falta "Recargar caso".
+ */
+export type ErrorDeEnvio =
+  | { tipo: "conexion" }
+  | { tipo: "api"; mensaje: string }
+  | { tipo: "ya_resuelto" }
+  | { tipo: "no_pendiente" }
+  | { tipo: "desconocido"; mensaje: string }
+  | { tipo: "alias"; mensaje: string };
+
+/** Red, 5xx o un fallo sin forma conocida: "conexion", sin afirmar mas de lo que se sabe. */
+export function clasificarError(error: unknown): ErrorDeEnvio {
+  if (error instanceof ApiError) {
+    if (error.status === 409) {
+      const causa = causaDelConflicto(error);
+      if (causa === "ya_resuelto") return { tipo: "ya_resuelto" };
+      if (causa === "no_pendiente") return { tipo: "no_pendiente" };
+      if (causa === "alias_en_conflicto")
+        return { tipo: "alias", mensaje: error.message };
+      return { tipo: "desconocido", mensaje: error.message };
+    }
+    if (error.status < 500) return { tipo: "api", mensaje: error.message };
+  }
+  return { tipo: "conexion" };
+}
+
+/** Si el caso vuelve a la cola tras el error: no, si el servidor ya lo saco (D3). */
+export function debeVolverALaLista(error: ErrorDeEnvio): boolean {
+  return error.tipo !== "ya_resuelto" && error.tipo !== "no_pendiente";
+}

@@ -56,14 +56,16 @@ type Anomalias interface {
 // alerta dice que una fila no esta en condiciones de ponderar, nunca cuanto
 // vale.
 type alertaJSON struct {
-	ID          string     `json:"id"`
-	Tipo        string     `json:"tipo"`
-	Detalle     string     `json:"detalle"`
-	Periodo     string     `json:"periodo"`
-	Referencia  string     `json:"referencia"`
-	RefTipo     string     `json:"ref_tipo"`
-	RefID       string     `json:"ref_id"`
-	RefTitular  string     `json:"ref_titular,omitempty"`
+	ID         string `json:"id"`
+	Tipo       string `json:"tipo"`
+	Detalle    string `json:"detalle"`
+	Periodo    string `json:"periodo"`
+	Referencia string `json:"referencia"`
+	RefTipo    string `json:"ref_tipo"`
+	RefID      string `json:"ref_id"`
+	RefTitular string `json:"ref_titular,omitempty"`
+	// RefTitulo es el titulo vigente de la obra referida (solo ref_tipo=obra); ref_id sigue siendo la referencia.
+	RefTitulo   string     `json:"ref_titulo,omitempty"`
 	Critica     bool       `json:"critica"`
 	Detectada   time.Time  `json:"detectada"`
 	Resuelta    bool       `json:"resuelta"`
@@ -159,6 +161,7 @@ func aAlertaJSON(a aplicacion.Alerta) alertaJSON {
 		RefTipo:        a.RefTipo,
 		RefID:          a.RefID,
 		RefTitular:     a.RefTitular,
+		RefTitulo:      a.RefTitulo,
 		Critica:        a.Critica,
 		Detectada:      a.Detectada,
 		Resuelta:       a.Resuelta,

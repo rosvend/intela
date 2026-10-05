@@ -1,5 +1,6 @@
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -9,6 +10,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Inicio from "../Inicio";
 import { setToken } from "../api";
+import { resumenDePrueba } from "../reparto/resumenDePrueba";
 import { ProveedorDeSesion, Rol } from "../sesion";
 
 function json(cuerpo: unknown, status = 200) {
@@ -38,21 +40,58 @@ function montar() {
   );
 }
 
-/** La tarjeta de un KPI, por el titulo que `Tarjeta` pinta en su `h2`. */
-function tarjeta(titulo: string): HTMLElement {
-  const articulo = screen
+/** Responde la sesion con `rol` y el resto con `rutas` (o 404). */
+function servir(
+  rol: Rol,
+  rutas: Record<string, () => Response | Promise<Response>> = {},
+  nombre?: string,
+) {
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/session") return json(usuario(rol, nombre));
+    const ruta = Object.keys(rutas).find(
+      (r) => path === r || path.startsWith(`${r}?`),
+    );
+    return ruta ? rutas[ruta]() : json({ error: "ruta no encontrada" }, 404);
+  });
+}
+
+/** La tarjeta (o panel) por el titulo que pinta en su `h2`. */
+function bloque(titulo: string): HTMLElement {
+  const contenedor = screen
     .getByRole("heading", { name: titulo })
-    .closest("article");
-  if (!articulo) throw new Error(`no se encontro la tarjeta "${titulo}"`);
-  return articulo;
+    .closest("article, section");
+  if (!contenedor) throw new Error(`no se encontro "${titulo}"`);
+  return contenedor as HTMLElement;
 }
 
-/** El mensaje que una tarjeta muestra cuando su recurso fallo (Tarjeta.tsx). */
+/** Igual que `bloque`, esperando a que la sesion monte el tablero. */
+async function encontrar(titulo: string): Promise<HTMLElement> {
+  await screen.findByRole("heading", { name: titulo });
+  return bloque(titulo);
+}
+
 function alertaDe(titulo: string): HTMLElement {
-  return within(tarjeta(titulo)).getByRole("alert");
+  return within(bloque(titulo)).getByRole("alert");
 }
 
-describe("Inicio — seleccion de tablero por rol", () => {
+const KPIS = [
+  "Cargas por procesar",
+  "Obras en reserva",
+  "Obras sin identificar",
+  "Última distribución",
+];
+
+const PROCESO = {
+  id: "proc-2025",
+  circuito: "nacional",
+  etapa: "verificacion",
+  periodo: "2025",
+  revision: 1,
+  firmas: [{ rol: "distribucion", actor_id: "usr-d", revision: 1 }],
+};
+
+describe("Inicio de staff", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
     setToken("tok");
@@ -64,186 +103,101 @@ describe("Inicio — seleccion de tablero por rol", () => {
     localStorage.clear();
   });
 
-  it("el administrador ve el panel de control y no la liquidacion del titular", async () => {
-    vi.mocked(fetch).mockImplementation(async (input) => {
-      if (String(input) === "/api/auth/session") {
-        return json(usuario("administrador", "Admin Intela"));
-      }
-      return json({ error: "ruta no encontrada" }, 404);
-    });
+  it("saluda por el nombre y muestra los cuatro indicadores y los paneles", async () => {
+    servir("administrador", {}, "Admin Intela");
+
+    montar();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Hola, Admin" }),
+    ).toBeTruthy();
+    for (const kpi of KPIS) {
+      expect(screen.getByRole("heading", { name: kpi })).toBeTruthy();
+    }
+    for (const panel of [
+      "Recaudo del periodo por fuente",
+      "Distribución en curso",
+      "Alertas",
+      "Actividad reciente",
+    ]) {
+      expect(screen.getByRole("heading", { name: panel })).toBeTruthy();
+    }
+    expect(screen.getByRole("link", { name: "Nueva ingesta" })).toBeTruthy();
+  });
+
+  it("contabilidad no ve Nueva ingesta ni la bitacora que no puede leer", async () => {
+    servir("contabilidad");
+
+    montar();
+
+    await screen.findByRole("heading", { name: "Cargas por procesar" });
+    expect(screen.queryByRole("link", { name: "Nueva ingesta" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Actividad reciente" }),
+    ).toBeNull();
+  });
+
+  it("cada widget sin backend muestra el vacio, sin alerta", async () => {
+    servir("administrador");
 
     montar();
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "Panel de control" }),
+        within(bloque("Cargas por procesar")).getByText("Sin datos todavía"),
       ).toBeTruthy(),
-    );
-    expect(screen.getByText("Cargas pendientes")).toBeTruthy();
-    expect(screen.getByText("Obras en reserva")).toBeTruthy();
-    expect(screen.getByText("ONI")).toBeTruthy();
-    expect(screen.getByText("Última corrida")).toBeTruthy();
-    expect(
-      screen.queryByRole("heading", { name: "Mi liquidación" }),
-    ).toBeNull();
-  });
-
-  it("el titular ve su liquidacion y el panel de ingresos montado en #ingresos", async () => {
-    vi.mocked(fetch).mockImplementation(async (input) => {
-      const url = String(input);
-      if (url === "/api/auth/session") {
-        return json(usuario("titular", "Ana Escritora"));
-      }
-      if (url.startsWith("/api/mis-ingresos")) {
-        return json({
-          ingresos: [
-            {
-              ref: "proc-2026-01:obra-completa:tit-1",
-              obra_id: "obra-completa",
-              obra: "La Casa de las Dos Palmas",
-              fuente: "caracol",
-              periodo: "2026-01",
-              neto: "3600.00",
-            },
-          ],
-        });
-      }
-      return json({ error: "ruta no encontrada" }, 404);
-    });
-
-    montar();
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Mi liquidación" }),
-      ).toBeTruthy(),
-    );
-    expect(screen.getByText("Ana Escritora")).toBeTruthy();
-    expect(screen.getByText("Mis obras")).toBeTruthy();
-    expect(screen.getByText("Última liquidación")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Mis ingresos" })).toBeTruthy();
-    expect(
-      await screen.findByRole("cell", { name: "La Casa de las Dos Palmas" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Explicar esta cifra" }),
-    ).toBeTruthy();
-    expect(document.getElementById("ingresos")).toBeTruthy();
-    expect(screen.queryByText("Cargas pendientes")).toBeNull();
-    expect(
-      screen.queryByRole("heading", { name: "Panel de control" }),
-    ).toBeNull();
-  });
-
-  it("cada widget muestra el vacio cuando su backend no existe, sin alerta", async () => {
-    vi.mocked(fetch).mockImplementation(async (input) => {
-      if (String(input) === "/api/auth/session") {
-        return json(usuario("administrador"));
-      }
-      return json({ error: "ruta no encontrada" }, 404);
-    });
-
-    montar();
-
-    await waitFor(() =>
-      expect(screen.getAllByText("Sin datos todavía").length).toBeGreaterThan(
-        0,
-      ),
     );
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("un widget con datos pinta el conteo y uno con 500 se queda en alerta sin tumbar el resto", async () => {
-    vi.mocked(fetch).mockImplementation(async (input) => {
-      const path = String(input);
-      if (path === "/api/auth/session") {
-        return json(usuario("administrador"));
-      }
-      if (path === "/api/tablero/oni") {
-        return json({ total: 12 });
-      }
-      if (path === "/api/tablero/cargas-pendientes") {
-        return json({ error: "la base esta caida" }, 500);
-      }
-      return json({ error: "ruta no encontrada" }, 404);
+  it("un indicador con datos pinta el conteo y uno con 500 alerta solo en su tarjeta", async () => {
+    servir("administrador", {
+      "/api/tablero/oni": () => json({ total: 12 }),
+      "/api/tablero/cargas-pendientes": () =>
+        json({ error: "la base esta caida" }, 500),
     });
 
     montar();
 
-    await waitFor(() => expect(screen.getByText("12")).toBeTruthy());
-    expect(screen.getByRole("alert").textContent).toBe("la base esta caida");
-    expect(screen.getAllByText("Sin datos todavía").length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("heading", { name: "Panel de control" }),
-    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        within(bloque("Obras sin identificar")).getByText("12"),
+      ).toBeTruthy(),
+    );
+    expect(alertaDe("Cargas por procesar").textContent).toBe(
+      "la base esta caida",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   it("un 2xx con el cuerpo ilegible se ve con su mensaje, y un 500 con el suyo", async () => {
-    // `useRecurso` clasifica el error de cada widget con la union de errores
-    // tipados. Un 2xx cuyo cuerpo no parsea llega como `ErrorDeCuerpoIlegible`
-    // -el servidor contesto bien y lo que no llego fue el cuerpo- y sin entrar
-    // en la union la tarjeta lo cambiaba por el generico "no se pudo cargar
-    // este indicador", que dice menos de lo que se sabe.
     const cuerpoIlegible = '{"total": 12';
-    const respuestaOni = new Response(cuerpoIlegible, {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-
-    vi.mocked(fetch).mockImplementation(async (input) => {
-      const path = String(input);
-      if (path === "/api/auth/session") {
-        return json(usuario("administrador"));
-      }
-      if (path === "/api/tablero/oni") {
-        return respuestaOni;
-      }
-      if (path === "/api/tablero/cargas-pendientes") {
-        return json({ error: "la base esta caida" }, 500);
-      }
-      return json({ error: "ruta no encontrada" }, 404);
+    servir("administrador", {
+      "/api/tablero/oni": () =>
+        new Response(cuerpoIlegible, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      "/api/tablero/cargas-pendientes": () =>
+        json({ error: "la base esta caida" }, 500),
     });
 
     montar();
 
     await waitFor(() => expect(screen.getAllByRole("alert").length).toBe(2));
-
-    // Precondicion: el doble contesto un 2xx con un cuerpo que no parsea. Un
-    // doble que devolviera un 500 mediria el camino del `ApiError` y la prueba
-    // pasaria por el motivo equivocado.
-    expect(respuestaOni.ok).toBe(true);
-    expect(respuestaOni.status).toBe(200);
-    expect(respuestaOni.headers.get("content-type")).toContain("json");
-    await expect(
-      new Response(cuerpoIlegible, {
-        headers: { "content-type": "application/json" },
-      }).json(),
-    ).rejects.toThrow();
-
-    expect(alertaDe("ONI").textContent).toBe(
+    expect(alertaDe("Obras sin identificar").textContent).toBe(
       "la respuesta llegó sin un cuerpo legible",
     );
-
-    // Control negativo: un 500 con mensaje propio sigue llegando con el suyo,
-    // en su propia tarjeta. Sin esto, un arreglo que metiera los dos errores en
-    // el mismo saco pasaria la afirmacion de arriba.
-    expect(alertaDe("Cargas pendientes").textContent).toBe(
+    expect(alertaDe("Cargas por procesar").textContent).toBe(
       "la base esta caida",
-    );
-    expect(alertaDe("ONI").textContent).not.toBe(
-      alertaDe("Cargas pendientes").textContent,
     );
   });
 
-  it("control negativo: un fallo de red sigue siendo el vacio, no una alerta con mensaje", async () => {
+  it("control negativo: un fallo de red sigue siendo el vacio, no una alerta", async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = String(input);
-      if (path === "/api/auth/session") {
-        return json(usuario("administrador"));
-      }
-      if (path === "/api/tablero/oni") {
-        throw new TypeError("Failed to fetch");
-      }
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === "/api/tablero/oni") throw new TypeError("Failed to fetch");
       return json({ error: "ruta no encontrada" }, 404);
     });
 
@@ -251,9 +205,228 @@ describe("Inicio — seleccion de tablero por rol", () => {
 
     await waitFor(() =>
       expect(
-        within(tarjeta("ONI")).getByText("Sin datos todavía"),
+        within(bloque("Obras sin identificar")).getByText("Sin datos todavía"),
       ).toBeTruthy(),
     );
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Obras en reserva explica que la obra entera queda retenida", async () => {
+    servir("administrador", {
+      "/api/tablero/obras-en-reserva": () => json({ total: 3 }),
+    });
+
+    montar();
+
+    await within(await encontrar("Obras en reserva")).findByText("3");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Qué significa Obras en reserva" }),
+    );
+    const ayuda = screen.getByRole("dialog").textContent;
+    expect(ayuda).toMatch(/sin declaración/);
+    expect(ayuda).toMatch(/no suman 100%/);
+    expect(ayuda).toMatch(/sin IPI/);
+  });
+
+  it("sin bolsas registradas el recaudo usa datos de demostración y lo dice", async () => {
+    servir("administrador");
+
+    montar();
+
+    const recaudo = await encontrar("Recaudo del periodo por fuente");
+    await within(recaudo).findByText("Datos de demostración");
+    expect(
+      within(within(recaudo).getByRole("list")).getByText("Caracol"),
+    ).toBeTruthy();
+    expect(within(recaudo).getByText("$ 1.890.000.000")).toBeTruthy();
+    expect(
+      within(recaudo).getByRole("group", { name: "Recaudo por fuente" }),
+    ).toBeTruthy();
+  });
+
+  it("con bolsas reales pinta su total por fuente, sin el chip de demostración", async () => {
+    servir("administrador", {
+      "/api/bolsas": () =>
+        json([
+          {
+            id: "b1",
+            usuario_id: "caracol",
+            periodo: "2025",
+            circuito: "nacional",
+            bruto: "1000000.00",
+          },
+          {
+            id: "b2",
+            usuario_id: "rcn",
+            periodo: "2025",
+            circuito: "nacional",
+            bruto: "500000.00",
+          },
+        ]),
+    });
+
+    montar();
+
+    const recaudo = await encontrar("Recaudo del periodo por fuente");
+    await within(recaudo).findByText("$ 1.500.000");
+    expect(within(recaudo).queryByText("Datos de demostración")).toBeNull();
+    expect(
+      within(within(recaudo).getByRole("list")).getByText("RCN"),
+    ).toBeTruthy();
+  });
+
+  it("la distribución en curso muestra la etapa y la firma que falta", async () => {
+    servir("administrador", {
+      "/api/procesos": () => json([PROCESO]),
+      "/api/alertas/resumen": () => json(resumenDePrueba()),
+    });
+
+    montar();
+
+    const panel = await encontrar("Distribución en curso");
+    await within(panel).findByText("Etapa 6 de 9");
+    expect(
+      within(panel).getByRole("listitem", { current: "step" }).textContent,
+    ).toBe("Verificación");
+    expect(
+      within(panel).getByText(/Falta la firma de Contabilidad/),
+    ).toBeTruthy();
+    expect(
+      within(panel)
+        .getByRole("link", { name: "Abrir distribución" })
+        .getAttribute("href"),
+    ).toBe("/distribucion/proc-2025");
+  });
+
+  it("las alertas resumen las abiertas y dicen si alguna bloquea", async () => {
+    servir("administrador", {
+      "/api/procesos": () => json([PROCESO]),
+      "/api/alertas/resumen": () =>
+        json(
+          resumenDePrueba({
+            abiertas: 5,
+            criticas_abiertas: 2,
+            porTipo: { oni: 3, duplicado_registro: 2 },
+          }),
+        ),
+    });
+
+    montar();
+
+    const panel = await encontrar("Alertas");
+    await within(panel).findByText("2 críticas bloquean la distribución");
+    expect(within(panel).getByText("5")).toBeTruthy();
+    expect(within(panel).getByText("ONI")).toBeTruthy();
+    expect(
+      within(panel)
+        .getByRole("link", { name: "Resolver alertas" })
+        .getAttribute("href"),
+    ).toBe("/anomalias?periodo=2025");
+  });
+
+  it("cada acción de los paneles es un botón, no texto suelto", async () => {
+    servir("administrador", {
+      "/api/procesos": () => json([PROCESO]),
+      "/api/alertas/resumen": () => json(resumenDePrueba()),
+      "/api/auditoria/asientos": () => json([]),
+    });
+
+    montar();
+
+    const distribucion = await encontrar("Distribución en curso");
+    const abrir = await within(distribucion).findByRole("link", {
+      name: "Abrir distribución",
+    });
+    const alertas = await encontrar("Alertas");
+    const resolver = await within(alertas).findByRole("link", {
+      name: "Resolver alertas",
+    });
+    const actividad = await encontrar("Actividad reciente");
+    const bitacora = await within(actividad).findByRole("link", {
+      name: "Ver bitácora",
+    });
+    const ingesta = within(bloque("Cargas por procesar")).getByRole("link", {
+      name: "Ir a ingesta",
+    });
+    for (const cta of [abrir, resolver, bitacora, ingesta]) {
+      expect(cta.classList.contains("boton-secundario")).toBe(true);
+    }
+  });
+
+  it("no pinta subtítulos de relleno ni enums crudos", async () => {
+    servir("administrador", {
+      "/api/tablero/ultima-corrida": () =>
+        json({ periodo: "2025-01", etapa: "verificacion", estado: "en_curso" }),
+      "/api/procesos": () => json([PROCESO]),
+      "/api/auditoria/asientos": () => json([]),
+    });
+
+    montar();
+
+    const ultima = await encontrar("Última distribución");
+    await within(ultima).findByText("Verificación");
+    expect(screen.queryByText(/en_curso/)).toBeNull();
+    expect(screen.queryByText(/no se paga por fila/)).toBeNull();
+    expect(screen.queryByText(/se rastrea hasta su origen/)).toBeNull();
+    expect(screen.queryByText(/Reportes de uso esperando/)).toBeNull();
+    expect(screen.queryByText(/Se actualiza al abrirla/)).toBeNull();
+  });
+
+  it("la actividad reciente habla en lenguaje llano y con tiempo relativo", async () => {
+    const haceUnRato = new Date(Date.now() - 5 * 60_000).toISOString();
+    servir("administrador", {
+      "/api/auditoria/asientos": () =>
+        json([
+          {
+            id: "a1",
+            hecho: "proceso.etapa_avanzada",
+            ref_tipo: "proceso",
+            ref_id: "proc-2025",
+            actor: "usr-admin",
+            payload: { etapa: "verificacion" },
+            cuando: haceUnRato,
+          },
+        ]),
+    });
+
+    montar();
+
+    const panel = await encontrar("Actividad reciente");
+    await within(panel).findByText("La distribución avanzó a Verificación");
+    expect(within(panel).getByText(/hace 5 minutos/)).toBeTruthy();
+  });
+});
+
+describe("Inicio del titular", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    setToken("tok");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("el titular no ve el panel de staff ni dispara sus pedidos", async () => {
+    servir("titular", {}, "Ana Escritora");
+
+    montar();
+
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([u]) => String(u) !== "/api/auth/session"),
+      ).toBe(true),
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Cargas por procesar" }),
+    ).toBeNull();
+    const paths = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+    expect(paths).not.toContain("/api/tablero/cargas-pendientes");
+    expect(paths).not.toContain("/api/procesos");
+    expect(paths).not.toContain("/api/bolsas");
   });
 });

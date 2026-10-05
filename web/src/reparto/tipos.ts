@@ -16,47 +16,22 @@ export const RUTAS_REPARTO = {
   resumenAlertas: (periodo: string) =>
     `/api/alertas/resumen?periodo=${encodeURIComponent(periodo)}`,
   evaluarAlertas: "/api/alertas/evaluacion",
+  bolsas: "/api/bolsas",
 } as const;
 
 /** Sondeo del panel: el issue aplaza websocket/SSE para un pico anual. */
 export const INTERVALO_SONDEO_MS = 15_000;
 
-export type Circuito = "nacional" | "internacional";
-
-export type Etapa =
-  | "recaudo"
-  | "deducciones"
-  | "importe_obra"
-  | "importe_titular"
-  | "liquidacion_parcial"
-  | "verificacion"
-  | "liquidacion_final"
-  | "pago_registro"
-  | "fees_in_error"
-  | "auditoria";
-
 /**
- * Roles que la tabla `firmas` admite en una compuerta. El CHECK del esquema
- * cierra el conjunto: administrador opera el pipeline y auditor lee, ninguno
- * de los dos firma aqui.
+ * `Proceso` sale del contrato: el tipo hecho a mano leia `rechazo` y
+ * `sobre_rev` cuando la API manda `rechazo_motivo` y `revision` (I7).
  */
-export type RolDeFirma = "distribucion" | "contabilidad";
-
-export type Firma = {
-  rol: RolDeFirma;
-  actor_id: string;
-  sobre_rev: number;
-};
-
-export type Proceso = {
-  id: string;
-  circuito: Circuito;
-  etapa: Etapa;
-  periodo: string;
-  revision: number;
-  firmas?: Firma[];
-  rechazo?: string;
-};
+export type Proceso = components["schemas"]["Proceso"];
+export type Firma = components["schemas"]["Firma"];
+export type Circuito = Proceso["circuito"];
+export type Etapa = Proceso["etapa"];
+/** Roles que la tabla `firmas` admite en una compuerta (CHECK del esquema). */
+export type RolDeFirma = Firma["rol"];
 
 export type AccionDeFirma = "firmar" | "rechazar";
 

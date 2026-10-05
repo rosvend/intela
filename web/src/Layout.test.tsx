@@ -81,14 +81,17 @@ describe("Layout", () => {
     localStorage.clear();
   });
 
-  it("con rol titular el sidebar tiene un solo enlace (Inicio)", async () => {
+  it("con rol titular el sidebar tiene Inicio y Mis liquidaciones", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValue(respuestaUsuario("titular"));
 
     montar();
 
-    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(2));
     expect(screen.getByRole("link", { name: "Inicio" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Mis liquidaciones" }),
+    ).toBeTruthy();
     expect(screen.queryByText("Configuración")).toBeNull();
   });
 
@@ -199,6 +202,46 @@ describe("Layout", () => {
     );
   });
 
+  it("un fallo de render queda dentro de la pagina, y navegar fuera la recupera", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("auditor"));
+    const silencio = vi.spyOn(console, "error").mockImplementation(() => {});
+    function PaginaRota(): never {
+      throw new RangeError("importe ilegible");
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/auditoria"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<p>contenido de inicio</p>} />
+              <Route path="/auditoria" element={<PaginaRota />} />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          name: "No se pudo mostrar esta pantalla",
+        }),
+      ).toBeTruthy(),
+    );
+    // El shell sigue en pie: el fallo no tumba la app.
+    expect(screen.getByRole("link", { name: "Inicio" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("link", { name: "Inicio" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("contenido de inicio")).toBeTruthy(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    silencio.mockRestore();
+  });
+
   it("logout llama a DELETE /auth/session y limpia el token", async () => {
     // Con rol administrador, `Layout` tambien pide el conteo de pendientes
     // (badge de /identificacion) apenas monta: encolar por ORDEN asumiria que
@@ -300,7 +343,7 @@ describe("Layout", () => {
 
     montar();
 
-    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBe(2));
     const rutasPedidas = vi
       .mocked(fetch)
       .mock.calls.map(([input]) => urlDe(input));

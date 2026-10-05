@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import Liquidaciones from "./Liquidaciones";
 
@@ -50,34 +51,81 @@ describe("Liquidaciones", () => {
     cleanup();
   });
 
-  it("muestra bruto, deducciones y neto del panel", async () => {
+  it("muestra cada obra con su neto, periodo en palabras y descuentos en pesos", async () => {
     render(<Liquidaciones />);
-    expect(await screen.findByText("La Casa de las Dos Palmas")).toBeTruthy();
-    expect(screen.getAllByText("6000.00").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("3900.00").length).toBeGreaterThan(0);
+    const fila = (await screen.findByText("La Casa de las Dos Palmas")).closest(
+      "li",
+    );
+    expect(fila?.textContent).toContain("enero 2026");
+    expect(fila?.textContent).toContain("$ 3.900");
+    expect(fila?.textContent).toContain("$ 6.000");
+    const leyenda = within(fila as HTMLElement).getByRole("list", {
+      name: "Reparto de La Casa de las Dos Palmas",
+    });
+    const items = within(leyenda)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(items).toEqual([
+      "Tú recibes$ 3.900",
+      "Gastos administrativos$ 1.200",
+      "Bienestar social$ 600",
+      "Reserva$ 300",
+    ]);
+    expect(screen.getByLabelText("$ 3.900")).toBeTruthy();
     expect(vi.mocked(api)).toHaveBeenCalledWith("/api/mis-liquidaciones/obras");
   });
 
-  it("filtra por periodo antes de exportar", async () => {
+  it("bajo el titulo de cada obra pinta su bruto partido en una barra proporcional", async () => {
+    render(<Liquidaciones />);
+    const fila = (await screen.findByText("La Casa de las Dos Palmas")).closest(
+      "li",
+    ) as HTMLElement;
+    const barra = within(fila).getByRole("group", {
+      name: "Reparto de La Casa de las Dos Palmas",
+    });
+    const segmentos = within(barra).getAllByRole("button");
+    expect(segmentos.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Tú recibes: $ 3.900 (65 %)",
+      "Gastos administrativos: $ 1.200 (20 %)",
+      "Bienestar social: $ 600 (10 %)",
+      "Reserva: $ 300 (5 %)",
+    ]);
+    expect(
+      (segmentos[0].style as CSSStyleDeclaration).getPropertyValue("--color"),
+    ).toBe("var(--serie-1)");
+  });
+
+  it("no lleva un subtitulo de relleno bajo el titulo", async () => {
     render(<Liquidaciones />);
     await screen.findByText("La Casa de las Dos Palmas");
+    expect(screen.queryByText(/El archivo descargado lleva/)).toBeNull();
+  });
 
-    fireEvent.change(screen.getByRole("textbox"), {
+  it("no usa clases que no existen", async () => {
+    const { container } = render(<Liquidaciones />);
+    await screen.findByText("La Casa de las Dos Palmas");
+    expect(container.querySelector(".card")).toBeNull();
+    expect(container.querySelector(".panel")).toBeTruthy();
+  });
+
+  it("filtra por periodo", async () => {
+    render(<Liquidaciones />);
+    await screen.findByText("La Casa de las Dos Palmas");
+    fireEvent.change(screen.getByLabelText("Periodo"), {
       target: { value: "2026-01" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Filtrar" }));
-
-    await waitFor(() => {
+    await waitFor(() =>
       expect(vi.mocked(api)).toHaveBeenCalledWith(
         "/api/mis-liquidaciones/obras?periodo=2026-01",
-      );
-    });
+      ),
+    );
   });
 
   it("exporta PDF y Excel con el periodo filtrado", async () => {
     render(<Liquidaciones />);
     await screen.findByText("La Casa de las Dos Palmas");
-    fireEvent.change(screen.getByRole("textbox"), {
+    fireEvent.change(screen.getByLabelText("Periodo"), {
       target: { value: "2026-01" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Filtrar" }));
@@ -85,18 +133,38 @@ describe("Liquidaciones", () => {
       expect(vi.mocked(api).mock.calls.length).toBeGreaterThan(1),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
-    await waitFor(() => {
+    fireEvent.click(screen.getByRole("button", { name: "Descargar PDF" }));
+    await waitFor(() =>
       expect(vi.mocked(descargar)).toHaveBeenCalledWith(
         "/api/mis-liquidaciones/export?formato=pdf&periodo=2026-01",
-      );
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Exportar Excel" }));
-    await waitFor(() => {
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Descargar Excel" }));
+    await waitFor(() =>
       expect(vi.mocked(descargar)).toHaveBeenCalledWith(
         "/api/mis-liquidaciones/export?formato=xlsx&periodo=2026-01",
-      );
+      ),
+    );
+  });
+
+  it("sin liquidaciones muestra un vacio amable y no ofrece exportar", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...panel,
+      lineas: [],
+      totales: { ...panel.totales, neto: "0.00" },
     });
+    render(<Liquidaciones />);
+    expect(
+      await screen.findByText("Todavía no tienes liquidaciones"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Descargar PDF" })).toBeNull();
+  });
+
+  it("un error de la API se anuncia", async () => {
+    vi.mocked(api).mockRejectedValue(new Error("se cayo la base"));
+    render(<Liquidaciones />);
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "se cayo la base",
+    );
   });
 });
