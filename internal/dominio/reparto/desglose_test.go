@@ -205,3 +205,69 @@ func TestDesgloseReproduceLosPuntosDelMotor(t *testing.T) {
 		})
 	}
 }
+
+// R-27 es de RD 9.5: la marca solo excluye en suscripcion y hotel. En las demas
+// modalidades el motor no la mira, asi que Pondera tampoco.
+func TestPonderaSoloExcluyeR27EnSuscripcionYHotel(t *testing.T) {
+	for _, m := range []reparto.Modalidad{
+		reparto.TV, reparto.Cine, reparto.Teatro, reparto.Transporte, reparto.OTT, reparto.Suscripcion, reparto.Hotel,
+	} {
+		for _, fuera := range []bool{false, true} {
+			u := reparto.Uso{Modalidad: m, FueraDeRepertorio: fuera}
+			esperado := !fuera || (m != reparto.Suscripcion && m != reparto.Hotel)
+			if got := reparto.Pondera(u); got != esperado {
+				t.Errorf("Pondera(%s, fuera=%t) = %t, se esperaba %t", m, fuera, got, esperado)
+			}
+		}
+	}
+}
+
+// El recibo desglosa solo los usos que Pondera deja pasar, y esa suma
+// redondeada es el Puntos del motor aun con un uso fuera de repertorio en la
+// misma obra y el mismo grupo (#206).
+func TestDesgloseDeLosUsosQuePonderanReproduceLosPuntosDelMotor(t *testing.T) {
+	for _, mod := range []reparto.Modalidad{reparto.Suscripcion, reparto.Hotel} {
+		t.Run(string(mod), func(t *testing.T) {
+			uso := func(obra string, g reparto.GrupoCanal, dur string, em int64, fuera bool) reparto.Uso {
+				return reparto.Uso{ObraID: obra, Modalidad: mod, TipoObra: "serie", CanalID: "c-" + string(g),
+					Grupo: g, DuracionMin: d(dur), Rating: d("2"), Emisiones: em, FueraDeRepertorio: fuera}
+			}
+			usos := []reparto.Uso{
+				uso("x", reparto.GrupoPrivadosNacionales, "48", 10, false),
+				uso("x", reparto.GrupoPrivadosNacionales, "30", 4, true),
+				uso("y", reparto.GrupoPremium, "60", 3, false),
+			}
+			snap := snapBase()
+			decls := []repertorio.Declaracion{declCompleta("x", "t-x", "IPI-x"), declCompleta("y", "t-y", "IPI-y")}
+			r, err := reparto.Reparto(bolsa("1000000"), usos, snap, decls, optSinDed())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(r.Obras) != 2 {
+				t.Fatalf("obras = %d, se esperaban 2", len(r.Obras))
+			}
+			for _, o := range r.Obras {
+				suma, todos := decimal.Zero, decimal.Zero
+				for _, u := range usos {
+					if u.ObraID != o.ObraID {
+						continue
+					}
+					dg, err := reparto.DesglosarUso(u, snap)
+					if err != nil {
+						t.Fatal(err)
+					}
+					todos = todos.Add(dg.Puntos)
+					if reparto.Pondera(u) {
+						suma = suma.Add(dg.Puntos)
+					}
+				}
+				if !suma.Round(8).Equal(o.Puntos) {
+					t.Errorf("obra %s: suma de los usos que ponderan %s != puntos del motor %s", o.ObraID, suma.Round(8), o.Puntos)
+				}
+				if o.ObraID == "x" && todos.Round(8).Equal(o.Puntos) {
+					t.Errorf("obra x: el caso no ejerce R-27, desglosar todos los usos tambien cuadra (%s)", todos)
+				}
+			}
+		})
+	}
+}
