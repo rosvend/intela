@@ -99,9 +99,7 @@ describe("TurnoAgente", () => {
         turno={turno(respuesta("Quiza RD 9.1.1.", { parcial: true }))}
       />,
     );
-    expect(screen.getByRole("note").textContent).toContain(
-      "Respuesta parcial",
-    );
+    expect(screen.getByRole("note").textContent).toContain("Respuesta parcial");
     expect(container.querySelector(".agente-respuesta--parcial")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Copiar cita RD 9.1.1" }),

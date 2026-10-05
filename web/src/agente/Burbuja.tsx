@@ -12,6 +12,8 @@ import {
   turnoPendiente,
   type Turno,
 } from "./conversacion";
+import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
+import TurnoAgente from "./TurnoAgente";
 
 const NO_DISPONIBLE = "El asistente no está disponible en este momento.";
 
@@ -78,7 +80,10 @@ export default function Burbuja() {
           onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
         >
           <header className="agente-cabecera">
-            <p className="agente-titulo">Asistente</p>
+            <div>
+              <p className="agente-titulo">Asistente</p>
+              <AvisoNoSeGuarda />
+            </div>
             <button
               type="button"
               className="agente-cerrar"
@@ -141,18 +146,10 @@ function TurnoVista({ turno }: { turno: Turno }) {
       <p className="agente-mensaje agente-mensaje-usuario">{turno.texto}</p>
     );
   }
-  if (turno.estado === "pendiente") {
-    return <p className="agente-mensaje agente-pensando">Pensando…</p>;
-  }
-  if (turno.estado === "error") {
-    return (
-      <p className="agente-mensaje agente-error" role="alert">
-        {turno.texto}
-      </p>
-    );
-  }
   return (
-    <p className="agente-mensaje agente-mensaje-asistente">{turno.texto}</p>
+    <div className="agente-mensaje agente-mensaje-asistente">
+      <TurnoAgente turno={turno} />
+    </div>
   );
 }
 
