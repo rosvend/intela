@@ -42,30 +42,52 @@ describe("aplicarEvento", () => {
   });
 });
 
+const usuario = (texto: string): Turno => ({
+  rol: "usuario",
+  texto,
+  herramientas: [],
+  estado: "listo",
+});
+const asistente = (
+  texto: string,
+  estado: Turno["estado"] = "listo",
+): Turno => ({
+  rol: "asistente",
+  texto,
+  herramientas: [],
+  estado,
+});
+
 describe("historialPara", () => {
-  it("manda solo turnos cerrados con texto, como mucho los ultimos MAX_HISTORIAL", () => {
+  it("manda pares pregunta-respuesta cerrados, como mucho los ultimos MAX_HISTORIAL", () => {
     const turnos: Turno[] = [];
-    for (let i = 0; i < MAX_HISTORIAL + 4; i++) {
-      turnos.push({
-        rol: "usuario",
-        texto: `p${i}`,
-        herramientas: [],
-        estado: "listo",
-      });
+    for (let i = 0; i < MAX_HISTORIAL; i++) {
+      turnos.push(usuario(`p${i}`), asistente(`r${i}`));
     }
-    turnos.push({ ...turnoPendiente() });
-    turnos.push({
-      rol: "asistente",
-      texto: "fallo",
-      herramientas: [],
-      estado: "error",
-    });
+    turnos.push(usuario("en curso"), turnoPendiente());
     const h = historialPara(turnos);
     expect(h).toHaveLength(MAX_HISTORIAL);
-    expect(h[0]).toEqual({ rol: "usuario", texto: "p4" });
+    expect(h[0]).toEqual({ rol: "usuario", texto: `p${MAX_HISTORIAL / 2}` });
     expect(h.at(-1)).toEqual({
-      rol: "usuario",
-      texto: `p${MAX_HISTORIAL + 3}`,
+      rol: "asistente",
+      texto: `r${MAX_HISTORIAL - 1}`,
     });
+  });
+
+  it("tras un fallo y un reintento, la pregunta sin respuesta no se reenvia", () => {
+    const turnos: Turno[] = [
+      usuario("primera"),
+      asistente("respuesta"),
+      usuario("fallida"),
+      asistente("no disponible", "error"),
+      usuario("reintento"),
+      asistente("ok"),
+    ];
+    expect(historialPara(turnos)).toEqual([
+      { rol: "usuario", texto: "primera" },
+      { rol: "asistente", texto: "respuesta" },
+      { rol: "usuario", texto: "reintento" },
+      { rol: "asistente", texto: "ok" },
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import {
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
@@ -25,6 +25,16 @@ export default function Burbuja() {
   const [abierto, setAbierto] = useState(false);
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [enviando, setEnviando] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const pregunta = useRef<HTMLTextAreaElement>(null);
+  const yaAbierto = useRef(false);
+
+  // Al abrir, el foco va a la pregunta; al cerrar, vuelve a la burbuja que abrio el panel.
+  useEffect(() => {
+    if (abierto) pregunta.current?.focus();
+    else if (yaAbierto.current) opener.current?.focus();
+    yaAbierto.current ||= abierto;
+  }, [abierto]);
 
   async function preguntar(mensaje: string) {
     const historial = historialPara(turnos);
@@ -80,12 +90,17 @@ export default function Burbuja() {
           </header>
           <ErrorBoundary>
             <Conversacion turnos={turnos} />
-            <Entrada deshabilitada={enviando} alEnviar={preguntar} />
+            <Entrada
+              campo={pregunta}
+              deshabilitada={enviando}
+              alEnviar={preguntar}
+            />
           </ErrorBoundary>
         </section>
       )}
       {!abierto && (
         <button
+          ref={opener}
           type="button"
           className="agente-burbuja"
           aria-label="Abrir asistente"
@@ -142,9 +157,11 @@ function TurnoVista({ turno }: { turno: Turno }) {
 }
 
 function Entrada({
+  campo,
   deshabilitada,
   alEnviar,
 }: {
+  campo: Ref<HTMLTextAreaElement>;
   deshabilitada: boolean;
   alEnviar: (mensaje: string) => void;
 }) {
@@ -161,6 +178,7 @@ function Entrada({
   return (
     <form className="agente-entrada" onSubmit={enviar}>
       <textarea
+        ref={campo}
         aria-label="Tu pregunta"
         rows={2}
         maxLength={4000}

@@ -50,10 +50,22 @@ export function aplicarEvento(t: Turno, nombre: string, datos: unknown): Turno {
   }
 }
 
-/** Lo que se reenvia como contexto: turnos cerrados con texto, los ultimos MAX_HISTORIAL. */
+const cerrado = (t: Turno | undefined): t is Turno =>
+  t !== undefined && t.estado === "listo" && t.texto.trim() !== "";
+
+/**
+ * Lo que se reenvia como contexto: pares pregunta-respuesta cerrados, los
+ * ultimos MAX_HISTORIAL. Una pregunta cuya respuesta fallo o sigue en curso no
+ * va: el modelo la leeria como contexto sin respuesta.
+ */
 export function historialPara(turnos: readonly Turno[]): TurnoAgente[] {
   return turnos
-    .filter((t) => t.estado === "listo" && t.texto.trim() !== "")
+    .filter((t, i) => {
+      if (!cerrado(t)) return false;
+      if (t.rol !== "usuario") return true;
+      const respuesta = turnos[i + 1];
+      return cerrado(respuesta) && respuesta.rol === "asistente";
+    })
     .map((t) => ({ rol: t.rol, texto: t.texto }))
     .slice(-MAX_HISTORIAL);
 }

@@ -52,6 +52,26 @@ describe("apiStream", () => {
     ]);
   });
 
+  it("reconoce un CRLF partido entre dos trozos como fin de linea", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      respuestaSSE([
+        'event: tool_call\r\ndata: {"herramienta":"eco"}\r\n\r',
+        '\nevent: answer\r\ndata: {"texto":"hola"}\r',
+        "\n\r\n",
+      ]),
+    );
+    const eventos: [string, unknown][] = [];
+
+    await apiStream("/api/agente/consulta", { mensaje: "x" }, (n, d) =>
+      eventos.push([n, d]),
+    );
+
+    expect(eventos).toEqual([
+      ["tool_call", { herramienta: "eco" }],
+      ["answer", { texto: "hola" }],
+    ]);
+  });
+
   it("un error HTTP antes del flujo sube como ApiError con el mensaje del servidor", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValue(

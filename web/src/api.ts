@@ -236,7 +236,8 @@ export async function apiStream(
   for (;;) {
     const { value, done } = await lector.read();
     if (done) break;
-    pendiente += value.replace(/\r\n/g, "\n");
+    // Primero se une y luego se normaliza: un CRLF puede llegar partido entre dos trozos.
+    pendiente = (pendiente + value).replace(/\r\n/g, "\n");
     let corte: number;
     while ((corte = pendiente.indexOf("\n\n")) >= 0) {
       entregarBloque(pendiente.slice(0, corte), alEvento);

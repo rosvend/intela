@@ -52,6 +52,16 @@ describe("Burbuja", () => {
     ).toBeTruthy();
   });
 
+  it("al abrir enfoca la pregunta y al cerrar devuelve el foco a la burbuja", () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Tu pregunta"));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Abrir asistente" }),
+    );
+  });
+
   it("envia la pregunta y pinta la respuesta que llega por el flujo", async () => {
     vi.mocked(fetch).mockResolvedValue(
       respuestaSSE(
