@@ -435,6 +435,46 @@ func TestExplicarUnaRedistribucionEnCeroNoEscondeElPago(t *testing.T) {
 	}
 }
 
+func asientoDeRendimiento(vigencia, importe string) Asiento {
+	payload := fmt.Sprintf(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"nacional"},"circuito":"nacional","vigencia":"%s","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"%s"}]}`, vigencia, importe)
+	return Asiento{
+		Hecho: HechoRendimientosDistribuidos, RefTipo: RefProceso, RefID: "p2",
+		Payload: []byte(payload),
+	}
+}
+
+// Dos vigencias sobre el mismo par origen-destino comparten ref. Explicar
+// devuelve la suma, en cualquier orden, y un cero posterior no la tapa.
+func TestExplicarDosPagosDeLaMismaRefSuman(t *testing.T) {
+	t.Parallel()
+	ref := FormarRefRendimiento("p1", "p2", "obra-1", "titular-a")
+	ordenes := [][]Asiento{
+		{asientoDeRendimiento("2025", "40.00"), asientoDeRendimiento("2026", "20.00")},
+		{asientoDeRendimiento("2026", "20.00"), asientoDeRendimiento("2025", "40.00")},
+		{asientoDeRendimiento("2025", "40.00"), asientoDeRendimiento("2026", "20.00"), asientoDeRendimiento("2027", "0.00")},
+	}
+	for _, asientos := range ordenes {
+		b := &bitacoraFalsa{asientos: asientos}
+		x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+		if err != nil {
+			t.Fatalf("error inesperado: %v", err)
+		}
+		if !x.Neto.Equal(decimal.RequireFromString("60.00")) || !x.Bruto.Equal(x.Neto) {
+			t.Fatalf("neto/bruto = %s/%s, se esperaba 60.00 (40+20); un pago no puede tapar al otro", x.Neto, x.Bruto)
+		}
+	}
+
+	refReserva := FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-a")
+	b := &bitacoraFalsa{asientos: []Asiento{asientoDeLiberacion("40.00"), asientoDeLiberacion("20.00")}}
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, refReserva)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("60.00")) {
+		t.Fatalf("neto = %s, dos liberaciones del mismo par tienen que sumar", x.Neto)
+	}
+}
+
 func TestExplicarUnRendimientoNombraOrigenYDestino(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"internacional"},"circuito":"nacional","vigencia":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"40.00"}]}`)

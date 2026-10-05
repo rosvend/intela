@@ -482,14 +482,21 @@ func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref
 	}, nil
 }
 
-// lineaAccesoria prefiere el importe positivo mas reciente. Una redistribucion
-// posterior en cero no esconde el pago que ya se asento.
+// lineaAccesoria suma los importes positivos que comparten la ref. Dos pagos
+// sobre el mismo par origen-destino (otra vigencia, otra liberacion) no se
+// tapan: la cifra explicada es el total. Una redistribucion posterior en
+// cero no esconde lo ya pagado. El porcentaje y el IPI salen del asiento
+// positivo de mayor indice, que es el mas reciente si la bitacora viene en
+// orden cronologico; la suma no depende de ese orden.
 func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, CorridaAsentada, CorridaAsentada, bool) {
+	var suma decimal.Decimal
+	var positiva LineaDosCorridas
+	var origenPos, destinoPos CorridaAsentada
+	hayPositiva := false
 	var cero LineaDosCorridas
 	var origenCero, destinoCero CorridaAsentada
 	hayCero := false
-	for i := len(asientos) - 1; i >= 0; i-- {
-		a := asientos[i]
+	for _, a := range asientos {
 		if a.Hecho != acc.hecho {
 			continue
 		}
@@ -498,11 +505,21 @@ func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, Cor
 			continue
 		}
 		if importePositivo(linea.Importe) {
-			return linea, origen, destino, true
+			importe, err := decimal.NewFromString(linea.Importe)
+			if err != nil {
+				continue
+			}
+			suma = suma.Add(importe)
+			positiva = linea
+			origenPos, destinoPos = origen, destino
+			hayPositiva = true
+			continue
 		}
-		if !hayCero {
-			cero, origenCero, destinoCero, hayCero = linea, origen, destino, true
-		}
+		cero, origenCero, destinoCero, hayCero = linea, origen, destino, true
+	}
+	if hayPositiva {
+		positiva.Importe = suma.StringFixed(2)
+		return positiva, origenPos, destinoPos, true
 	}
 	if hayCero {
 		return cero, origenCero, destinoCero, true

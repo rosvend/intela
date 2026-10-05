@@ -401,7 +401,7 @@ func TestDistribuirRendimientoNoRevalorizaLaCorrida(t *testing.T) {
 	if !residuo.IsZero() {
 		t.Fatalf("residuo = %s, se esperaba cero", residuo)
 	}
-	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoRendimientosDistribuidos {
+	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoRendimientosDistribuidos || libro.asientos[0].RefID != "p2" {
 		t.Fatalf("asiento = %+v", libro.asientos)
 	}
 	var payload asientoRendimientosDistribuidos
@@ -436,6 +436,47 @@ func TestDistribuirRendimientoDosVecesNoRepartDosVeces(t *testing.T) {
 	}
 	if !residuo.IsZero() {
 		t.Fatalf("residuo = %s, se esperaba cero", residuo)
+	}
+}
+
+// Dos vigencias sobre el mismo par comparten ref. La cifra explicada es la
+// suma de lo pagado, no solo la vigencia mas reciente.
+func TestDistribuirDosVigenciasExplicaLaSuma(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
+		claveRendimiento(reparto.Nacional, "2025"): {Circuito: reparto.Nacional, Vigencia: "2025", Monto: decimal.RequireFromString("100.00")},
+		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("50.00")},
+	}}
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}, libro)
+	ctx := context.Background()
+
+	primera, _, err := b.DistribuirRendimiento(ctx, "p1", "p2", reparto.Nacional, "2025", "actor-1")
+	if err != nil {
+		t.Fatalf("2025: %v", err)
+	}
+	segunda, _, err := b.DistribuirRendimiento(ctx, "p1", "p2", reparto.Nacional, "2026", "actor-1")
+	if err != nil {
+		t.Fatalf("2026: %v", err)
+	}
+	ref := FormarRefRendimiento("p1", "p2", primera[0].ObraID, primera[0].TitularID)
+	if otra := FormarRefRendimiento("p1", "p2", segunda[0].ObraID, segunda[0].TitularID); otra != ref {
+		t.Fatalf("refs %q y %q, el par origen-destino comparte ref", ref, otra)
+	}
+	for _, a := range libro.asientos {
+		if a.RefID != "p2" {
+			t.Fatalf("RefID = %q, el asiento cuelga de la corrida de destino", a.RefID)
+		}
+	}
+
+	x, err := (ExplicarCifra{Bitacora: libro}).Explicar(ctx, Usuario{ID: "usr-aud", Rol: RolAuditor}, ref)
+	if err != nil {
+		t.Fatalf("explicar: %v", err)
+	}
+	esperado := primera[0].Importe.Add(segunda[0].Importe)
+	if !x.Neto.Equal(esperado) {
+		t.Fatalf("neto = %s, se esperaba %s (2025+2026)", x.Neto, esperado)
 	}
 }
 

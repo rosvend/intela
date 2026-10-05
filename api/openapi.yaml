@@ -1824,7 +1824,10 @@ paths:
         rendimiento distribuido (RD 10.1) usa
         `rendimiento:proceso_origen:proceso_destino:obra_id:titular_id`.
         Esas respuestas llenan `origen` y `destino`: la cifra se repartio
-        contra una corrida anterior y se pago en otra.
+        contra una corrida anterior y se pago en otra. Si varios asientos
+        comparten esa ref (otra vigencia, u otra liberacion), `neto` es la
+        suma de los importes positivos. Un asiento posterior en cero no
+        reemplaza ese total.
 
         Si falta la valorizacion de la corrida o de la obra, la respuesta es
         404: una explicacion a medias es peor que ninguna. Un eslabon
