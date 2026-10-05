@@ -108,9 +108,14 @@ func TestLeerLosReglamentosReales(t *testing.T) {
 	if len(m) != len(ss) {
 		t.Fatalf("citas duplicadas: %d secciones, %d citas", len(ss), len(m))
 	}
-	for _, c := range []string{"RD 5.1", "RD 9.1.1", "RD 13.1.3", "RD 15", "RT 3.1", "RS 4.1", "RA 2.1"} {
+	// Los de la segunda linea tienen el encabezado indentado en el .md.
+	for _, c := range []string{"RD 5.1", "RD 9.1.1", "RD 13.1.3", "RD 15", "RT 3.1", "RS 4.1", "RA 2.1",
+		"RD 7.4", "RD 7.5", "RD 13.1", "RD 13.2", "RD 16.2", "RT 3.4.1", "RT 3.4.2", "RT 3.6", "RT 3.7"} {
 		if s, ok := m[c]; !ok || strings.TrimSpace(s.Texto) == "" {
 			t.Errorf("falta %s o esta vacia", c)
 		}
+	}
+	if strings.Contains(m["RD 13.1.6"].Texto, "Documentos aportados por REDES SGC") {
+		t.Errorf("RD 13.2 quedo pegado a RD 13.1.6: %q", m["RD 13.1.6"].Texto)
 	}
 }
