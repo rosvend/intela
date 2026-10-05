@@ -39,7 +39,7 @@ Cinco partes:
    tablero y API comparten origen. Es el mismo truco que hace hoy `deploy/nginx.conf` con
    `proxy_pass http://api/`: la barra final quita el prefijo, porque el router registra las rutas en
    la raiz.
-3. **RDS PostgreSQL `db.t4g.micro` en subred privada**, sin endpoint publico, sin NAT Gateway y sin
+3. **RDS PostgreSQL `db.t4g.micro` en subred privada**, sin endpoint publico, sin NAT Gateway (se anadio despues, solo para el asistente: ADR 0026) y sin
    VPC interface endpoints. La Lambda la alcanza desde dentro de la VPC.
 4. **El orden migrar-antes-de-servir lo impone el grafo de Terraform**, no un paso de shell:
    `module.api` declara `depends_on = [module.migrations]`. Si goose falla, el `apply` falla y la API

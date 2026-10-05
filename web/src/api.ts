@@ -210,6 +210,61 @@ export async function api(path: string, init: Opciones = {}): Promise<unknown> {
   return res;
 }
 
+/**
+ * POST que responde Server-Sent Events. Va por `fetch` + lector de stream y no
+ * por `EventSource`, que no puede enviar la cabecera `Bearer`. Reutiliza `api()`
+ * para el token, el 401 y los errores JSON previos al flujo; despues entrega
+ * cada bloque `event:`/`data:` en orden. Un bloque cuyo `data` no es JSON se
+ * descarta: un evento ilegible no debe tumbar los que vienen detras.
+ */
+export async function apiStream(
+  path: string,
+  cuerpo: unknown,
+  alEvento: (nombre: string, datos: unknown) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await api(path, {
+    method: "POST",
+    body: JSON.stringify(cuerpo),
+    signal,
+  });
+  if (!(res instanceof Response) || !res.body) {
+    throw new ErrorDeCuerpoIlegible(200, "se esperaba un flujo de eventos");
+  }
+  const lector = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let pendiente = "";
+  for (;;) {
+    const { value, done } = await lector.read();
+    if (done) break;
+    // Primero se une y luego se normaliza: un CRLF puede llegar partido entre dos trozos.
+    pendiente = (pendiente + value).replace(/\r\n/g, "\n");
+    let corte: number;
+    while ((corte = pendiente.indexOf("\n\n")) >= 0) {
+      entregarBloque(pendiente.slice(0, corte), alEvento);
+      pendiente = pendiente.slice(corte + 2);
+    }
+  }
+  if (pendiente.trim()) entregarBloque(pendiente, alEvento);
+}
+
+function entregarBloque(
+  bloque: string,
+  alEvento: (nombre: string, datos: unknown) => void,
+) {
+  let nombre = "message";
+  const datos: string[] = [];
+  for (const linea of bloque.split("\n")) {
+    if (linea.startsWith("event:")) nombre = linea.slice(6).trim();
+    else if (linea.startsWith("data:")) datos.push(linea.slice(5).trimStart());
+  }
+  if (datos.length === 0) return;
+  try {
+    alEvento(nombre, JSON.parse(datos.join("\n")));
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+  }
+}
+
 // Lectura sin sesion. El listado ONI es publico (R-18): adjuntar el token
 // y redirigir a /login ante un 401 convertiria la publicacion legal en una
 // pagina interna.

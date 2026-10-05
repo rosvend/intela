@@ -18,6 +18,7 @@ import {
   ShieldCheckIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline";
+import Burbuja from "./agente/Burbuja";
 import { usePendientesDeIdentificacion } from "./identificacion/pendientes";
 import ErrorBoundary from "./ErrorBoundary";
 import { iniciales } from "./iniciales";
@@ -239,6 +240,8 @@ export default function Layout() {
           {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
         </ErrorBoundary>
       </main>
+      {/* El asistente esta en todas las pantallas; lo que puede ver lo recorta el servidor por rol. */}
+      <Burbuja />
     </div>
   );
 }

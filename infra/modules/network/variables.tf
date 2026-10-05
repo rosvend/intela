@@ -7,11 +7,12 @@
 # is also what makes a second deployment, in another account or another region,
 # a copy of a tfvars file instead of a surprise.
 #
-# There is no NAT Gateway and no internet gateway, on purpose. The Lambdas only
-# ever talk to PostgreSQL and to S3: PostgreSQL is inside this VPC, and S3 is
-# reached through a gateway endpoint, which is free. CloudWatch Logs works
-# without an endpoint because the Lambda service writes the logs on the
-# function's behalf, not through the function's own network interface.
+# PostgreSQL is inside this VPC and S3 is reached through a gateway endpoint,
+# which is free. The assistant (#66, ADR 0026) calls the Anthropic API, which
+# needs outbound internet: one NAT Gateway (about USD 32 a month), switchable
+# with enable_nat. CloudWatch Logs works without an endpoint because the Lambda
+# service writes the logs on the function's behalf, not through the function's
+# own network interface.
 
 variable "name_prefix" {
   description = "Prefix for every resource name, so two deployments never collide."
@@ -33,4 +34,10 @@ variable "subnet_count" {
     condition     = var.subnet_count >= 2
     error_message = "RDS needs a DB subnet group covering at least two availability zones."
   }
+}
+
+variable "enable_nat" {
+  description = "Create one NAT Gateway (single AZ, about USD 32 a month plus traffic) so the private subnets can reach the internet. Off means no route out of the VPC."
+  type        = bool
+  default     = false
 }

@@ -247,6 +247,19 @@ Lo que falta confirmar: si el PO quiere el descarte como concepto propio o prefi
 marca de "revisado, no es repertorio" en otra forma; y si el efecto monetario debe ser el de
 R-27 (la parte no existe) o el de `RD 13.8` (la parte queda en reserva hasta que prescriba).
 
+### P-23 Base legal para enviar datos del asistente a Anthropic, fuera de AWS y de Colombia
+
+Estado: **Abierta, urgente**. Duena: area juridica de REDES SGC.
+Pregunta: el asistente (#66) usa en produccion la API de Anthropic (ADR 0026; Bedrock esta
+bloqueado por el formulario de caso de uso). Envia a Anthropic, un tercero en Estados Unidos y
+fuera de AWS, la conversacion y, desde #68/#69, resultados de herramientas que pueden incluir
+nombres de titulares y cifras. ¿Tiene eso base legal suficiente bajo la Ley 1581 de 2012
+(transferencia o transmision internacional) y la politica de tratamiento de REDES? ¿Hace falta
+autorizacion del titular, clausula contractual o declaracion de conformidad? Con Bedrock el
+riesgo era menor (los datos no salian de la cuenta de AWS); con Anthropic directo es mayor.
+Mientras tanto: solo herramientas sin datos personales en produccion; las de titulares o cifras
+(#68, #69) no se habilitan sin respuesta o sin aceptacion explicita del riesgo por REDES.
+
 ## Agenda para la reunion con REDES
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
 cifra defendible.

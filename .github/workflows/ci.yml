@@ -431,6 +431,7 @@ jobs:
     secrets:
       AWS_PLAN_ROLE_ARN: ${{ secrets.AWS_PLAN_ROLE_ARN }}
       BUDGET_NOTIFICATION_EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # The gate. This is the ONLY required check in `main`'s branch protection,
   # so its name must stay `ci` - renaming it locks the branch.

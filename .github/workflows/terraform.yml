@@ -52,6 +52,12 @@ on:
           `vars.` entry because this repository is public and this workflow
           posts the plan as a pull request comment.
         required: false
+      ANTHROPIC_API_KEY:
+        description: >-
+          Optional key for the in-app assistant's direct Anthropic provider
+          (#66). Production uses it (ADR 0026); it is read by the plan and the
+          deploy. Marked `sensitive` in Terraform.
+        required: false
 
 permissions:
   contents: read
@@ -219,6 +225,8 @@ jobs:
         working-directory: infra/envs/${{ inputs.environment }}
         env:
           EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+          # Read when agente_proveedor = "anthropic", the production default (#66, ADR 0026).
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
           TF_VAR_budget_notification_emails="$(jq -cR \
