@@ -9,13 +9,12 @@ import ErrorBoundary from "../ErrorBoundary";
 import {
   aplicarEvento,
   historialPara,
+  NO_DISPONIBLE,
   turnoPendiente,
   type Turno,
 } from "./conversacion";
 import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
 import TurnoAgente from "./TurnoAgente";
-
-const NO_DISPONIBLE = "El asistente no está disponible en este momento.";
 
 /**
  * Asistente de solo lectura (#66): burbuja flotante abajo a la izquierda que
