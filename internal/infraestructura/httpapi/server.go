@@ -83,6 +83,7 @@ type Casos struct {
 	// Bolsas no tiene ruta: la agrega #34. Queda cableada para que la
 	// liberacion y su asiento compartan unidad (#177).
 	Bolsas aplicacion.BolsasAccesorias
+	Agente         Agente
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -115,6 +116,7 @@ type API struct {
 	ingresos       ConsultaIngresos
 	tablero        Tablero
 	bolsas         aplicacion.BolsasAccesorias
+	agente         Agente
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -153,6 +155,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		ingresos:       casos.Ingresos,
 		tablero:        casos.Tablero,
 		bolsas:         casos.Bolsas,
+		agente:         casos.Agente,
 		opts:           opts,
 		log:            log,
 	}
@@ -195,6 +198,8 @@ func (a *API) Router() http.Handler {
 		protegido.Use(a.conSesion)
 		protegido.Get("/auth/session", a.sesionActual)
 		protegido.Delete("/auth/session", a.cerrarSesion)
+		// El asistente de solo lectura: cualquier rol, porque el alcance lo recortan los casos de uso de cada herramienta.
+		protegido.With(limitarPorUsuario(limiteAgentePorMinuto, time.Minute)).Post("/agente/consulta", a.consultarAgente)
 		// Ordenes de pago (ADR 0019). El rol lo decide el caso de uso:
 		// /liquidaciones es staff y /mis-liquidaciones es el titular.
 		protegido.Get("/liquidaciones", a.listarLiquidaciones)
