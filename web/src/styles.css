@@ -3720,6 +3720,7 @@ p.alerta {
 
 .agente-mensaje-asistente {
   align-self: flex-start;
+  max-width: 100%;
   background: var(--fondo);
 }
 
