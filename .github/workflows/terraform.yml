@@ -219,6 +219,8 @@ jobs:
         working-directory: infra/envs/${{ inputs.environment }}
         env:
           EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+          # Optional: empty leaves the in-app assistant answering "not available" (#66).
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
           TF_VAR_budget_notification_emails="$(jq -cR \

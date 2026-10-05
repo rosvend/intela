@@ -33,6 +33,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/modelolenguaje"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -274,6 +275,25 @@ func construir() (http.Handler, error) {
 	}
 
 	// Mismo cableado que cmd/api, con la boveda en S3 (ADR 0023).
+	// El asistente de solo lectura (#66). Sin proveedor configurado responde "no disponible": nunca tumba el arranque.
+	modelo, proveedor := modelolenguaje.Elegir(
+		config.Cadena("AGENTE_PROVEEDOR", ""),
+		config.Cadena("ANTHROPIC_API_KEY", ""),
+		config.Cadena("AGENTE_MODELO", ""),
+	)
+	registro.Info("asistente", slog.String("proveedor", proveedor))
+	herramientas, err := aplicacion.NuevoCatalogoHerramientas()
+	if err != nil {
+		return nil, err
+	}
+	agente := aplicacion.AgenteConsulta{
+		Modelo:       modelo,
+		Herramientas: herramientas,
+		Reloj:        reloj.Sistema{},
+		Log:          registro,
+		Plazo:        config.Duracion("AGENTE_PLAZO", 25*time.Second),
+	}
+
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud: store,
 		Auth:  autenticacion,
@@ -319,6 +339,7 @@ func construir() (http.Handler, error) {
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
 		Tablero:  aplicacion.Tablero{Repo: store},
 		Bolsas:   bolsas,
+		Agente:   agente,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

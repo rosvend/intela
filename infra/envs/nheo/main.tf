@@ -90,6 +90,9 @@ module "api" {
   oni_direccion_fisica      = "Carrera 14 No. 99-33, Oficina 602, Torre REM, Bogota D.C."
   oni_direccion_electronica = "redescritorescolombia@redescritores.com"
 
+  # The assistant's key arrives as a secret (TF_VAR_anthropic_api_key); empty keeps it "not available".
+  anthropic_api_key = var.anthropic_api_key
+
   # THE ORDERING GUARANTEE. docs/cd.md requires the schema to move before the
   # new code serves traffic, and ADR 0008 explains the cost of getting it wrong:
   # a reparto run in flight must not meet a schema its code does not know. If

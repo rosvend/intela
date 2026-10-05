@@ -78,3 +78,10 @@ variable "monthly_budget_usd" {
   type        = number
   default     = 20
 }
+
+variable "anthropic_api_key" {
+  description = "Key for the in-app assistant (#66). Comes from the ANTHROPIC_API_KEY secret; empty leaves the assistant answering 'not available'."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

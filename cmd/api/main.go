@@ -23,6 +23,7 @@ import (
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
 	"github.com/rosvend/intela/internal/infraestructura/httpapi"
 	"github.com/rosvend/intela/internal/infraestructura/ingesta"
+	"github.com/rosvend/intela/internal/infraestructura/modelolenguaje"
 	"github.com/rosvend/intela/internal/infraestructura/objetos"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/reloj"
@@ -241,6 +242,25 @@ func ejecutar(log *slog.Logger) error {
 		Reloj:         reloj.Sistema{},
 	}
 
+	// El asistente de solo lectura (#66). Sin proveedor configurado responde "no disponible": nunca tumba el arranque.
+	modelo, proveedor := modelolenguaje.Elegir(
+		config.Cadena("AGENTE_PROVEEDOR", ""),
+		config.Cadena("ANTHROPIC_API_KEY", ""),
+		config.Cadena("AGENTE_MODELO", ""),
+	)
+	log.Info("asistente", slog.String("proveedor", proveedor))
+	herramientas, err := aplicacion.NuevoCatalogoHerramientas()
+	if err != nil {
+		return err
+	}
+	agente := aplicacion.AgenteConsulta{
+		Modelo:       modelo,
+		Herramientas: herramientas,
+		Reloj:        reloj.Sistema{},
+		Log:          log,
+		Plazo:        config.Duracion("AGENTE_PLAZO", 50*time.Second),
+	}
+
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
@@ -276,6 +296,7 @@ func ejecutar(log *slog.Logger) error {
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
 		Tablero:  aplicacion.Tablero{Repo: store},
 		Bolsas:   bolsas,
+		Agente:   agente,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

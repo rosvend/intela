@@ -83,7 +83,7 @@ type Casos struct {
 	// Bolsas no tiene ruta: la agrega #34. Queda cableada para que la
 	// liberacion y su asiento compartan unidad (#177).
 	Bolsas aplicacion.BolsasAccesorias
-	Agente         Agente
+	Agente Agente
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).

@@ -30,6 +30,10 @@ module "function" {
     ONI_DIRECCION_FISICA      = var.oni_direccion_fisica
     ONI_DIRECCION_ELECTRONICA = var.oni_direccion_electronica
     OBJECT_BUCKET             = var.vault_bucket_name
+    AGENTE_PROVEEDOR          = var.agente_proveedor
+    ANTHROPIC_API_KEY         = var.anthropic_api_key
+    AGENTE_MODELO             = var.agente_modelo
+    AGENTE_PLAZO              = var.agente_plazo
   }
 }
 
