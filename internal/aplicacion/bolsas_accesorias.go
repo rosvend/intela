@@ -33,7 +33,7 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 	return pool, nil
 }
 
-// LiberarReservaPrescrita reparte el remanente de una reserva (RD 14.4) sobre las proporciones exactas de su corrida, mas rendimientoAUsar (RD 10.4) descontado de (nacional, vigenciaRendimiento). El saldo nuevo es el residuo, no cero: sin titulares a quien repartir, el importe se queda en la reserva.
+// LiberarReservaPrescrita reparte el remanente de una reserva (RD 14.4) sobre las proporciones exactas de su corrida, mas rendimientoAUsar (RD 10.4). El saldo que devuelve es el persistido. El residuo de redondeo del rendimiento no sale del ledger: sin titulares, ese importe se queda en rendimientos y la reserva no lo absorbe.
 func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
 	if rendimientoAUsar.IsNegative() {
 		return nil, decimal.Zero, fmt.Errorf("%w: rendimiento acumulado negativo", reparto.ErrRepartoInvalido)
@@ -57,6 +57,11 @@ func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID
 		})
 	if err != nil {
 		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
+	}
+	// El repositorio resta del saldo el residuo de la segunda particion, que
+	// fn no ve. Releer deja el valor devuelto igual al persistido.
+	if pool, errLectura := b.Reservas.ReservaPorProceso(ctx, procesoID); errLectura == nil {
+		residuo = pool.Saldo
 	}
 	return nuevas, residuo, nil
 }
