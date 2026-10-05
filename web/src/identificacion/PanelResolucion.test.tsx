@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +26,7 @@ const casoUno = {
   id: "caso-1",
   titulo: "La Niña T3 E12",
   titulo_original: "La niña — Capítulo 12",
-  fuente: "Caracol Televisión",
+  fuente: "caracol",
   modalidad: "tv",
   reporte_id: "ING-2024-0890",
   periodo: "2024-11",
@@ -162,12 +163,50 @@ describe("PanelResolucion", () => {
       />,
     );
 
-    expect(screen.getByText("Obra elegida")).not.toBeNull();
-    expect(screen.getByText("La Niña")).not.toBeNull();
-    expect(screen.getByText("0,71")).not.toBeNull();
+    const comparacion = screen.getByRole("group", {
+      name: "Reportado vs catálogo",
+    });
+    const catalogo = within(comparacion).getByRole("group", {
+      name: "Catálogo",
+    });
+    expect(within(catalogo).getByText("La Niña")).not.toBeNull();
+    expect(within(catalogo).getByText("2016 · Drama")).not.toBeNull();
+    expect(within(catalogo).getByText("0,71")).not.toBeNull();
     expect(
       screen.getByRole("button", { name: "Asignar a La Niña" }),
     ).not.toBeNull();
+  });
+
+  it("compara lo reportado con el catalogo y resalta lo que difiere", () => {
+    render(
+      <Arnes
+        modo={{
+          tipo: "candidata",
+          obraId: "obra-1",
+          obraTitulo: "La Niña",
+          obraAnio: 2016,
+          obraGenero: "Drama",
+          puntaje: 0.71,
+        }}
+      />,
+    );
+
+    const reportado = screen.getByRole("group", { name: "Reportado" });
+    const marcas = Array.from(reportado.querySelectorAll("mark")).map(
+      (m) => m.textContent,
+    );
+    // Del titulo emitido sobra "T3 E12"; del original, "Capítulo 12".
+    expect(marcas).toEqual(["T3 E12", "Capítulo 12"]);
+    expect(within(reportado).getByText("Caracol TV · nov 2024")).not.toBeNull();
+  });
+
+  it("los ids del uso no se ven hasta abrir el detalle tecnico", () => {
+    render(<Arnes modo={{ tipo: "descarte" }} />);
+
+    expect(screen.queryByText("ID_Ficha=48213")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Detalle técnico" }));
+    expect(screen.getByText("ID_Ficha=48213")).not.toBeNull();
+    expect(screen.getByText("caso-1")).not.toBeNull();
   });
 
   it("modo descarte: muestra el aviso de que el registro no se asigna a ninguna obra", () => {

@@ -161,9 +161,11 @@ describe("ListaOni", () => {
     montar();
     await screen.findByText("Magazine de farándula");
 
-    fireEvent.change(screen.getByLabelText("Filtrar por estado"), {
-      target: { value: "asignado" },
-    });
+    fireEvent.click(
+      within(
+        screen.getByRole("group", { name: "Filtrar por estado" }),
+      ).getByRole("button", { name: /^Asignada/ }),
+    );
     await screen.findByText("Magazine de farándula");
     expect(consultas.some((url) => url.includes("estado=asignado"))).toBe(true);
 
@@ -209,9 +211,11 @@ describe("ListaOni", () => {
     // Cambiar el ESTADO -un enum siempre disponible, no una fuente- trae una
     // pagina con una fuente distinta (RCN). D4 acumula: no reemplaza la ya
     // vista, la suma.
-    fireEvent.change(screen.getByLabelText("Filtrar por estado"), {
-      target: { value: "asignado" },
-    });
+    fireEvent.click(
+      within(
+        screen.getByRole("group", { name: "Filtrar por estado" }),
+      ).getByRole("button", { name: /^Asignada/ }),
+    );
     await screen.findByText("Magazine de farándula");
 
     expect(opcionesDeFuente()).toEqual([
@@ -283,10 +287,18 @@ describe("ListaOni", () => {
     expect(
       within(dialogo).getByText("Registro enviado a revisión"),
     ).not.toBeNull();
-    expect(
-      within(dialogo).getByText("Cascada de identificación"),
-    ).not.toBeNull();
+    // Linea de tiempo: reportado -> en revision, con la evidencia en llano.
+    const pasos = within(dialogo).getAllByRole("listitem");
+    expect(pasos.map((p) => p.querySelector("strong")?.textContent)).toEqual([
+      "Reportado",
+      "En revisión",
+    ]);
     expect(within(dialogo).getByText(casoPendiente.evidencia)).not.toBeNull();
+    // Los ids, detras del detalle tecnico.
+    expect(within(dialogo).queryByText("ID_Ficha=48213")).toBeNull();
+    fireEvent.click(
+      within(dialogo).getByRole("button", { name: "Detalle técnico" }),
+    );
     expect(within(dialogo).getByText("ID_Ficha=48213")).not.toBeNull();
 
     // Ninguna peticion nueva: el modal se armo con lo que la fila ya traia.
@@ -339,6 +351,39 @@ describe("ListaOni", () => {
     expect(
       within(dialogo).queryByRole("link", { name: "Ver la obra" }),
     ).toBeNull();
+  });
+
+  it("los chips de estado cuentan los registros, filtran y marcan el activo", async () => {
+    const consultas = instalarServidor({
+      porDefecto: [casoPendiente, casoAsignado, casoDescartado],
+    });
+    montar();
+    await screen.findByText("La Niña T3 E12");
+
+    const grupo = screen.getByRole("group", { name: "Filtrar por estado" });
+    expect(
+      within(grupo).getByRole("button", { name: "Pendiente: 1" }),
+    ).not.toBeNull();
+    expect(
+      within(grupo).getByRole("button", { name: "Asignada: 1" }),
+    ).not.toBeNull();
+    const todos = within(grupo).getByRole("button", { name: "Todos: 3" });
+    expect(todos.getAttribute("aria-pressed")).toBe("true");
+
+    // La distribucion: un segmento por estado presente.
+    const barra = screen.getByRole("group", {
+      name: "Distribución por estado",
+    });
+    expect(within(barra).getAllByRole("button")).toHaveLength(3);
+
+    fireEvent.click(within(grupo).getByRole("button", { name: /^Descartada/ }));
+    await screen.findByText("Noticiero central");
+    expect(consultas.at(-1)).toContain("estado=descartado");
+    expect(
+      within(grupo)
+        .getByRole("button", { name: /^Descartada/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 
   it("sin filtros y sin registros: 'No hay registros ONI'", async () => {

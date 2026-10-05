@@ -3,6 +3,10 @@ import Cargando from "../Cargando";
 import { useLista } from "../catalogo/useLista";
 import { iniciales } from "../iniciales";
 import { formatearInstante } from "../tablero/formato";
+import "../revision.css";
+import Detalle from "../ui/Detalle";
+import { IconoInfo } from "./iconos";
+import { formatearPeriodo, nombreDeFuente } from "./presentacion";
 import { HECHO_ASIGNADA, leerResolucionAsentada } from "./tipos";
 
 /**
@@ -69,9 +73,11 @@ function CuerpoDelHistorial({ asientos }: { asientos: readonly Asiento[] }) {
 
   if (resoluciones.length === 0) {
     return (
-      <div className="bandeja-vacia">
-        <p>Esta obra no tiene resoluciones manuales</p>
-        <p className="muted">
+      <div className="revision-vacio revision-vacio-compacto">
+        <p className="revision-vacio-titulo">
+          Esta obra no tiene resoluciones manuales
+        </p>
+        <p className="revision-vacio-texto">
           Las decisiones futuras aparecerán aquí con su nota y referencia de
           origen.
         </p>
@@ -84,9 +90,9 @@ function CuerpoDelHistorial({ asientos }: { asientos: readonly Asiento[] }) {
       <p className="muted historial-resoluciones-contador">
         {resoluciones.length} resoluciones
       </p>
-      <ol className="historial-resoluciones-lista">
+      <ol className="linea-tiempo">
         {resoluciones.map((asiento) => (
-          <li key={asiento.id} className="historial-resoluciones-item">
+          <li key={asiento.id} className="linea-tiempo-paso">
             <EntradaDeResolucion asiento={asiento} />
           </li>
         ))}
@@ -114,34 +120,39 @@ function EntradaDeResolucion({ asiento }: { asiento: Asiento }) {
   const nombre = resolucion?.actorNombre ?? asiento.actor;
 
   return (
-    <div className="historial-resoluciones-entrada">
-      <header className="historial-resoluciones-cabecera">
-        <span className="avatar" aria-hidden="true">
+    <div className="linea-tiempo-contenido">
+      <header className="linea-tiempo-cabecera">
+        <span className="avatar avatar-chico" aria-hidden="true">
           {iniciales(nombre)}
         </span>
-        <div>
-          <p className="historial-resoluciones-actor">{nombre}</p>
-          <time
-            dateTime={asiento.cuando}
-            title={asiento.cuando}
-            className="muted"
-          >
-            {formatearInstante(asiento.cuando)}
-          </time>
-        </div>
+        <p className="linea-tiempo-titulo">{nombre}</p>
+        <time
+          dateTime={asiento.cuando}
+          title={asiento.cuando}
+          className="linea-tiempo-fecha"
+        >
+          {formatearInstante(asiento.cuando)}
+        </time>
       </header>
       {resolucion === null ? (
         <p>Resolución manual con un detalle que no se pudo leer.</p>
       ) : (
         <>
-          <p>
-            Asignó “{resolucion.titulo}” de {resolucion.fuente},{" "}
-            {resolucion.periodo}, a esta obra.
+          <p className="linea-tiempo-texto">
+            Asignó “{resolucion.titulo}” de {nombreDeFuente(resolucion.fuente)},{" "}
+            {formatearPeriodo(resolucion.periodo)}, a esta obra.
           </p>
-          <p className="detalle-nota">{resolucion.nota}</p>
-          <p className="muted detalle-identificador">
-            {resolucion.usoId} · {resolucion.reporteId}
-          </p>
+          <p className="linea-tiempo-nota">{resolucion.nota}</p>
+          <Detalle
+            titulo="Referencia de origen"
+            etiquetaDisparador="Referencia de origen"
+            claseDisparador="revision-icono-boton"
+            disparador={<IconoInfo />}
+          >
+            <span className="detalle-tecnico-id">
+              {resolucion.usoId} · {resolucion.reporteId}
+            </span>
+          </Detalle>
         </>
       )}
     </div>

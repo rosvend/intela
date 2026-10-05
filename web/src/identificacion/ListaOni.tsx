@@ -1,17 +1,26 @@
 import { useEffect, useId, useState, type ReactElement } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import Cargando from "../Cargando";
 import Paginador from "../catalogo/Paginador";
+import "../revision.css";
 import { formatearInstante } from "../tablero/formato";
+import BarraApilada from "../ui/BarraApilada";
+import Detalle from "../ui/Detalle";
 import { useApi } from "../useApi";
+import { EsqueletoDeCasos, EstadoVacio } from "./BandejaIdentificacion";
+import DetalleTecnico from "./DetalleTecnico";
 import Dialogo from "./Dialogo";
+import { IconoInfo } from "./iconos";
+import {
+  contarPorEstado,
+  formatearPeriodo,
+  nombreDeFuente,
+} from "./presentacion";
 import {
   ESTADOS_DE_CASO,
   ETIQUETA_ESTADO,
   LIMITE_LISTA_ONI,
   RUTAS_IDENTIFICACION,
   esPaginaDeCasos,
-  idsDeFuente,
   type CasoIdentificacion,
   type EstadoDeCaso,
   type FiltrosDeCasos,
@@ -118,6 +127,25 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     });
   }, [pagina]);
 
+  // Los conteos por estado salen de la ultima pagina SIN filtro de estado con
+  // la misma fuente, periodo y desplazamiento: el contrato no trae totales
+  // por estado, y al filtrar por uno los demas no deben caer a cero.
+  const claveDeConteo = `${fuente}|${periodo}|${desplazamiento}`;
+  const [conteos, setConteos] = useState<{
+    clave: string;
+    porEstado: Record<EstadoDeCaso, number>;
+    total: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!pagina || estado !== "") return;
+    setConteos({
+      clave: claveDeConteo,
+      porEstado: contarPorEstado(pagina.casos),
+      total: pagina.casos.length,
+    });
+  }, [pagina, estado, claveDeConteo]);
+  const conteosVigentes = conteos?.clave === claveDeConteo ? conteos : null;
+
   const opcionesDeFuente = opcionesAcumuladas(fuentesVistas, fuente);
   const opcionesDePeriodo = opcionesAcumuladas(periodosVistos, periodo);
 
@@ -169,36 +197,59 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   const idTituloHistorial = useId();
 
   return (
-    <section className="lista-oni">
-      <header className="lista-oni-cabecera">
-        <h1>Lista ONI</h1>
-        <p className="bandeja-intro">
-          Registros que requirieron revisión en la cascada de identificación.
+    <section className="lista-oni revision">
+      <header className="revision-cabecera">
+        <div className="revision-titulo-fila">
+          <h1>Lista ONI</h1>
+          <Link to="/identificacion" className="revision-enlace">
+            Ir a casos pendientes
+          </Link>
+        </div>
+        <p className="revision-intro">
+          Cada uso que necesitó revisión y en qué quedó.
         </p>
-        <Link to="/identificacion" className="boton-secundario">
-          Ir a casos pendientes
-        </Link>
       </header>
 
-      <div className="filtros">
-        <label>
-          Estado
+      <div className="panel oni-resumen">
+        <div className="oni-chips" role="group" aria-label="Filtrar por estado">
+          <ChipDeEstado
+            etiqueta="Todos"
+            cuenta={conteosVigentes?.total}
+            activo={estado === ""}
+            onClick={() => aplicarFiltro("estado", "")}
+          />
+          {ESTADOS_DE_CASO.map((valor) => (
+            <ChipDeEstado
+              key={valor}
+              etiqueta={ETIQUETA_ESTADO[valor]}
+              cuenta={conteosVigentes?.porEstado[valor]}
+              color={COLOR_ESTADO[valor]}
+              activo={estado === valor}
+              onClick={() => aplicarFiltro("estado", valor)}
+            />
+          ))}
+        </div>
+        {conteosVigentes && conteosVigentes.total > 0 && (
+          <div className="oni-distribucion">
+            <BarraApilada
+              etiqueta="Distribución por estado"
+              formatear={(v) => `${v} ${v === "1" ? "registro" : "registros"}`}
+              segmentos={ESTADOS_DE_CASO.map((valor) => ({
+                id: valor,
+                etiqueta: ETIQUETA_ESTADO[valor],
+                valor: String(conteosVigentes.porEstado[valor]),
+                color: COLOR_ESTADO[valor],
+              }))}
+            />
+            {(desplazamiento > 0 ||
+              conteosVigentes.total >= LIMITE_LISTA_ONI) && (
+              <p className="oni-nota">Conteo de esta página.</p>
+            )}
+          </div>
+        )}
+        <div className="oni-filtros">
           <select
-            aria-label="Filtrar por estado"
-            value={estado}
-            onChange={(e) => aplicarFiltro("estado", e.target.value)}
-          >
-            <option value="">Todos los estados</option>
-            {ESTADOS_DE_CASO.map((valor) => (
-              <option key={valor} value={valor}>
-                {ETIQUETA_ESTADO[valor]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Fuente
-          <select
+            className="pildora-select"
             aria-label="Filtrar por fuente"
             value={fuente}
             onChange={(e) => aplicarFiltro("fuente", e.target.value)}
@@ -206,14 +257,12 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
             <option value="">Todas las fuentes</option>
             {opcionesDeFuente.map((valor) => (
               <option key={valor} value={valor}>
-                {valor}
+                {nombreDeFuente(valor)}
               </option>
             ))}
           </select>
-        </label>
-        <label>
-          Periodo
           <select
+            className="pildora-select"
             aria-label="Filtrar por periodo"
             value={periodo}
             onChange={(e) => aplicarFiltro("periodo", e.target.value)}
@@ -221,24 +270,28 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
             <option value="">Todos los periodos</option>
             {opcionesDePeriodo.map((valor) => (
               <option key={valor} value={valor}>
-                {valor}
+                {formatearPeriodo(valor)}
               </option>
             ))}
           </select>
-        </label>
-        <button
-          type="button"
-          className="boton-secundario"
-          onClick={limpiarFiltros}
-        >
-          Limpiar filtros
-        </button>
+          {hayFiltros && (
+            <button
+              type="button"
+              className="boton-fantasma"
+              onClick={limpiarFiltros}
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
       </div>
 
-      {lectura.cargando && <Cargando texto="Cargando la lista ONI…" />}
+      {lectura.cargando && (
+        <EsqueletoDeCasos etiqueta="Cargando la lista ONI" />
+      )}
 
       {!lectura.cargando && lectura.error && (
-        <div className="bandeja-error" role="alert">
+        <div className="revision-aviso-error" role="alert">
           <p>No pudimos cargar la lista ONI: {lectura.error.message}</p>
           <button
             type="button"
@@ -251,7 +304,7 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
       )}
 
       {!lectura.cargando && !lectura.error && pagina === null && (
-        <p className="bandeja-error" role="alert">
+        <p className="revision-aviso-error" role="alert">
           La lista ONI no llegó como una página de casos legible.
         </p>
       )}
@@ -261,17 +314,17 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
           {pagina.casos.length === 0 ? (
             <VaciaListaOni conFiltros={hayFiltros} />
           ) : (
-            <div className="lista-oni-caja">
-              <table className="tabla-lista-oni" aria-label="Lista ONI">
+            <div className="panel oni-tabla-caja">
+              <table className="oni-tabla" aria-label="Lista ONI">
                 <thead>
                   <tr>
-                    <th scope="col">Título como vino</th>
-                    <th scope="col">Fuente</th>
-                    <th scope="col">Periodo</th>
+                    <th scope="col">Uso reportado</th>
                     <th scope="col">Estado</th>
                     <th scope="col">Responsable</th>
-                    <th scope="col">Última actualización</th>
-                    <th scope="col">Acciones</th>
+                    <th scope="col">Actualizado</th>
+                    <th scope="col">
+                      <span className="solo-lector">Acciones</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -284,7 +337,7 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
                   ))}
                 </tbody>
               </table>
-              <div className="lista-oni-pie">
+              <div className="oni-pie">
                 <Paginador
                   etiqueta="Registros"
                   desplazamiento={desplazamiento}
@@ -316,23 +369,61 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   );
 }
 
-/**
- * El estado vacio de la pantalla, sin filtros o con filtros (plano seccion
- * 5): son dos hechos distintos y el texto no los confunde -sin filtros la
- * lista ONI misma esta vacia; con filtros, lo unico que se sabe es que ESOS
- * filtros no encontraron nada-. "Limpiar filtros" para el segundo caso ya
- * existe en la cabecera de filtros; el texto no repite un boton propio.
- */
-function VaciaListaOni({ conFiltros }: { conFiltros: boolean }): ReactElement {
+/** Color de estado: es un estado, asi que sale de los tokens de estado. */
+const COLOR_ESTADO: Record<EstadoDeCaso, string> = {
+  pendiente: "var(--alerta)",
+  asignado: "var(--ok)",
+  descartado: "var(--texto-suave)",
+};
+
+function ChipDeEstado({
+  etiqueta,
+  cuenta,
+  color,
+  activo,
+  onClick,
+}: {
+  etiqueta: string;
+  cuenta: number | undefined;
+  color?: string;
+  activo: boolean;
+  onClick: () => void;
+}): ReactElement {
   return (
-    <div className="bandeja-vacia">
-      <p>{conFiltros ? "No hay coincidencias" : "No hay registros ONI"}</p>
-      {conFiltros && (
-        <p className="muted">
-          Ajusta los filtros para consultar otros registros ONI.
-        </p>
+    <button
+      type="button"
+      className="chip-filtro"
+      aria-pressed={activo}
+      aria-label={cuenta === undefined ? etiqueta : `${etiqueta}: ${cuenta}`}
+      onClick={onClick}
+    >
+      {color && (
+        <span
+          className="chip-filtro-punto"
+          style={{ background: color }}
+          aria-hidden="true"
+        />
       )}
-    </div>
+      {etiqueta}
+      {cuenta !== undefined && (
+        <span className="chip-filtro-cuenta">{cuenta}</span>
+      )}
+    </button>
+  );
+}
+
+/** Sin filtros la lista misma esta vacia; con filtros, solo ESOS no encontraron nada. */
+function VaciaListaOni({ conFiltros }: { conFiltros: boolean }): ReactElement {
+  return conFiltros ? (
+    <EstadoVacio
+      titulo="No hay coincidencias"
+      texto="Ajusta los filtros para consultar otros registros ONI."
+    />
+  ) : (
+    <EstadoVacio
+      titulo="No hay registros ONI"
+      texto="Ningún uso ha necesitado revisión todavía."
+    />
   );
 }
 
@@ -342,27 +433,21 @@ function EtiquetaDeEstadoOni({
   estado: EstadoDeCaso;
 }): ReactElement {
   return (
-    <span className={`lista-oni-estado lista-oni-estado-${estado}`}>
+    <span className={`chip ${CLASE_CHIP_ESTADO[estado]}`}>
       {ETIQUETA_ESTADO[estado]}
     </span>
   );
 }
 
+const CLASE_CHIP_ESTADO: Record<EstadoDeCaso, string> = {
+  pendiente: "chip-alerta",
+  asignado: "chip-ok",
+  descartado: "",
+};
+
 /**
- * Una fila de la lista. "Resolver" solo si el caso sigue pendiente (plano
- * seccion 5): un caso ya asignado o descartado no tiene decision que tomar, y
- * el contrato de #175 no admite corregirla (D-alcance de #175).
- *
- * DECISION #39: "Resolver" navega a `/identificacion` -la bandeja, que ya
- * lista todos los pendientes- en vez de abrir aqui mismo el panel de
- * resolucion. Reabrir `PanelResolucion` desde esta pantalla exigiria
- * reconstruir en la lista ONI la remocion optimista y el empuje del conteo
- * (D3) que hoy son responsabilidad de `BandejaIdentificacion` -duplicar ese
- * ciclo de vida en dos pantallas es la clase de indireccion que el CLAUDE.md
- * raiz llama deuda, no diseno-. La bandeja es, ademas, el destino que la
- * propia lista ya ofrece en su cabecera ("Ir a casos pendientes"): un
- * administrador que resuelve desde aqui llega al mismo lugar por el mismo
- * enlace.
+ * Una fila. "Resolver" solo si sigue pendiente, y navega a la bandeja
+ * (DECISION #39): la remocion optimista vive alli y no se duplica aqui.
  */
 function FilaListaOni({
   caso,
@@ -372,13 +457,13 @@ function FilaListaOni({
   onVerHistorial: () => void;
 }): ReactElement {
   return (
-    <tr>
+    <tr className={`oni-fila oni-fila-${caso.estado}`}>
       <td>
-        <p className="lista-oni-titulo-texto">{caso.titulo}</p>
-        <p className="muted lista-oni-id">{caso.id}</p>
+        <p className="oni-titulo">{caso.titulo}</p>
+        <p className="oni-meta">
+          {nombreDeFuente(caso.fuente)} · {formatearPeriodo(caso.periodo)}
+        </p>
       </td>
-      <td>{caso.fuente}</td>
-      <td>{caso.periodo}</td>
       <td>
         <EtiquetaDeEstadoOni estado={caso.estado} />
       </td>
@@ -387,20 +472,21 @@ function FilaListaOni({
         <time
           dateTime={caso.ultima_actualizacion}
           title={caso.ultima_actualizacion}
+          className="oni-fecha"
         >
           {formatearInstante(caso.ultima_actualizacion)}
         </time>
       </td>
-      <td className="lista-oni-acciones">
+      <td className="oni-acciones">
         <button
           type="button"
-          className="boton-secundario"
+          className="boton-fantasma"
           onClick={onVerHistorial}
         >
           Ver historial
         </button>
         {caso.estado === "pendiente" && (
-          <Link to="/identificacion" className="boton-secundario">
+          <Link to="/identificacion" className="boton-una">
             Resolver
           </Link>
         )}
@@ -410,10 +496,8 @@ function FilaListaOni({
 }
 
 /**
- * El historial completo del registro (D5): se arma con lo que la propia fila
- * YA trae -quien, cuando, la decision, la nota y, si se asigno, la obra-, sin
- * una peticion adicional. No hay `GET` de un caso por id (plano seccion 2), y
- * tampoco hace falta: la lista ya trajo el caso entero.
+ * El historial del registro (D5), armado con lo que la fila YA trae: no hay
+ * `GET` de un caso por id, y no hace falta.
  */
 function HistorialDelRegistro({
   idTitulo,
@@ -426,12 +510,27 @@ function HistorialDelRegistro({
 }): ReactElement {
   return (
     <div className="historial-registro">
-      <header className="historial-registro-cabecera">
-        <p className="muted">{caso.id}</p>
+      <header className="historial-registro-cabecera oni-historial-cabecera">
         <h2 id={idTitulo}>{tituloDelHistorial(caso)}</h2>
+        <Detalle
+          titulo="Detalle técnico"
+          etiquetaDisparador="Detalle técnico"
+          claseDisparador="revision-icono-boton"
+          disparador={<IconoInfo />}
+        >
+          <DetalleTecnico caso={caso} />
+        </Detalle>
       </header>
       <div className="historial-registro-cuerpo">
-        <CuerpoDelHistorial caso={caso} />
+        <LineaDeTiempo caso={caso} />
+        {caso.estado === "asignado" && caso.obra_asignada && (
+          <Link
+            to={`/catalogo/${encodeURIComponent(caso.obra_asignada.id)}`}
+            className="boton-secundario oni-ver-obra"
+          >
+            Ver la obra
+          </Link>
+        )}
       </div>
       <footer className="historial-registro-pie">
         <button type="button" className="boton-secundario" onClick={onCerrar}>
@@ -450,58 +549,56 @@ function tituloDelHistorial(caso: CasoIdentificacion): string {
   return "Registro descartado";
 }
 
-/** Los tres cuerpos del historial, segun el estado del caso (plano seccion 5). */
-function CuerpoDelHistorial({
-  caso,
-}: {
-  caso: CasoIdentificacion;
-}): ReactElement {
-  if (caso.estado === "pendiente") {
-    const ids = idsDeFuente(caso.ids_fuente);
-    return (
-      <>
-        <p className="muted">Cascada de identificación</p>
-        {ids.length > 0 && (
-          <ul className="bandeja-fichas">
-            {ids.map((id) => (
-              <li key={id} className="ficha">
-                {id}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p>{caso.evidencia}</p>
-      </>
-    );
-  }
-
+/** Los pasos del registro, de arriba abajo: reportado, revision y decision. */
+function LineaDeTiempo({ caso }: { caso: CasoIdentificacion }): ReactElement {
+  const resuelto = caso.estado !== "pendiente";
   return (
-    <>
-      <dl className="historial-registro-datos">
-        <div>
-          <dt>Responsable</dt>
-          <dd>{caso.resuelto_por?.nombre ?? "—"}</dd>
+    <ol className="linea-tiempo">
+      <li className="linea-tiempo-paso">
+        <div className="linea-tiempo-contenido">
+          <strong className="linea-tiempo-titulo">Reportado</strong>
+          <p className="linea-tiempo-texto">
+            {nombreDeFuente(caso.fuente)} · {formatearPeriodo(caso.periodo)}
+          </p>
         </div>
-        {caso.resuelto_en !== null && (
-          <div>
-            <dt>Fecha</dt>
-            <dd>
-              <time dateTime={caso.resuelto_en} title={caso.resuelto_en}>
-                {formatearInstante(caso.resuelto_en)}
-              </time>
-            </dd>
-          </div>
-        )}
-      </dl>
-      <p>{caso.nota ?? "—"}</p>
-      {caso.estado === "asignado" && caso.obra_asignada && (
-        <Link
-          to={`/catalogo/${encodeURIComponent(caso.obra_asignada.id)}`}
-          className="boton-secundario"
+      </li>
+      <li
+        className={`linea-tiempo-paso${resuelto ? "" : " linea-tiempo-actual"}`}
+      >
+        <div className="linea-tiempo-contenido">
+          <strong className="linea-tiempo-titulo">En revisión</strong>
+          <p className="linea-tiempo-texto">
+            {caso.evidencia !== ""
+              ? caso.evidencia
+              : "No encontramos una obra segura en el catálogo."}
+          </p>
+        </div>
+      </li>
+      {resuelto && (
+        <li
+          className={`linea-tiempo-paso linea-tiempo-actual linea-tiempo-${caso.estado}`}
         >
-          Ver la obra
-        </Link>
+          <div className="linea-tiempo-contenido">
+            <strong className="linea-tiempo-titulo">
+              {caso.estado === "asignado" ? "Asignado" : "Descartado"}
+            </strong>
+            <p className="linea-tiempo-texto">
+              <span className="linea-tiempo-quien">
+                {caso.resuelto_por?.nombre ?? "—"}
+              </span>
+              {caso.resuelto_en !== null && (
+                <>
+                  {" · "}
+                  <time dateTime={caso.resuelto_en} title={caso.resuelto_en}>
+                    {formatearInstante(caso.resuelto_en)}
+                  </time>
+                </>
+              )}
+            </p>
+            <p className="linea-tiempo-nota">{caso.nota ?? "—"}</p>
+          </div>
+        </li>
       )}
-    </>
+    </ol>
   );
 }

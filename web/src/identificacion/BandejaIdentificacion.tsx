@@ -1,8 +1,21 @@
-import { useEffect, useId, useState, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import { Link } from "react-router-dom";
-import Cargando from "../Cargando";
+import "../revision.css";
+import Detalle from "../ui/Detalle";
 import { useApi } from "../useApi";
+import DetalleTecnico from "./DetalleTecnico";
 import Dialogo from "./Dialogo";
+import {
+  IconoCheck,
+  IconoChispa,
+  IconoDescartar,
+  IconoInfo,
+  IconoLupa,
+  IconoPantalla,
+  IconoPregunta,
+  IconoTodoEnOrden,
+} from "./iconos";
+import MedidorConfianza from "./MedidorConfianza";
 import PanelResolucion, { type ModoResolucion } from "./PanelResolucion";
 import { useFijarPendientes } from "./pendientes";
 import {
@@ -10,12 +23,16 @@ import {
   RUTAS_IDENTIFICACION,
   esPaginaDeCasos,
   etiquetaDeModalidad,
-  formatearPuntaje,
-  idsDeFuente,
   type CandidatoIdentificacion,
   type CasoIdentificacion,
   type SugerenciaIdentificacion,
 } from "./tipos";
+import {
+  explicarCandidata,
+  formatearPeriodo,
+  nombreDeFuente,
+  prefiereQuieto,
+} from "./presentacion";
 
 /** El caso sobre el que se abrio el panel, y en que modo. */
 type PanelAbierto = { caso: CasoIdentificacion; modo: ModoResolucion };
@@ -24,6 +41,9 @@ type PanelAbierto = { caso: CasoIdentificacion; modo: ModoResolucion };
 type Aviso = { detalle: string };
 
 const DURACION_AVISO_MS = 4000;
+
+/** Lo que dura la salida animada de una tarjeta (revision.css, `caso-salir`). */
+const DURACION_SALIDA_MS = 220;
 
 /**
  * Bandeja de identificacion (`/identificacion`): los casos ONI pendientes,
@@ -57,6 +77,9 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   // reintenta. `Set`, no filtrar el array de `useApi`: la pagina que trajo
   // `useApi` no cambia con la recarga optimista, solo lo que se PINTA de ella.
   const [fuera, setFuera] = useState<Set<string>>(new Set());
+  // Las tarjetas que se estan yendo: siguen pintadas mientras dura la salida.
+  const [saliendo, setSaliendo] = useState<Set<string>>(new Set());
+  const temporizadores = useRef(new Map<string, number>());
   const [panel, setPanel] = useState<PanelAbierto | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
   const [aviso, setAviso] = useState<Aviso | null>(null);
@@ -70,17 +93,14 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     ? pagina.casos.filter((c) => !fuera.has(c.id))
     : [];
   // `pagina.pendientes` es el conteo del servidor al momento de la carga;
-  // restarle `fuera.size` lo mantiene en vivo sin pedir de nuevo el recurso
-  // -el mismo criterio que `usePendientesDeIdentificacion` aplica del lado
-  // del badge, aqui del lado de quien lo alimenta.
+  // restarle lo que ya salio lo mantiene en vivo sin pedir de nuevo.
   const conteo = pagina
-    ? Math.max(pagina.pendientes - fuera.size, 0)
+    ? Math.max(pagina.pendientes - fuera.size - saliendo.size, 0)
     : undefined;
 
   useEffect(() => {
     if (conteo !== undefined) fijarPendientes(conteo);
-    // `fijarPendientes` es estable (viene de `useFijarPendientes`, que la
-    // memoiza); solo `conteo` decide cuando volver a empujar.
+    // `fijarPendientes` es estable (memoizada en `useFijarPendientes`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conteo]);
 
@@ -90,20 +110,37 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
     return () => clearTimeout(temporizador);
   }, [aviso]);
 
+  useEffect(() => {
+    const pendientes = temporizadores.current;
+    return () => pendientes.forEach((t) => window.clearTimeout(t));
+  }, []);
+
+  function conId(previos: Set<string>, id: string, poner: boolean) {
+    const siguientes = new Set(previos);
+    if (poner) siguientes.add(id);
+    else siguientes.delete(id);
+    return siguientes;
+  }
+
   function marcarFuera(id: string) {
-    setFuera((previos) => {
-      const siguientes = new Set(previos);
-      siguientes.add(id);
-      return siguientes;
-    });
+    if (prefiereQuieto()) {
+      setFuera((p) => conId(p, id, true));
+      return;
+    }
+    setSaliendo((p) => conId(p, id, true));
+    const t = window.setTimeout(() => {
+      temporizadores.current.delete(id);
+      setSaliendo((p) => conId(p, id, false));
+      setFuera((p) => conId(p, id, true));
+    }, DURACION_SALIDA_MS);
+    temporizadores.current.set(id, t);
   }
 
   function devolverALaLista(id: string) {
-    setFuera((previos) => {
-      const siguientes = new Set(previos);
-      siguientes.delete(id);
-      return siguientes;
-    });
+    window.clearTimeout(temporizadores.current.get(id));
+    temporizadores.current.delete(id);
+    setSaliendo((p) => conId(p, id, false));
+    setFuera((p) => conId(p, id, false));
   }
 
   function cerrarPanel() {
@@ -112,35 +149,42 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   }
 
   return (
-    <section className="bandeja" aria-label="Bandeja de identificación">
-      <header className="bandeja-cabecera">
-        <div className="bandeja-titulo-fila">
+    <section
+      className="bandeja revision"
+      aria-label="Bandeja de identificación"
+    >
+      <header className="revision-cabecera">
+        <div className="revision-titulo-fila">
           <h1>Bandeja de identificación</h1>
-          {conteo !== undefined && (
-            <span className="pastilla-conteo">
-              {conteo === 1 ? "1 caso pendiente" : `${conteo} casos pendientes`}
-            </span>
+          {conteo !== undefined && conteo > 0 && (
+            <span className="chip chip-marca">{conteo} por revisar</span>
           )}
+          <Link to="/lista-oni" className="revision-enlace">
+            Ver lista ONI
+          </Link>
         </div>
-        <p className="bandeja-intro">
-          Revisa la evidencia y decide la obra correcta. Intela nunca asigna un
-          registro a ciegas.
+        <p className="revision-intro">
+          Usos reportados que no pudimos asociar con seguridad a una obra del
+          catálogo. Elige la obra correcta o descártalo.
         </p>
-        <Link to="/lista-oni" className="boton-secundario">
-          Ver lista ONI
-        </Link>
       </header>
 
       {aviso && (
-        <p className="bandeja-aviso" role="status">
-          <strong>Decisión registrada</strong> {aviso.detalle}
-        </p>
+        <div className="revision-toast" role="status">
+          <span className="revision-toast-icono">
+            <IconoCheck tamano={16} />
+          </span>
+          <strong>Decisión registrada</strong>
+          <span>{aviso.detalle}</span>
+        </div>
       )}
 
-      {lectura.cargando && <Cargando texto="Cargando los casos pendientes…" />}
+      {lectura.cargando && (
+        <EsqueletoDeCasos etiqueta="Cargando los casos pendientes" />
+      )}
 
       {!lectura.cargando && lectura.error && (
-        <div className="bandeja-error" role="alert">
+        <div className="revision-aviso-error" role="alert">
           <p>No pudimos cargar los casos: {lectura.error.message}</p>
           <button
             type="button"
@@ -153,7 +197,7 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
       )}
 
       {!lectura.cargando && !lectura.error && pagina === null && (
-        <p className="bandeja-error" role="alert">
+        <p className="revision-aviso-error" role="alert">
           La bandeja no llegó como una lista de casos legibles.
         </p>
       )}
@@ -161,22 +205,24 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
       {pagina !== null && (
         <>
           {casosVisibles.length === 0 && (conteo ?? 0) === 0 && (
-            <div className="bandeja-vacia">
-              <p>No hay casos pendientes</p>
-              <p className="muted">
-                {fuera.size > 0
-                  ? "Todas las entradas fueron asignadas o descartadas con trazabilidad."
-                  : "La cascada de identificación procesó todos los registros disponibles."}
-              </p>
-            </div>
+            <EstadoVacio
+              titulo="Todo en orden: no hay usos pendientes por identificar"
+              texto={
+                fuera.size > 0
+                  ? "Cada decisión quedó registrada con su nota."
+                  : "Cuando llegue un uso dudoso, aparecerá aquí."
+              }
+            />
           )}
 
           {casosVisibles.length > 0 && (
-            <ul className="bandeja-lista">
-              {casosVisibles.map((caso) => (
+            <ul className="casos">
+              {casosVisibles.map((caso, i) => (
                 <TarjetaCaso
                   key={caso.id}
                   caso={caso}
+                  indice={i}
+                  saliendo={saliendo.has(caso.id)}
                   onAsignarCandidata={(candidato) =>
                     setPanel({
                       caso,
@@ -202,10 +248,10 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
           )}
 
           {conteo !== undefined && conteo > casosVisibles.length && (
-            <div className="bandeja-mas">
+            <div className="revision-mas">
               <p>
-                Se muestran {casosVisibles.length} de {conteo} casos pendientes,
-                en orden de llegada del reporte.
+                Se muestran {casosVisibles.length} de {conteo}, en orden de
+                llegada.
               </p>
               <button
                 type="button"
@@ -253,154 +299,153 @@ function Contenido({ onRecargar }: { onRecargar: () => void }): ReactElement {
   );
 }
 
+/** Esqueleto de carga: la forma de las tarjetas, sin texto que leer. */
+export function EsqueletoDeCasos({
+  etiqueta,
+}: {
+  etiqueta: string;
+}): ReactElement {
+  return (
+    <div
+      className="esqueletos"
+      role="status"
+      aria-label={etiqueta}
+      aria-busy="true"
+    >
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="esqueleto-caso" aria-hidden="true">
+          <span className="esqueleto esqueleto-titulo" />
+          <span className="esqueleto esqueleto-linea" />
+          <span className="esqueleto esqueleto-barra" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function EstadoVacio({
+  titulo,
+  texto,
+}: {
+  titulo: string;
+  texto?: string;
+}): ReactElement {
+  return (
+    <div className="revision-vacio">
+      <span className="revision-vacio-icono">
+        <IconoTodoEnOrden />
+      </span>
+      <p className="revision-vacio-titulo">{titulo}</p>
+      {texto && <p className="revision-vacio-texto">{texto}</p>}
+    </div>
+  );
+}
+
 function TarjetaCaso({
   caso,
+  indice,
+  saliendo,
   onAsignarCandidata,
   onBuscarOtraObra,
   onDescartar,
 }: {
   caso: CasoIdentificacion;
+  indice: number;
+  saliendo: boolean;
   onAsignarCandidata: (candidato: CandidatoIdentificacion) => void;
   onBuscarOtraObra: () => void;
   onDescartar: () => void;
 }): ReactElement {
-  // Expandida por defecto (plano seccion 5): nadie tiene que abrir la
-  // tarjeta para ver por que un registro esta en la bandeja.
-  const [expandida, setExpandida] = useState(true);
-  const idCuerpo = useId();
   const sugerenciaTexto = textoDeSugerencia(caso.sugerencia);
 
   return (
-    <li className="bandeja-caso">
-      <button
-        type="button"
-        className="bandeja-caso-cabecera"
-        aria-expanded={expandida}
-        aria-controls={idCuerpo}
-        onClick={() => setExpandida((v) => !v)}
-      >
-        <div className="bandeja-caso-titulo-fila">
-          <h2>{caso.titulo}</h2>
-          <span className="etiqueta-modalidad">
-            {etiquetaDeModalidad(caso.modalidad)}
-          </span>
-          <span className="etiqueta-id">{caso.id}</span>
+    <li
+      className={`caso${saliendo ? " caso-saliendo" : ""}`}
+      style={{ "--indice": Math.min(indice, 8) } as React.CSSProperties}
+      aria-hidden={saliendo || undefined}
+    >
+      <header className="caso-cabecera">
+        <span className="caso-icono">
+          <IconoPantalla />
+        </span>
+        <div className="caso-reportado">
+          <h2 className="caso-titulo">{caso.titulo}</h2>
+          <p className="caso-meta">
+            {nombreDeFuente(caso.fuente)} · {formatearPeriodo(caso.periodo)}
+          </p>
         </div>
-        <p className="muted">
-          {caso.fuente} · {caso.periodo} · Entrega {caso.reporte_id}
+        <span className="chip">{etiquetaDeModalidad(caso.modalidad)}</span>
+        <Detalle
+          titulo="Detalle técnico"
+          etiquetaDisparador="Detalle técnico"
+          claseDisparador="revision-icono-boton"
+          disparador={<IconoInfo />}
+        >
+          <DetalleTecnico caso={caso} />
+        </Detalle>
+      </header>
+
+      {sugerenciaTexto && (
+        <p className="caso-sugerencia">
+          <IconoChispa />
+          <span>{sugerenciaTexto}</span>
         </p>
-      </button>
-
-      {expandida && (
-        <div id={idCuerpo} className="bandeja-caso-cuerpo">
-          <div className="bandeja-caso-datos">
-            <section className="bandeja-caso-entrada">
-              <h3>Entrada del reporte</h3>
-              <dl>
-                <div>
-                  <dt>Título emitido</dt>
-                  <dd>{caso.titulo}</dd>
-                </div>
-                <div>
-                  <dt>Título original</dt>
-                  <dd>{caso.titulo_original || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Fuente</dt>
-                  <dd>{caso.fuente}</dd>
-                </div>
-              </dl>
-            </section>
-            <section className="bandeja-caso-evidencia">
-              <h3>Evidencia del sistema</h3>
-              <ul className="bandeja-fichas">
-                {idsDeFuente(caso.ids_fuente).map((id) => (
-                  <li key={id} className="ficha">
-                    {id}
-                  </li>
-                ))}
-              </ul>
-              <p>{caso.evidencia}</p>
-            </section>
-          </div>
-
-          <section className="bandeja-candidatas">
-            {sugerenciaTexto && (
-              <p className="bandeja-sugerencia" role="status">
-                <strong>{sugerenciaTexto}</strong>
-                <span>Confírmala o elige otra. Nada se asigna solo.</span>
-                {caso.sugerencia.motivo !== "" && (
-                  <span className="muted">{caso.sugerencia.motivo}</span>
-                )}
-              </p>
-            )}
-            <div className="bandeja-candidatas-cabecera">
-              <div>
-                <h3>Obras candidatas</h3>
-                <p className="muted">
-                  Ordenadas por puntaje. Ninguna se asigna automáticamente.
-                </p>
-              </div>
-              <span className="muted">
-                {caso.candidatos.length} coincidencias
-              </span>
-            </div>
-
-            {caso.candidatos.length === 0 ? (
-              <div className="bandeja-sin-candidatas">
-                <p>No encontramos obras candidatas</p>
-                <p className="muted">
-                  Busca manualmente en el catálogo o descarta el registro.
-                </p>
-              </div>
-            ) : (
-              <ul className="bandeja-lista-candidatas">
-                {caso.candidatos.map((candidato) => (
-                  <li key={candidato.obra_id} className="bandeja-candidato">
-                    <div className="bandeja-candidato-cabecera">
-                      <span className="bandeja-candidato-titulo">
-                        {candidato.titulo}
-                      </span>
-                      <span className="pastilla-puntaje">
-                        {formatearPuntaje(candidato.puntaje)}
-                      </span>
-                    </div>
-                    <p className="muted">
-                      {candidato.anio} · {candidato.genero} · Comparado con “
-                      {candidato.titulo_consultado}”
-                    </p>
-                    <button
-                      type="button"
-                      className="boton-primario"
-                      aria-label={`Asignar a esta obra: ${candidato.titulo}`}
-                      onClick={() => onAsignarCandidata(candidato)}
-                    >
-                      Asignar a esta obra
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <div className="bandeja-caso-pie">
-            <button
-              type="button"
-              className="boton-secundario"
-              onClick={onBuscarOtraObra}
-            >
-              Buscar otra obra
-            </button>
-            <button
-              type="button"
-              className="boton-secundario"
-              onClick={onDescartar}
-            >
-              Descartar registro
-            </button>
-          </div>
-        </div>
       )}
+
+      {caso.candidatos.length === 0 ? (
+        <p className="caso-sin-candidatas">
+          No encontramos obras parecidas en el catálogo. Búscala a mano o
+          descarta el uso.
+        </p>
+      ) : (
+        <ul className="candidatas" aria-label="Obras posibles">
+          {caso.candidatos.map((candidato) => (
+            <li key={candidato.obra_id} className="candidata">
+              <div className="candidata-obra">
+                <span className="candidata-titulo">{candidato.titulo}</span>
+                <span className="candidata-meta">
+                  {candidato.anio} · {candidato.genero}
+                </span>
+              </div>
+              <MedidorConfianza puntaje={candidato.puntaje} />
+              <Detalle
+                titulo={`Por qué ${candidato.titulo} es candidata`}
+                etiquetaDisparador={`Por qué ${candidato.titulo} es candidata`}
+                claseDisparador="revision-icono-boton"
+                disparador={<IconoPregunta />}
+              >
+                <span className="detalle-texto">
+                  {explicarCandidata(candidato)}
+                </span>
+              </Detalle>
+              <button
+                type="button"
+                className="boton-una"
+                aria-label={`Es esta obra: ${candidato.titulo}`}
+                onClick={() => onAsignarCandidata(candidato)}
+              >
+                <IconoCheck tamano={16} />
+                Es esta obra
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <footer className="caso-pie">
+        <button
+          type="button"
+          className="boton-fantasma"
+          onClick={onBuscarOtraObra}
+        >
+          <IconoLupa />
+          Buscar otra obra
+        </button>
+        <button type="button" className="boton-fantasma" onClick={onDescartar}>
+          <IconoDescartar />
+          Descartar
+        </button>
+      </footer>
     </li>
   );
 }

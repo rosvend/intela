@@ -164,38 +164,98 @@ afterEach(() => {
 });
 
 describe("BandejaIdentificacion", () => {
-  it("muestra la tarjeta expandida con las candidatas y sus puntajes, sin preseleccion", async () => {
+  it("explica la bandeja en una frase y cuenta los pendientes", async () => {
+    instalarServidor({ casos: [casoUno], pendientes: 3 });
+    montar();
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Bandeja de identificación",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Usos reportados que no pudimos asociar con seguridad a una obra del catálogo. Elige la obra correcta o descártalo.",
+      ),
+    ).not.toBeNull();
+    expect(await screen.findByText("3 por revisar")).not.toBeNull();
+  });
+
+  it("cada caso muestra lo reportado, sus candidatas con medidor de parecido y ninguna preseleccionada", async () => {
     instalarServidor({ casos: [casoUno] });
     montar();
 
-    expect(await screen.findByText("Bandeja de identificación")).not.toBeNull();
-    expect(tituloDeLaTarjeta()).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "La Niña T3 E12" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Caracol Televisión · nov 2024")).not.toBeNull();
 
-    const cabecera = screen.getByRole("button", {
-      name: /La Niña T3 E12/,
-    });
-    expect(cabecera.getAttribute("aria-expanded")).toBe("true");
-
+    // El medidor: barra con su lectura accesible y la cifra decimal visible.
+    const medidores = screen.getAllByRole("meter");
+    expect(medidores).toHaveLength(2);
+    expect(medidores[0].getAttribute("aria-valuetext")).toBe(
+      "Coincidencia alta, 0,71",
+    );
+    expect(medidores[1].getAttribute("aria-valuetext")).toBe(
+      "Coincidencia baja, 0,43",
+    );
     expect(screen.getByText("0,71")).not.toBeNull();
     expect(screen.getByText("0,43")).not.toBeNull();
-    expect(screen.getByText("2 coincidencias")).not.toBeNull();
     expect(screen.getByText("Sugerencia: asignar a La Niña.")).not.toBeNull();
-    expect(
-      screen.getByText("Confírmala o elige otra. Nada se asigna solo."),
-    ).not.toBeNull();
 
-    // ADR 0007: ninguna candidata viene marcada o resaltada por defecto. Las
-    // dos ofrecen exactamente el mismo boton, sin distincion visual de
-    // "recomendada".
-    const botones = screen.getAllByRole("button", {
-      name: /^Asignar a esta obra:/,
-    });
+    // ADR 0007: las dos candidatas ofrecen el mismo boton, sin "recomendada".
+    const botones = screen.getAllByRole("button", { name: /^Es esta obra:/ });
     expect(botones).toHaveLength(2);
     expect(
-      screen.getByRole("button", { name: "Asignar a esta obra: La Niña" }),
+      screen.getByRole("button", { name: "Es esta obra: La Promesa" }),
     ).not.toBeNull();
+  });
+
+  it("los ids internos y la evidencia viven detras de un Detalle", async () => {
+    instalarServidor({ casos: [casoUno] });
+    montar();
+
+    await screen.findByRole("heading", { level: 2, name: "La Niña T3 E12" });
+    expect(screen.queryByText("caso-1")).toBeNull();
+    expect(screen.queryByText("ID_Ficha=48213")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Detalle técnico" }));
+    const tecnico = screen.getByRole("dialog", { name: "Detalle técnico" });
+    expect(within(tecnico).getByText("caso-1")).not.toBeNull();
+    expect(within(tecnico).getByText("ID_Ficha=48213")).not.toBeNull();
+    expect(within(tecnico).getByText("ING-2024-0890")).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Por qué La Niña es candidata" }),
+    );
+    const porque = screen.getByRole("dialog", {
+      name: "Por qué La Niña es candidata",
+    });
+    expect(porque.textContent).toContain("se parece mucho");
+  });
+
+  it("mientras carga pinta esqueletos con un estado accesible", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    montar();
+
     expect(
-      screen.getByRole("button", { name: "Asignar a esta obra: La Promesa" }),
+      screen.getByRole("status", { name: "Cargando los casos pendientes" }),
+    ).not.toBeNull();
+    expect(tituloDeLaTarjeta()).toBeNull();
+  });
+
+  it("sin casos pendientes muestra el estado vacio amable", async () => {
+    instalarServidor({ casos: [] });
+    montar();
+
+    expect(
+      await screen.findByText(
+        "Todo en orden: no hay usos pendientes por identificar",
+      ),
     ).not.toBeNull();
   });
 
@@ -212,7 +272,7 @@ describe("BandejaIdentificacion", () => {
 
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Asignar a esta obra: La Niña",
+        name: "Es esta obra: La Niña",
       }),
     );
     const dialogo = await screen.findByRole("dialog");
@@ -304,9 +364,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: " no es del repertorio " },
@@ -334,9 +392,7 @@ describe("BandejaIdentificacion", () => {
     instalarServidor({ casos: [casoUno], resolver: () => enVuelo });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "en revision" },
@@ -369,9 +425,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "nota de prueba" },
@@ -404,9 +458,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "x" },
@@ -435,9 +487,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "x" },
@@ -469,9 +519,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "x" },
@@ -502,9 +550,7 @@ describe("BandejaIdentificacion", () => {
     });
     montar();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Descartar registro" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "x" },
@@ -535,7 +581,7 @@ describe("BandejaIdentificacion", () => {
     await waitFor(() => expect(tituloDeLaTarjeta()).not.toBeNull());
     await waitFor(() => expect(fijarPendientes).toHaveBeenCalledWith(3));
 
-    fireEvent.click(screen.getByRole("button", { name: "Descartar registro" }));
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
     const dialogo = await screen.findByRole("dialog");
     fireEvent.change(within(dialogo).getByLabelText("Nota *"), {
       target: { value: "x" },

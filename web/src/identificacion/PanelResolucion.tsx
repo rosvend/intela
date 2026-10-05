@@ -1,4 +1,6 @@
-import { useId, useState, type ReactElement } from "react";
+import { Fragment, useId, useState, type ReactElement } from "react";
+import "../revision.css";
+import Detalle from "../ui/Detalle";
 import { ApiError } from "../api";
 import { esObra, type Obra } from "../catalogo/tipos";
 import { useLista } from "../catalogo/useLista";
@@ -9,11 +11,15 @@ import {
   resolverCaso,
   type ResolucionDeCaso,
 } from "./resolucion";
+import DetalleTecnico from "./DetalleTecnico";
+import { IconoInfo } from "./iconos";
+import MedidorConfianza from "./MedidorConfianza";
 import {
-  formatearPuntaje,
-  idsDeFuente,
-  type CasoIdentificacion,
-} from "./tipos";
+  compararTitulos,
+  formatearPeriodo,
+  nombreDeFuente,
+} from "./presentacion";
+import type { CasoIdentificacion } from "./tipos";
 
 /**
  * Con que obra trabaja el panel, segun por donde se abrio:
@@ -210,8 +216,6 @@ export default function PanelResolucion({
     }
   }
 
-  const idsDeLaEntrada = idsDeFuente(caso.ids_fuente);
-
   return (
     <div className="panel-resolucion">
       <header className="panel-resolucion-cabecera">
@@ -219,6 +223,16 @@ export default function PanelResolucion({
         <h2 id={idTitulo} className="panel-resolucion-titulo">
           {TITULO_POR_MODO[modo.tipo]}
         </h2>
+        <span className="panel-resolucion-tecnico">
+          <Detalle
+            titulo="Detalle técnico"
+            etiquetaDisparador="Detalle técnico"
+            claseDisparador="revision-icono-boton"
+            disparador={<IconoInfo />}
+          >
+            <DetalleTecnico caso={caso} />
+          </Detalle>
+        </span>
         <button
           type="button"
           className="dialogo-cerrar"
@@ -231,16 +245,7 @@ export default function PanelResolucion({
       </header>
 
       <div className="panel-resolucion-cuerpo">
-        <section className="panel-entrada">
-          <div className="panel-entrada-cabecera">
-            <span className="muted">Entrada original</span>
-            <span className="muted">{caso.id}</span>
-          </div>
-          <p className="panel-entrada-titulo">{caso.titulo}</p>
-          <p className="muted">
-            {[caso.fuente, caso.periodo, ...idsDeLaEntrada].join(" · ")}
-          </p>
-        </section>
+        <Comparacion caso={caso} obra={obraElegida} />
 
         {modo.tipo === "descarte" ? (
           <section className="panel-aviso-descarte" role="note">
@@ -280,32 +285,6 @@ export default function PanelResolucion({
                     }
                   />
                 )}
-              </section>
-            )}
-
-            {obraElegida && (
-              <section className="panel-obra-elegida">
-                <span className="muted">Obra elegida</span>
-                <div className="panel-obra-elegida-caja">
-                  <div>
-                    <p className="panel-obra-elegida-titulo">
-                      {obraElegida.titulo}
-                    </p>
-                    {(obraElegida.anio !== undefined ||
-                      obraElegida.genero !== undefined) && (
-                      <p className="muted">
-                        {[obraElegida.anio, obraElegida.genero]
-                          .filter((v) => v !== undefined)
-                          .join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                  {obraElegida.puntaje !== undefined && (
-                    <span className="pastilla-puntaje">
-                      {formatearPuntaje(obraElegida.puntaje)}
-                    </span>
-                  )}
-                </div>
               </section>
             )}
           </>
@@ -354,6 +333,94 @@ export default function PanelResolucion({
         </button>
       </footer>
     </div>
+  );
+}
+
+/** Lado a lado: lo que llego en el reporte contra la obra del catalogo. */
+function Comparacion({
+  caso,
+  obra,
+}: {
+  caso: CasoIdentificacion;
+  obra: ObraElegida | null;
+}): ReactElement {
+  const contra = obra?.titulo ?? "";
+  return (
+    <div
+      className={`comparacion${obra ? "" : " comparacion-sola"}`}
+      role="group"
+      aria-label="Reportado vs catálogo"
+    >
+      <div className="comparacion-lado" role="group" aria-label="Reportado">
+        <span className="comparacion-etiqueta">Reportado</span>
+        <p className="comparacion-titulo">
+          <TituloComparado texto={caso.titulo} contra={obra ? contra : null} />
+        </p>
+        {caso.titulo_original !== "" && (
+          <p className="comparacion-original">
+            <TituloComparado
+              texto={caso.titulo_original}
+              contra={obra ? contra : null}
+            />
+          </p>
+        )}
+        <p className="comparacion-meta">
+          {nombreDeFuente(caso.fuente)} · {formatearPeriodo(caso.periodo)}
+        </p>
+      </div>
+      {obra && (
+        <div
+          className="comparacion-lado comparacion-catalogo"
+          role="group"
+          aria-label="Catálogo"
+        >
+          <span className="comparacion-etiqueta">Catálogo</span>
+          <p className="comparacion-titulo">
+            <TituloComparado
+              texto={obra.titulo}
+              contra={`${caso.titulo} ${caso.titulo_original}`}
+            />
+          </p>
+          {(obra.anio !== undefined || obra.genero !== undefined) && (
+            <p className="comparacion-meta">
+              {[obra.anio, obra.genero]
+                .filter((v) => v !== undefined)
+                .join(" · ")}
+            </p>
+          )}
+          {obra.puntaje !== undefined && (
+            <MedidorConfianza puntaje={obra.puntaje} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Un titulo con las palabras que no estan en `contra` resaltadas. */
+function TituloComparado({
+  texto,
+  contra,
+}: {
+  texto: string;
+  contra: string | null;
+}): ReactElement {
+  if (contra === null) return <>{texto}</>;
+  const segmentos = compararTitulos(texto, contra);
+  if (segmentos.every((s) => !s.distinto)) return <>{texto}</>;
+  return (
+    <>
+      {segmentos.map((s, i) => {
+        if (!s.distinto) return <Fragment key={i}>{s.texto}</Fragment>;
+        const espacio = /^\s*/.exec(s.texto)?.[0] ?? "";
+        return (
+          <Fragment key={i}>
+            {espacio}
+            <mark className="diferencia">{s.texto.slice(espacio.length)}</mark>
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 

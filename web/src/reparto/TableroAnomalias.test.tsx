@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -134,46 +135,100 @@ describe("TableroAnomalias", () => {
     localStorage.clear();
   });
 
-  it("muestra las seis tarjetas con los conteos del resumen y enlaza a resolucion", async () => {
+  it("resume las abiertas con una barra por tipo y una leyenda en lenguaje llano", async () => {
     servir();
 
     montar();
 
     await screen.findByText("Título no identificado");
-    expect(screen.getAllByText("ONI").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Duplicado de archivo").length).toBeGreaterThan(
-      0,
-    );
-    expect(
-      screen.getAllByText("Tipo de obra sin mapear").length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("link", { name: "Ir a resolución" }),
-    ).toHaveLength(6);
-    expect(screen.getAllByText("Abiertas · bloquean la corrida")).toHaveLength(
-      3,
-    );
     expect(screen.getByText(/1 crítica abierta bloquea/)).toBeTruthy();
+
+    const barra = screen.getByRole("group", { name: "Alertas por tipo" });
+    // Solo los tipos con abiertas tienen segmento.
+    expect(within(barra).getAllByRole("button")).toHaveLength(2);
+
+    const leyenda = screen.getByRole("list", { name: "Tipos de alerta" });
+    const filas = within(leyenda).getAllByRole("listitem");
+    expect(filas).toHaveLength(6);
     expect(
-      screen.getAllByRole("link", { name: "Resolver" }).length,
-    ).toBeGreaterThan(0);
+      within(leyenda).getByText("Usos sin obra identificada"),
+    ).toBeTruthy();
+    expect(
+      within(leyenda).getByText("Archivo recibido dos veces"),
+    ).toBeTruthy();
+    // Los tres tipos criticos dicen que bloquean.
+    expect(within(leyenda).getAllByText("Bloquea el reparto")).toHaveLength(3);
   });
 
-  it("Resolver no descarta el ?periodo ni repuebla la bandeja con otro", async () => {
+  it("cada tipo explica que significa y que hacer en un Detalle", async () => {
     servir();
 
     montar();
 
     await screen.findByText("Título no identificado");
-    const resolver = screen.getAllByRole("link", { name: "Resolver" })[0];
-    expect(resolver?.getAttribute("href")).toBe("#bandeja");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Qué significa: Declaración que no suma 100 %",
+      }),
+    );
+    const detalle = screen.getByRole("dialog", {
+      name: "Declaración que no suma 100 %",
+    });
+    expect(detalle.textContent).toContain("Qué hacer");
+    expect(detalle.textContent).toContain("reserva");
+  });
 
-    fireEvent.click(resolver as HTMLElement);
+  it("pinta una tarjeta por alerta con su severidad y esconde la referencia tecnica", async () => {
+    servir();
 
-    expect(screen.getByText("Título no identificado")).toBeTruthy();
+    montar();
+
+    const lista = await screen.findByRole("list", { name: "Alertas abiertas" });
+    const tarjetas = within(lista).getAllByRole("listitem");
+    expect(tarjetas).toHaveLength(3);
+    expect(within(tarjetas[2]).getByText("Bloquea el reparto")).toBeTruthy();
+    expect(within(tarjetas[0]).getByText("No bloquea")).toBeTruthy();
+
+    expect(screen.queryByText("uso:uso-9")).toBeNull();
+    fireEvent.click(
+      within(tarjetas[0]).getByRole("button", { name: "Detalle técnico" }),
+    );
+    expect(screen.getByText("uso:uso-9")).toBeTruthy();
+  });
+
+  it("una ONI enlaza a la bandeja de identificacion sin perder el periodo de la vista", async () => {
+    servir();
+
+    montar();
+
+    await screen.findByText("Título no identificado");
+    const enlaces = screen.getAllByRole("link", { name: "Identificar" });
+    expect(enlaces).toHaveLength(2);
+    expect(enlaces[0]?.getAttribute("href")).toBe("/identificacion");
     expect((screen.getByLabelText("Periodo") as HTMLSelectElement).value).toBe(
       "2025",
     );
+  });
+
+  it("una alerta resuelta se ve apagada", async () => {
+    servir({
+      lista: () =>
+        json([
+          alerta({
+            id: "al-9",
+            tipo: "oni",
+            detalle: "Ya cerrada",
+            resuelta: true,
+          }),
+        ]),
+    });
+
+    montar();
+
+    const texto = await screen.findByText("Ya cerrada");
+    const tarjeta = texto.closest("li");
+    expect(tarjeta?.className).toContain("alerta-resuelta");
+    expect(within(tarjeta as HTMLElement).getByText("Resuelta")).toBeTruthy();
   });
 
   it("sin ?periodo no pide las alertas de todos los periodos", async () => {
@@ -205,13 +260,12 @@ describe("TableroAnomalias", () => {
     montar("/anomalias");
 
     await waitFor(() =>
-      expect(screen.getAllByText("Sin datos todavía").length).toBeGreaterThan(
+      expect(screen.getAllByText("Sin datos todavía.").length).toBeGreaterThan(
         0,
       ),
     );
     const pedidas = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain(RUTAS_REPARTO.alertas());
-    expect(screen.getAllByText("Abiertas").length).toBeGreaterThan(0);
   });
 
   it("un periodo sin evaluar no se presenta como limpio", async () => {
@@ -223,7 +277,7 @@ describe("TableroAnomalias", () => {
     montar();
 
     await screen.findByText(/no se ha evaluado todavía: los conteos/);
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
     expect(
       screen.getByText("Este periodo no se ha evaluado todavía."),
     ).toBeTruthy();
@@ -305,7 +359,7 @@ describe("TableroAnomalias", () => {
       expect(screen.getAllByRole("alert").length).toBeGreaterThan(0),
     );
     expect(screen.queryByText("Sin datos todavía.")).toBeNull();
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
   });
 
   it("no dice 'No hay alertas' mientras el resumen no ha llegado", async () => {
@@ -327,10 +381,12 @@ describe("TableroAnomalias", () => {
       ).toBe(true),
     );
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByText(/No hay alertas abiertas/)).toBeNull();
+    expect(screen.queryByText(/no hay alertas abiertas/i)).toBeNull();
 
     resolver(json(resumenDePrueba({ periodo: "2025" })));
-    await screen.findByText("No hay alertas abiertas en este periodo.");
+    await screen.findByText(
+      "Todo en orden: no hay alertas abiertas en este periodo",
+    );
   });
 
   it("cuenta en singular una crítica aceptada sin corregir", async () => {

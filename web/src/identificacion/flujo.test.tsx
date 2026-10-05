@@ -324,7 +324,7 @@ describe("flujo de identificacion (integracion con App)", () => {
     //    principal no se puede pulsar sin nota (es obligatoria).
     fireEvent.click(
       screen.getByRole("button", {
-        name: `Asignar a esta obra: ${OBRA.titulo}`,
+        name: `Es esta obra: ${OBRA.titulo}`,
       }),
     );
     const panel = await screen.findByRole("dialog");
@@ -349,11 +349,11 @@ describe("flujo de identificacion (integracion con App)", () => {
     ).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(tituloEnLaBandeja(CASO_PENDIENTE.titulo)).toBeNull();
-    expect(screen.getByText("No hay casos pendientes")).toBeTruthy();
     expect(
-      screen.getByText(
-        "Todas las entradas fueron asignadas o descartadas con trazabilidad.",
-      ),
+      screen.getByText("Todo en orden: no hay usos pendientes por identificar"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Cada decisión quedó registrada con su nota."),
     ).toBeTruthy();
     await waitFor(() => expect(textoDelBadge()).toBeNull());
 
@@ -409,9 +409,13 @@ describe("flujo de identificacion (integracion con App)", () => {
 
     expect(entrada.textContent).toContain(ACTOR);
     expect(entrada.textContent).toContain(
-      `Asignó “${CASO_PENDIENTE.titulo}” de ${CASO_PENDIENTE.fuente}, ${CASO_PENDIENTE.periodo}, a esta obra.`,
+      `Asignó “${CASO_PENDIENTE.titulo}” de ${CASO_PENDIENTE.fuente}, sep 2026, a esta obra.`,
     );
     expect(entrada.textContent).toContain(NOTA);
+    // La referencia de origen espera detras de su Detalle.
+    fireEvent.click(
+      within(entrada).getByRole("button", { name: "Referencia de origen" }),
+    );
     expect(entrada.textContent).toContain(
       `${CASO_PENDIENTE.id} · ${CASO_PENDIENTE.reporte_id}`,
     );
@@ -435,7 +439,7 @@ describe("flujo de identificacion (integracion con App)", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: `Asignar a esta obra: ${OBRA.titulo}`,
+        name: `Es esta obra: ${OBRA.titulo}`,
       }),
     );
     const panel = await screen.findByRole("dialog");
