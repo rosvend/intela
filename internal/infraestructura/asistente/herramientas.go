@@ -9,7 +9,6 @@ import (
 
 // Herramientas es el UNICO sitio donde se registra una herramienta: una linea en su hueco, sin tocar los main.
 func Herramientas(store *postgres.Store) (aplicacion.CatalogoHerramientas, error) {
-	_ = store
 	var hs []aplicacion.Herramienta
 
 	// #67: buscar_reglamento.
