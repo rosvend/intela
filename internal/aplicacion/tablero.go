@@ -3,9 +3,11 @@ package aplicacion
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
@@ -24,20 +26,11 @@ type ObraResumen struct {
 	Estado string
 }
 
-// ResumenLiquidacion es el ultimo periodo del titular con corridas firmadas: neto sumado y obras distintas.
+// ResumenLiquidacion es el ultimo periodo del titular con ordenes de pago emitidas: neto sumado y obras distintas.
 type ResumenLiquidacion struct {
 	Periodo string
 	Neto    decimal.Decimal
 	Obras   int
-}
-
-// LineaDeTitular es una linea neta del titular con la etapa de su corrida, para filtrar las firmadas.
-type LineaDeTitular struct {
-	Periodo  string
-	Circuito reparto.Circuito
-	Etapa    reparto.Etapa
-	ObraID   string
-	Neto     decimal.Decimal
 }
 
 // CorridaResumen es la ultima corrida en tres palabras.
@@ -50,12 +43,14 @@ type CorridaResumen struct {
 // RepositorioTablero es la lectura de las tarjetas del tablero; sin filas es ErrNoEncontrado donde aplica.
 type RepositorioTablero interface {
 	ObrasDeclaradasDe(ctx context.Context, titularID string) ([]ObraDeclarada, error)
-	LineasDeTitular(ctx context.Context, titularID string) ([]LineaDeTitular, error)
+	// DeTitular son las ordenes de pago del titular: la misma lectura que /mis-liquidaciones.
+	DeTitular(ctx context.Context, titularID string) ([]liquidacion.OrdenDePago, error)
+	ObrasDeTitularEnProcesos(ctx context.Context, titularID string, procesos []string) (int, error)
 	CargasPendientes(ctx context.Context) (int, error)
 	CasosONIPendientes(ctx context.Context) (int, error)
 	UltimaCorrida(ctx context.Context) (ProcesoVista, error)
-	Declaraciones(ctx context.Context) (map[string]repertorio.Declaracion, error)
-	ListarObras(ctx context.Context, p Paginacion) ([]Obra, error)
+	// ContarObrasEnReserva cuenta las obras del catalogo cuya declaracion vigente no es Completa().
+	ContarObrasEnReserva(ctx context.Context) (int, error)
 }
 
 // Tablero sirve los conteos del panel de inicio; el rol de staff lo cierra el adaptador HTTP.
@@ -87,37 +82,39 @@ func (t Tablero) MisObras(ctx context.Context, actor Usuario) ([]ObraResumen, er
 	return out, nil
 }
 
-// UltimaLiquidacion resume el ultimo periodo del titular con corridas que ya cerraron la verificacion (ADR 0024).
+// UltimaLiquidacion resume el ultimo periodo del titular con ordenes de pago (ADR 0024).
+//
+// Un periodo solo tiene ordenes cuando TODAS sus corridas llegaron a liquidacion_final, y la
+// orden ya trae las diferidas y los arrastres de R-11: por eso se lee ordenes_pago y no la etapa
+// de cada linea. Es la misma fuente que /mis-liquidaciones.
 func (t Tablero) UltimaLiquidacion(ctx context.Context, actor Usuario) (ResumenLiquidacion, error) {
 	titularID, err := titularDe(actor)
 	if err != nil {
 		return ResumenLiquidacion{}, err
 	}
-	lineas, err := t.Repo.LineasDeTitular(ctx, titularID)
+	ordenes, err := t.Repo.DeTitular(ctx, titularID)
 	if err != nil {
 		return ResumenLiquidacion{}, err
 	}
-	firmadas := make([]LineaDeTitular, 0, len(lineas))
-	for _, l := range lineas {
-		if reparto.AlcanzoEtapa(l.Circuito, l.Etapa, reparto.EtapaLiquidacionFinal) {
-			firmadas = append(firmadas, l)
-		}
-	}
-	if len(firmadas) == 0 {
-		return ResumenLiquidacion{}, fmt.Errorf("%w: %s no tiene lineas firmadas", ErrNoEncontrado, titularID)
+	if len(ordenes) == 0 {
+		return ResumenLiquidacion{}, fmt.Errorf("%w: %s no tiene ordenes de pago", ErrNoEncontrado, titularID)
 	}
 	r := ResumenLiquidacion{Neto: decimal.Zero}
-	for _, l := range firmadas {
-		r.Periodo = max(r.Periodo, l.Periodo)
+	for _, o := range ordenes {
+		r.Periodo = max(r.Periodo, o.Periodo)
 	}
-	obras := map[string]struct{}{}
-	for _, l := range firmadas {
-		if l.Periodo == r.Periodo {
-			r.Neto = r.Neto.Add(l.Neto)
-			obras[l.ObraID] = struct{}{}
+	var procesos []string
+	for _, o := range ordenes {
+		if o.Periodo == r.Periodo {
+			r.Neto = r.Neto.Add(o.Neto)
+			procesos = append(procesos, o.Procesos...)
 		}
 	}
-	r.Obras = len(obras)
+	slices.Sort(procesos)
+	procesos = slices.Compact(procesos)
+	if r.Obras, err = t.Repo.ObrasDeTitularEnProcesos(ctx, titularID, procesos); err != nil {
+		return ResumenLiquidacion{}, err
+	}
 	return r, nil
 }
 
@@ -133,21 +130,7 @@ func (t Tablero) ONIPendientes(ctx context.Context) (int, error) {
 
 // ObrasEnReserva cuenta las obras del catalogo sin declaracion completa, tambien las no declaradas (R-04, RD 13.1.3).
 func (t Tablero) ObrasEnReserva(ctx context.Context) (int, error) {
-	obras, err := t.Repo.ListarObras(ctx, Paginacion{Limite: LimiteSinTope})
-	if err != nil {
-		return 0, err
-	}
-	decls, err := t.Repo.Declaraciones(ctx)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, o := range obras {
-		if !decls[o.ID].Completa() {
-			n++
-		}
-	}
-	return n, nil
+	return t.Repo.ContarObrasEnReserva(ctx)
 }
 
 // UltimaCorrida devuelve la corrida mas reciente con su estado derivado de la etapa.

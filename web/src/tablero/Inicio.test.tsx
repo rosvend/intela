@@ -88,7 +88,7 @@ const PROCESO = {
   etapa: "verificacion",
   periodo: "2025",
   revision: 1,
-  firmas: [{ rol: "distribucion", actor_id: "usr-d", sobre_rev: 1 }],
+  firmas: [{ rol: "distribucion", actor_id: "usr-d", revision: 1 }],
 };
 
 describe("Inicio de staff", () => {

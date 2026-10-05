@@ -47,37 +47,33 @@ func (s *Store) ObrasDeclaradasDe(ctx context.Context, titularID string) ([]apli
 	return obras, nil
 }
 
-// LineasDeTitular trae las lineas netas del titular con periodo y etapa de su corrida; filtra y agrega el caso de uso.
-// rt.importe es el neto, el mismo que sirve /mis-ingresos.
-func (s *Store) LineasDeTitular(ctx context.Context, titularID string) ([]aplicacion.LineaDeTitular, error) {
-	filas, err := s.ejecutorDe(ctx).Query(ctx, `
-		SELECT p.periodo, p.circuito, p.etapa, rt.obra_id, rt.importe
-		  FROM resultados_titular rt
-		  JOIN procesos p ON p.id = rt.proceso_id
-		 WHERE rt.titular_id = $1
-		 ORDER BY p.periodo, p.id, rt.obra_id`, titularID)
+// ObrasDeTitularEnProcesos cuenta las obras distintas del titular en las corridas de sus ordenes.
+func (s *Store) ObrasDeTitularEnProcesos(ctx context.Context, titularID string, procesos []string) (int, error) {
+	var n int
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
+		`SELECT COUNT(DISTINCT obra_id) FROM resultados_titular
+		  WHERE titular_id = $1 AND proceso_id = ANY($2)`, titularID, procesos).Scan(&n)
 	if err != nil {
-		return nil, traducirError(err, "lineas de %q", titularID)
+		return 0, traducirError(err, "obras liquidadas de %q", titularID)
 	}
-	defer filas.Close()
+	return n, nil
+}
 
-	var lineas []aplicacion.LineaDeTitular
-	for filas.Next() {
-		var (
-			l               aplicacion.LineaDeTitular
-			circuito, etapa string
-		)
-		if err := filas.Scan(&l.Periodo, &circuito, &etapa, &l.ObraID, &l.Neto); err != nil {
-			return nil, traducirError(err, "escanear linea de %q", titularID)
-		}
-		l.Circuito = reparto.Circuito(circuito)
-		l.Etapa = reparto.Etapa(etapa)
-		lineas = append(lineas, l)
+// ContarObrasEnReserva es repertorio.Declaracion.Completa() en SQL, sobre la version vigente:
+// sin partes, una parte sin IPI o no positiva, o una suma distinta de 100 (R-04, RD 13.1.3).
+func (s *Store) ContarObrasEnReserva(ctx context.Context) (int, error) {
+	var n int
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
+		`SELECT COUNT(*) FROM obras o
+		   LEFT JOIN (SELECT d.obra_id, SUM(d.porcentaje) AS suma,
+		                     bool_or(d.ipi = '' OR d.porcentaje <= 0) AS defectuosa
+		                FROM declaraciones d`+clausulaVigente+`
+		               GROUP BY d.obra_id) v ON v.obra_id = o.id
+		  WHERE v.obra_id IS NULL OR v.defectuosa OR v.suma <> 100`).Scan(&n)
+	if err != nil {
+		return 0, traducirError(err, "contar obras en reserva")
 	}
-	if err := filas.Err(); err != nil {
-		return nil, traducirError(err, "lineas de %q", titularID)
-	}
-	return lineas, nil
+	return n, nil
 }
 
 // CargasPendientes cuenta los reportes con alguna fila que la cascada aun no proceso.

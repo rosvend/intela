@@ -1,6 +1,6 @@
 import { formatearCOP } from "../ui/dinero";
 
-// Reexporta la unica suma de dinero (ui/dinero) para src/reparto, que aun importa de aqui.
+// Formatos de pantalla (enteros, instantes, importes); el dinero se formatea siempre con ui/dinero.
 
 export function formatearEntero(n: number): string {
   return new Intl.NumberFormat("es-CO").format(n);

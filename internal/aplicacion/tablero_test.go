@@ -3,25 +3,28 @@ package aplicacion
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/dominio/repertorio"
 )
 
 type repoTablero struct {
-	obras           []ObraDeclarada
-	lineas          []LineaDeTitular
-	cargas          int
-	oni             int
-	corrida         ProcesoVista
-	declaraciones   map[string]repertorio.Declaracion
-	catalogo        []Obra
-	paginacion      Paginacion
-	err             error
-	titularRecibido string
+	obras            []ObraDeclarada
+	ordenes          []liquidacion.OrdenDePago
+	obrasLiquidadas  int
+	procesosPedidos  []string
+	cargas           int
+	oni              int
+	enReserva        int
+	corrida          ProcesoVista
+	err              error
+	titularRecibido  string
+	titularDeConteos string
 }
 
 func (r *repoTablero) ObrasDeclaradasDe(_ context.Context, titularID string) ([]ObraDeclarada, error) {
@@ -29,9 +32,15 @@ func (r *repoTablero) ObrasDeclaradasDe(_ context.Context, titularID string) ([]
 	return r.obras, r.err
 }
 
-func (r *repoTablero) LineasDeTitular(_ context.Context, titularID string) ([]LineaDeTitular, error) {
+func (r *repoTablero) DeTitular(_ context.Context, titularID string) ([]liquidacion.OrdenDePago, error) {
 	r.titularRecibido = titularID
-	return r.lineas, r.err
+	return r.ordenes, r.err
+}
+
+func (r *repoTablero) ObrasDeTitularEnProcesos(_ context.Context, titularID string, procesos []string) (int, error) {
+	r.titularDeConteos = titularID
+	r.procesosPedidos = procesos
+	return r.obrasLiquidadas, r.err
 }
 
 func (r *repoTablero) CargasPendientes(context.Context) (int, error) { return r.cargas, r.err }
@@ -40,14 +49,7 @@ func (r *repoTablero) CasosONIPendientes(context.Context) (int, error) { return 
 
 func (r *repoTablero) UltimaCorrida(context.Context) (ProcesoVista, error) { return r.corrida, r.err }
 
-func (r *repoTablero) Declaraciones(context.Context) (map[string]repertorio.Declaracion, error) {
-	return r.declaraciones, r.err
-}
-
-func (r *repoTablero) ListarObras(_ context.Context, p Paginacion) ([]Obra, error) {
-	r.paginacion = p
-	return r.catalogo, r.err
-}
+func (r *repoTablero) ContarObrasEnReserva(context.Context) (int, error) { return r.enReserva, r.err }
 
 func parte(titular, ipi, pct string) repertorio.Parte {
 	return repertorio.Parte{TitularID: titular, IPI: ipi, Porcentaje: decimal.RequireFromString(pct)}
@@ -121,55 +123,58 @@ func TestTableroMisObrasVaciaEsListaNoNil(t *testing.T) {
 	}
 }
 
-func linea(periodo string, etapa reparto.Etapa, obra, neto string) LineaDeTitular {
-	return LineaDeTitular{
-		Periodo: periodo, Circuito: reparto.Nacional, Etapa: etapa,
-		ObraID: obra, Neto: decimal.RequireFromString(neto),
+func orden(periodo, circuito, neto string, procesos ...string) liquidacion.OrdenDePago {
+	return liquidacion.OrdenDePago{
+		ID: "liq-" + periodo + "-" + circuito, Periodo: periodo, Circuito: circuito,
+		Procesos: procesos, Neto: decimal.RequireFromString(neto), Estado: liquidacion.EstadoEnviada,
 	}
 }
 
+// La ultima liquidacion sale de ordenes_pago (ADR 0024), la misma fuente que /mis-liquidaciones.
 func TestTableroUltimaLiquidacion(t *testing.T) {
+	diferida := orden("2026-03", "nacional", "40", "proc-5")
+	diferida.Estado = liquidacion.EstadoDiferida
 	casos := []struct {
-		nombre string
-		lineas []LineaDeTitular
-		quiere ResumenLiquidacion
+		nombre   string
+		ordenes  []liquidacion.OrdenDePago
+		quiere   ResumenLiquidacion
+		procesos []string
 	}{
-		{"toma el ultimo periodo", []LineaDeTitular{
-			linea("2026-01", reparto.EtapaAuditoria, "o-1", "3900"),
-			linea("2026-02", reparto.EtapaLiquidacionFinal, "o-1", "780"),
-		}, ResumenLiquidacion{Periodo: "2026-02", Neto: decimal.RequireFromString("780"), Obras: 1}},
-		{"la misma obra en dos corridas cuenta una vez", []LineaDeTitular{
-			linea("2026-02", reparto.EtapaLiquidacionFinal, "o-1", "780"),
-			linea("2026-02", reparto.EtapaPagoRegistro, "o-1", "220"),
-			linea("2026-02", reparto.EtapaPagoRegistro, "o-2", "100"),
-		}, ResumenLiquidacion{Periodo: "2026-02", Neto: decimal.RequireFromString("1100"), Obras: 2}},
-		{"una corrida sin firmar no suma ni define el periodo", []LineaDeTitular{
-			linea("2026-01", reparto.EtapaLiquidacionFinal, "o-1", "3900"),
-			linea("2026-02", reparto.EtapaImporteTitular, "o-1", "780"),
-			linea("2026-02", reparto.EtapaVerificacion, "o-2", "50"),
-		}, ResumenLiquidacion{Periodo: "2026-01", Neto: decimal.RequireFromString("3900"), Obras: 1}},
+		{"toma el ultimo periodo", []liquidacion.OrdenDePago{
+			orden("2026-01", "nacional", "3900", "proc-1"),
+			orden("2026-02", "nacional", "780", "proc-2"),
+		}, ResumenLiquidacion{Periodo: "2026-02", Neto: decimal.RequireFromString("780"), Obras: 2}, []string{"proc-2"}},
+		{"los dos circuitos del periodo suman", []liquidacion.OrdenDePago{
+			orden("2026-02", "nacional", "780", "proc-2", "proc-3"),
+			orden("2026-02", "internacional", "100", "proc-4"),
+		}, ResumenLiquidacion{Periodo: "2026-02", Neto: decimal.RequireFromString("880"), Obras: 2}, []string{"proc-2", "proc-3", "proc-4"}},
+		{"una diferida es la liquidacion de su periodo", []liquidacion.OrdenDePago{
+			orden("2026-02", "nacional", "780", "proc-2"), diferida,
+		}, ResumenLiquidacion{Periodo: "2026-03", Neto: decimal.RequireFromString("40"), Obras: 2}, []string{"proc-5"}},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
-			repo := &repoTablero{lineas: c.lineas}
+			repo := &repoTablero{ordenes: c.ordenes, obrasLiquidadas: 2}
 			r, err := Tablero{Repo: repo}.UltimaLiquidacion(t.Context(), titularDeTablero())
 			if err != nil {
 				t.Fatalf("UltimaLiquidacion: %v", err)
 			}
-			if repo.titularRecibido != "tit-ana" {
-				t.Fatalf("titular = %q", repo.titularRecibido)
+			if repo.titularRecibido != "tit-ana" || repo.titularDeConteos != "tit-ana" {
+				t.Fatalf("titular = %q / %q", repo.titularRecibido, repo.titularDeConteos)
 			}
 			if r.Periodo != c.quiere.Periodo || r.Obras != c.quiere.Obras || !r.Neto.Equal(c.quiere.Neto) {
 				t.Fatalf("resumen = %+v, se esperaba %+v", r, c.quiere)
+			}
+			if !slices.Equal(repo.procesosPedidos, c.procesos) {
+				t.Fatalf("procesos = %v, se esperaba %v", repo.procesosPedidos, c.procesos)
 			}
 		})
 	}
 }
 
-func TestTableroUltimaLiquidacionSinLineasFirmadasEsNoEncontrado(t *testing.T) {
+func TestTableroUltimaLiquidacionSinOrdenesEsNoEncontrado(t *testing.T) {
 	casos := map[string]*repoTablero{
-		"sin lineas":          {},
-		"solo sin firmar":     {lineas: []LineaDeTitular{linea("2026-02", reparto.EtapaImporteTitular, "o-1", "780")}},
+		"sin ordenes":         {},
 		"error del adaptador": {err: ErrNoEncontrado},
 	}
 	for nombre, repo := range casos {
@@ -181,22 +186,10 @@ func TestTableroUltimaLiquidacionSinLineasFirmadasEsNoEncontrado(t *testing.T) {
 	}
 }
 
-func TestTableroObrasEnReservaCuentaTodoElCatalogo(t *testing.T) {
-	repo := &repoTablero{
-		declaraciones: map[string]repertorio.Declaracion{
-			"o-1": {ObraID: "o-1", Partes: []repertorio.Parte{parte("a", "IPI-1", "100")}},
-			"o-2": {ObraID: "o-2", Partes: []repertorio.Parte{parte("a", "IPI-1", "60")}},
-			"o-3": {ObraID: "o-3", Partes: []repertorio.Parte{parte("a", "IPI-1", "60"), parte("b", "", "40")}},
-		},
-		// o-4 no tiene ninguna declaracion: el motor la retiene igual (R-04).
-		catalogo: []Obra{{ID: "o-1"}, {ID: "o-2"}, {ID: "o-3"}, {ID: "o-4"}},
-	}
-	n, err := Tablero{Repo: repo}.ObrasEnReserva(t.Context())
+func TestTableroObrasEnReserva(t *testing.T) {
+	n, err := Tablero{Repo: &repoTablero{enReserva: 3}}.ObrasEnReserva(t.Context())
 	if err != nil || n != 3 {
 		t.Fatalf("n = %d, err = %v, se esperaban 3", n, err)
-	}
-	if repo.paginacion.Limite != LimiteSinTope {
-		t.Fatalf("paginacion = %+v, se esperaba el censo entero", repo.paginacion)
 	}
 }
 
