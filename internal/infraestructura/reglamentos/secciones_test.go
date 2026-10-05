@@ -73,8 +73,8 @@ func TestLeerPartePorNumeralConSuCita(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := porCita(ss)
-	if len(ss) != 4 || m["RD 9"].Texto != "Metodología para la distribución" {
-		t.Fatalf("se esperaban RD 9 (solo titulo), RD 9.1, RD 9.1.1 y RT 3; got %v", ss)
+	if len(ss) != 3 {
+		t.Fatalf("se esperaban RD 9.1, RD 9.1.1 y RT 3 (RD 9 solo agrupa); got %v", ss)
 	}
 	s := m["RD 9.1.1"]
 	if s.Titulo != "Fórmula para valorización de una obra" || s.Reglamento != "Reglamento de Distribucion IX" {
