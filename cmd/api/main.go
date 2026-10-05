@@ -245,6 +245,7 @@ func ejecutar(log *slog.Logger) error {
 
 	// El asistente de solo lectura (#66). Sin proveedor configurado responde "no disponible": nunca tumba el arranque.
 	modelo, proveedor := modelolenguaje.Elegir(
+		ctx,
 		config.Cadena("AGENTE_PROVEEDOR", ""),
 		config.Cadena("ANTHROPIC_API_KEY", ""),
 		config.Cadena("AGENTE_MODELO", ""),

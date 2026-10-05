@@ -278,6 +278,7 @@ func construir() (http.Handler, error) {
 	// Mismo cableado que cmd/api, con la boveda en S3 (ADR 0023).
 	// El asistente de solo lectura (#66). Sin proveedor configurado responde "no disponible": nunca tumba el arranque.
 	modelo, proveedor := modelolenguaje.Elegir(
+		ctx,
 		config.Cadena("AGENTE_PROVEEDOR", ""),
 		config.Cadena("ANTHROPIC_API_KEY", ""),
 		config.Cadena("AGENTE_MODELO", ""),
