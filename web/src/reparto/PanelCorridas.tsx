@@ -14,12 +14,16 @@ import { Rol, useSesion } from "../sesion";
 import { BotonEnlace } from "../tablero/BotonEnlace";
 import { Tarjeta } from "../tablero/Tarjeta";
 import { formatearEntero } from "../tablero/formato";
-import { sumarImportes } from "../ui/dinero";
 import { Bolsa, etiquetaDeFuente } from "../tablero/recaudo";
 import { useRecurso } from "../tablero/useDashboard";
 import BarraApilada, { colorDe } from "../ui/BarraApilada";
 import Cifra from "../ui/Cifra";
-import { aNumero, formatearCOP, formatearCOPCompacto } from "../ui/dinero";
+import {
+  aNumero,
+  formatearCOP,
+  formatearCOPCompacto,
+  sumarImportes,
+} from "../ui/dinero";
 import {
   TIPOS_DE_ALERTA,
   conteoDeTipo,
@@ -40,12 +44,6 @@ import {
   RUTAS_REPARTO,
 } from "./tipos";
 
-/** El contrato trae `bolsa_id`; el tipo local todavia no lo declara. */
-function bolsaIdDe(p: Proceso): string | undefined {
-  const id = (p as Proceso & { bolsa_id?: unknown }).bolsa_id;
-  return typeof id === "string" && id !== "" ? id : undefined;
-}
-
 /** Una corrida tal como la ve la pantalla: con su pagador y su bolsa. */
 type Corrida = {
   proceso: Proceso;
@@ -54,50 +52,92 @@ type Corrida = {
   color: string;
 };
 
-type Periodo = { periodo: string; corridas: Corrida[]; total?: string };
+/** Una bolsa del periodo, una sola vez aunque la corran varios procesos. */
+type BolsaDelPeriodo = { id: string; corrida: Corrida };
+
+type Periodo = {
+  periodo: string;
+  corridas: Corrida[];
+  bolsas: BolsaDelPeriodo[];
+  /** Solo si todas las corridas tienen su bolsa: nunca un total parcial. */
+  total?: string;
+  faltanMontos: boolean;
+};
+
+/** Orden de apertura: el backend numera `proc-<bolsa>-<corrida>`. */
+const porApertura = (a: Proceso, b: Proceso) =>
+  a.id.localeCompare(b.id, "es", { numeric: true });
 
 /**
- * Una corrida es una bolsa (ADR 0019): se nombra por quien pago, no por su
- * id. Dentro del periodo, la bolsa mayor primero; el color sigue a esa
- * posicion para que la barra y la lista hablen del mismo pagador.
+ * Una corrida es una bolsa (ADR 0019), pero una bolsa puede tener varias
+ * corridas: no hay UNIQUE sobre `procesos.bolsa_id`. El total y el peso van
+ * por bolsa distinta; las corridas de una misma bolsa se numeran por
+ * apertura. La bolsa mayor primero; el color sigue a la bolsa.
  */
 function agruparPorPeriodo(
   procesos: readonly Proceso[],
   bolsas: ReadonlyMap<string, Bolsa>,
 ): Periodo[] {
-  const porPeriodo = new Map<string, Omit<Corrida, "color">[]>();
-  for (const proceso of procesos) {
-    const idBolsa = bolsaIdDe(proceso);
-    const bolsa = idBolsa ? bolsas.get(idBolsa) : undefined;
-    const corrida = {
-      proceso,
-      nombre: bolsa
-        ? etiquetaDeFuente(bolsa.usuario_id)
-        : `Corrida ${ETIQUETA_CIRCUITO[proceso.circuito].toLowerCase()}`,
-      bruto: bolsa ? String(bolsa.bruto) : undefined,
-    };
-    porPeriodo.set(proceso.periodo, [
-      ...(porPeriodo.get(proceso.periodo) ?? []),
-      corrida,
-    ]);
+  const porPeriodo = new Map<string, Proceso[]>();
+  for (const p of procesos) {
+    porPeriodo.set(p.periodo, [...(porPeriodo.get(p.periodo) ?? []), p]);
   }
   return [...porPeriodo.entries()]
     .sort(([a], [b]) => b.localeCompare(a))
-    .map(([periodo, grupo]) => {
-      const corridas = [...grupo]
-        .sort(
-          (a, b) =>
-            aNumero(b.bruto ?? "-1") - aNumero(a.bruto ?? "-1") ||
-            a.nombre.localeCompare(b.nombre, "es"),
-        )
-        .map((c, i) => ({ ...c, color: colorDe(i) }));
-      const conBolsa = corridas.flatMap((c) => (c.bruto ? [c.bruto] : []));
+    .map(([periodo, grupo]) => armarPeriodo(periodo, grupo, bolsas));
+}
+
+function armarPeriodo(
+  periodo: string,
+  procesos: readonly Proceso[],
+  bolsas: ReadonlyMap<string, Bolsa>,
+): Periodo {
+  const porBolsa = new Map<string, Proceso[]>();
+  for (const p of [...procesos].sort(porApertura)) {
+    porBolsa.set(p.bolsa_id, [...(porBolsa.get(p.bolsa_id) ?? []), p]);
+  }
+  const grupos = [...porBolsa.entries()]
+    .map(([id, corridas]) => {
+      const bolsa = bolsas.get(id);
       return {
-        periodo,
+        id,
         corridas,
-        total: conBolsa.length > 0 ? sumarImportes(conBolsa) : undefined,
+        bruto: bolsa ? String(bolsa.bruto) : undefined,
+        pagador: bolsa
+          ? etiquetaDeFuente(bolsa.usuario_id)
+          : `Corrida ${ETIQUETA_CIRCUITO[corridas[0].circuito].toLowerCase()}`,
       };
-    });
+    })
+    .sort(
+      (a, b) =>
+        aNumero(b.bruto ?? "-1") - aNumero(a.bruto ?? "-1") ||
+        a.pagador.localeCompare(b.pagador, "es"),
+    );
+
+  const corridas = grupos.flatMap((g, i) =>
+    g.corridas.map((proceso, n) => ({
+      proceso,
+      nombre: n === 0 ? g.pagador : `${g.pagador} · corrida ${n + 1}`,
+      bruto: g.bruto,
+      color: colorDe(i),
+    })),
+  );
+  const conMonto = grupos.flatMap((g) => (g.bruto ? [g.bruto] : []));
+  const completo = conMonto.length > 0 && conMonto.length === grupos.length;
+  return {
+    periodo,
+    corridas,
+    bolsas: grupos.flatMap((g) => {
+      const corrida = corridas.find((c) => c.proceso.bolsa_id === g.id);
+      return g.bruto && corrida ? [{ id: g.id, corrida }] : [];
+    }),
+    total: completo ? sumarImportes(conMonto) : undefined,
+    faltanMontos: conMonto.length > 0 && !completo,
+  };
+}
+
+function plural(n: number, uno: string, varios: string): string {
+  return `${formatearEntero(n)} ${n === 1 ? uno : varios}`;
 }
 
 function enlaceDe(proceso: Proceso): string {
@@ -145,7 +185,8 @@ export default function PanelCorridas() {
 
   const procesos = useRecurso<Proceso[]>(RUTAS_REPARTO.procesos, true, recarga);
   // Todo rol que ve /distribucion puede leer /bolsas (x-required-roles).
-  const bolsas = useRecurso<Bolsa[]>("/api/bolsas");
+  // Se sondea con los procesos: una corrida nueva trae su bolsa nueva (I2).
+  const bolsas = useRecurso<Bolsa[]>(RUTAS_REPARTO.bolsas, true, recarga);
   const bolsaPorId = useMemo(
     () =>
       new Map(
@@ -297,39 +338,44 @@ export default function PanelCorridas() {
               className="panel corridas-resumen"
               aria-label="Resumen del periodo"
             >
+              {bolsas.tipo === "error" && (
+                <p className="tarjeta-error" role="alert">
+                  No se pudieron cargar los montos de las bolsas. El total y el
+                  peso de cada corrida no se muestran.
+                </p>
+              )}
               <p className="corridas-rotulo">
                 {grupo.total ? "Bolsa del periodo" : "Periodo"} {grupo.periodo}
               </p>
               {grupo.total && <Cifra valor={grupo.total} />}
+              {grupo.faltanMontos && (
+                <p className="muted corridas-conteo">
+                  Falta el monto de alguna bolsa; el total no se muestra.
+                </p>
+              )}
               <p className="muted corridas-conteo">
-                {formatearEntero(grupo.corridas.length)}{" "}
-                {grupo.corridas.length === 1 ? "corrida" : "corridas"}, una por
-                pagador
+                {grupo.total
+                  ? `${plural(grupo.corridas.length, "corrida", "corridas")} sobre ${plural(grupo.bolsas.length, "bolsa", "bolsas")}`
+                  : plural(grupo.corridas.length, "corrida", "corridas")}
               </p>
               {grupo.total && (
                 <BarraApilada
                   etiqueta="Bolsas por pagador"
-                  segmentos={grupo.corridas.flatMap((c) =>
-                    c.bruto
-                      ? [
-                          {
-                            id: c.proceso.id,
-                            etiqueta: c.nombre,
-                            valor: c.bruto,
-                            color: c.color,
-                            detalle: (
-                              <Link
-                                className="corridas-ver"
-                                to={enlaceDe(c.proceso)}
-                                aria-label={`Ver corrida de ${c.nombre}`}
-                              >
-                                Ver corrida
-                              </Link>
-                            ),
-                          },
-                        ]
-                      : [],
-                  )}
+                  segmentos={grupo.bolsas.map(({ id, corrida: c }) => ({
+                    id,
+                    etiqueta: c.nombre,
+                    valor: c.bruto ?? "0",
+                    color: c.color,
+                    detalle: (
+                      <Link
+                        className="corridas-ver"
+                        to={enlaceDe(c.proceso)}
+                        aria-label={`Ver corrida de ${c.nombre}`}
+                      >
+                        Ver corrida
+                      </Link>
+                    ),
+                  }))}
                 />
               )}
 
@@ -367,9 +413,9 @@ export default function PanelCorridas() {
                   {ETIQUETA_ETAPA[seleccionado.etapa]}
                 </span>
               </header>
-              {seleccionado.rechazo && (
+              {seleccionado.rechazo_motivo && (
                 <p className="corrida-rechazo" role="status">
-                  Último rechazo: {seleccionado.rechazo}
+                  Último rechazo: {seleccionado.rechazo_motivo}
                 </p>
               )}
               <Pipeline
@@ -482,7 +528,7 @@ function ItemDeCorrida({
       >
         <span className="corrida-punto" aria-hidden="true" />
         <span className="corrida-nombre">
-          <span>{nombre}</span>
+          <span title={nombre}>{nombre}</span>
           <span
             className={`corrida-etapa${esCompuerta(proceso.etapa) ? " corrida-etapa-firma" : ""}`}
           >
@@ -493,7 +539,8 @@ function ItemDeCorrida({
         <span className="corrida-lado">
           {bruto && (
             <span className="corrida-monto" title={formatearCOP(bruto)}>
-              {formatearCOPCompacto(bruto)}
+              <span aria-hidden="true">{formatearCOPCompacto(bruto)}</span>
+              <span className="solo-lector">{formatearCOP(bruto)}</span>
             </span>
           )}
           <span

@@ -37,6 +37,8 @@ const nacional: Proceso = {
   circuito: "nacional",
   etapa: "verificacion",
   periodo: "2025",
+  bolsa_id: "bolsa-nac",
+  snapshot_id: "snap-1",
   revision: 1,
   firmas: [],
 };
@@ -46,6 +48,8 @@ const internacional: Proceso = {
   circuito: "internacional",
   etapa: "recaudo",
   periodo: "2025-06",
+  bolsa_id: "bolsa-int",
+  snapshot_id: "snap-1",
   revision: 1,
   firmas: [],
 };
@@ -115,7 +119,7 @@ describe("PanelCorridas", () => {
         return json([
           {
             ...nacional,
-            firmas: [{ rol: "distribucion", actor_id: "usr-d", sobre_rev: 1 }],
+            firmas: [{ rol: "distribucion", actor_id: "usr-d", revision: 1 }],
           },
         ]);
       }
@@ -413,21 +417,21 @@ describe("PanelCorridas", () => {
   });
 
   describe("con bolsas por pagador", () => {
-    const caracol: Proceso & { bolsa_id: string } = {
+    const caracol: Proceso = {
       ...nacional,
       id: "proc-caracol",
       periodo: "2025-01",
       etapa: "verificacion",
       bolsa_id: "bolsa-caracol",
     };
-    const rcn: Proceso & { bolsa_id: string } = {
+    const rcn: Proceso = {
       ...nacional,
       id: "proc-rcn",
       periodo: "2025-01",
       etapa: "deducciones",
       bolsa_id: "bolsa-rcn",
     };
-    const viejo: Proceso & { bolsa_id: string } = {
+    const viejo: Proceso = {
       ...nacional,
       id: "proc-viejo",
       periodo: "2024-12",
@@ -696,5 +700,211 @@ describe("PanelCorridas", () => {
     expect(container.querySelector("details")).toBeNull();
     expect(container.textContent).not.toContain("proc-int");
     expect(screen.queryByText(/Cada reparto avanza por etapas/)).toBeNull();
+  });
+
+  describe("revisión 2 de Killgreck", () => {
+    function proceso(parcial: Partial<Proceso>): Proceso {
+      return {
+        ...nacional,
+        periodo: "2026-01",
+        etapa: "deducciones",
+        ...parcial,
+      };
+    }
+
+    function servirCon(
+      procesos: () => Proceso[],
+      bolsas: () => Response,
+      rol: Rol = "administrador",
+    ) {
+      vi.mocked(fetch).mockImplementation(async (input) => {
+        const path = String(input);
+        if (path === "/api/auth/session") return json(usuario(rol));
+        if (path === RUTAS_REPARTO.procesos) return json(procesos());
+        if (path === "/api/bolsas") return bolsas();
+        if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+        return json({ error: "ruta no encontrada" }, 404);
+      });
+    }
+
+    const bolsaCaracol = {
+      id: "bolsa-caracol-2026-01-nacional",
+      usuario_id: "caracol",
+      periodo: "2026-01",
+      circuito: "nacional",
+      bruto: "1890000000.00",
+    };
+
+    it("B2: dos corridas sobre la misma bolsa no la cuentan dos veces", async () => {
+      // La API las lista por id: la -10 llega antes que la -2.
+      const decima = proceso({
+        id: "proc-bolsa-caracol-2026-01-nacional-10",
+        bolsa_id: bolsaCaracol.id,
+      });
+      const segunda = proceso({
+        id: "proc-bolsa-caracol-2026-01-nacional-2",
+        bolsa_id: bolsaCaracol.id,
+      });
+      servirCon(
+        () => [decima, segunda],
+        () => json([bolsaCaracol]),
+      );
+      montar("/distribucion/proc-bolsa-caracol-2026-01-nacional-10");
+
+      const resumen = await screen.findByRole("region", {
+        name: "Resumen del periodo",
+      });
+      await within(resumen).findByLabelText("$ 1.890.000.000");
+      expect(within(resumen).queryByLabelText("$ 3.780.000.000")).toBeNull();
+      expect(
+        within(resumen).getByText("2 corridas sobre 1 bolsa"),
+      ).toBeTruthy();
+      expect(within(resumen).queryByText(/una por pagador/)).toBeNull();
+
+      // Se distinguen por orden de apertura, no por el orden de la API.
+      const lista = within(resumen).getByRole("list", { name: "Corridas" });
+      const items = within(lista).getAllByRole("listitem");
+      expect(items).toHaveLength(2);
+      expect(within(items[0]).getByText("Caracol")).toBeTruthy();
+      expect(within(items[1]).getByText("Caracol · corrida 2")).toBeTruthy();
+
+      const barra = within(resumen).getByRole("group", {
+        name: "Bolsas por pagador",
+      });
+      expect(within(barra).getAllByRole("button")).toHaveLength(1);
+
+      const region = await screen.findByRole("region", {
+        name: "Corrida seleccionada",
+      });
+      expect(
+        within(region).getByRole("heading", { name: "Caracol · corrida 2" }),
+      ).toBeTruthy();
+      const cifras = within(region).getByRole("list", {
+        name: "Cifras de la corrida",
+      });
+      expect(within(cifras).getByText("100 %")).toBeTruthy();
+    });
+
+    it("B3: un monto compacto lleva el exacto en title y en el nombre accesible", async () => {
+      servirCon(
+        () => [proceso({ id: "proc-grande", bolsa_id: "bolsa-grande" })],
+        () =>
+          json([
+            {
+              ...bolsaCaracol,
+              id: "bolsa-grande",
+              bruto: "123456789012.34",
+            },
+          ]),
+      );
+      montar();
+
+      const lista = await screen.findByRole("list", { name: "Corridas" });
+      const exacto = "$ 123.456.789.012,34";
+      const monto = await within(lista).findByTitle(exacto);
+      expect(monto.textContent).toContain(exacto);
+      expect(
+        within(lista).getByRole("link", {
+          name: new RegExp(exacto.replace(/[$.]/g, "\\$&")),
+        }),
+      ).toBeTruthy();
+
+      const cifras = screen.getByRole("list", { name: "Cifras de la corrida" });
+      expect(within(cifras).getByText(exacto)).toBeTruthy();
+      expect(screen.getByLabelText(exacto)).toBeTruthy();
+    });
+
+    it("I2: si /api/bolsas falla avisa y no muestra total ni peso", async () => {
+      servirCon(
+        () => [proceso({ id: "proc-a", bolsa_id: "bolsa-a" })],
+        () => json({ error: "fallo interno" }, 500),
+      );
+      montar();
+
+      const alerta = await screen.findByRole("alert");
+      expect(alerta.textContent).toMatch(/no se pudieron cargar los montos/i);
+      const resumen = screen.getByRole("region", {
+        name: "Resumen del periodo",
+      });
+      expect(within(resumen).queryByText(/Bolsa del periodo/)).toBeNull();
+      expect(screen.queryByText("Peso en el periodo")).toBeNull();
+    });
+
+    it("I2: una corrida sin su bolsa en el listado no deja un total parcial", async () => {
+      servirCon(
+        () => [
+          proceso({ id: "proc-a", bolsa_id: "bolsa-a" }),
+          proceso({ id: "proc-b", bolsa_id: "bolsa-b" }),
+        ],
+        () => json([{ ...bolsaCaracol, id: "bolsa-a", bruto: "100.00" }]),
+      );
+      montar("/distribucion/proc-a");
+
+      const resumen = await screen.findByRole("region", {
+        name: "Resumen del periodo",
+      });
+      await within(resumen).findByText(/Falta el monto/);
+      expect(within(resumen).queryByText(/Bolsa del periodo/)).toBeNull();
+      expect(screen.queryByText("Peso en el periodo")).toBeNull();
+    });
+
+    it("I2: el sondeo vuelve a pedir las bolsas y el total se actualiza", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const a = proceso({ id: "proc-a", bolsa_id: "bolsa-a" });
+        const b = proceso({ id: "proc-b", bolsa_id: "bolsa-b" });
+        const bolsaA = { ...bolsaCaracol, id: "bolsa-a", bruto: "100.00" };
+        const bolsaB = {
+          ...bolsaCaracol,
+          id: "bolsa-b",
+          usuario_id: "rcn",
+          bruto: "900.00",
+        };
+        let llegoLaNueva = false;
+        servirCon(
+          () => (llegoLaNueva ? [a, b] : [a]),
+          () => json(llegoLaNueva ? [bolsaA, bolsaB] : [bolsaA]),
+        );
+        montar("/distribucion/proc-a");
+
+        const resumen = await screen.findByRole("region", {
+          name: "Resumen del periodo",
+        });
+        await within(resumen).findByLabelText("$ 100");
+
+        llegoLaNueva = true;
+        await act(async () => {
+          vi.advanceTimersByTime(INTERVALO_SONDEO_MS);
+        });
+
+        await within(resumen).findByLabelText("$ 1.000");
+        const cifras = screen.getByRole("list", {
+          name: "Cifras de la corrida",
+        });
+        await within(cifras).findByText("10 %");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("I7: el motivo del último rechazo se muestra", async () => {
+      servirCon(
+        () => [
+          proceso({
+            id: "proc-a",
+            bolsa_id: "bolsa-a",
+            etapa: "verificacion",
+            rechazo_motivo: "faltan soportes de la liquidacion parcial",
+          }),
+        ],
+        () => json([]),
+      );
+      montar();
+
+      const estado = await screen.findByText(/Último rechazo/);
+      expect(estado.textContent).toBe(
+        "Último rechazo: faltan soportes de la liquidacion parcial",
+      );
+    });
   });
 });

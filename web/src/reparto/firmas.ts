@@ -22,7 +22,7 @@ export function esCompuerta(etapa: Etapa): boolean {
 
 export function firmasDeRevision(proceso: Proceso): readonly Firma[] {
   return (proceso.firmas ?? []).filter(
-    (firma) => firma.sobre_rev === proceso.revision,
+    (firma) => firma.revision === proceso.revision,
   );
 }
 

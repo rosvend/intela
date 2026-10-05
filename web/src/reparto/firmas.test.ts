@@ -14,6 +14,8 @@ function proceso(parcial: Partial<Proceso> = {}): Proceso {
     circuito: "nacional",
     etapa: "verificacion",
     periodo: "2025",
+    bolsa_id: "bolsa-1",
+    snapshot_id: "snap-1",
     revision: 1,
     firmas: [],
     ...parcial,
@@ -44,7 +46,7 @@ describe("rolesPendientes / rolesFirmados", () => {
 
   it("una firma de otra revision no cuenta", () => {
     const p = proceso({
-      firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+      firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       revision: 2,
     });
     expect(rolesPendientes(p)).toEqual(["distribucion", "contabilidad"]);
@@ -52,7 +54,7 @@ describe("rolesPendientes / rolesFirmados", () => {
 
   it("con una firma de esta revision, el otro rol queda pendiente", () => {
     const p = proceso({
-      firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+      firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
     });
     expect(rolesFirmados(p)).toEqual(["distribucion"]);
     expect(rolesPendientes(p)).toEqual(["contabilidad"]);
@@ -80,7 +82,7 @@ describe("puedeFirmar", () => {
 
   it("quien ya firmo esta revision no vuelve a firmar", () => {
     const p = proceso({
-      firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+      firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
     });
     expect(puedeFirmar("distribucion", p)).toBe(false);
     expect(puedeFirmar("contabilidad", p)).toBe(true);

@@ -10,6 +10,8 @@ function proceso(parcial: Partial<Proceso> = {}): Proceso {
     circuito: "nacional",
     etapa: "verificacion",
     periodo: "2025",
+    bolsa_id: "bolsa-1",
+    snapshot_id: "snap-1",
     revision: 1,
     firmas: [],
     ...parcial,
@@ -50,7 +52,7 @@ describe("Compuerta", () => {
     montar(
       "administrador",
       proceso({
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(
@@ -76,7 +78,7 @@ describe("Compuerta", () => {
     montar(
       "distribucion",
       proceso({
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(screen.queryByRole("button", { name: "Firmar" })).toBeNull();
@@ -114,7 +116,7 @@ describe("Compuerta", () => {
     montar(
       "administrador",
       proceso({
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(
@@ -128,7 +130,7 @@ describe("Compuerta", () => {
       "distribucion",
       proceso({
         revision: 2,
-        firmas: [{ rol: "distribucion", actor_id: "usr-1", sobre_rev: 1 }],
+        firmas: [{ rol: "distribucion", actor_id: "usr-1", revision: 1 }],
       }),
     );
     expect(screen.getByText("0 de 2")).toBeTruthy();
@@ -140,7 +142,7 @@ describe("Compuerta", () => {
       "administrador",
       proceso({
         revision: 3,
-        firmas: [{ rol: "contabilidad", actor_id: "usr-c9", sobre_rev: 3 }],
+        firmas: [{ rol: "contabilidad", actor_id: "usr-c9", revision: 3 }],
       }),
     );
     expect(container.querySelector("details")).toBeNull();

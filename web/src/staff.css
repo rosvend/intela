@@ -219,7 +219,7 @@
 }
 
 .staff-recaudo .cifra-valor {
-  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-size: clamp(1.4rem, 12cqi, 2.75rem);
 }
 
 .staff-leyenda {
@@ -633,6 +633,17 @@
   flex-direction: column;
   gap: 0.6rem;
   padding: 1.25rem;
+  container-type: inline-size;
+}
+
+/*
+ * El dinero nunca se recorta: la cifra se achica con su tarjeta
+ * ($ 123.456.789.012,34 mide ~9.6em, cabe en 9cqi) y, si aun asi no cabe, parte.
+ */
+.corridas-resumen .cifra-valor {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: clamp(1rem, 9cqi, 2.4rem);
 }
 
 .corridas-rotulo {
@@ -743,6 +754,8 @@
   font-size: 0.88rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: end;
+  overflow-wrap: anywhere;
 }
 
 .corrida-avance {
@@ -780,25 +793,28 @@
   margin-top: 1.25rem;
 }
 
+/* Sin overflow: hidden. Los separadores son sombras, no huecos que recortar. */
 .corrida-cifras {
   list-style: none;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1px;
   margin: 1.5rem 0 0;
   padding: 0;
-  overflow: hidden;
   border: 1px solid var(--borde);
   border-radius: 12px;
-  background: var(--borde);
+  background: var(--superficie);
 }
 
 .corrida-cifras li {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  min-width: 0;
   padding: 0.85rem 1rem;
-  background: var(--superficie);
+  box-shadow:
+    -1px 0 0 var(--borde),
+    0 -1px 0 var(--borde);
+  container-type: inline-size;
 }
 
 .corrida-cifras-rotulo {
@@ -808,7 +824,8 @@
 }
 
 .corrida-cifras-valor {
-  font-size: 1.1rem;
+  font-size: clamp(0.75rem, 9cqi, 1.1rem);
+  overflow-wrap: anywhere;
   font-weight: 700;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
@@ -1194,11 +1211,4 @@
   .compuerta-tarjeta button:active:not(:disabled) {
     transform: none;
   }
-}
-
-/* El signo y la cifra nunca se parten en dos lineas. */
-.corrida-monto,
-.corrida-cifras-valor,
-.panel-corridas .tarjeta-valor {
-  white-space: nowrap;
 }

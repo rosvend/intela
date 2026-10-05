@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { evaluarPeriodo, firmarProceso } from "./cliente";
+import type { paths } from "../contrato";
 import { RUTAS_REPARTO } from "./tipos";
 
 describe("cliente de procesos", () => {
@@ -54,6 +55,24 @@ describe("cliente de procesos", () => {
       "/api/alertas/resumen?periodo=2025-01",
     );
     expect(RUTAS_REPARTO.evaluarAlertas).toBe("/api/alertas/evaluacion");
+  });
+
+  it("las bolsas se leen de GET /bolsas del contrato (llegó de main en #211)", () => {
+    // Si el contrato renombra o quita la ruta, esto deja de compilar.
+    const ruta: keyof paths = "/bolsas";
+    type Lista =
+      paths["/bolsas"]["get"]["responses"][200]["content"]["application/json"];
+    const muestra: Lista = [
+      {
+        id: "b",
+        usuario_id: "caracol",
+        periodo: "2026-01",
+        circuito: "nacional",
+        bruto: "1.00",
+      },
+    ];
+    expect(RUTAS_REPARTO.bolsas).toBe(`/api${ruta}`);
+    expect(muestra).toHaveLength(1);
   });
 
   it("evaluarPeriodo hace POST /alertas/evaluacion con el periodo", async () => {
