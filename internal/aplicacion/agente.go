@@ -193,7 +193,7 @@ func (a AgenteConsulta) ejecutar(ctx context.Context, turno int, actor Usuario, 
 	a.log().InfoContext(ctx, "agente: herramienta",
 		slog.Int("turno", turno),
 		slog.String("herramienta", ll.Nombre),
-		slog.String("argumentos", abreviar(string(ll.Argumentos), 200)),
+		slog.Int("argumentos_bytes", len(ll.Argumentos)),
 		slog.String("actor", actor.ID),
 		slog.String("rol", string(actor.Rol)),
 		slog.Int64("latencia_ms", a.Reloj.Ahora().Sub(inicio).Milliseconds()),
@@ -298,17 +298,7 @@ func mensajesIniciales(historial []TurnoConversacion, mensaje string) ([]Mensaje
 	return append(out, MensajeModelo{Rol: RolMensajeUsuario, Texto: mensaje}), nil
 }
 
+// contextoDeActor manda solo el rol: nombre y correo no salen al proveedor (minimizacion, Ley 1581, ADR 0025).
 func contextoDeActor(u Usuario) string {
-	nombre := u.Nombre
-	if nombre == "" {
-		nombre = u.Email
-	}
-	return fmt.Sprintf("Quien pregunta: %s, con rol %q. Responde solo con lo que ese rol puede ver.", nombre, u.Rol)
-}
-
-func abreviar(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	return fmt.Sprintf("Quien pregunta tiene rol %q. Responde solo con lo que ese rol puede ver.", u.Rol)
 }

@@ -119,6 +119,25 @@ func TestAgenteRespondeSinHerramientasConElSistemaYElHistorial(t *testing.T) {
 	}
 }
 
+func TestAgenteElContextoSoloLlevaElRolNiNombreNiCorreo(t *testing.T) {
+	m := &modeloGuionizado{guion: []RespuestaModelo{{Texto: "ok"}}}
+	a, _ := agente(m, catalogo(t))
+	var r registroEventos
+	actor := Usuario{ID: "usr-1", Rol: RolAdministrador, Nombre: "Maria Perez", Email: "maria@redes.example"}
+	if err := a.Responder(t.Context(), actor, nil, "hola", r.emitir); err != nil {
+		t.Fatal(err)
+	}
+	p := m.peticiones[0]
+	if !strings.Contains(p.Contexto, string(RolAdministrador)) {
+		t.Errorf("el contexto no nombra el rol: %q", p.Contexto)
+	}
+	for _, dato := range []string{actor.Nombre, actor.Email, actor.ID} {
+		if strings.Contains(p.Contexto, dato) || strings.Contains(p.Sistema, dato) {
+			t.Errorf("el modelo recibe un dato personal %q: %q", dato, p.Contexto)
+		}
+	}
+}
+
 func TestAgenteDespachaLaHerramientaConElActorYEnvuelveElResultadoEnCuarentena(t *testing.T) {
 	m := &modeloGuionizado{guion: []RespuestaModelo{
 		{Texto: "voy a mirar", Llamadas: []LlamadaHerramienta{llamada("c1", "eco", `{"texto":"hola"}`)}},
@@ -462,6 +481,12 @@ func TestAgenteRegistraCadaInvocacionDeHerramienta(t *testing.T) {
 	}
 	if _, hay := linea["latencia_ms"]; !hay {
 		t.Error("falta latencia_ms en el log")
+	}
+	if _, hay := linea["argumentos"]; hay {
+		t.Error("el log no puede llevar los argumentos: pueden tener datos personales")
+	}
+	if linea["argumentos_bytes"] != float64(len(`{"texto":"a"}`)) {
+		t.Errorf("argumentos_bytes = %v", linea["argumentos_bytes"])
 	}
 }
 
