@@ -100,21 +100,33 @@ func (p ProcesoDeReparto) Firmar(rol RolAcompuerta, actorID string) (ProcesoDeRe
 	return p, nil
 }
 
-// firmasCompletas es true cuando los dos roles firmaron la revision actual.
-func (p ProcesoDeReparto) firmasCompletas() bool {
-	var tieneDistribucion, tieneContabilidad bool
-	for _, f := range p.Firmas {
-		if f.SobreRev != p.Revision {
-			continue
-		}
-		switch RolAcompuerta(f.Rol) {
-		case RolDistribucion:
-			tieneDistribucion = true
-		case RolContabilidad:
-			tieneContabilidad = true
+// EtapasDe es el recorrido del circuito en orden (RD 13.5); copia, para que nadie lo altere.
+func EtapasDe(c Circuito) []Etapa {
+	return slices.Clone(secuenciaEtapas(c))
+}
+
+// EnCompuerta dice si la etapa actual exige doble firma para avanzar.
+func (p ProcesoDeReparto) EnCompuerta() bool {
+	return etapaEsCompuerta(p.Etapa)
+}
+
+// FirmasFaltantes son los roles que aun no firman la revision actual; vacio fuera de compuerta.
+func (p ProcesoDeReparto) FirmasFaltantes() []RolAcompuerta {
+	if !p.EnCompuerta() {
+		return nil
+	}
+	var faltan []RolAcompuerta
+	for _, rol := range []RolAcompuerta{RolDistribucion, RolContabilidad} {
+		if !slices.ContainsFunc(p.Firmas, func(f Firma) bool { return f.SobreRev == p.Revision && f.Rol == string(rol) }) {
+			faltan = append(faltan, rol)
 		}
 	}
-	return tieneDistribucion && tieneContabilidad
+	return faltan
+}
+
+// firmasCompletas es true cuando los dos roles firmaron la revision actual.
+func (p ProcesoDeReparto) firmasCompletas() bool {
+	return len(p.FirmasFaltantes()) == 0
 }
 
 // AvanzarEtapa mueve el proceso a la siguiente etapa de su circuito. En una
