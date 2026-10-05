@@ -55,8 +55,8 @@ on:
       ANTHROPIC_API_KEY:
         description: >-
           Optional key for the in-app assistant's direct Anthropic provider
-          (#66). Production uses Bedrock (ADR 0025); this only keeps the plan
-          equal to the deploy plan. Marked `sensitive` in Terraform.
+          (#66). Production uses it (ADR 0026); it is read by the plan and the
+          deploy. Marked `sensitive` in Terraform.
         required: false
 
 permissions:
@@ -225,7 +225,7 @@ jobs:
         working-directory: infra/envs/${{ inputs.environment }}
         env:
           EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
-          # Optional: only used when AGENTE_PROVEEDOR=anthropic; production uses Bedrock (#66, ADR 0025).
+          # Read when agente_proveedor = "anthropic", the production default (#66, ADR 0026).
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
