@@ -146,8 +146,10 @@ function TurnoVista({ turno }: { turno: Turno }) {
       <p className="agente-mensaje agente-mensaje-usuario">{turno.texto}</p>
     );
   }
+  // El fallo es su propio aviso: dentro de la burbuja gris quedaria como caja en caja.
+  const clase = turno.estado === "error" ? "" : " agente-mensaje-asistente";
   return (
-    <div className="agente-mensaje agente-mensaje-asistente">
+    <div className={`agente-mensaje${clase}`}>
       <TurnoAgente turno={turno} />
     </div>
   );
