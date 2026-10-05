@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
@@ -72,6 +73,22 @@ func TestFalsoMarcasDePruebaFuerzanFalloYRespuestaParcial(t *testing.T) {
 	r, _ := Modelo{}.Responder(t.Context(), p)
 	if len(r.Llamadas) != 1 {
 		t.Errorf("#parcial deberia seguir llamando herramientas: %+v", r)
+	}
+}
+
+func TestFalsoRecortaLosResultadosLargosSinPartirUnaRuna(t *testing.T) {
+	p := pregunta("hola")
+	datos := strings.Repeat("a", 1199) + strings.Repeat("ñ", 10)
+	p.Mensajes = append(p.Mensajes, aplicacion.MensajeModelo{Rol: aplicacion.RolMensajeUsuario, Resultados: []aplicacion.ResultadoHerramienta{{Contenido: datos}}})
+	r, err := Modelo{}.Responder(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(r.Texto) {
+		t.Fatal("el texto recortado no es UTF-8 valido")
+	}
+	if !strings.Contains(r.Texto, strings.Repeat("a", 1199)+"...") {
+		t.Errorf("no recorto en la runa anterior al limite: %q", r.Texto[len(r.Texto)-12:])
 	}
 }
 

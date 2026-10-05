@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rosvend/intela/internal/aplicacion"
 )
@@ -17,6 +18,9 @@ const (
 	MarcaFallo   = "#fallo"
 	MarcaParcial = "#parcial"
 )
+
+// maxBytesResultado acota cada resultado en la respuesta de demostracion; se corta en limite de runa.
+const maxBytesResultado = 1200
 
 var (
 	periodoRe = regexp.MustCompile(`\b\d{4}(-\d{2})?\b`)
@@ -100,8 +104,12 @@ func resumir(rs []aplicacion.ResultadoHerramienta) string {
 		if m := sobreRe.FindStringSubmatch(r.Contenido); m != nil {
 			datos = m[1]
 		}
-		if len(datos) > 1200 {
-			datos = datos[:1200] + "..."
+		if len(datos) > maxBytesResultado {
+			corte := maxBytesResultado
+			for corte > 0 && !utf8.RuneStart(datos[corte]) {
+				corte--
+			}
+			datos = datos[:corte] + "..."
 		}
 		b.WriteString("\n" + datos + "\n")
 	}
