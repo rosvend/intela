@@ -64,15 +64,42 @@ const alertas: Alerta[] = [
   alerta({
     id: "al-1",
     tipo: "oni",
-    detalle: "Título no identificado",
+    detalle:
+      'la cascada no reconocio "La reina del flow" (fuente "caracol", entrega "r-1"): queda en la cola manual',
     referencia: "uso:uso-9",
+    ref_id: "uso-9",
   }),
-  alerta({ id: "al-2", tipo: "oni", detalle: "Otra ONI" }),
+  alerta({ id: "al-2", tipo: "oni", detalle: "Otra ONI", ref_id: "u-2" }),
   alerta({
     id: "al-3",
     tipo: "duplicado_archivo",
     detalle: "Mismo SHA-256",
+    ref_tipo: "reporte",
+    ref_id: "rep-1",
     critica: true,
+  }),
+];
+
+const RESERVA_60 =
+  'la declaracion vigente de la obra "obra-serie" no esta completa: lo declarado suma 60% en 1 parte(s) y R-04 exige 100 exactos';
+const COAUTOR =
+  'el coautor con IPI IPI-00000002 figura en el catalogo de la obra "obra-serie" y no tiene parte en la declaracion vigente';
+
+const deSerieY: Alerta[] = [
+  alerta({
+    id: "s-1",
+    tipo: "reserva_declaracion_incompleta",
+    detalle: RESERVA_60,
+    ref_tipo: "obra",
+    ref_id: "obra-serie",
+  }),
+  alerta({
+    id: "s-2",
+    tipo: "titular_sin_porcentaje",
+    detalle: COAUTOR,
+    ref_tipo: "obra",
+    ref_id: "obra-serie",
+    ref_titular: "ipi:IPI-00000002",
   }),
 ];
 
@@ -100,6 +127,7 @@ type Rutas = {
   resumen?: () => Response;
   lista?: () => Response;
   evaluar?: () => Response;
+  obras?: Record<string, string>;
 };
 
 function servir({
@@ -107,6 +135,7 @@ function servir({
   resumen = () => json(resumen2025),
   lista = () => json(alertas),
   evaluar = () => new Response(null, { status: 204 }),
+  obras = {},
 }: Rutas = {}) {
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const path = String(input);
@@ -116,6 +145,9 @@ function servir({
       return evaluar();
     if (path === RUTAS_REPARTO.resumenAlertas("2025")) return resumen();
     if (path === RUTAS_REPARTO.alertas("2025")) return lista();
+    const obra = /^\/api\/obras\/([^/]+)$/.exec(path)?.[1];
+    if (obra && obras[decodeURIComponent(obra)])
+      return json({ id: obra, titulo: obras[decodeURIComponent(obra)] });
     return json({ error: "ruta no encontrada" }, 404);
   });
 }
@@ -135,29 +167,43 @@ describe("TableroAnomalias", () => {
     localStorage.clear();
   });
 
-  it("resume las abiertas con una barra por tipo y una leyenda en lenguaje llano", async () => {
+  it("resume en chips cuantas bloquean y cuantas avisan, con la barra por tipo", async () => {
     servir();
 
     montar();
 
-    await screen.findByText("Título no identificado");
-    expect(screen.getByText(/1 crítica abierta bloquea/)).toBeTruthy();
+    await screen.findByText("La reina del flow");
+    const totales = screen.getByRole("group", { name: "Totales del periodo" });
+    expect(within(totales).getByText("1 bloquea")).toBeTruthy();
+    expect(within(totales).getByText("2 avisos")).toBeTruthy();
 
     const barra = screen.getByRole("group", { name: "Alertas por tipo" });
     // Solo los tipos con abiertas tienen segmento.
     expect(within(barra).getAllByRole("button")).toHaveLength(2);
 
     const leyenda = screen.getByRole("list", { name: "Tipos de alerta" });
-    const filas = within(leyenda).getAllByRole("listitem");
-    expect(filas).toHaveLength(6);
+    expect(within(leyenda).getAllByRole("listitem")).toHaveLength(6);
+    // Los tres tipos criticos llevan el candado, sin subtitulo.
     expect(
-      within(leyenda).getByText("Usos sin obra identificada"),
-    ).toBeTruthy();
-    expect(
-      within(leyenda).getByText("Archivo recibido dos veces"),
-    ).toBeTruthy();
-    // Los tres tipos criticos dicen que bloquean.
-    expect(within(leyenda).getAllByText("Bloquea el reparto")).toHaveLength(3);
+      within(leyenda).getAllByRole("img", { name: "Bloquea el reparto" }),
+    ).toHaveLength(3);
+    expect(screen.queryByText("Bloquea el reparto")).toBeNull();
+    expect(screen.queryByText(/crítica abierta bloquea/)).toBeNull();
+  });
+
+  it("sin criticas el resumen dice que nada bloquea", async () => {
+    servir({
+      resumen: () =>
+        json(resumenDePrueba({ abiertas: 2, porTipo: { oni: 2 } })),
+    });
+
+    montar();
+
+    const totales = await screen.findByRole("group", {
+      name: "Totales del periodo",
+    });
+    expect(within(totales).getByText("Nada bloquea")).toBeTruthy();
+    expect(within(totales).getByText("2 avisos")).toBeTruthy();
   });
 
   it("cada tipo explica que significa y que hacer en un Detalle", async () => {
@@ -165,7 +211,7 @@ describe("TableroAnomalias", () => {
 
     montar();
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     fireEvent.click(
       screen.getByRole("button", {
         name: "Qué significa: Declaración que no suma 100 %",
@@ -178,27 +224,88 @@ describe("TableroAnomalias", () => {
     expect(detalle.textContent).toContain("reserva");
   });
 
-  it("pinta una tarjeta por alerta con titulo, severidad y la frase del servidor, sin detalle tecnico", async () => {
+  it("agrupa por obra con su titulo real y un chip por problema", async () => {
+    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+
+    montar();
+
+    const titulo = await screen.findByRole("heading", { name: "Serie Y" });
+    const tarjeta = titulo.closest("li") as HTMLElement;
+    expect(within(tarjeta).getByText("Declaración al 60 %")).toBeTruthy();
+    expect(within(tarjeta).getByText("Coautor sin porcentaje")).toBeTruthy();
+    expect(
+      within(tarjeta).getByRole("img", { name: "60 de 100 % declarado" }),
+    ).toBeTruthy();
+    expect(
+      within(tarjeta).getByRole("img", {
+        name: "IPI-00000002: porcentaje sin declarar",
+      }),
+    ).toBeTruthy();
+
+    const lista = screen.getByRole("list", { name: "Registros afectados" });
+    expect(lista.querySelectorAll(":scope > li")).toHaveLength(1);
+  });
+
+  it("la frase del servidor no se pinta: vive en el Detalle de cada problema", async () => {
+    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+
+    montar();
+
+    await screen.findByRole("heading", { name: "Serie Y" });
+    expect(screen.queryByText(RESERVA_60)).toBeNull();
+    expect(screen.queryByText("obra:obra-serie")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Detalle: Declaración al 60 %" }),
+    );
+    expect(screen.getByRole("dialog").textContent).toContain(RESERVA_60);
+  });
+
+  it("sin titulo en el catalogo la tarjeta usa el id de la obra", async () => {
+    servir({ lista: () => json(deSerieY) });
+
+    montar();
+
+    expect(
+      await screen.findByRole("heading", { name: "obra-serie" }),
+    ).toBeTruthy();
+  });
+
+  it("la declaracion y el coautor llevan a abrir la declaracion de la obra", async () => {
+    servir({ lista: () => json(deSerieY), obras: { "obra-serie": "Serie Y" } });
+
+    montar();
+
+    await screen.findByRole("heading", { name: "Serie Y" });
+    const enlaces = screen.getAllByRole("link", { name: "Abrir declaración" });
+    expect(enlaces).toHaveLength(1);
+    expect(enlaces[0].getAttribute("href")).toBe(
+      "/catalogo/obra-serie/declaracion",
+    );
+  });
+
+  it("lo que bloquea va primero, con borde de acento y chip relleno con candado", async () => {
     servir();
 
     montar();
 
-    const lista = await screen.findByRole("list", { name: "Alertas abiertas" });
-    const tarjetas = within(lista).getAllByRole("listitem");
+    const lista = await screen.findByRole("list", {
+      name: "Registros afectados",
+    });
+    const tarjetas = Array.from(
+      lista.querySelectorAll<HTMLElement>(":scope > li"),
+    );
     expect(tarjetas).toHaveLength(3);
-    expect(
-      within(tarjetas[0]).getByText("Usos sin obra identificada"),
-    ).toBeTruthy();
-    expect(
-      within(tarjetas[0]).getByText("Título no identificado"),
-    ).toBeTruthy();
-    expect(within(tarjetas[2]).getByText("Bloquea el reparto")).toBeTruthy();
-    expect(within(tarjetas[0]).getByText("No bloquea")).toBeTruthy();
+    expect(within(tarjetas[0]).getByRole("heading").textContent).toBe("rep-1");
+    expect(tarjetas[0].className).toContain("afectado-bloquea");
+    expect(tarjetas[1].className).not.toContain("afectado-bloquea");
 
+    const chip = within(tarjetas[0]).getByText("Archivo duplicado");
+    expect(chip.closest(".chip")?.className).toContain("problema-chip-bloquea");
     expect(
-      screen.queryByRole("button", { name: "Detalle técnico" }),
-    ).toBeNull();
-    expect(screen.queryByText("uso:uso-9")).toBeNull();
+      within(tarjetas[0]).getByRole("img", { name: "Bloquea el reparto" }),
+    ).toBeTruthy();
+    const aviso = within(tarjetas[1]).getByText("Sin obra identificada");
+    expect(aviso.closest(".chip")?.className).toContain("chip-alerta");
   });
 
   it("no hereda la clase .revision del <dl> de afiliacion, que lo parte en una columna de 11rem", async () => {
@@ -206,30 +313,32 @@ describe("TableroAnomalias", () => {
 
     const { container } = montar();
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     const pantalla = container.querySelector("section.anomalias");
     expect(pantalla?.classList.contains("revision")).toBe(false);
     expect(pantalla?.classList.contains("revision-pantalla")).toBe(true);
   });
 
-  it("no pone subtitulo de relleno bajo el titulo", async () => {
+  it("no pone subtitulo de relleno ni la linea de corridas del periodo", async () => {
     servir();
 
     montar();
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     expect(screen.queryByText(/Lo que conviene revisar/)).toBeNull();
+    expect(screen.queryByText(/Corridas del periodo/)).toBeNull();
   });
 
-  it("vuelve al panel de corridas con un boton, no con texto enlazado", async () => {
+  it("el panel de corridas es una pildora secundaria en la cabecera", async () => {
     servir();
 
     montar();
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     const volver = screen.getByRole("link", { name: "Panel de corridas" });
     expect(volver.getAttribute("href")).toBe("/distribucion");
     expect(volver.className).toContain("boton-secundario");
+    expect(volver.closest("header")).not.toBeNull();
   });
 
   it("una ONI enlaza a la bandeja de identificacion sin perder el periodo de la vista", async () => {
@@ -237,24 +346,28 @@ describe("TableroAnomalias", () => {
 
     montar();
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     const enlaces = screen.getAllByRole("link", { name: "Identificar" });
     expect(enlaces).toHaveLength(2);
     expect(enlaces[0]?.getAttribute("href")).toBe("/identificacion");
-    expect(enlaces[0]?.className).toContain("boton-primario");
+    expect(
+      screen
+        .getByRole("link", { name: "Revisar en Ingesta" })
+        .getAttribute("href"),
+    ).toBe("/ingesta");
     expect((screen.getByLabelText("Periodo") as HTMLSelectElement).value).toBe(
       "2025",
     );
   });
 
-  it("una alerta resuelta se ve apagada", async () => {
+  it("una alerta resuelta se ve apagada y sin accion", async () => {
     servir({
       lista: () =>
         json([
           alerta({
             id: "al-9",
             tipo: "oni",
-            detalle: "Ya cerrada",
+            detalle: 'la cascada no reconocio "Ya cerrada" (fuente "x")',
             resuelta: true,
           }),
         ]),
@@ -263,9 +376,10 @@ describe("TableroAnomalias", () => {
     montar();
 
     const texto = await screen.findByText("Ya cerrada");
-    const tarjeta = texto.closest("li");
-    expect(tarjeta?.className).toContain("alerta-resuelta");
-    expect(within(tarjeta as HTMLElement).getByText("Resuelta")).toBeTruthy();
+    const tarjeta = texto.closest("li") as HTMLElement;
+    expect(tarjeta.className).toContain("afectado-cerrado");
+    expect(within(tarjeta).getByText("Resuelta")).toBeTruthy();
+    expect(within(tarjeta).queryByRole("link")).toBeNull();
   });
 
   it("sin ?periodo no pide las alertas de todos los periodos", async () => {
@@ -281,7 +395,7 @@ describe("TableroAnomalias", () => {
 
     montar("/anomalias");
 
-    await screen.findByText("Título no identificado");
+    await screen.findByText("La reina del flow");
     const pedidas = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain(RUTAS_REPARTO.alertas());
     expect(pedidas).not.toContain(RUTAS_REPARTO.resumenAlertas(""));
@@ -359,7 +473,7 @@ describe("TableroAnomalias", () => {
       await screen.findByRole("button", { name: "Evaluar periodo" }),
     );
 
-    await screen.findByText(/1 crítica abierta bloquea/);
+    await screen.findByText("1 bloquea");
     const post = llamadas(RUTAS_REPARTO.evaluarAlertas)[0];
     expect(post?.[1]?.method).toBe("POST");
     expect(post?.[1]?.body).toBe('{"periodo":"2025"}');

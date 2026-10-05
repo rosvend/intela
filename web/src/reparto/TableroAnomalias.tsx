@@ -7,11 +7,16 @@ import { useSesion } from "../sesion";
 import { formatearEntero } from "../tablero/formato";
 import { useRecurso } from "../tablero/useDashboard";
 import BarraApilada, { PALETA } from "../ui/BarraApilada";
-import Cifra from "../ui/Cifra";
 import Detalle from "../ui/Detalle";
+import {
+  accionDe,
+  agruparPorAfectado,
+  type Afectado,
+  type Problema,
+  type Visual,
+} from "./agruparAlertas";
 import { TIPOS_DE_ALERTA, plural, puedeEvaluar } from "./anomalias";
 import { evaluarPeriodo } from "./cliente";
-import { ETIQUETA_CIRCUITO } from "./etapas";
 import {
   Alerta,
   Proceso,
@@ -64,10 +69,6 @@ const COPIA_DE_TIPO: Record<
   },
 };
 
-function tituloDeTipo(tipo: string): string {
-  return COPIA_DE_TIPO[tipo as TipoDeAlerta]?.titulo ?? tipo;
-}
-
 /** Color por entidad, en el orden fijo de `TIPOS_DE_ALERTA`. */
 function colorDeTipo(tipo: TipoDeAlerta): string {
   return PALETA[TIPOS_DE_ALERTA.indexOf(tipo) % PALETA.length];
@@ -106,7 +107,11 @@ export default function TableroAnomalias() {
     recarga,
   );
 
-  const lista = alertas.tipo === "listo" ? alertas.datos : [];
+  const lista = useMemo(
+    () => (alertas.tipo === "listo" ? alertas.datos : []),
+    [alertas],
+  );
+  const afectados = useMemo(() => agruparPorAfectado(lista), [lista]);
   const sinEvaluar =
     resumen.tipo === "listo" && resumen.datos.ultima_evaluacion === null;
 
@@ -157,6 +162,13 @@ export default function TableroAnomalias() {
               <option value={periodo}>{periodo}</option>
             )}
           </select>
+          <Link to="/distribucion" className="boton-secundario boton-enlace">
+            Panel de corridas
+            <ArrowRightIcon
+              className="boton-enlace-flecha"
+              aria-hidden="true"
+            />
+          </Link>
         </div>
       </header>
 
@@ -200,7 +212,6 @@ export default function TableroAnomalias() {
       )}
 
       <section className="anomalias-lista" aria-label="Alertas del periodo">
-        <h2 className="panel-titulo">Alertas</h2>
         {alertas.tipo === "cargando" && (
           <div
             className="esqueletos"
@@ -261,72 +272,61 @@ export default function TableroAnomalias() {
                   {formatearEntero(resumen.datos.abiertas)} alertas abiertas.
                 </p>
               )}
-            <ul className="alertas" aria-label="Alertas abiertas">
-              {lista.map((alerta, i) => (
-                <TarjetaDeAlerta key={alerta.id} alerta={alerta} indice={i} />
+            <ul className="afectados" aria-label="Registros afectados">
+              {afectados.map((afectado, i) => (
+                <TarjetaDeAfectado
+                  key={afectado.clave}
+                  afectado={afectado}
+                  indice={i}
+                />
               ))}
             </ul>
           </>
         )}
       </section>
-
-      {procesos.tipo === "listo" && procesos.datos.length > 0 && (
-        <footer className="anomalias-pie">
-          <p className="revision-texto-suave">
-            Corridas del periodo:{" "}
-            {procesos.datos
-              .filter((p) => !periodo || p.periodo === periodo)
-              .map((p) => ETIQUETA_CIRCUITO[p.circuito])
-              .join(" · ") || "ninguna"}
-          </p>
-          <Link to="/distribucion" className="boton-secundario boton-enlace">
-            Panel de corridas
-            <ArrowRightIcon aria-hidden="true" />
-          </Link>
-        </footer>
-      )}
     </section>
   );
 }
 
-/** Total abierto, barra por tipo y leyenda con lo que significa cada uno. */
+/** Totales en chips, barra por tipo y leyenda; lo que significa cada tipo, en su Detalle. */
 function ResumenDeSeveridad({
   resumen,
 }: {
   resumen: ResumenDeAlertas;
 }): ReactElement {
   const bloquean = resumen.criticas_abiertas;
+  const avisos = Math.max(0, resumen.abiertas - bloquean);
+  const aceptadas = resumen.criticas_aceptadas;
   return (
     <div className="panel anomalias-resumen">
-      <div className="panel-cabecera">
-        <div>
-          <p className="anomalias-etiqueta">Alertas abiertas</p>
-          <Cifra
-            valor={String(resumen.abiertas)}
-            formatear={(v) => formatearEntero(Number(v))}
-          />
-        </div>
-        <span className={`chip ${bloquean > 0 ? "chip-error" : "chip-ok"}`}>
-          {bloquean > 0
-            ? `${formatearEntero(bloquean)} ${plural(bloquean, "bloquea", "bloquean")}`
-            : "Nada bloquea"}
+      <div
+        className="anomalias-totales"
+        role="group"
+        aria-label="Totales del periodo"
+      >
+        {bloquean > 0 ? (
+          <span className="chip anomalias-total problema-chip-bloquea">
+            <IconoCandado />
+            {`${formatearEntero(bloquean)} ${plural(bloquean, "bloquea", "bloquean")}`}
+          </span>
+        ) : (
+          <span className="chip chip-ok anomalias-total">Nada bloquea</span>
+        )}
+        <span
+          className={`chip anomalias-total${avisos > 0 ? " chip-alerta" : ""}`}
+        >
+          {`${formatearEntero(avisos)} ${plural(avisos, "aviso", "avisos")}`}
         </span>
+        {aceptadas > 0 && (
+          <span className="chip anomalias-total">
+            {`${formatearEntero(aceptadas)} ${plural(
+              aceptadas,
+              "aceptada sin corregir",
+              "aceptadas sin corregir",
+            )}`}
+          </span>
+        )}
       </div>
-      <p className="anomalias-frase">
-        {formatearEntero(bloquean)}{" "}
-        {plural(
-          bloquean,
-          "crítica abierta bloquea",
-          "críticas abiertas bloquean",
-        )}{" "}
-        el reparto de este periodo.
-        {resumen.criticas_aceptadas > 0 &&
-          ` · ${formatearEntero(resumen.criticas_aceptadas)} ${plural(
-            resumen.criticas_aceptadas,
-            "aceptada sin corregir",
-            "aceptadas sin corregir",
-          )}`}
-      </p>
       {resumen.abiertas > 0 && (
         <BarraApilada
           etiqueta="Alertas por tipo"
@@ -356,7 +356,14 @@ function ResumenDeSeveridad({
               <span className="anomalias-leyenda-nombre">
                 <span>{copia.titulo}</span>
                 {conteo.critica && (
-                  <span className="chip chip-error">Bloquea el reparto</span>
+                  <span
+                    className="anomalias-candado"
+                    role="img"
+                    aria-label="Bloquea el reparto"
+                    title="Bloquea el reparto"
+                  >
+                    <IconoCandado />
+                  </span>
                 )}
                 <Detalle
                   titulo={copia.titulo}
@@ -382,45 +389,154 @@ function ResumenDeSeveridad({
   );
 }
 
-function TarjetaDeAlerta({
-  alerta,
+const CLASE_DE_REGISTRO: Record<Afectado["refTipo"], string> = {
+  obra: "Obra",
+  reporte: "Archivo",
+  uso: "Uso reportado",
+};
+
+/** El titulo del catalogo para una obra; el id si no llega. */
+function useNombre(afectado: Afectado): string {
+  const esObra = afectado.refTipo === "obra";
+  const obra = useRecurso<{ titulo?: unknown }>(
+    `/api/obras/${encodeURIComponent(afectado.refId)}`,
+    esObra,
+  );
+  if (afectado.nombre) return afectado.nombre;
+  if (
+    esObra &&
+    obra.tipo === "listo" &&
+    typeof obra.datos?.titulo === "string" &&
+    obra.datos.titulo !== ""
+  ) {
+    return obra.datos.titulo;
+  }
+  return afectado.refId;
+}
+
+function TarjetaDeAfectado({
+  afectado,
   indice,
 }: {
-  alerta: Alerta;
+  afectado: Afectado;
   indice: number;
 }): ReactElement {
-  const resuelta = alerta.resuelta || alerta.autocerrada;
+  const nombre = useNombre(afectado);
+  const accion = accionDe(afectado);
+  const clase = afectado.bloquea
+    ? " afectado-bloquea"
+    : afectado.cerrado
+      ? " afectado-cerrado"
+      : "";
   return (
     <li
-      className={`alerta${resuelta ? " alerta-resuelta" : ""}`}
+      className={`afectado${clase}`}
       style={{ "--indice": Math.min(indice, 8) } as React.CSSProperties}
     >
-      <div className="alerta-cabecera">
-        <span
-          className="leyenda-punto"
-          style={{ "--color": colorDeTipo(alerta.tipo) } as React.CSSProperties}
-          aria-hidden="true"
-        />
-        <span className="alerta-tipo">{tituloDeTipo(alerta.tipo)}</span>
-        {resuelta ? (
-          <span className="chip chip-ok">Resuelta</span>
-        ) : alerta.critica ? (
-          <span className="chip chip-error">Bloquea el reparto</span>
-        ) : (
-          <span className="chip">No bloquea</span>
-        )}
+      <div className="afectado-cabecera">
+        <span className="afectado-clase">
+          {CLASE_DE_REGISTRO[afectado.refTipo] ?? afectado.refTipo}
+        </span>
+        <h3 className="afectado-nombre">{nombre}</h3>
+        {afectado.cerrado && <span className="chip chip-ok">Resuelta</span>}
       </div>
-      <p className="alerta-detalle">{alerta.detalle}</p>
-      {alerta.tipo === "oni" && !resuelta && (
-        <div className="alerta-acciones">
-          <Link to="/identificacion" className="boton-primario boton-enlace">
-            Identificar
-            <ArrowRightIcon aria-hidden="true" />
-          </Link>
-        </div>
+      <ul className="problemas" aria-label={`Problemas de ${nombre}`}>
+        {afectado.problemas.map((problema) => (
+          <FilaDeProblema key={problema.alerta.id} problema={problema} />
+        ))}
+      </ul>
+      {accion && (
+        <Link
+          to={accion.ruta}
+          className="boton-secundario boton-enlace afectado-accion"
+        >
+          {accion.etiqueta}
+          <ArrowRightIcon className="boton-enlace-flecha" aria-hidden="true" />
+        </Link>
       )}
     </li>
   );
+}
+
+function FilaDeProblema({ problema }: { problema: Problema }): ReactElement {
+  const tono = problema.bloquea
+    ? "problema-chip-bloquea"
+    : problema.cerrado
+      ? ""
+      : "chip-alerta";
+  return (
+    <li className="problema">
+      <span className={`chip problema-chip ${tono}`}>
+        {problema.bloquea && (
+          <span role="img" aria-label="Bloquea el reparto">
+            <IconoCandado />
+          </span>
+        )}
+        <span>{problema.etiqueta}</span>
+      </span>
+      <VisualDeProblema visual={problema.visual} />
+      <Detalle
+        titulo={problema.etiqueta}
+        etiquetaDisparador={`Detalle: ${problema.etiqueta}`}
+        claseDisparador="revision-icono-boton problema-detalle"
+        disparador={<IconoInfo />}
+      >
+        <span className="detalle-texto">{problema.alerta.detalle}</span>
+      </Detalle>
+    </li>
+  );
+}
+
+function VisualDeProblema({ visual }: { visual: Visual }): ReactElement | null {
+  if (visual.forma === "progreso") {
+    const cifra = visual.valor.toLocaleString("es-CO");
+    return (
+      <span
+        className="problema-progreso"
+        role="img"
+        aria-label={`${cifra} de 100 % declarado`}
+      >
+        <span className="problema-pista" aria-hidden="true">
+          <span
+            className="problema-relleno"
+            style={{ "--valor": `${visual.valor}%` } as React.CSSProperties}
+          />
+        </span>
+        <span className="problema-cifra" aria-hidden="true">
+          {cifra}/100
+        </span>
+      </span>
+    );
+  }
+  if (visual.forma === "titular") {
+    const etiqueta =
+      visual.porcentaje === null
+        ? `${visual.ipi ?? "Coautor"}: porcentaje sin declarar`
+        : `${visual.porcentaje.replace(".", ",")} % sin IPI`;
+    return (
+      <span className="problema-titular" role="img" aria-label={etiqueta}>
+        <span className="avatar avatar-chico" aria-hidden="true">
+          <IconoPersona />
+        </span>
+        <span className="problema-cifra" aria-hidden="true">
+          {visual.porcentaje === null
+            ? "? %"
+            : `${visual.porcentaje.replace(".", ",")} %`}
+        </span>
+        {visual.porcentaje === null && visual.ipi && (
+          <span className="problema-ipi" aria-hidden="true">
+            {visual.ipi}
+          </span>
+        )}
+        {visual.porcentaje !== null && (
+          <span className="problema-ipi" aria-hidden="true">
+            IPI ?
+          </span>
+        )}
+      </span>
+    );
+  }
+  return null;
 }
 
 function IconoBase({ children }: { children: React.ReactNode }) {
@@ -447,6 +563,41 @@ const IconoPregunta = () => (
     <circle cx="12" cy="12" r="9" />
     <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.2M12 17h.01" />
   </IconoBase>
+);
+
+const IconoInfo = () => (
+  <IconoBase>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5M12 8h.01" />
+  </IconoBase>
+);
+
+/** Candado relleno: marca lo que bloquea el reparto. */
+const IconoCandado = () => (
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="currentColor"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path d="M5 7V5a3 3 0 1 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7H5zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2z" />
+  </svg>
+);
+
+const IconoPersona = () => (
+  <svg
+    viewBox="0 0 16 16"
+    width="12"
+    height="12"
+    fill="currentColor"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <circle cx="8" cy="5" r="3" />
+    <path d="M2.5 14a5.5 5.5 0 0 1 11 0z" />
+  </svg>
 );
 
 const IconoEscudo = () => (

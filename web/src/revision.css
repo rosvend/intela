@@ -948,22 +948,22 @@ mark.diferencia {
   padding: 1.75rem;
 }
 
-.anomalias-resumen .panel-cabecera {
-  margin-bottom: 0;
-  align-items: flex-start;
+.anomalias-totales {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.anomalias-etiqueta {
-  margin: 0 0 0.2rem;
-  color: var(--texto-suave);
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.anomalias-frase {
-  margin: 0;
-  color: var(--texto-medio);
+.anomalias-total {
+  padding: 0.35rem 0.85rem;
   font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.anomalias-candado {
+  display: inline-flex;
+  color: var(--error);
 }
 
 /* Leyenda en 2-3 columnas: seis tipos en una sola columna eran una tira larga. */
@@ -1000,7 +1000,14 @@ mark.diferencia {
   gap: 0.75rem;
 }
 
-.alertas {
+/* El enlace de navegacion a la derecha de la cabecera, junto al periodo. */
+.anomalias .revision-titulo-fila .boton-enlace {
+  margin-left: auto;
+}
+
+/* ---------- una tarjeta por registro afectado ---------- */
+
+.afectados {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1009,67 +1016,141 @@ mark.diferencia {
   gap: 1rem;
 }
 
-/* `.alertas >`: styles.css define un `.alerta` global (caja rosa) que carga despues. */
-.alertas > .alerta {
+.afectado {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.85rem;
   min-width: 0;
   padding: 1.25rem 1.4rem;
   background: var(--superficie);
   border: 1px solid var(--borde);
   border-radius: var(--radio-tarjeta);
-  color: var(--texto);
   animation: revision-entrar var(--dur-media) var(--curva-salida) backwards;
   animation-delay: calc(var(--indice, 0) * 40ms);
 }
 
-.alertas > .alerta-resuelta {
+/* El Detalle abierto no queda bajo la tarjeta siguiente. */
+.afectado:focus-within {
+  position: relative;
+  z-index: 1;
+}
+
+/* Lo que bloquea se ve desde lejos: borde y filo de error. */
+.afectado-bloquea {
+  border-color: var(--error-fondo);
+  box-shadow: inset 3px 0 0 var(--error);
+}
+
+.afectado-cerrado {
   opacity: 0.55;
   background: var(--fondo);
 }
 
-.alerta-resuelta .leyenda-punto {
-  filter: grayscale(1);
+.afectado-cabecera {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 0.5rem;
 }
 
-.alerta-cabecera {
+.afectado-clase {
+  grid-column: 1;
+  color: var(--texto-suave);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.afectado-nombre {
+  grid-column: 1;
+  margin: 0.1rem 0 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.afectado-cabecera > .chip {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.problemas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.problema {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.6rem;
+  min-width: 0;
 }
 
-.alerta-cabecera .chip {
+.problema-chip {
+  gap: 0.35rem;
+}
+
+.problema-chip > span[role="img"] {
+  display: inline-flex;
+}
+
+/* Relleno de error: el unico chip solido de la pantalla es el que bloquea. */
+.problema-chip-bloquea {
+  background: var(--error);
+  color: #fff;
+}
+
+.problema-progreso,
+.problema-titular {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.problema-pista {
+  position: relative;
+  width: 72px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--borde);
+  overflow: hidden;
+}
+
+.problema-relleno {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--valor, 0%);
+  border-radius: 99px;
+  background: var(--alerta);
+}
+
+.problema-cifra {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto);
+}
+
+.problema-ipi {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--texto-suave);
+}
+
+.problema .detalle {
   margin-left: auto;
 }
 
-.alerta-tipo {
-  font-weight: 600;
-}
-
-.alerta-detalle {
-  margin: 0;
-  max-width: 65ch;
-  color: var(--texto-medio);
-  font-size: 0.92rem;
-  line-height: 1.55;
-  overflow-wrap: break-word;
-}
-
-.alerta-acciones {
-  display: flex;
-  justify-content: flex-end;
+.afectado-accion {
+  align-self: flex-end;
   margin-top: auto;
-  padding-top: 0.25rem;
-}
-
-.anomalias-pie {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
 }
 
 /* ---------- pantallas angostas ---------- */
@@ -1088,7 +1169,7 @@ mark.diferencia {
     grid-template-columns: 1fr;
   }
 
-  .alertas {
+  .afectados {
     grid-template-columns: 1fr;
   }
 
@@ -1104,7 +1185,7 @@ mark.diferencia {
 
 @media (prefers-reduced-motion: reduce) {
   .caso,
-  .alertas > .alerta,
+  .afectado,
   .revision-vacio,
   .medidor-relleno,
   .dialogo-lateral,
