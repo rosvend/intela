@@ -632,12 +632,30 @@ export interface paths {
          *     o `proceso_id:obra_id` para la cifra de la obra, incluida una obra
          *     retenida porque su declaracion no suma 100% (RD 13.1.3).
          *
+         *     Una liberacion de reserva (RD 14.4) usa
+         *     `reserva:proceso_origen:proceso_destino:obra_id:titular_id`. Un
+         *     rendimiento distribuido (RD 10.1) usa
+         *     `rendimiento:proceso_origen:proceso_destino:obra_id:titular_id`.
+         *     Esas respuestas llenan `origen` y `destino`: la cifra se repartio
+         *     contra una corrida anterior y se pago en otra. Si varios asientos
+         *     comparten esa ref (otra vigencia, u otra liberacion), `neto` es la
+         *     suma de los importes positivos. Un asiento posterior en cero no
+         *     reemplaza ese total. `regla`, `obra`, `identificacion`,
+         *     `valorizacion` y `reportes` salen de la valorizacion de la corrida
+         *     de origen, que fijo las proporciones; `firmas`, de la corrida que
+         *     paga. `bolsa` es la de la corrida de origen en una liberacion, y va
+         *     vacia (`id` vacio) en un rendimiento: ese dinero son rendimientos
+         *     financieros, no una bolsa. Si la valorizacion de origen no esta
+         *     asentada, la cifra no se oculta: se nombra en `faltantes`.
+         *
          *     Si falta la valorizacion de la corrida o de la obra, la respuesta es
          *     404: una explicacion a medias es peor que ninguna. Un eslabon
          *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
-         *     no oculta la cifra: se nombra en `faltantes`. Hoy son dos: el recaudo
-         *     de la bolsa (`recaudo.registrado`) y el alta de la obra
-         *     (`obra.registrada`, que se nombra aunque haya correcciones asentadas).
+         *     no oculta la cifra: se nombra en `faltantes`. Son el recaudo de la
+         *     bolsa (`recaudo.registrado`), el alta de la obra (`obra.registrada`,
+         *     que se nombra aunque haya correcciones asentadas) y, solo en una
+         *     cifra accesoria, la valorizacion de la corrida de origen
+         *     (`reparto.valorizado`, `reparto.obra_valorizada`).
          *
          *     Un titular solo ve lineas suyas; la de otro titular responde 403, no
          *     404. `auditor` y `administrador` ven cualquiera.
@@ -2767,7 +2785,34 @@ export interface components {
                 /** @enum {string} */
                 circuito: "nacional" | "internacional";
             };
-            /** @description De donde salio el dinero. */
+            /**
+             * @description Corrida cuyas proporciones se usaron (RD 14.4, RD 10.1). Ausente
+             *     en una cifra de valorizacion.
+             */
+            origen?: {
+                proceso_id: string;
+                /** @example 2026-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /**
+             * @description Corrida en la que se pago la cifra liberada o el rendimiento.
+             *     Ausente en una cifra de valorizacion.
+             */
+            destino?: {
+                proceso_id: string;
+                /** @example 2027-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /**
+             * @description De donde salio el dinero. En una liberacion de reserva, la bolsa
+             *     de la corrida de origen. En un rendimiento va vacia (`id` vacio,
+             *     `bruto` en cero, `recaudo` null): son rendimientos financieros
+             *     (RD 10), no una bolsa.
+             */
             bolsa: {
                 id: string;
                 /** @description Usuario de recaudo que pago la bolsa. */
@@ -2789,8 +2834,11 @@ export interface components {
                 id: string;
                 /** @description De la ultima correccion asentada (`obra.metadatos_corregidos`) o, si no hay, del alta. Vacio si no hay ninguna de las dos. */
                 titulo: string;
-                /** @enum {string} */
-                escalon: "alias" | "id_global" | "difuso" | "manual";
+                /**
+                 * @description Vacio solo si no hay identificacion asentada: una cifra accesoria cuya corrida de origen no tiene `reparto.obra_valorizada` (nombrado en `faltantes`).
+                 * @enum {string}
+                 */
+                escalon: "alias" | "id_global" | "difuso" | "manual" | "";
                 /** @description Puntaje del matching (ADR 0007), no puntos de reparto. Vacio para alias e id global, que son exactos. */
                 puntaje: string;
                 /**
@@ -2823,6 +2871,11 @@ export interface components {
              *     diaria con 60 usos en la corrida son ~23 KB.
              */
             valorizacion: components["schemas"]["ValorizacionDeUso"][];
+            /**
+             * @description Snapshot normativo y reglamento de la corrida. En una cifra
+             *     accesoria, los de la corrida de origen; vacios si su
+             *     `reparto.valorizado` falta (nombrado en `faltantes`).
+             */
             regla: {
                 snapshot_id: string;
                 reglamento: string;
@@ -2857,9 +2910,10 @@ export interface components {
             /**
              * @description Eslabones accesorios sin asiento, por el nombre del hecho que falta:
              *     `recaudo.registrado` (origen de la bolsa) y `obra.registrada` (alta
-             *     de la obra; una correccion asentada no la sustituye). Vacio solo si
-             *     los dos estan asentados; la cadena del dinero nunca falta, sin ella
-             *     la respuesta es 404.
+             *     de la obra; una correccion asentada no la sustituye). En una cifra
+             *     accesoria tambien `reparto.valorizado` y `reparto.obra_valorizada`
+             *     de la corrida de origen. Vacio solo si todos estan asentados; la
+             *     cadena del dinero nunca falta, sin ella la respuesta es 404.
              */
             faltantes: string[];
         };
@@ -4959,7 +5013,9 @@ export interface operations {
             header?: never;
             path: {
                 /**
-                 * @description `proceso_id:obra_id:titular_id` o `proceso_id:obra_id`. Cualquier
+                 * @description `proceso_id:obra_id:titular_id`, `proceso_id:obra_id`,
+                 *     `reserva:origen:destino:obra_id:titular_id` o
+                 *     `rendimiento:origen:destino:obra_id:titular_id`. Cualquier
                  *     otra forma responde 404.
                  * @example proc-bolsa-1-1:obra-1:titular-1
                  */

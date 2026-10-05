@@ -19,6 +19,16 @@ const organoAprobadorReserva = "Asamblea General"
 // aplica al recaudo recibido del extranjero.
 var ErrReservaInternacional = errors.New("la reserva de errores tecnicos no aplica al circuito internacional")
 
+// ExigirLiberacionNacional: la reserva solo existe en el circuito nacional
+// (RD 14.5.4), asi que la corrida que fijo sus proporciones y la que paga lo
+// liberado tambien lo son.
+func ExigirLiberacionNacional(origen, destino Circuito) error {
+	if origen != Nacional || destino != Nacional {
+		return fmt.Errorf("%w: origen %q, destino %q", ErrReservaInternacional, origen, destino)
+	}
+	return nil
+}
+
 // PoolReserva es la reserva de errores tecnicos retenida de una corrida
 // (RD 14). Su proveniencia -- de que corrida se tomo -- es dato permanente:
 // RD 14.4 exige liberar el remanente proporcional a como se distribuyo

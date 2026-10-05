@@ -9,12 +9,27 @@ import (
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
-// BolsasAccesorias orquesta la reserva de errores tecnicos (RD 14) y los rendimientos financieros (RD 10). Sin ruta HTTP todavia: eso lo cablea #34.
+// BolsasAccesorias orquesta la reserva de errores tecnicos (RD 14) y los rendimientos financieros (RD 10).
+//
+// Liberar y distribuir asientan en la misma unidad que el movimiento (#177).
+// La ruta HTTP que los dispara sigue siendo de #34: cablearlos aqui no abre
+// un endpoint.
 type BolsasAccesorias struct {
 	Resultados    RepositorioResultados
 	Reservas      RepositorioReservas
 	Rendimientos  RepositorioRendimientos
 	Reclamaciones RepositorioReclamacionesReserva
+	// Corridas aporta periodo y circuito al asiento. Sin eso ExplicarCifra
+	// tendria que reconstruirlos, y el ADR 0006 lo prohibe.
+	Corridas LecturaDeCorridas
+	Bitacora BitacoraAuditoria
+	Unidad   UnidadDeTrabajo
+	Reloj    Reloj
+}
+
+// LecturaDeCorridas es lo unico que la liberacion lee de un proceso.
+type LecturaDeCorridas interface {
+	ProcesoPorID(ctx context.Context, id string) (ProcesoVista, error)
 }
 
 // RegistrarReserva abre el pool de reserva de una corrida con Resultado.Reserva y tasaPct (RD 14.5.1). De una sola vez: CrearReserva falla si el proceso ya tiene una.
@@ -33,35 +48,75 @@ func (b BolsasAccesorias) RegistrarReserva(ctx context.Context, procesoID string
 	return pool, nil
 }
 
-// LiberarReservaPrescrita reparte el remanente de una reserva (RD 14.4) sobre las proporciones exactas de su corrida, mas rendimientoAUsar (RD 10.4). El saldo que devuelve es el persistido. El residuo de redondeo del rendimiento no sale del ledger: sin titulares, ese importe se queda en rendimientos y la reserva no lo absorbe.
-func (b BolsasAccesorias) LiberarReservaPrescrita(ctx context.Context, procesoID, vigenciaRendimiento string, rendimientoAUsar decimal.Decimal) ([]reparto.LineaTitular, decimal.Decimal, error) {
+// LiberarReservaPrescrita reparte el remanente de una reserva (RD 14.4) sobre las proporciones exactas de su corrida de origen, mas rendimientoAUsar (RD 10.4) descontado de (nacional, vigenciaRendimiento). El saldo que devuelve es el persistido. El residuo de redondeo del rendimiento no sale del ledger: sin titulares, ese importe se queda en rendimientos y la reserva no lo absorbe.
+//
+// procesoDestinoID es la corrida en la que ese dinero se paga. El linaje
+// apunta a las dos (#177). Las dos son nacionales (RD 14.5.4). La liberacion
+// y el asiento reserva.liberada son un solo hecho: si el asiento falla, no se
+// libera nada.
+func (b BolsasAccesorias) LiberarReservaPrescrita(
+	ctx context.Context,
+	procesoOrigenID, procesoDestinoID, vigenciaRendimiento string,
+	rendimientoAUsar decimal.Decimal,
+	actorID string,
+) ([]reparto.LineaTitular, decimal.Decimal, error) {
 	if rendimientoAUsar.IsNegative() {
 		return nil, decimal.Zero, fmt.Errorf("%w: rendimiento acumulado negativo", reparto.ErrRepartoInvalido)
 	}
-	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
+	if err := exigirDosCorridas(procesoOrigenID, procesoDestinoID); err != nil {
+		return nil, decimal.Zero, err
+	}
+	if err := exigirActor(actorID, fmt.Sprintf("liberar la reserva de %q", procesoOrigenID)); err != nil {
+		return nil, decimal.Zero, err
+	}
+	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoOrigenID)
 	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
+		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoOrigenID, err)
 	}
 
 	var nuevas []reparto.LineaTitular
 	var residuo decimal.Decimal
-	err = b.Reservas.LiberarSaldoReserva(ctx, procesoID, vigenciaRendimiento, rendimientoAUsar,
-		func(saldoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
-			monto := saldoActual.Add(rendimientoAUsar)
-			var errDist error
-			nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
-			if errDist != nil {
-				return decimal.Decimal{}, nil, errDist
-			}
-			return residuo, nuevas, nil
-		})
-	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("liberar reserva de %q: %w", procesoID, err)
-	}
-	// El repositorio resta del saldo el residuo de la segunda particion, que
-	// fn no ve. Releer deja el valor devuelto igual al persistido.
-	if pool, errLectura := b.Reservas.ReservaPorProceso(ctx, procesoID); errLectura == nil {
+	err = b.enUnidad(ctx, func(ctx context.Context) error {
+		origen, destino, errCorr := b.dosCorridas(ctx, procesoOrigenID, procesoDestinoID)
+		if errCorr != nil {
+			return errCorr
+		}
+		if errCirc := reparto.ExigirLiberacionNacional(reparto.Circuito(origen.Circuito), reparto.Circuito(destino.Circuito)); errCirc != nil {
+			return errCirc
+		}
+		var saldoReserva decimal.Decimal
+		errLib := b.Reservas.LiberarSaldoReserva(ctx, procesoOrigenID, vigenciaRendimiento, rendimientoAUsar,
+			func(saldoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+				saldoReserva = saldoActual
+				monto := saldoActual.Add(rendimientoAUsar)
+				var errDist error
+				nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(monto, resultado.Titulares)
+				if errDist != nil {
+					return decimal.Decimal{}, nil, errDist
+				}
+				return residuo, nuevas, nil
+			})
+		if errLib != nil {
+			return fmt.Errorf("liberar reserva de %q: %w", procesoOrigenID, errLib)
+		}
+		// El repositorio resta del saldo el residuo de la segunda particion,
+		// que fn no ve. Releer dentro de la unidad deja el valor devuelto y
+		// el asentado iguales al persistido.
+		pool, errLectura := b.Reservas.ReservaPorProceso(ctx, procesoOrigenID)
+		if errLectura != nil {
+			return fmt.Errorf("releer reserva de %q: %w", procesoOrigenID, errLectura)
+		}
 		residuo = pool.Saldo
+		return b.asentarDosCorridas(ctx, HechoReservaLiberada, procesoDestinoID, actorID, asientoReservaLiberada{
+			Origen: origen, Destino: destino, VigenciaRendimiento: vigenciaRendimiento,
+			SaldoReserva:      saldoReserva.StringFixed(2),
+			RendimientoSumado: rendimientoAUsar.StringFixed(2),
+			SaldoRestante:     residuo.StringFixed(2),
+			Lineas:            lineasAsentadas(nuevas),
+		})
+	})
+	if err != nil {
+		return nil, decimal.Zero, err
 	}
 	return nuevas, residuo, nil
 }
@@ -77,26 +132,53 @@ func (b BolsasAccesorias) RegistrarRendimiento(ctx context.Context, circuito rep
 	return nil
 }
 
-// DistribuirRendimiento reparte el pool sobre las proporciones de una corrida (RD 10.1), consumiendo el monto y persistiendo las lineas en la misma transaccion.
-func (b BolsasAccesorias) DistribuirRendimiento(ctx context.Context, procesoID string, circuito reparto.Circuito, vigencia string) ([]reparto.LineaTitular, decimal.Decimal, error) {
-	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoID)
+// DistribuirRendimiento reparte el pool sobre las proporciones de la corrida de origen (RD 10.1) y lo paga en la de destino; las dos son del circuito del rendimiento (RD 10.3). El asiento rendimientos.distribuidos y el debito del ledger son un solo hecho (#177).
+func (b BolsasAccesorias) DistribuirRendimiento(
+	ctx context.Context,
+	procesoOrigenID, procesoDestinoID string,
+	circuito reparto.Circuito,
+	vigencia, actorID string,
+) ([]reparto.LineaTitular, decimal.Decimal, error) {
+	if err := exigirDosCorridas(procesoOrigenID, procesoDestinoID); err != nil {
+		return nil, decimal.Zero, err
+	}
+	if err := exigirActor(actorID, fmt.Sprintf("distribuir el rendimiento %s/%s", circuito, vigencia)); err != nil {
+		return nil, decimal.Zero, err
+	}
+	resultado, err := b.Resultados.ResultadoPorProceso(ctx, procesoOrigenID)
 	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento sobre %q: %w", procesoID, err)
+		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento sobre %q: %w", procesoOrigenID, err)
 	}
 
 	var nuevas []reparto.LineaTitular
 	var residuo decimal.Decimal
-	err = b.Rendimientos.ActualizarMontoRendimiento(ctx, circuito, vigencia, procesoID,
-		func(montoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
-			var errDist error
-			nuevas, residuo, errDist = reparto.DistribuirSobreProporciones(montoActual, resultado.Titulares)
-			if errDist != nil {
-				return decimal.Decimal{}, nil, errDist
-			}
-			return residuo, nuevas, nil
+	err = b.enUnidad(ctx, func(ctx context.Context) error {
+		origen, destino, errCorr := b.dosCorridas(ctx, procesoOrigenID, procesoDestinoID)
+		if errCorr != nil {
+			return errCorr
+		}
+		if errCirc := reparto.ExigirMismoCircuito(circuito, reparto.Circuito(origen.Circuito), reparto.Circuito(destino.Circuito)); errCirc != nil {
+			return errCirc
+		}
+		errDist := b.Rendimientos.ActualizarMontoRendimiento(ctx, circuito, vigencia, procesoOrigenID,
+			func(montoActual decimal.Decimal) (decimal.Decimal, []reparto.LineaTitular, error) {
+				var errRep error
+				nuevas, residuo, errRep = reparto.DistribuirSobreProporciones(montoActual, resultado.Titulares)
+				if errRep != nil {
+					return decimal.Decimal{}, nil, errRep
+				}
+				return residuo, nuevas, nil
+			})
+		if errDist != nil {
+			return fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, errDist)
+		}
+		return b.asentarDosCorridas(ctx, HechoRendimientosDistribuidos, procesoDestinoID, actorID, asientoRendimientosDistribuidos{
+			Origen: origen, Destino: destino, Circuito: string(circuito), Vigencia: vigencia,
+			Lineas: lineasAsentadas(nuevas),
 		})
+	})
 	if err != nil {
-		return nil, decimal.Zero, fmt.Errorf("distribuir rendimiento %s/%s: %w", circuito, vigencia, err)
+		return nil, decimal.Zero, err
 	}
 	return nuevas, residuo, nil
 }

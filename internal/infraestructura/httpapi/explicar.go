@@ -127,6 +127,16 @@ type explicacionJSON struct {
 	Deducciones    []deduccionLinajeJSON `json:"deducciones"`
 	Firmas         []firmaLinajeJSON     `json:"firmas"`
 	Faltantes      []string              `json:"faltantes"`
+	// Origen y destino solo viajan en una cifra liberada o un rendimiento (#177).
+	Origen  *corridaJSON `json:"origen,omitempty"`
+	Destino *corridaJSON `json:"destino,omitempty"`
+}
+
+func aCorridaJSON(c *aplicacion.CorridaLinaje) *corridaJSON {
+	if c == nil {
+		return nil
+	}
+	return &corridaJSON{ProcesoID: c.ProcesoID, Periodo: c.Periodo, Circuito: c.Circuito}
 }
 
 func aReporteLinajeJSON(r aplicacion.ReporteAsentado) reporteLinajeJSON {
@@ -151,6 +161,8 @@ func aExplicacionJSON(x aplicacion.Explicacion) explicacionJSON {
 		Neto: x.Neto.StringFixed(2), Bruto: x.Bruto.StringFixed(2),
 		Retenida: x.Retenida, Motivo: x.Motivo,
 		Corrida: corridaJSON{ProcesoID: x.Corrida.ProcesoID, Periodo: x.Corrida.Periodo, Circuito: x.Corrida.Circuito},
+		Origen:  aCorridaJSON(x.Origen),
+		Destino: aCorridaJSON(x.Destino),
 		Bolsa:   bolsaLinajeJSON{ID: x.Bolsa.ID, UsuarioID: x.Bolsa.UsuarioID, Bruto: x.Bolsa.Bruto.StringFixed(2)},
 		Reporte: aReporteLinajeJSON(x.Reporte),
 		Obra:    obraLinajeJSON{ID: x.Obra.ID, Titulo: x.Obra.Titulo, Escalon: x.Obra.Escalon, Puntaje: x.Obra.Puntaje, Puntos: x.Obra.Puntos},

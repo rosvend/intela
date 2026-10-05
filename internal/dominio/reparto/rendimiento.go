@@ -1,6 +1,7 @@
 package reparto
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -13,6 +14,20 @@ import (
 // vigenciaValida es el ano de la comunicacion publica (RD 10.1): cuatro
 // digitos, nada mas.
 var vigenciaValida = regexp.MustCompile(`^[0-9]{4}$`)
+
+// ErrCircuitoCruzado: RD 10.3 separa las inversiones del recaudo nacional y
+// las del internacional para saber a que reparto corresponde cada
+// rendimiento. Un rendimiento se reparte sobre una corrida de su circuito y
+// se paga en otra del mismo.
+var ErrCircuitoCruzado = errors.New("el rendimiento no se reparte fuera de su circuito")
+
+// ExigirMismoCircuito rechaza repartir o pagar un rendimiento en una corrida de otro circuito (RD 10.3).
+func ExigirMismoCircuito(rendimiento, origen, destino Circuito) error {
+	if origen != rendimiento || destino != rendimiento {
+		return fmt.Errorf("%w: rendimiento %q, origen %q, destino %q", ErrCircuitoCruzado, rendimiento, origen, destino)
+	}
+	return nil
+}
 
 // PoolRendimiento son los rendimientos financieros de un (circuito, vigencia)
 // (RD 10). Vigencia es el ano de la comunicacion publica que se reparte, no

@@ -79,6 +79,9 @@ type Casos struct {
 	Resolucion     ResolucionIdentificacion
 	Explicar       Explicador
 	Ingresos       ConsultaIngresos
+	// Bolsas no tiene ruta: la agrega #34. Queda cableada para que la
+	// liberacion y su asiento compartan unidad (#177).
+	Bolsas aplicacion.BolsasAccesorias
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -109,6 +112,7 @@ type API struct {
 	resolucion     ResolucionIdentificacion
 	explicar       Explicador
 	ingresos       ConsultaIngresos
+	bolsas         aplicacion.BolsasAccesorias
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -145,6 +149,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		resolucion:     casos.Resolucion,
 		explicar:       casos.Explicar,
 		ingresos:       casos.Ingresos,
+		bolsas:         casos.Bolsas,
 		opts:           opts,
 		log:            log,
 	}
