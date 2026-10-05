@@ -489,12 +489,63 @@ func snapshotDesdeTablaCongelada(ctx context.Context, ej ejecutor, id string) (r
 	return snap, nil
 }
 
+// unidadesConocidas es la etiqueta de escala de cada clave que este binario
+// sabe pintar. Vive al lado de las clausulas y no en la pantalla: escalaValor
+// ya decidio aqui si 0.20 es una fraccion o un porcentaje, y quien liste no
+// tiene que reaprenderlo (#151).
+//
+// Una clave nueva que no este en el mapa sale como [aplicacion.UnidadCruda].
+// El test TestUnidadDeCubreCadaClausulaDelSnapshot hace que eso no pase en
+// silencio para las clausulas del snapshot.
+var unidadesConocidas = map[string]string{
+	"deduccion.administrativa": aplicacion.UnidadFraccion,
+	"deduccion.social":         aplicacion.UnidadFraccion,
+	"reserva.errores_tecnicos": aplicacion.UnidadFraccion,
+	// 0.80 es el 80 % artistico (RD 9.1.1(c)), guardado como fraccion. El
+	// motor lo multiplica directo, pero pintarlo al lado de un porcentaje
+	// 0-100 sin etiqueta es el mismo error de escala.
+	"duracion.artistica_pct": aplicacion.UnidadFraccion,
+
+	"grupo.privados_pct":      aplicacion.UnidadPorcentaje,
+	"grupo.regionales_pct":    aplicacion.UnidadPorcentaje,
+	"grupo.premium_pct":       aplicacion.UnidadPorcentaje,
+	"grupo.lideres_pct":       aplicacion.UnidadPorcentaje,
+	"grupo.estandar_pct":      aplicacion.UnidadPorcentaje,
+	"asignacion.terceros_pct": aplicacion.UnidadPorcentaje,
+
+	"ponderacion.cinematografica": aplicacion.UnidadMultiplicador,
+	"ponderacion.unitario":        aplicacion.UnidadMultiplicador,
+	"ponderacion.serie":           aplicacion.UnidadMultiplicador,
+	"ponderacion.sketches":        aplicacion.UnidadMultiplicador,
+	"ott.wa":                      aplicacion.UnidadMultiplicador,
+	"ott.wb":                      aplicacion.UnidadMultiplicador,
+	"ott.wc":                      aplicacion.UnidadMultiplicador,
+
+	"duracion.minutos_hora_tv":  aplicacion.UnidadMinutos,
+	"matching.umbral":           aplicacion.UnidadUmbral,
+	"matching.umbral_banda":     aplicacion.UnidadUmbral,
+	reparto.ClaveBaseCineTeatro: aplicacion.UnidadTexto,
+}
+
+// unidadDe etiqueta la escala de una clave. cambio.* es una familia: cada
+// moneda nueva no necesita una entrada propia.
+func unidadDe(clave string) string {
+	if strings.HasPrefix(clave, "cambio.") {
+		return aplicacion.UnidadTasaCambio
+	}
+	if u, ok := unidadesConocidas[clave]; ok {
+		return u
+	}
+	return aplicacion.UnidadCruda
+}
+
 // Vigentes lista los parametros que rigen en `ahora`, con su procedencia.
 //
 // Es la lectura de administracion del ADR 0004, no la del motor: por eso
 // devuelve [aplicacion.FilaParametro] con la vigencia y el organo, y no un
 // snapshot. El valor va en la misma forma canonica que entra en el id, para
-// que la lista y lo congelado se puedan comparar caracter a caracter.
+// que la lista y lo congelado se puedan comparar caracter a caracter. Unidad
+// etiqueta esa escala (#151): el valor crudo no se convierte.
 //
 // ORDER BY aqui es presentacion y puede ir en SQL; el orden del que cuelga el
 // id NO, y por eso lo fija [consumidos] en Go. Ver su comentario.
@@ -526,6 +577,7 @@ func (s *Store) Vigentes(ctx context.Context, ahora time.Time) ([]aplicacion.Fil
 		}
 		// La misma forma que entra en el id, texto incluido (ver texto()).
 		f.Valor = parametroResuelto{valor: valor.Decimal, valorTexto: deref(valorTexto)}.texto()
+		f.Unidad = unidadDe(f.Clave)
 		out = append(out, f)
 	}
 	// No es opcional: un fallo a mitad de stream sale solo por aqui, y sin

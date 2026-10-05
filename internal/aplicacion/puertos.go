@@ -757,14 +757,42 @@ type ParametrosNormativos interface {
 // ella: es la pantalla de administracion del ADR 0004. El adaptador lo entrega
 // en la misma forma canonica que entra en el id del snapshot, para que lo que
 // se ve en la lista y lo que se congelo sean comparables caracter a caracter.
+//
+// Unidad dice en que escala esta ese valor crudo. parametros.valor no usa una
+// sola: deduccion.administrativa guarda 0.200000 (una fraccion, 20 %) y
+// grupo.privados_pct guarda 50.000000 (ya un porcentaje). Sin la etiqueta, la
+// pantalla de administracion pintaria las dos como si fueran lo mismo (#151).
+// El valor no se reescala: sigue siendo el que entra en el digest del id.
 type FilaParametro struct {
 	Clave           string
 	Valor           string
+	Unidad          string
 	VigenteDesde    time.Time
 	VigenteHasta    *time.Time
 	OrganoAprobador string
 	Reglamento      string
 }
+
+// Unidades de [FilaParametro.Unidad]. El pintor elige el formato; no vuelve a
+// aplicar la conversion de escalaValor, que vive en el adaptador.
+const (
+	// UnidadFraccion: la columna trae 0-1. 0.200000 es 20 %.
+	UnidadFraccion = "fraccion"
+	// UnidadPorcentaje: la columna ya esta en 0-100. 50.000000 es 50 %.
+	UnidadPorcentaje = "porcentaje"
+	// UnidadMultiplicador: coeficiente que el motor usa tal cual (ponderacion, OTT).
+	UnidadMultiplicador = "multiplicador"
+	// UnidadMinutos: una duracion en minutos, no un porcentaje.
+	UnidadMinutos = "minutos"
+	// UnidadUmbral: similitud 0-1 del matching. No es una fraccion de dinero.
+	UnidadUmbral = "umbral"
+	// UnidadTasaCambio: unidades de moneda local por una unidad extranjera (cambio.*).
+	UnidadTasaCambio = "tasa_cambio"
+	// UnidadTexto: la fila guarda valor_texto, no una cifra.
+	UnidadTexto = "texto"
+	// UnidadCruda: clave sin clasificar. No hay que asumir que es un porcentaje.
+	UnidadCruda = "cruda"
+)
 
 // CompuertaAnomalias dice cuantas anomalias criticas abiertas tiene un periodo tras evaluarlo, y cuantas se
 // aceptaron tal cual sin corregir el dato (#164); nunca cuenta sin mirar (ADR 0021).

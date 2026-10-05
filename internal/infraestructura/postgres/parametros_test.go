@@ -1177,6 +1177,30 @@ func TestLaBaseRechazaDosVigenciasSolapadasDeLaMismaClave(t *testing.T) {
 	}
 }
 
+func TestUnidadDeCubreCadaClausulaDelSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, c := range clausulasDelSnapshot {
+		if unidadDe(c.clave) == aplicacion.UnidadCruda {
+			t.Errorf("%s quedo en unidad cruda: la pantalla no sabria que esta pintando", c.clave)
+		}
+	}
+	if unidadDe("deduccion.administrativa") != aplicacion.UnidadFraccion {
+		t.Errorf("deduccion.administrativa = %q", unidadDe("deduccion.administrativa"))
+	}
+	if unidadDe("grupo.privados_pct") != aplicacion.UnidadPorcentaje {
+		t.Errorf("grupo.privados_pct = %q", unidadDe("grupo.privados_pct"))
+	}
+	if unidadDe("cambio.USD") != aplicacion.UnidadTasaCambio || unidadDe("cambio.EUR") != aplicacion.UnidadTasaCambio {
+		t.Error("cambio.* tiene que etiquetarse como tasa, no como porcentaje")
+	}
+	if unidadDe("cine_teatro.base") != aplicacion.UnidadTexto {
+		t.Errorf("cine_teatro.base = %q", unidadDe("cine_teatro.base"))
+	}
+	if unidadDe("clave.que.no.existe") != aplicacion.UnidadCruda {
+		t.Error("una clave desconocida no puede heredar la escala de otra")
+	}
+}
+
 func TestVigentesDevuelveLoQueRigeConSuProcedencia(t *testing.T) {
 	store, pool := colaVacia(t)
 	sembrarParametros(t, pool, "2024-01-01")
@@ -1202,6 +1226,15 @@ func TestVigentesDevuelveLoQueRigeConSuProcedencia(t *testing.T) {
 	// lista y lo congelado se puedan comparar caracter a caracter.
 	if viva.Valor != "0.210000" {
 		t.Errorf("Valor = %q, se esperaba %q", viva.Valor, "0.210000")
+	}
+	// El valor sigue crudo (#151). La unidad es lo que impide pintarlo como
+	// si fuera el 0-100 de grupo.privados_pct.
+	if viva.Unidad != aplicacion.UnidadFraccion {
+		t.Errorf("Unidad de deduccion.administrativa = %q, se esperaba %q", viva.Unidad, aplicacion.UnidadFraccion)
+	}
+	g := slices.IndexFunc(filas, func(f aplicacion.FilaParametro) bool { return f.Clave == "grupo.privados_pct" })
+	if g < 0 || filas[g].Unidad != aplicacion.UnidadPorcentaje || filas[g].Valor != "50.000000" {
+		t.Errorf("grupo.privados_pct = %+v, se esperaba valor crudo 50.000000 y unidad porcentaje", filas[g])
 	}
 	if viva.VigenteHasta != nil {
 		t.Errorf("VigenteHasta = %v, el tramo abierto no tiene fin", viva.VigenteHasta)
