@@ -222,7 +222,10 @@ describe("Inicio de staff", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Qué significa Obras en reserva" }),
     );
-    expect(screen.getByRole("dialog").textContent).toMatch(/no suman 100%/);
+    const ayuda = screen.getByRole("dialog").textContent;
+    expect(ayuda).toMatch(/sin declaración/);
+    expect(ayuda).toMatch(/no suman 100%/);
+    expect(ayuda).toMatch(/sin IPI/);
   });
 
   it("sin bolsas registradas el recaudo usa datos de demostración y lo dice", async () => {

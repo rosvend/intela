@@ -40,3 +40,30 @@ export function proporciones(importes: string[]): number[] {
   if (total === 0) return valores.map(() => 0);
   return valores.map((v) => Math.round((v / total) * 10000) / 100);
 }
+
+/** Suma exacta en BigInt con toda la precision; redondea una vez a centavos, lejos de cero. Lo ilegible lanza RangeError. */
+export function sumarImportes(importes: readonly string[]): string {
+  const leidos = importes.map((importe) => {
+    const m = DECIMAL.exec(importe.trim());
+    if (!m)
+      throw new RangeError(`importe ilegible: ${JSON.stringify(importe)}`);
+    const [, signo, entero, fraccion = ""] = m;
+    return {
+      negativo: Boolean(signo),
+      digitos: entero + fraccion,
+      escala: fraccion.length,
+    };
+  });
+  const escala = Math.max(2, ...leidos.map((l) => l.escala));
+  let total = 0n;
+  for (const l of leidos) {
+    const valor = BigInt(l.digitos) * 10n ** BigInt(escala - l.escala);
+    total += l.negativo ? -valor : valor;
+  }
+  const negativo = total < 0n;
+  const divisor = 10n ** BigInt(escala - 2);
+  const abs = negativo ? -total : total;
+  const centavos = (abs + divisor / 2n) / divisor;
+  const resto = (centavos % 100n).toString().padStart(2, "0");
+  return `${negativo && centavos > 0n ? "-" : ""}${centavos / 100n}.${resto}`;
+}

@@ -1,5 +1,7 @@
 // Traducciones de datos del backend a lenguaje de escritor. Sin aritmetica en float sobre dinero.
 
+import { sumarImportes } from "../ui/dinero";
+
 const MESES = [
   "enero",
   "febrero",
@@ -74,25 +76,6 @@ export function estadoDeObra(estado: string): EstadoObra {
   }
   if (e === "completa") return { tipo: "lista", etiqueta: "Lista para pagar" };
   return { tipo: "otro", etiqueta: estado };
-}
-
-function aCentavos(importe: string): bigint {
-  const m = /^(-)?(\d+)(?:\.(\d+))?$/.exec(importe.trim());
-  if (!m) return 0n;
-  const cent =
-    BigInt(m[2]) * 100n + BigInt((m[3] ?? "").padEnd(2, "0").slice(0, 2));
-  return m[1] ? -cent : cent;
-}
-
-function deCentavos(c: bigint): string {
-  const neg = c < 0n;
-  const abs = neg ? -c : c;
-  return `${neg ? "-" : ""}${abs / 100n}.${(abs % 100n).toString().padStart(2, "0")}`;
-}
-
-/** Suma exacta de importes decimales en centavos (BigInt). */
-export function sumarImportes(importes: string[]): string {
-  return deCentavos(importes.reduce((t, v) => t + aCentavos(v), 0n));
 }
 
 export type NetoDeObra = { obra_id: string; titulo: string; neto: string };

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  formatearEntero,
-  formatearImporte,
-  sumarImportes,
-  tiempoRelativo,
-} from "./formato";
+import { formatearEntero, formatearImporte, tiempoRelativo } from "./formato";
 
 describe("formatearEntero", () => {
   it("agrupa miles con locale es-CO", () => {
@@ -25,24 +20,6 @@ describe("formatearImporte", () => {
 
   it("respeta el signo negativo", () => {
     expect(formatearImporte("-50.5")).toBe("-$ 50,50");
-  });
-});
-
-describe("sumarImportes", () => {
-  it("suma strings decimales sin perder centavos", () => {
-    expect(sumarImportes(["0.10", "0.20"])).toBe("0.30");
-    expect(sumarImportes(["600000000.00", "350000000", "40000000.5"])).toBe(
-      "990000000.50",
-    );
-  });
-
-  it("una lista vacia suma cero y un importe ilegible no cuenta", () => {
-    expect(sumarImportes([])).toBe("0.00");
-    expect(sumarImportes(["10", "abc"])).toBe("10.00");
-  });
-
-  it("respeta los negativos", () => {
-    expect(sumarImportes(["-5.25", "1"])).toBe("-4.25");
   });
 });
 

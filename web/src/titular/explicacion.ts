@@ -4,7 +4,8 @@ import {
   nombreConcepto,
   type CitaReglamento,
 } from "../reglamento";
-import { fechaLlana, numeroLlano, sumarImportes } from "./presentacion";
+import { sumarImportes } from "../ui/dinero";
+import { fechaLlana, numeroLlano } from "./presentacion";
 
 export type ParteDelBruto = {
   id: string;

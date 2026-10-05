@@ -1,5 +1,7 @@
 import { formatearCOP } from "../ui/dinero";
 
+// Reexporta la unica suma de dinero (ui/dinero) para src/reparto, que aun importa de aqui.
+
 export function formatearEntero(n: number): string {
   return new Intl.NumberFormat("es-CO").format(n);
 }
@@ -35,24 +37,6 @@ export function formatearInstante(iso: string): string {
 /** Importe neto como string decimal, en pesos colombianos. */
 export function formatearImporte(neto: string): string {
   return formatearCOP(neto);
-}
-
-const DECIMAL = /^(-)?(\d+)(?:\.(\d{1,2}))?\d*$/;
-
-/** Suma exacta de importes decimales (centavos en BigInt); lo ilegible no cuenta. */
-export function sumarImportes(importes: readonly string[]): string {
-  let centavos = 0n;
-  for (const importe of importes) {
-    const m = DECIMAL.exec(importe.trim());
-    if (!m) continue;
-    const [, signo, entero, fraccion = ""] = m;
-    const valor = BigInt(entero) * 100n + BigInt((fraccion + "00").slice(0, 2));
-    centavos += signo ? -valor : valor;
-  }
-  const negativo = centavos < 0n;
-  const abs = negativo ? -centavos : centavos;
-  const resto = (abs % 100n).toString().padStart(2, "0");
-  return `${negativo ? "-" : ""}${abs / 100n}.${resto}`;
 }
 
 const RELATIVO = new Intl.RelativeTimeFormat("es-CO", { numeric: "auto" });

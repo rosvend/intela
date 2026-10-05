@@ -4,6 +4,7 @@ import {
   formatearCOP,
   formatearCOPCompacto,
   proporciones,
+  sumarImportes,
 } from "./dinero";
 
 describe("formatearCOP", () => {
@@ -57,5 +58,41 @@ describe("aNumero", () => {
   it("lee el decimal o devuelve 0", () => {
     expect(aNumero("12.5")).toBe(12.5);
     expect(aNumero("x")).toBe(0);
+  });
+});
+
+describe("sumarImportes", () => {
+  it("suma strings decimales en centavos exactos, sin pasar por float", () => {
+    expect(sumarImportes(["0.10", "0.20"])).toBe("0.30");
+    expect(sumarImportes(["600000000.00", "350000000", "40000000.5"])).toBe(
+      "990000000.50",
+    );
+    expect(sumarImportes(["123456789012345678.99", "0.01"])).toBe(
+      "123456789012345679.00",
+    );
+  });
+
+  it("una lista vacia suma cero", () => {
+    expect(sumarImportes([])).toBe("0.00");
+  });
+
+  it("respeta los negativos", () => {
+    expect(sumarImportes(["4800.00", "-1200.00"])).toBe("3600.00");
+    expect(sumarImportes(["-5.25", "1"])).toBe("-4.25");
+  });
+
+  it("suma con toda la precision y redondea una vez, lejos de cero, como StringFixed(2)", () => {
+    expect(sumarImportes(["1.239"])).toBe("1.24");
+    expect(sumarImportes(["0.004", "0.004"])).toBe("0.01");
+    expect(sumarImportes(["0.005"])).toBe("0.01");
+    expect(sumarImportes(["-0.005"])).toBe("-0.01");
+    expect(sumarImportes(["0.0049"])).toBe("0.00");
+    expect(sumarImportes(["60.0000"])).toBe("60.00");
+  });
+
+  it("un importe ilegible lanza: el dinero no se descarta en silencio", () => {
+    for (const ilegible of ["abc", "", "1e5", "1,5", "NaN", "1."]) {
+      expect(() => sumarImportes(["10", ilegible])).toThrow(RangeError);
+    }
   });
 });

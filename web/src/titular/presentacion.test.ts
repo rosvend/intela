@@ -9,7 +9,6 @@ import {
   numeroLlano,
   porcentajeLlano,
   primerNombre,
-  sumarImportes,
 } from "./presentacion";
 
 describe("nombrePeriodo", () => {
@@ -70,14 +69,6 @@ describe("estadoDeObra", () => {
 
   it("un estado desconocido no se disfraza de pagable", () => {
     expect(estadoDeObra("otra-cosa").tipo).toBe("otro");
-  });
-});
-
-describe("sumarImportes", () => {
-  it("suma decimales en centavos exactos, sin pasar por float", () => {
-    expect(sumarImportes(["0.10", "0.20"])).toBe("0.30");
-    expect(sumarImportes(["4800.00", "-1200.00"])).toBe("3600.00");
-    expect(sumarImportes([])).toBe("0.00");
   });
 });
 

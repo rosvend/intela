@@ -75,7 +75,7 @@ export default function TableroAdministrador({
         <Tarjeta
           titulo="Obras en reserva"
           icono={<LockClosedIcon />}
-          ayuda="Los porcentajes de la declaración de obra no suman 100%. Mientras no se corrija, no se reparte nada de esa obra: el total queda en reserva (RD 13.1.3)."
+          ayuda="Obras sin declaración, cuyos porcentajes no suman 100% o con una parte sin IPI. Mientras no se corrija, no se reparte nada de esa obra: el total queda en reserva (RD 13.1.3)."
           to={ve("/catalogo") ? "/catalogo" : undefined}
           etiquetaEnlace="Ir al catálogo"
           recurso={tablero.obrasEnReserva}

@@ -641,10 +641,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Obras declaradas con declaracion incompleta
-         * @description Obras con declaracion vigente cuyo estado es `incompleta` (no suma
-         *     100%, o a una parte le falta el IPI). Se retiene el total en reserva
-         *     (`R-04`, `RD 13.1.3`). Una obra sin ninguna declaracion no cuenta.
+         * Obras del catalogo con declaracion incompleta
+         * @description Obras del catalogo cuyo estado es `incompleta`: sin ninguna
+         *     declaracion, porcentajes que no suman 100%, o una parte sin IPI. Se
+         *     retiene el total en reserva (`R-04`, `RD 13.1.3`). Es el mismo
+         *     criterio del motor de reparto, de las anomalias y del catalogo.
          */
         get: operations["tableroObrasEnReserva"];
         put?: never;
@@ -731,8 +732,10 @@ export interface paths {
         /**
          * Resumen del ultimo periodo liquidado del titular
          * @description Neto sumado y numero de obras del ultimo periodo con lineas de
-         *     liquidacion del titular autenticado. Las mismas cifras netas que
-         *     `/mis-ingresos`.
+         *     liquidacion del titular autenticado. Solo cuentan las corridas que ya
+         *     cerraron la compuerta de verificacion (llegaron a `liquidacion_final`,
+         *     ADR 0024): una corrida sin firmar no suma ni define el periodo. Una
+         *     obra repartida por dos bolsas del periodo cuenta una vez.
          */
         get: operations["tableroUltimaLiquidacion"];
         put?: never;
@@ -5521,7 +5524,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description El titular no tiene lineas de liquidacion. */
+            /** @description El titular no tiene lineas de corridas firmadas. */
             404: {
                 headers: {
                     [name: string]: unknown;

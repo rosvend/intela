@@ -1,5 +1,5 @@
 import type { components } from "../contrato";
-import { sumarImportes } from "./formato";
+import { sumarImportes } from "../ui/dinero";
 
 export type Bolsa = components["schemas"]["Bolsa"];
 

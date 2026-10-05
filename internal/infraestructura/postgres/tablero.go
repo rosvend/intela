@@ -47,25 +47,37 @@ func (s *Store) ObrasDeclaradasDe(ctx context.Context, titularID string) ([]apli
 	return obras, nil
 }
 
-// UltimaLiquidacionDe suma las lineas del titular en su ultimo periodo; sin lineas es ErrNoEncontrado.
+// LineasDeTitular trae las lineas netas del titular con periodo y etapa de su corrida; filtra y agrega el caso de uso.
 // rt.importe es el neto, el mismo que sirve /mis-ingresos.
-func (s *Store) UltimaLiquidacionDe(ctx context.Context, titularID string) (aplicacion.ResumenLiquidacion, error) {
-	var r aplicacion.ResumenLiquidacion
-	err := s.ejecutorDe(ctx).QueryRow(ctx, `
-		WITH lineas AS (
-		  SELECT p.periodo, rt.obra_id, rt.importe
-		    FROM resultados_titular rt
-		    JOIN procesos p ON p.id = rt.proceso_id
-		   WHERE rt.titular_id = $1
-		)
-		SELECT periodo, SUM(importe), COUNT(DISTINCT obra_id)
-		  FROM lineas
-		 WHERE periodo = (SELECT MAX(periodo) FROM lineas)
-		 GROUP BY periodo`, titularID).Scan(&r.Periodo, &r.Neto, &r.Obras)
+func (s *Store) LineasDeTitular(ctx context.Context, titularID string) ([]aplicacion.LineaDeTitular, error) {
+	filas, err := s.ejecutorDe(ctx).Query(ctx, `
+		SELECT p.periodo, p.circuito, p.etapa, rt.obra_id, rt.importe
+		  FROM resultados_titular rt
+		  JOIN procesos p ON p.id = rt.proceso_id
+		 WHERE rt.titular_id = $1
+		 ORDER BY p.periodo, p.id, rt.obra_id`, titularID)
 	if err != nil {
-		return aplicacion.ResumenLiquidacion{}, traducirError(err, "ultima liquidacion de %q", titularID)
+		return nil, traducirError(err, "lineas de %q", titularID)
 	}
-	return r, nil
+	defer filas.Close()
+
+	var lineas []aplicacion.LineaDeTitular
+	for filas.Next() {
+		var (
+			l               aplicacion.LineaDeTitular
+			circuito, etapa string
+		)
+		if err := filas.Scan(&l.Periodo, &circuito, &etapa, &l.ObraID, &l.Neto); err != nil {
+			return nil, traducirError(err, "escanear linea de %q", titularID)
+		}
+		l.Circuito = reparto.Circuito(circuito)
+		l.Etapa = reparto.Etapa(etapa)
+		lineas = append(lineas, l)
+	}
+	if err := filas.Err(); err != nil {
+		return nil, traducirError(err, "lineas de %q", titularID)
+	}
+	return lineas, nil
 }
 
 // CargasPendientes cuenta los reportes con alguna fila que la cascada aun no proceso.
