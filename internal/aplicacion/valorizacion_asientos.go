@@ -103,8 +103,8 @@ type AsientoObraValorizada struct {
 	Motivo      string                `json:"motivo,omitempty"`
 	Declaracion *DeclaracionAsentada  `json:"declaracion"`
 	Titulares   []TitularAsentado     `json:"titulares"`
-	Usos        []IdentificacionDeUso `json:"usos"`
-	// Valorizacion es la aritmetica de los puntos de cada uso (#187). Un
+	Usos        []IdentificacionDeUso `json:"usos"` // solo los usos que ponderaron (R-27, #206)
+	// Valorizacion es la aritmetica de los puntos de cada uso que pondero (#187). Un
 	// asiento anterior a #187 no la trae y Explicar devuelve lista vacia: no
 	// se reconstruye (ADR 0006). Sin cota de usos: lo acotado es el peso de
 	// cada uno (TestValorizacionDeUsoPesaLoDocumentado).
@@ -191,6 +191,10 @@ func asientosDeValorizacion(e entradaValorizacion) ([]pendiente, error) {
 		}
 		if e.motor[i].ObraID != u.Uso.ObraID {
 			return nil, fmt.Errorf("uso %q: obra del motor %q: %w", u.Uso.ID, e.motor[i].ObraID, ErrLinajeIncompleto)
+		}
+		// R-27 (RD 9.5, #206): el uso que el motor no pondero no se itemiza.
+		if !reparto.Pondera(e.motor[i]) {
+			continue
 		}
 		dg, err := reparto.DesglosarUso(e.motor[i], e.snap)
 		if err != nil {
