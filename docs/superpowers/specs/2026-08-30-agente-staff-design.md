@@ -96,7 +96,7 @@ dominio saltándose `aplicacion` repetiría exactamente el error que
 | `explicar_cifra` | `ExplicarCifra` (#38) | Linaje completo de una cifra/asiento |
 | `buscar_obra` | consulta de catálogo (Sprint 3/4) | Buscar obra por título/ID, estado de declaración |
 | `estado_declaracion` | nuevo: `ConsultarEstadoDeclaracion` (envuelve `RepositorioRepertorio.DeclaracionDeObra` + `repertorio.Declaracion.Estado()`) | Si los splits de una obra suman 100%, o `declaracion_incompleta` |
-| `listar_oni` | nuevo: `ConsultarONI` (envuelve el puerto `RepositorioONI.Listar` ya existente) | Cola de obras no identificadas, filtrable |
+| `listar_oni` | nuevo: `ConsultarONI` (lee la cola viva de identificación por el puerto `RepositorioCasosIdentificacion.ListarCasosIdentificacion`; `RepositorioONI.Listar` no existe) | Cola de obras no identificadas, más antiguas primero, sin importes (R-18). Solo `administrador`, igual que `/identificacion/*` en `roles.md`. Filtros: `periodo`, `fuente`, `limite` (1–100) |
 | `estado_corrida` | proceso/aprobaciones (#34) — **ver nota** | En qué etapa de la máquina de estados `RD 13.5` está una corrida |
 
 **Nota sobre `estado_corrida`:** #34, tal como está planteado hoy, solo lista
