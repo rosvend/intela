@@ -56,7 +56,7 @@ arrancar la API. Reemplaza entero el indice del modelo en una transaccion.
   el indexador tienen que usar el mismo `EMBEDDINGS_PROVEEDOR`/`EMBEDDINGS_MODELO`.
 - Pisos de similitud (`internal/infraestructura/embeddings`): 0.2 falso, 0.35 Titan.
   **Provisionales** hasta calibrarlos con preguntas reales del staff.
-- Requiere la extension pgvector (migracion 00029). Local y CI usan
+- Requiere la extension pgvector (migracion 00030). Local y CI usan
   `pgvector/pgvector:0.8.1-pg16`. En RDS PostgreSQL 16 la extension `vector` viene incluida y
   la crea la migracion con el usuario maestro (`rds_superuser`).
 - Si el indice del modelo activo esta vacio, la API deja un `WARN` "indice vacio para el
