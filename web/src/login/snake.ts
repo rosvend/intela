@@ -101,7 +101,7 @@ export const DEFINICIONES: readonly DefinicionSerpiente[] = RUTAS.map(
   (_, ruta) => ({
     ruta,
     fase: 0,
-    velocidad: 0.04,
+    velocidad: 0.2,
     nodos: 56,
     grosor: 7,
     cabeza: 36,

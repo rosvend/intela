@@ -31,15 +31,16 @@ describe("la escena", () => {
     expect([...rutas].sort()).toEqual(RUTAS.map((_, i) => i));
   });
 
-  it("todas van al mismo paso tranquilo y en el mismo sentido", () => {
+  it("todas van al mismo paso, rapido como un motion graphic, y en el mismo sentido", () => {
     // La marca tiene simetria de giro: si una hebra fuera al reves o mas
     // deprisa, el nudo se leeria como cuatro cosas sueltas.
     const v = estadoInicial(ANCHO, ALTO).serpientes.map(
       (s) => s.trayectoria.velocidad,
     );
     for (const x of v) {
-      expect(x).toBeGreaterThan(0);
-      expect(x).toBeLessThan(0.06);
+      // Una vuelta entre 2 y 8 segundos.
+      expect(x).toBeGreaterThanOrEqual(0.125);
+      expect(x).toBeLessThanOrEqual(0.5);
       expect(Math.abs(x - v[0])).toBeLessThan(v[0] * 0.15);
     }
   });
