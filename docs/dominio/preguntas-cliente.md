@@ -247,6 +247,16 @@ Lo que falta confirmar: si el PO quiere el descarte como concepto propio o prefi
 marca de "revisado, no es repertorio" en otra forma; y si el efecto monetario debe ser el de
 R-27 (la parte no existe) o el de `RD 13.8` (la parte queda en reserva hasta que prescriba).
 
+### P-23 Base legal para procesar datos del asistente en AWS fuera de Colombia
+
+Estado: **Abierta**. Duena: area juridica de REDES SGC.
+Pregunta: el asistente (#66) envia a Claude Haiku 4.5 en Amazon Bedrock la conversacion y,
+desde #68/#69, resultados de herramientas que pueden incluir nombres de titulares y cifras.
+Bedrock procesa en us-east-1, us-east-2 o us-west-2 (EE. UU.), dentro de la cuenta de AWS de
+REDES y sin acceso de Anthropic. ¿Tiene eso base legal suficiente bajo la Ley 1581 de 2012
+(transferencia o transmision internacional) y la politica de tratamiento de REDES?
+Mientras tanto: solo herramientas sin datos personales en produccion (ADR 0026).
+
 ## Agenda para la reunion con REDES
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una
 cifra defendible.

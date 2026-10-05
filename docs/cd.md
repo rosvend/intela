@@ -129,20 +129,41 @@ corrida que apunte a otro sitio no puede leerlos. Ademas hace falta la variable 
 `id-token: write` ya se concede, en los dos jobs que lo usan y en ninguno mas — que era exactamente
 la condicion que este documento ponia.
 
-### La clave del asistente
+### El modelo del asistente
 
-El asistente de solo lectura (#66) llama a un modelo de lenguaje. Su clave es la unica credencial
-de aplicacion que entra por el despliegue:
+El asistente de solo lectura (#66) llama a un modelo de lenguaje. En produccion es **Claude
+Haiku 4.5 en Amazon Bedrock** ([ADR 0026](decisiones/0026-asistente-sobre-bedrock.md)):
+`infra/envs/nheo` fija `AGENTE_PROVEEDOR=bedrock` (variable `agente_proveedor`), la Lambda
+llega a Bedrock por el endpoint de interfaz `bedrock-runtime` de `infra/modules/network`
+(~USD 7,20/mes, una AZ) y se autentica con su rol: no hay secreto que cargar.
 
-1. Crear el secreto de repositorio `ANTHROPIC_API_KEY` (Settings -> Secrets and variables ->
-   Actions). `terraform.yml` y `deploy.yml` lo exportan como `TF_VAR_anthropic_api_key`.
-2. `infra/envs/nheo` lo pasa al modulo `api`, que lo inyecta como `ANTHROPIC_API_KEY` en la
-   Lambda. La variable es `sensitive`: el plan que se comenta en el PR la imprime como
-   `(sensitive value)`. Queda, eso si, en el estado de Terraform (bucket cifrado) y en la
-   configuracion de la funcion; moverla a SSM/Secrets Manager es infraestructura nueva que no
-   entra en #66.
-3. Sin el secreto el despliegue no falla: el asistente contesta "no disponible" y el resto de la
-   API sirve igual.
+1. **Prerrequisito de cuenta, una sola vez.** Bedrock exige enviar el formulario de caso de uso
+   de Anthropic (consola de Bedrock -> Model catalog -> Claude Haiku 4.5) antes de invocar sus
+   modelos. Sin el, Converse responde `ResourceNotFoundException: Model use case details have
+   not been submitted for this account` y el asistente contesta "no disponible". El 2026-10-05
+   la cuenta de `nheo` todavia devolvia ese error.
+2. **Permisos.** El rol de `intela-api` solo puede `bedrock:InvokeModel` sobre el perfil
+   `us.anthropic.claude-haiku-4-5-20251001-v1:0`, el modelo base detras de el (us-east-1,
+   us-east-2, us-west-2) y `amazon.titan-embed-text-v2:0`. Cambiar `AGENTE_MODELO` a otro
+   modelo exige ampliar `data.aws_iam_policy_document.bedrock` en `infra/envs/nheo/main.tf`.
+3. **Anthropic directo, opcional.** `ANTHROPIC_API_KEY` sigue declarado (repositorio ->
+   `TF_VAR_anthropic_api_key`, `sensitive`) y se usa solo con `agente_proveedor = "anthropic"`.
+   Desde estas subredes no hay ruta a `api.anthropic.com`, asi que en `nheo` no sirve. Si se
+   usa en otro despliegue, poner un tope de gasto mensual a esa clave en la consola de Anthropic.
+4. Sin proveedor que funcione el despliegue no falla: el asistente contesta "no disponible" y
+   el resto de la API sirve igual.
+
+#### Tope de gasto
+
+- Cada pregunta son hasta 5 llamadas al modelo, de hasta 2048 tokens de salida cada una.
+- El limite de 20 preguntas por usuario por minuto **es por instancia**: vive en la memoria del
+  proceso, y en Lambda cada entorno caliente tiene el suyo. El tope real es 20 x instancias
+  calientes, acotadas por `reserved_concurrency` (10). Un limite compartido es trabajo aparte.
+- El presupuesto de `infra/modules/budget` filtra por la etiqueta `Project=intela`. El endpoint
+  la lleva; **las invocaciones a Bedrock por un perfil del sistema no**, asi que ese
+  presupuesto no ve el gasto del modelo. Crear a mano (o en un PR aparte) un presupuesto de
+  cuenta filtrado por el servicio Amazon Bedrock, y vigilar las cuotas de servicio de Bedrock
+  (tokens y peticiones por minuto del modelo), que son el tope duro.
 
 `AGENTE_PLAZO` (25 s por defecto en el modulo) acota la pregunta entera por debajo del
 `timeout_s` de la Lambda (30 s): al vencer, el usuario recibe un evento `error` en vez de un 502
