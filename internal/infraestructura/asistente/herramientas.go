@@ -12,6 +12,11 @@ func Herramientas(store *postgres.Store) (aplicacion.CatalogoHerramientas, error
 	var hs []aplicacion.Herramienta
 
 	// #67: buscar_reglamento.
+	if h, ok, err := buscarReglamento(store); err != nil {
+		return aplicacion.CatalogoHerramientas{}, err
+	} else if ok {
+		hs = append(hs, h)
+	}
 
 	// #69: estado_corrida y listar_oni.
 

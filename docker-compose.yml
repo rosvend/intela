@@ -42,7 +42,8 @@ x-backend: &backend
 
 services:
   postgres:
-    image: postgres:16.6-alpine
+    # PostgreSQL 16 con pgvector para el indice del reglamento (#67, migracion 00030).
+    image: pgvector/pgvector:0.8.1-pg16
     environment:
       POSTGRES_USER: intela
       POSTGRES_PASSWORD: intela
