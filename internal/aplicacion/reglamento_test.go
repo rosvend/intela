@@ -29,12 +29,12 @@ type almacenFijo struct {
 	indexadas     []SeccionIndexada
 }
 
-func (a *almacenFijo) Buscar(_ context.Context, e Embedding, topK int) ([]CoincidenciaReglamento, error) {
+func (a *almacenFijo) BuscarSecciones(_ context.Context, e Embedding, topK int) ([]CoincidenciaReglamento, error) {
 	a.buscado, a.topK = e, topK
 	return a.coincidencias, nil
 }
 
-func (a *almacenFijo) Reemplazar(_ context.Context, modelo string, ss []SeccionIndexada) error {
+func (a *almacenFijo) IndexarSecciones(_ context.Context, modelo string, ss []SeccionIndexada) error {
 	a.modelo, a.indexadas = modelo, ss
 	return nil
 }
