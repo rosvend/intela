@@ -88,7 +88,7 @@ func partir(md string) ([]aplicacion.SeccionReglamento, error) {
 			continue
 		}
 		// Un numeral abre seccion solo si cuelga de la del archivo y avanza: una referencia hacia atras es texto.
-		if n := reNumeral.FindStringSubmatch(linea); n != nil && strings.HasPrefix(n[1], m[1]+".") {
+		if n := reNumeral.FindStringSubmatch(strings.TrimSpace(linea)); n != nil && strings.HasPrefix(n[1], m[1]+".") {
 			if partes := componentes(n[1]); slices.Compare(partes, ultimo) > 0 {
 				cerrar()
 				actual = aplicacion.SeccionReglamento{Cita: abrev + " " + n[1], Reglamento: nombre, Titulo: strings.TrimSpace(n[2])}
