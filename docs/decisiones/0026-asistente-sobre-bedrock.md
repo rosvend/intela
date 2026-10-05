@@ -59,8 +59,9 @@ se deja el NAT, o se reintroduce un endpoint de interfaz `bedrock-runtime` (~USD
 Las subredes privadas de la Lambda no tenian ruta a internet. `infra/modules/network` crea,
 con `enable_nat` (por defecto `true` en `nheo`): una subred publica, un Internet Gateway, **un**
 NAT Gateway en una sola AZ con su IP elastica y la ruta `0.0.0.0/0` de la tabla privada. El
-security group de las Lambdas pasa de "todo" a 443 hacia cualquier destino y 5432 hacia el
-security group de la base. RDS y la Lambda de migraciones usan rutas internas de la VPC
+security group de las Lambdas **no cambia**: su regla de salida sigue abierta (estrecharla era
+un borrado y la guarda de destruccion de Terraform lo rechaza; con el NAT ya alcanza internet).
+Estrecharla a 443 + 5432 queda como mejora aparte. RDS y la Lambda de migraciones usan rutas internas de la VPC
 (Postgres) y el endpoint gateway de S3; el NAT no interviene en ellas. El endpoint de interfaz
 `bedrock-runtime` de la primera version se elimino: con el NAT es redundante.
 

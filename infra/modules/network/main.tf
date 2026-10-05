@@ -74,24 +74,14 @@ resource "aws_security_group" "lambda" {
   tags = { Name = "${var.name_prefix}-lambda" }
 }
 
-# Egress is narrowed to what the functions use: PostgreSQL inside the VPC and
-# HTTPS (S3 gateway endpoint, and the assistant's model API through the NAT).
-resource "aws_vpc_security_group_egress_rule" "lambda_https" {
+# Left open on purpose (not narrowed): replacing this rule is a delete, which the
+# Terraform destroy guard refuses. With enable_nat the same rule also lets the
+# functions reach the assistant's model API through the NAT.
+resource "aws_vpc_security_group_egress_rule" "lambda_all" {
   security_group_id = aws_security_group.lambda.id
-  description       = "HTTPS to the S3 gateway endpoint and, with the NAT, the assistant's model API"
-  from_port         = 443
-  to_port           = 443
-  ip_protocol       = "tcp"
+  description       = "Outbound to PostgreSQL and the S3 gateway endpoint; with enable_nat also to the internet through the NAT."
+  ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
-}
-
-resource "aws_vpc_security_group_egress_rule" "lambda_postgres" {
-  security_group_id            = aws_security_group.lambda.id
-  description                  = "PostgreSQL to the database security group"
-  from_port                    = 5432
-  to_port                      = 5432
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.database.id
 }
 
 resource "aws_security_group" "database" {
