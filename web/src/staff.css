@@ -1195,3 +1195,10 @@
     transform: none;
   }
 }
+
+/* El signo y la cifra nunca se parten en dos lineas. */
+.corrida-monto,
+.corrida-cifras-valor,
+.panel-corridas .tarjeta-valor {
+  white-space: nowrap;
+}

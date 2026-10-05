@@ -170,6 +170,7 @@
 }
 
 .leyenda-cifra {
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   text-align: right;
@@ -203,7 +204,8 @@
 }
 
 .cifra-valor {
-  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  white-space: nowrap;
+  font-size: clamp(1.5rem, 2.6vw, 2.4rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
