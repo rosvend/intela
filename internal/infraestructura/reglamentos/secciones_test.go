@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"unicode/utf8"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/aplicacion/herramientas"
 )
 
 const md9 = `---
@@ -117,5 +119,20 @@ func TestLeerLosReglamentosReales(t *testing.T) {
 	}
 	if strings.Contains(m["RD 13.1.6"].Texto, "Documentos aportados por REDES SGC") {
 		t.Errorf("RD 13.2 quedo pegado a RD 13.1.6: %q", m["RD 13.1.6"].Texto)
+	}
+}
+
+func TestNingunaSeccionRealSeRecortaAlDevolverla(t *testing.T) {
+	ss, err := Leer(os.DirFS("../../../docs/reglamentos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range ss {
+		if n := utf8.RuneCountInString(s.Texto); n > herramientas.MaxRunasTextoSeccion {
+			t.Errorf("%s tiene %d runas y buscar_reglamento la recortaria a %d", s.Cita, n, herramientas.MaxRunasTextoSeccion)
+		}
+	}
+	if n := utf8.RuneCountInString(porCita(ss)["RD 13.5"].Texto); n < 6000 {
+		t.Errorf("RD 13.5 tiene %d runas; la prueba necesita una seccion real larga", n)
 	}
 }
