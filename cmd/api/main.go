@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/infraestructura/asistente"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
@@ -249,7 +250,7 @@ func ejecutar(log *slog.Logger) error {
 		config.Cadena("AGENTE_MODELO", ""),
 	)
 	log.Info("asistente", slog.String("proveedor", proveedor))
-	herramientas, err := aplicacion.NuevoCatalogoHerramientas()
+	herramientas, err := asistente.Herramientas(store)
 	if err != nil {
 		return err
 	}

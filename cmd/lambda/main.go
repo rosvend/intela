@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/infraestructura/asistente"
 	"github.com/rosvend/intela/internal/infraestructura/config"
 	"github.com/rosvend/intela/internal/infraestructura/cripto"
 	"github.com/rosvend/intela/internal/infraestructura/exportacion"
@@ -282,7 +283,7 @@ func construir() (http.Handler, error) {
 		config.Cadena("AGENTE_MODELO", ""),
 	)
 	registro.Info("asistente", slog.String("proveedor", proveedor))
-	herramientas, err := aplicacion.NuevoCatalogoHerramientas()
+	herramientas, err := asistente.Herramientas(store)
 	if err != nil {
 		return nil, err
 	}
