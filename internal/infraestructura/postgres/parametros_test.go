@@ -1177,6 +1177,73 @@ func TestLaBaseRechazaDosVigenciasSolapadasDeLaMismaClave(t *testing.T) {
 	}
 }
 
+func TestUnidadDeCubreCadaClausulaDelSnapshot(t *testing.T) {
+	t.Parallel()
+
+	// La escala que ya convierte al armar el snapshot tambien protege la
+	// etiqueta. "Ninguna clausula sale cruda" no basta: deduccion.social
+	// pintada como porcentaje seguiria en verde (#212).
+	for _, c := range clausulasDelSnapshot {
+		u := unidadDe(c.clave)
+		if u == aplicacion.UnidadCruda {
+			t.Errorf("%s quedo en unidad cruda: la pantalla no sabria que esta pintando", c.clave)
+		}
+		if c.escala == escalaFraccionAPorcentaje && u != aplicacion.UnidadFraccion {
+			t.Errorf("%s tiene escala fraccion a porcentaje pero unidad %q, se esperaba %q",
+				c.clave, u, aplicacion.UnidadFraccion)
+		}
+		if c.enTexto != nil && u != aplicacion.UnidadTexto {
+			t.Errorf("%s es textual pero unidad %q, se esperaba %q",
+				c.clave, u, aplicacion.UnidadTexto)
+		}
+	}
+
+	// Las claves que siembra semilla/dataset.go, mas cambio.usd en minusculas.
+	// matching.umbral_banda no esta en clausulasDelSnapshot: sin esta fila,
+	// borrarla del mapa saldria cruda y el bucle de arriba no lo veria.
+	// smmlv es pesos, no una escala de clausula, y queda cruda.
+	esperadas := map[string]string{
+		"deduccion.administrativa":    aplicacion.UnidadFraccion,
+		"deduccion.social":            aplicacion.UnidadFraccion,
+		"reserva.errores_tecnicos":    aplicacion.UnidadFraccion,
+		"duracion.artistica_pct":      aplicacion.UnidadFraccion,
+		"grupo.privados_pct":          aplicacion.UnidadPorcentaje,
+		"grupo.regionales_pct":        aplicacion.UnidadPorcentaje,
+		"grupo.premium_pct":           aplicacion.UnidadPorcentaje,
+		"grupo.lideres_pct":           aplicacion.UnidadPorcentaje,
+		"grupo.estandar_pct":          aplicacion.UnidadPorcentaje,
+		"asignacion.terceros_pct":     aplicacion.UnidadPorcentaje,
+		"ponderacion.cinematografica": aplicacion.UnidadMultiplicador,
+		"ponderacion.unitario":        aplicacion.UnidadMultiplicador,
+		"ponderacion.serie":           aplicacion.UnidadMultiplicador,
+		"ponderacion.sketches":        aplicacion.UnidadMultiplicador,
+		"ott.wa":                      aplicacion.UnidadMultiplicador,
+		"ott.wb":                      aplicacion.UnidadMultiplicador,
+		"ott.wc":                      aplicacion.UnidadMultiplicador,
+		"duracion.minutos_hora_tv":    aplicacion.UnidadMinutos,
+		"matching.umbral":             aplicacion.UnidadUmbral,
+		"matching.umbral_banda":       aplicacion.UnidadUmbral,
+		reparto.ClaveBaseCineTeatro:   aplicacion.UnidadTexto,
+		"smmlv":                       aplicacion.UnidadCruda,
+		"cambio.USD":                  aplicacion.UnidadTasaCambio,
+		"cambio.EUR":                  aplicacion.UnidadTasaCambio,
+		"cambio.usd":                  aplicacion.UnidadTasaCambio,
+	}
+	for clave, quiero := range esperadas {
+		if tengo := unidadDe(clave); tengo != quiero {
+			t.Errorf("unidadDe(%s) = %q, se esperaba %q", clave, tengo, quiero)
+		}
+	}
+	for clave := range unidadesConocidas {
+		if _, ok := esperadas[clave]; !ok {
+			t.Errorf("unidadesConocidas tiene %q y la tabla del test no", clave)
+		}
+	}
+	if unidadDe("clave.que.no.existe") != aplicacion.UnidadCruda {
+		t.Error("una clave desconocida no puede heredar la escala de otra")
+	}
+}
+
 func TestVigentesDevuelveLoQueRigeConSuProcedencia(t *testing.T) {
 	store, pool := colaVacia(t)
 	sembrarParametros(t, pool, "2024-01-01")
@@ -1202,6 +1269,18 @@ func TestVigentesDevuelveLoQueRigeConSuProcedencia(t *testing.T) {
 	// lista y lo congelado se puedan comparar caracter a caracter.
 	if viva.Valor != "0.210000" {
 		t.Errorf("Valor = %q, se esperaba %q", viva.Valor, "0.210000")
+	}
+	// El valor sigue crudo (#151). La unidad es lo que impide pintarlo como
+	// si fuera el 0-100 de grupo.privados_pct.
+	if viva.Unidad != aplicacion.UnidadFraccion {
+		t.Errorf("Unidad de deduccion.administrativa = %q, se esperaba %q", viva.Unidad, aplicacion.UnidadFraccion)
+	}
+	g := slices.IndexFunc(filas, func(f aplicacion.FilaParametro) bool { return f.Clave == "grupo.privados_pct" })
+	if g < 0 {
+		t.Fatal("falta grupo.privados_pct en la lista")
+	}
+	if filas[g].Unidad != aplicacion.UnidadPorcentaje || filas[g].Valor != "50.000000" {
+		t.Errorf("grupo.privados_pct = %+v, se esperaba valor crudo 50.000000 y unidad porcentaje", filas[g])
 	}
 	if viva.VigenteHasta != nil {
 		t.Errorf("VigenteHasta = %v, el tramo abierto no tiene fin", viva.VigenteHasta)
