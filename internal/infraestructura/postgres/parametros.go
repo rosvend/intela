@@ -68,13 +68,16 @@ const columnasParametro = `clave, valor, valor_texto, organo, reglamento, vigent
 // [reparto.Snapshot] exige, o si hay que convertirlo al armar el snapshot.
 //
 // Existe porque el Snapshot NO usa una sola unidad (tipos.go:125-129):
-// Admin/Social/Reserva, los grupos de canal y la asignacion a terceros son
-// 0-100, pero ott.w*, ponderacion.* y duracion.artistica_pct son
-// multiplicadores crudos que el motor usa tal cual. Que la unidad sea un
-// campo explicito de la clausula, y no algo que cada setter tenga que
-// recordar, es lo que evita que una clausula nueva se escriba en la unidad
-// equivocada sin que nada lo note: bloqueante 1 de la revision de PR #134 fue
-// exactamente eso, y en silencio.
+// Admin/Social/Reserva llegan como fraccion 0-1 y el Snapshot las exige en
+// 0-100; los grupos de canal y la asignacion a terceros ya vienen en 0-100.
+// ott.w* y ponderacion.* son multiplicadores que el motor usa tal cual.
+// duracion.artistica_pct tambien entra directa -- el motor multiplica el
+// 0.80 sin pasarlo por pctDe -- pero ese 0.80 es una fraccion (80 %), no un
+// multiplicador: la etiqueta de pantalla vive en [unidadesConocidas].
+// Que la escala sea un campo explicito de la clausula, y no algo que cada
+// setter tenga que recordar, es lo que evita que una clausula nueva se
+// escriba en la unidad equivocada sin que nada lo note: bloqueante 1 de la
+// revision de PR #134 fue exactamente eso, y en silencio.
 type escalaValor int
 
 const (
@@ -160,7 +163,9 @@ var clausulasDelSnapshotV1 = []clausula{
 
 	// RD 9.1.1(c): 80% artistico y hora televisiva de 48 minutos. Los aplica
 	// normalizacion al canonizar la fila (duracion.go), multiplicando
-	// directo -- no pasan por pctDe --, asi que van directas.
+	// directo -- no pasan por pctDe --, asi que van directas. El 0.80
+	// guardado sigue siendo una fraccion (80 %): esa etiqueta esta en
+	// [unidadesConocidas], no en esta escala.
 	numerica("duracion.artistica_pct", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.DuracionArtisticaPct = v }),
 	numerica("duracion.minutos_hora_tv", escalaDirecta, func(s *reparto.Snapshot, v decimal.Decimal) { s.MinutosHoraTV = v }),
 
@@ -489,12 +494,66 @@ func snapshotDesdeTablaCongelada(ctx context.Context, ej ejecutor, id string) (r
 	return snap, nil
 }
 
+// unidadesConocidas es la etiqueta de escala de cada clave que este binario
+// sabe pintar. Vive al lado de las clausulas y no en la pantalla: escalaValor
+// ya decidio aqui si 0.20 es una fraccion o un porcentaje, y quien liste no
+// tiene que reaprenderlo (#151).
+//
+// Una clave nueva que no este en el mapa sale como [aplicacion.UnidadCruda].
+// TestUnidadDeCubreCadaClausulaDelSnapshot cruza esta etiqueta con la escala
+// de cada clausula y con la tabla de las claves sembradas: una fraccion
+// pintada como porcentaje no puede salir en verde.
+var unidadesConocidas = map[string]string{
+	"deduccion.administrativa": aplicacion.UnidadFraccion,
+	"deduccion.social":         aplicacion.UnidadFraccion,
+	"reserva.errores_tecnicos": aplicacion.UnidadFraccion,
+	// 0.80 es el 80 % artistico (RD 9.1.1(c)), guardado como fraccion. El
+	// motor lo multiplica directo, pero pintarlo al lado de un porcentaje
+	// 0-100 sin etiqueta es el mismo error de escala.
+	"duracion.artistica_pct": aplicacion.UnidadFraccion,
+
+	"grupo.privados_pct":      aplicacion.UnidadPorcentaje,
+	"grupo.regionales_pct":    aplicacion.UnidadPorcentaje,
+	"grupo.premium_pct":       aplicacion.UnidadPorcentaje,
+	"grupo.lideres_pct":       aplicacion.UnidadPorcentaje,
+	"grupo.estandar_pct":      aplicacion.UnidadPorcentaje,
+	"asignacion.terceros_pct": aplicacion.UnidadPorcentaje,
+
+	"ponderacion.cinematografica": aplicacion.UnidadMultiplicador,
+	"ponderacion.unitario":        aplicacion.UnidadMultiplicador,
+	"ponderacion.serie":           aplicacion.UnidadMultiplicador,
+	"ponderacion.sketches":        aplicacion.UnidadMultiplicador,
+	"ott.wa":                      aplicacion.UnidadMultiplicador,
+	"ott.wb":                      aplicacion.UnidadMultiplicador,
+	"ott.wc":                      aplicacion.UnidadMultiplicador,
+
+	"duracion.minutos_hora_tv":  aplicacion.UnidadMinutos,
+	"matching.umbral":           aplicacion.UnidadUmbral,
+	"matching.umbral_banda":     aplicacion.UnidadUmbral,
+	reparto.ClaveBaseCineTeatro: aplicacion.UnidadTexto,
+}
+
+// unidadDe etiqueta la escala de una clave. cambio.* es una familia: cada
+// moneda nueva no necesita una entrada propia. El prefijo es [prefijoTasa],
+// el mismo con el que se arma el snapshot: si la familia cambia de nombre,
+// la etiqueta cambia con ella.
+func unidadDe(clave string) string {
+	if strings.HasPrefix(clave, prefijoTasa) {
+		return aplicacion.UnidadTasaCambio
+	}
+	if u, ok := unidadesConocidas[clave]; ok {
+		return u
+	}
+	return aplicacion.UnidadCruda
+}
+
 // Vigentes lista los parametros que rigen en `ahora`, con su procedencia.
 //
 // Es la lectura de administracion del ADR 0004, no la del motor: por eso
 // devuelve [aplicacion.FilaParametro] con la vigencia y el organo, y no un
 // snapshot. El valor va en la misma forma canonica que entra en el id, para
-// que la lista y lo congelado se puedan comparar caracter a caracter.
+// que la lista y lo congelado se puedan comparar caracter a caracter. Unidad
+// etiqueta esa escala (#151): el valor crudo no se convierte.
 //
 // ORDER BY aqui es presentacion y puede ir en SQL; el orden del que cuelga el
 // id NO, y por eso lo fija [consumidos] en Go. Ver su comentario.
@@ -526,6 +585,7 @@ func (s *Store) Vigentes(ctx context.Context, ahora time.Time) ([]aplicacion.Fil
 		}
 		// La misma forma que entra en el id, texto incluido (ver texto()).
 		f.Valor = parametroResuelto{valor: valor.Decimal, valorTexto: deref(valorTexto)}.texto()
+		f.Unidad = unidadDe(f.Clave)
 		out = append(out, f)
 	}
 	// No es opcional: un fallo a mitad de stream sale solo por aqui, y sin

@@ -79,8 +79,10 @@ func (p Parametros) Vigentes(ctx context.Context) ([]FilaParametro, error) {
 // lo que regia en enero.
 func (p Parametros) Congelar(ctx context.Context, fechaPeriodo time.Time) (string, reparto.Snapshot, error) {
 	// Sin esta guarda, una fecha cero resuelve contra el ano 1 y el fallo que
-	// sale es "faltan las trece clausulas", que manda a cargar parametros a
-	// quien lo que tiene es una fecha sin rellenar.
+	// sale nombra las clausulas del snapshot que faltan, que manda a cargar
+	// parametros a quien lo que tiene es una fecha sin rellenar. Eran trece
+	// cuando se escribio este comentario; desde #134 el conjunto vigente es
+	// otro (veinte con la base de cine, #194) y el mensaje las nombra.
 	if fechaPeriodo.IsZero() {
 		return "", reparto.Snapshot{}, errors.New("congelar parametros: falta la fecha del periodo")
 	}
