@@ -14,7 +14,7 @@ import {
 } from "./snake";
 
 /**
- * El panel derecho: marcas de Intela recorriendo la ruta del propio logo.
+ * El panel derecho: marcas de Intela recorriendo, cada una, una hebra del logo.
  *
  * # Adorno, y nada mas
  *
@@ -147,24 +147,24 @@ export default function SnakeCanvas() {
       c.restore();
     }
 
-    /** El nudo entero, muy tenue: las serpientes lo recorren y se lee la marca. */
+    /** Todas las hebras, muy tenues: las serpientes las recorren y se lee la marca. */
     function pintarGuia() {
       const c = ctx!;
-      const principal = estado.serpientes[0];
-      if (!principal) return;
-      const puntos = trazo(principal.trayectoria);
       c.save();
       c.globalAlpha = 0.08;
       c.strokeStyle = "#ffffff";
       c.lineCap = "round";
       c.lineJoin = "round";
-      c.lineWidth = principal.grosor;
-      c.beginPath();
-      c.moveTo(puntos[0].x, puntos[0].y);
-      for (let i = 1; i < puntos.length; i++)
-        c.lineTo(puntos[i].x, puntos[i].y);
-      c.lineTo(puntos[0].x, puntos[0].y);
-      c.stroke();
+      for (const s of estado.serpientes) {
+        const puntos = trazo(s.trayectoria);
+        c.lineWidth = s.grosor;
+        c.beginPath();
+        c.moveTo(puntos[0].x, puntos[0].y);
+        for (let i = 1; i < puntos.length; i++)
+          c.lineTo(puntos[i].x, puntos[i].y);
+        c.lineTo(puntos[0].x, puntos[0].y);
+        c.stroke();
+      }
       c.restore();
     }
 

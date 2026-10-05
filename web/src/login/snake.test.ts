@@ -11,7 +11,7 @@ import {
   trazo,
   type GameState,
 } from "./snake";
-import { puntoEn } from "./trazoLogo";
+import { puntoEn, RUTAS } from "./trazoLogo";
 
 const ANCHO = 720;
 const ALTO = 900;
@@ -24,27 +24,33 @@ function correr(segundos: number, hz = 60): GameState {
 }
 
 describe("la escena", () => {
-  it("trae varias serpientes repartidas por la misma ruta", () => {
+  it("cada serpiente recorre su propia hebra de la marca", () => {
     const e = estadoInicial(ANCHO, ALTO);
-    expect(e.serpientes.length).toBeGreaterThan(1);
-    // Desfases y velocidades distintas: dos trazos sincronizados se leen
-    // como un error de repeticion.
-    const fases = new Set(e.serpientes.map((s) => s.trayectoria.fase));
-    const velocidades = new Set(
-      e.serpientes.map((s) => s.trayectoria.velocidad),
-    );
-    expect(fases.size).toBe(e.serpientes.length);
-    expect(velocidades.size).toBe(e.serpientes.length);
+    const rutas = e.serpientes.map((s) => s.trayectoria.ruta);
+    expect(new Set(rutas).size).toBe(e.serpientes.length);
+    expect([...rutas].sort()).toEqual(RUTAS.map((_, i) => i));
   });
 
-  it("las diferencia por grosor y opacidad, para dar profundidad", () => {
-    const e = estadoInicial(ANCHO, ALTO);
-    expect(new Set(e.serpientes.map((s) => s.grosor)).size).toBe(
-      e.serpientes.length,
+  it("todas van al mismo paso tranquilo y en el mismo sentido", () => {
+    // La marca tiene simetria de giro: si una hebra fuera al reves o mas
+    // deprisa, el nudo se leeria como cuatro cosas sueltas.
+    const v = estadoInicial(ANCHO, ALTO).serpientes.map(
+      (s) => s.trayectoria.velocidad,
     );
-    expect(new Set(e.serpientes.map((s) => s.alfa)).size).toBe(
-      e.serpientes.length,
-    );
+    for (const x of v) {
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(0.06);
+      expect(Math.abs(x - v[0])).toBeLessThan(v[0] * 0.15);
+    }
+  });
+
+  it("la marca queda armada: todas comparten caja", () => {
+    const tr = estadoInicial(ANCHO, ALTO).serpientes.map((s) => s.trayectoria);
+    for (const t of tr) {
+      expect(t.x0).toBe(tr[0].x0);
+      expect(t.y0).toBe(tr[0].y0);
+      expect(t.lado).toBe(tr[0].lado);
+    }
   });
 });
 
@@ -70,7 +76,7 @@ describe("las trayectorias siguen la marca", () => {
     const tr = s.trayectoria;
     for (const t of [0, 1.7, 9.3, 40]) {
       const p = posicion(tr, t);
-      const q = puntoEn(tr.fase + tr.velocidad * t);
+      const q = puntoEn(tr.ruta, tr.fase + tr.velocidad * t);
       expect(p.x).toBeCloseTo(tr.x0 + q.x * tr.lado, 6);
       expect(p.y).toBeCloseTo(tr.y0 + q.y * tr.lado, 6);
     }
@@ -120,10 +126,11 @@ describe("las trayectorias siguen la marca", () => {
     }
   });
 
-  it("el trazo de guia es la ruta entera dentro del panel", () => {
-    const tr = dimensionar(DEFINICIONES[0], ANCHO, ALTO).trayectoria;
+  it("el trazo de guia es la ruta entera de cada serpiente", () => {
+    const tr = dimensionar(DEFINICIONES[1], ANCHO, ALTO).trayectoria;
     const puntos = trazo(tr);
-    expect(puntos.length).toBeGreaterThan(100);
+    expect(puntos).toHaveLength(RUTAS[tr.ruta].length);
+    expect(puntos[0].x).toBeCloseTo(tr.x0 + RUTAS[tr.ruta][0].x * tr.lado, 9);
     for (const p of puntos) {
       expect(p.x).toBeGreaterThanOrEqual(tr.x0 - 1e-9);
       expect(p.x).toBeLessThanOrEqual(tr.x0 + tr.lado + 1e-9);

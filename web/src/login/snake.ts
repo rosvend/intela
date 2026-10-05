@@ -1,14 +1,13 @@
 /**
  * Logica del adorno de la pantalla de acceso. Sin lienzo y sin DOM.
  *
- * Varias serpientes recorren la RUTA DE LA MARCA de Intela (`trazoLogo`), cada
- * una con su desfase y su velocidad: juntas van dibujando el nudo. No se
- * dirigen, asi que no hay teclas que quitarle al formulario.
+ * Cada serpiente recorre SU hebra de la marca de Intela (`trazoLogo`): juntas
+ * van dibujando el nudo. No se dirigen, asi que no hay teclas que quitarle al formulario.
  *
  * `avanzar` es pura: se prueba sin `CanvasRenderingContext2D` y sin frames.
  */
 
-import { puntoEn, TABLA } from "./trazoLogo";
+import { MUESTRAS, puntoEn, RUTAS } from "./trazoLogo";
 
 export interface Point {
   x: number;
@@ -37,6 +36,8 @@ export interface Trayectoria {
   y0: number;
   /** Lado de la caja, en px. */
   lado: number;
+  /** Hebra de la marca, indice en `RUTAS`. */
+  ruta: number;
   /** Desfase sobre el lazo, en fraccion de vuelta. */
   fase: number;
   /** Vueltas por segundo. */
@@ -77,8 +78,8 @@ export const AJUSTES = {
 
 /** Definicion relativa de cada serpiente, antes de ajustarla al panel. */
 export interface DefinicionSerpiente {
-  /** Tamano de la marca relativo a las demas: capas que no se pisan del todo. */
-  escala: number;
+  /** Hebra de la marca que recorre: indice en `RUTAS`. */
+  ruta: number;
   fase: number;
   velocidad: number;
   nodos: number;
@@ -91,57 +92,22 @@ export interface DefinicionSerpiente {
 const OCUPACION = 0.86;
 
 /**
- * Las cinco serpientes: la misma ruta, repartidas a quintos de vuelta y con
- * velocidades distintas para que no se sincronicen. Van de mas a menos
- * presencia; se pintan en orden inverso, asi que la primera queda encima.
+ * Una serpiente por hebra. Misma fase, mismo paso y mismo sentido: las hebras
+ * son la misma elipse girada un cuarto de vuelta, asi que las cuatro cabezas
+ * se mueven como una figura que gira y la marca se lee entera, no como cuatro
+ * trazos sueltos.
  */
-export const DEFINICIONES: readonly DefinicionSerpiente[] = [
-  {
-    escala: 1,
+export const DEFINICIONES: readonly DefinicionSerpiente[] = RUTAS.map(
+  (_, ruta) => ({
+    ruta,
     fase: 0,
-    velocidad: 0.045,
-    nodos: 60,
-    grosor: 9,
-    cabeza: 46,
-    alfa: 1,
-  },
-  {
-    escala: 0.96,
-    fase: 0.2,
-    velocidad: 0.041,
-    nodos: 54,
+    velocidad: 0.04,
+    nodos: 56,
     grosor: 7,
-    cabeza: 38,
-    alfa: 0.68,
-  },
-  {
-    escala: 1.03,
-    fase: 0.4,
-    velocidad: 0.038,
-    nodos: 48,
-    grosor: 6,
-    cabeza: 32,
-    alfa: 0.5,
-  },
-  {
-    escala: 0.92,
-    fase: 0.6,
-    velocidad: 0.034,
-    nodos: 42,
-    grosor: 4,
-    cabeza: 24,
-    alfa: 0.28,
-  },
-  {
-    escala: 1.06,
-    fase: 0.8,
-    velocidad: 0.031,
-    nodos: 36,
-    grosor: 3,
-    cabeza: 19,
-    alfa: 0.18,
-  },
-];
+    cabeza: 36,
+    alfa: 0.9,
+  }),
+);
 
 /**
  * Ajusta una definicion al panel: escala de grosor y cabeza por la diagonal,
@@ -161,16 +127,14 @@ export function dimensionar(
   const cabeza = def.cabeza * escala;
   const margen = cabeza / 2 + 10;
   const menor = Math.min(ancho, alto);
-  const lado = Math.max(
-    1,
-    Math.min(menor * OCUPACION * def.escala, menor - 2 * margen),
-  );
+  const lado = Math.max(1, Math.min(menor * OCUPACION, menor - 2 * margen));
 
   return {
     trayectoria: {
       x0: (ancho - lado) / 2,
       y0: (alto - lado) / 2,
       lado,
+      ruta: def.ruta,
       fase: def.fase,
       velocidad: def.velocidad,
     },
@@ -187,21 +151,21 @@ function enPanel(tr: Trayectoria, p: { x: number; y: number }): Point {
 
 /** Donde esta la cabeza en el instante `t`. */
 export function posicion(tr: Trayectoria, t: number): Point {
-  return enPanel(tr, puntoEn(tr.fase + tr.velocidad * t));
+  return enPanel(tr, puntoEn(tr.ruta, tr.fase + tr.velocidad * t));
 }
 
 /** Rumbo de la cabeza: diferencia entre las muestras vecinas de la ruta. */
 export function rumbo(tr: Trayectoria, t: number): number {
   const s = tr.fase + tr.velocidad * t;
-  const h = 1 / TABLA.length;
-  const a = puntoEn(s - h);
-  const b = puntoEn(s + h);
+  const h = 1 / MUESTRAS;
+  const a = puntoEn(tr.ruta, s - h);
+  const b = puntoEn(tr.ruta, s + h);
   return Math.atan2(b.y - a.y, b.x - a.x);
 }
 
-/** La ruta completa en px, para pintar la guia tenue de la marca. */
+/** La hebra completa en px, para pintar la guia tenue de la marca. */
 export function trazo(tr: Trayectoria): Point[] {
-  return TABLA.map((p) => enPanel(tr, p));
+  return RUTAS[tr.ruta].map((p) => enPanel(tr, p));
 }
 
 export function estadoInicial(ancho: number, alto: number): GameState {

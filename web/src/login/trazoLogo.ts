@@ -1,10 +1,12 @@
 /**
- * La ruta de la marca de Intela: un lazo cerrado que recorre el nudo entero.
+ * Las rutas de la marca de Intela: una por hebra del nudo.
  *
- * Calcado a mano de `docs/intela-logo.png`. El nudo tiene simetria central, asi
- * que solo se escribe media vuelta y la otra mitad es su giro de 180 grados.
- * Media vuelta: aro superior izquierdo, barra inferior del centro, arco grande
- * de arriba a la derecha y barra izquierda del centro hasta abajo.
+ * La marca son cuatro hebras iguales, cada una la anterior girada un cuarto de
+ * vuelta sobre el centro. Cada hebra es (casi) una elipse: se ajusto por
+ * minimos cuadrados al eje de los trazos de `docs/intela-logo.png`, con la
+ * simetria impuesta, y queda a ~2 px de media del eje (el trazo mide ~28 px).
+ * En el PNG cada hebra es un arco abierto; la ruta cierra su elipse, asi que
+ * la serpiente sigue la vuelta sin codos.
  */
 
 export interface Punto {
@@ -12,77 +14,37 @@ export interface Punto {
   y: number;
 }
 
-/** Muestras de la tabla. */
+/** Muestras de cada tabla. */
 export const MUESTRAS = 480;
 
-// Media vuelta en pixeles del PNG (marca ~330x315, centro en 195,172).
-const MEDIA_VUELTA: readonly [number, number][] = [
-  [185, 25],
-  [145, 21],
-  [105, 27.5],
-  [70, 47.5],
-  [50, 80],
-  [49, 112.5],
-  [62.5, 150],
-  [90, 180],
-  [125, 210],
-  [160, 226],
-  [195, 233],
-  [230, 231],
-  [260, 224],
-  [285, 211],
-  [310, 194],
-  [332.5, 172.5],
-  [342.5, 140],
-  [342.5, 105],
-  [332.5, 72.5],
-  [310, 45],
-  [277.5, 27.5],
-  [242.5, 24],
-  [207.5, 32.5],
-  [176, 52.5],
-  [152.5, 82.5],
-  [137.5, 122.5],
-  [132.5, 165],
-  [139, 210],
-  [155, 250],
-  [180, 287.5],
-];
+/** Elipse base, en px del PNG, relativa al centro de la marca (195.8, 172.6). */
+const ELIPSE = {
+  dx: -11.549,
+  dy: -42.393,
+  a: 137.198,
+  b: 105.212,
+  giro: 0.233,
+};
 
-const CENTRO = { x: 195, y: 172 };
+const DENSIDAD = 4096;
 
-function controles(): Punto[] {
-  const a = MEDIA_VUELTA.map(([x, y]) => ({ x, y }));
-  const b = a.map((p) => ({ x: 2 * CENTRO.x - p.x, y: 2 * CENTRO.y - p.y }));
-  return [...a, ...b];
-}
-
-/** Catmull-Rom uniforme y cerrada: pasa por cada control sin esquinas. */
-function curva(c: Punto[], porTramo: number): Punto[] {
-  const n = c.length;
-  const salida: Punto[] = [];
-  for (let i = 0; i < n; i++) {
-    const p0 = c[(i - 1 + n) % n];
-    const p1 = c[i];
-    const p2 = c[(i + 1) % n];
-    const p3 = c[(i + 2) % n];
-    for (let k = 0; k < porTramo; k++) {
-      const t = k / porTramo;
-      const t2 = t * t;
-      const t3 = t2 * t;
-      const f = (a: number, b: number, cc: number, d: number) =>
-        0.5 *
-        (2 * b +
-          (-a + cc) * t +
-          (2 * a - 5 * b + 4 * cc - d) * t2 +
-          (-a + 3 * b - 3 * cc + d) * t3);
-      salida.push({
-        x: f(p0.x, p1.x, p2.x, p3.x),
-        y: f(p0.y, p1.y, p2.y, p3.y),
-      });
-    }
-  }
-  return salida;
+/**
+ * La hebra `k`: la base girada k cuartos de vuelta. El parametro crece en
+ * sentido horario en pantalla (y hacia abajo), igual en las cuatro.
+ */
+function hebra(k: number): Punto[] {
+  const g = (k * Math.PI) / 2;
+  const [cg, sg] = [Math.cos(g), Math.sin(g)];
+  const cx = ELIPSE.dx * cg - ELIPSE.dy * sg;
+  const cy = ELIPSE.dx * sg + ELIPSE.dy * cg;
+  const th = ELIPSE.giro + g;
+  const [ct, st] = [Math.cos(th), Math.sin(th)];
+  return Array.from({ length: DENSIDAD }, (_, i) => {
+    const s = (i / DENSIDAD) * 2 * Math.PI;
+    const u = ELIPSE.a * Math.cos(s);
+    const v = ELIPSE.b * Math.sin(s);
+    return { x: cx + u * ct - v * st, y: cy + u * st + v * ct };
+  });
 }
 
 /** Remuestrea por arco: `n` puntos a la misma distancia sobre el lazo. */
@@ -111,32 +73,36 @@ function porArco(densa: Punto[], n: number): Punto[] {
   return salida;
 }
 
-/** Lleva a la caja [0,1] conservando el aspecto, centrado. */
-function normalizar(p: Punto[]): Punto[] {
-  const xs = p.map((q) => q.x);
-  const ys = p.map((q) => q.y);
+/**
+ * Lleva todas las rutas a la MISMA caja [0,1], cuadrada y centrada: con una
+ * caja por ruta la marca se desarmaria.
+ */
+function normalizar(rutas: Punto[][]): Punto[][] {
+  const todos = rutas.flat();
+  const xs = todos.map((q) => q.x);
+  const ys = todos.map((q) => q.y);
   const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
   const [y0, y1] = [Math.min(...ys), Math.max(...ys)];
   const lado = Math.max(x1 - x0, y1 - y0);
   const dx = (lado - (x1 - x0)) / 2;
   const dy = (lado - (y1 - y0)) / 2;
-  return p.map((q) => ({
-    x: (q.x - x0 + dx) / lado,
-    y: (q.y - y0 + dy) / lado,
-  }));
+  return rutas.map((r) =>
+    r.map((q) => ({ x: (q.x - x0 + dx) / lado, y: (q.y - y0 + dy) / lado })),
+  );
 }
 
-/** La ruta muestreada una sola vez, equidistante por arco, en [0,1]. */
-export const TABLA: readonly Punto[] = normalizar(
-  porArco(curva(controles(), 40), MUESTRAS),
+/** Las cuatro hebras, muestreadas una vez y equidistantes por arco, en [0,1]. */
+export const RUTAS: readonly (readonly Punto[])[] = normalizar(
+  [0, 1, 2, 3].map((k) => porArco(hebra(k), MUESTRAS)),
 );
 
-/** Punto de la ruta en la fraccion `s` del lazo; envuelve fuera de [0,1). */
-export function puntoEn(s: number): Punto {
+/** Punto de la ruta `ruta` en la fraccion `s` del lazo; envuelve fuera de [0,1). */
+export function puntoEn(ruta: number, s: number): Punto {
+  const tabla = RUTAS[ruta];
   const u = (((s % 1) + 1) % 1) * MUESTRAS;
   const i = Math.floor(u) % MUESTRAS;
   const t = u - Math.floor(u);
-  const a = TABLA[i];
-  const b = TABLA[(i + 1) % MUESTRAS];
+  const a = tabla[i];
+  const b = tabla[(i + 1) % MUESTRAS];
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
