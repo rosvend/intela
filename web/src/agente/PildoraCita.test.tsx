@@ -42,7 +42,7 @@ describe("PildoraCita", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("p1:obra-7");
-    expect(screen.getByRole("status").textContent).toBe("Cita copiada");
+    expect(screen.getByText("Cita copiada")).toBeTruthy();
   });
 
   it("sin portapapeles deja la cita seleccionada para copiarla a mano", async () => {
@@ -53,7 +53,7 @@ describe("PildoraCita", () => {
     });
 
     expect(window.getSelection()?.toString()).toBe("RT 5");
-    expect(screen.getByRole("status").textContent).toContain("Ctrl+C");
+    expect(screen.getByText(/Ctrl\+C/)).toBeTruthy();
   });
 
   it("una cita de asiento se distingue de un numeral de reglamento", () => {
@@ -64,6 +64,7 @@ describe("PildoraCita", () => {
       </>,
     );
     const [asiento, numeral] = screen.getAllByRole("button");
+    expect(screen.queryByRole("status")).toBeNull();
     expect(asiento.className).toContain("cita--asiento");
     expect(asiento.textContent).toContain("asiento");
     expect(numeral.className).toContain("cita--reglamento");
