@@ -632,6 +632,13 @@ export interface paths {
          *     o `proceso_id:obra_id` para la cifra de la obra, incluida una obra
          *     retenida porque su declaracion no suma 100% (RD 13.1.3).
          *
+         *     Una liberacion de reserva (RD 14.4) usa
+         *     `reserva:proceso_origen:proceso_destino:obra_id:titular_id`. Un
+         *     rendimiento distribuido (RD 10.1) usa
+         *     `rendimiento:proceso_origen:proceso_destino:obra_id:titular_id`.
+         *     Esas respuestas llenan `origen` y `destino`: la cifra se repartio
+         *     contra una corrida anterior y se pago en otra.
+         *
          *     Si falta la valorizacion de la corrida o de la obra, la respuesta es
          *     404: una explicacion a medias es peor que ninguna. Un eslabon
          *     accesorio sin asiento (hoy, el recaudo de una bolsa sembrada por SQL)
@@ -2763,6 +2770,28 @@ export interface components {
             corrida: {
                 proceso_id: string;
                 /** @example 2026-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /**
+             * @description Corrida cuyas proporciones se usaron (RD 14.4, RD 10.1). Ausente
+             *     en una cifra de valorizacion.
+             */
+            origen?: {
+                proceso_id: string;
+                /** @example 2026-01 */
+                periodo: string;
+                /** @enum {string} */
+                circuito: "nacional" | "internacional";
+            };
+            /**
+             * @description Corrida en la que se pago la cifra liberada o el rendimiento.
+             *     Ausente en una cifra de valorizacion.
+             */
+            destino?: {
+                proceso_id: string;
+                /** @example 2027-01 */
                 periodo: string;
                 /** @enum {string} */
                 circuito: "nacional" | "internacional";
@@ -4959,7 +4988,9 @@ export interface operations {
             header?: never;
             path: {
                 /**
-                 * @description `proceso_id:obra_id:titular_id` o `proceso_id:obra_id`. Cualquier
+                 * @description `proceso_id:obra_id:titular_id`, `proceso_id:obra_id`,
+                 *     `reserva:origen:destino:obra_id:titular_id` o
+                 *     `rendimiento:origen:destino:obra_id:titular_id`. Cualquier
                  *     otra forma responde 404.
                  * @example proc-bolsa-1-1:obra-1:titular-1
                  */

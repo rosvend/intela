@@ -14,7 +14,9 @@ var _ aplicacion.RepositorioReclamacionesReserva = (*Store)(nil)
 
 // GuardarReclamacion crea/actualiza, bloquea la fila, inserta avales nuevos, recalcula estado desde lo persistido (B4), y debita reservas.saldo una sola vez al pasar a 'resuelta' (B3).
 func (s *Store) GuardarReclamacion(ctx context.Context, r reparto.ReclamacionReserva) error {
-	return s.EnTransaccion(ctx, func(tx pgx.Tx) error {
+	// enTransaccionDe: un asiento escrito en la misma unidad que el debito
+	// tiene que poder revertirlo. EnTransaccion lo confirmaria aparte.
+	return s.enTransaccionDe(ctx, func(tx pgx.Tx) error {
 		// DO NOTHING y no DO UPDATE: detalle y monto_solicitado son el reclamo
 		// declarado, inmutable una vez abierto -- FirmarReclamacion solo avala.
 		if _, err := tx.Exec(ctx,
@@ -120,7 +122,7 @@ func estadoDeAvales(avales []reparto.AvalReclamacion) string {
 // ReclamacionPorID relee una reclamacion con sus avales.
 func (s *Store) ReclamacionPorID(ctx context.Context, id string) (reparto.ReclamacionReserva, error) {
 	var r reparto.ReclamacionReserva
-	err := s.pool.QueryRow(ctx,
+	err := s.ejecutorDe(ctx).QueryRow(ctx,
 		`SELECT id, titular_id, COALESCE(proceso_id, ''), detalle, monto_solicitado
 		   FROM reclamaciones WHERE id = $1`,
 		id,
@@ -129,7 +131,7 @@ func (s *Store) ReclamacionPorID(ctx context.Context, id string) (reparto.Reclam
 		return reparto.ReclamacionReserva{}, traducirError(err, "leer reclamacion %q", id)
 	}
 
-	avales, err := avalesDe(ctx, s.pool, id)
+	avales, err := avalesDe(ctx, s.ejecutorDe(ctx), id)
 	if err != nil {
 		return reparto.ReclamacionReserva{}, err
 	}

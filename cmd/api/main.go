@@ -226,6 +226,19 @@ func ejecutar(log *slog.Logger) error {
 		Liquidacion: ordenes,
 	}
 
+	// Sin ruta: la abre #34. El caso de uso queda armado para que liberar
+	// una reserva y asentar reserva.liberada sean una sola unidad (#177).
+	bolsas := aplicacion.BolsasAccesorias{
+		Resultados:    store,
+		Reservas:      store,
+		Rendimientos:  store,
+		Reclamaciones: store,
+		Corridas:      store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud:      store,
 		Auth:       autenticacion,
@@ -259,6 +272,7 @@ func ejecutar(log *slog.Logger) error {
 		},
 		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
+		Bolsas:   bolsas,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                log,

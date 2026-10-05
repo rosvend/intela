@@ -2,8 +2,10 @@ package aplicacion
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -238,9 +240,10 @@ func TestLiberarReservaPrescritaReplicaLasProporcionesDeLaCorridaOriginal(t *tes
 	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
 		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
 	}}
-	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, libro)
 
-	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.Zero)
+	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.Zero, "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -253,6 +256,16 @@ func TestLiberarReservaPrescritaReplicaLasProporcionesDeLaCorridaOriginal(t *tes
 	if !reservas.porProc["p1"].Saldo.IsZero() {
 		t.Fatalf("saldo tras liberar = %s, se esperaba cero (todo el remanente se distribuyo)", reservas.porProc["p1"].Saldo)
 	}
+	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoReservaLiberada || libro.asientos[0].RefID != "p2" {
+		t.Fatalf("asiento = %+v, se esperaba reserva.liberada sobre la corrida de destino", libro.asientos)
+	}
+	var payload asientoReservaLiberada
+	if err := json.Unmarshal(libro.asientos[0].Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Origen.ProcesoID != "p1" || payload.Destino.ProcesoID != "p2" || payload.VigenciaRendimiento != "2026" {
+		t.Fatalf("payload = %+v, el linaje tiene que nombrar las dos corridas", payload)
+	}
 }
 
 func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
@@ -261,10 +274,10 @@ func TestLiberarReservaPrescritaIncluyeElRendimientoAcumulado(t *testing.T) {
 	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
 		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
 	}}
-	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, &bitacoraFalsa{})
 
 	// RD 10.4: el rendimiento acumulado sobre la reserva se incluye al liberarla.
-	nuevas, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.RequireFromString("10.00"))
+	nuevas, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.RequireFromString("10.00"), "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -282,7 +295,7 @@ func TestLiberarReservaPrescritaRechazaRendimientoNegativo(t *testing.T) {
 	}}
 	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
 
-	_, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.RequireFromString("-20.00"))
+	_, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.RequireFromString("-20.00"), "actor-1")
 	if !errors.Is(err, reparto.ErrRepartoInvalido) {
 		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido: el mismo PR ya rechaza un rendimiento negativo en RegistrarRendimiento", err)
 	}
@@ -300,9 +313,9 @@ func TestLiberarReservaPrescritaDejaElSaldoIgualAlResiduoSinTitulares(t *testing
 	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
 		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
 	}}
-	b := BolsasAccesorias{Resultados: resultados, Reservas: reservas}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, &bitacoraFalsa{})
 
-	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "2026", decimal.Zero)
+	nuevas, residuo, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.Zero, "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -375,9 +388,10 @@ func TestDistribuirRendimientoNoRevalorizaLaCorrida(t *testing.T) {
 	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
 		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
 	}}
-	b := BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}
+	libro := &bitacoraFalsa{}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}, libro)
 
-	nuevas, residuo, err := b.DistribuirRendimiento(context.Background(), "p1", reparto.Nacional, "2026")
+	nuevas, residuo, err := b.DistribuirRendimiento(context.Background(), "p1", "p2", reparto.Nacional, "2026", "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -387,6 +401,16 @@ func TestDistribuirRendimientoNoRevalorizaLaCorrida(t *testing.T) {
 	if !residuo.IsZero() {
 		t.Fatalf("residuo = %s, se esperaba cero", residuo)
 	}
+	if len(libro.asientos) != 1 || libro.asientos[0].Hecho != HechoRendimientosDistribuidos {
+		t.Fatalf("asiento = %+v", libro.asientos)
+	}
+	var payload asientoRendimientosDistribuidos
+	if err := json.Unmarshal(libro.asientos[0].Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Origen.ProcesoID != "p1" || payload.Destino.ProcesoID != "p2" || payload.Vigencia != "2026" {
+		t.Fatalf("payload = %+v", payload)
+	}
 }
 
 func TestDistribuirRendimientoDosVecesNoRepartDosVeces(t *testing.T) {
@@ -395,13 +419,13 @@ func TestDistribuirRendimientoDosVecesNoRepartDosVeces(t *testing.T) {
 	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
 		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
 	}}
-	b := BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}, &bitacoraFalsa{})
 	ctx := context.Background()
 
-	if _, _, err := b.DistribuirRendimiento(ctx, "p1", reparto.Nacional, "2026"); err != nil {
+	if _, _, err := b.DistribuirRendimiento(ctx, "p1", "p2", reparto.Nacional, "2026", "actor-1"); err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	nuevas, residuo, err := b.DistribuirRendimiento(ctx, "p1", reparto.Nacional, "2026")
+	nuevas, residuo, err := b.DistribuirRendimiento(ctx, "p1", "p2", reparto.Nacional, "2026", "actor-1")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -461,4 +485,119 @@ func TestFirmarReclamacionPropagaElRechazoDelDominio(t *testing.T) {
 	if _, err := b.FirmarReclamacion(ctx, "rec-1", reparto.RolDistribucionYContabilidad, "actor-unico"); err == nil {
 		t.Fatal("se esperaba que el caso de uso propague el rechazo del dominio")
 	}
+}
+
+func TestLiberarReservaPrescritaNoLiberaSiElAsientoFalla(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Circuito: reparto.Nacional, MontoInicial: decimal.RequireFromString("50.00"), Saldo: decimal.RequireFromString("50.00")},
+	}}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Reservas: reservas}, &bitacoraFalsa{err: errors.New("bitacora caida")})
+	b.Unidad = unidadQueRevierteReservas{reservas: reservas}
+
+	if _, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p2", "2026", decimal.Zero, "actor-1"); err == nil {
+		t.Fatal("se esperaba el fallo del asiento")
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("saldo = %s, el asiento fallido no debio liberar la reserva", reservas.porProc["p1"].Saldo)
+	}
+}
+
+func TestDistribuirRendimientoNoDebitaSiElAsientoFalla(t *testing.T) {
+	t.Parallel()
+	resultados := &resultadosFalso{porProceso: map[string]reparto.Resultado{"p1": resultadoConDosTitulares()}}
+	rendimientos := &rendimientosFalso{porClave: map[string]reparto.PoolRendimiento{
+		claveRendimiento(reparto.Nacional, "2026"): {Circuito: reparto.Nacional, Vigencia: "2026", Monto: decimal.RequireFromString("100.00")},
+	}}
+	b := cablearBolsas(BolsasAccesorias{Resultados: resultados, Rendimientos: rendimientos}, &bitacoraFalsa{err: errors.New("bitacora caida")})
+	b.Unidad = unidadQueRevierteRendimientos{rendimientos: rendimientos}
+
+	if _, _, err := b.DistribuirRendimiento(context.Background(), "p1", "p2", reparto.Nacional, "2026", "actor-1"); err == nil {
+		t.Fatal("se esperaba el fallo del asiento")
+	}
+	monto := rendimientos.porClave[claveRendimiento(reparto.Nacional, "2026")].Monto
+	if !monto.Equal(decimal.RequireFromString("100.00")) {
+		t.Fatalf("monto = %s, el asiento fallido no debio debitar el pool", monto)
+	}
+}
+
+func TestLiberarReservaPrescritaRechazaLaMismaCorrida(t *testing.T) {
+	t.Parallel()
+	reservas := &reservasFalso{porProc: map[string]reparto.PoolReserva{
+		"p1": {ProcesoID: "p1", Saldo: decimal.RequireFromString("50.00")},
+	}}
+	b := BolsasAccesorias{Reservas: reservas}
+
+	if _, _, err := b.LiberarReservaPrescrita(context.Background(), "p1", "p1", "2026", decimal.Zero, "actor-1"); !errors.Is(err, reparto.ErrRepartoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRepartoInvalido", err)
+	}
+	if !reservas.porProc["p1"].Saldo.Equal(decimal.RequireFromString("50.00")) {
+		t.Fatalf("saldo = %s, el rechazo no debio tocar la reserva", reservas.porProc["p1"].Saldo)
+	}
+}
+
+type corridasFalso struct {
+	porID map[string]ProcesoVista
+}
+
+func (c *corridasFalso) ProcesoPorID(_ context.Context, id string) (ProcesoVista, error) {
+	p, ok := c.porID[id]
+	if !ok {
+		return ProcesoVista{}, ErrNoEncontrado
+	}
+	return p, nil
+}
+
+func corridasDePrueba() *corridasFalso {
+	return &corridasFalso{porID: map[string]ProcesoVista{
+		"p1": {ID: "p1", Periodo: "2026-01", Circuito: reparto.Nacional},
+		"p2": {ID: "p2", Periodo: "2027-01", Circuito: reparto.Nacional},
+	}}
+}
+
+type unidadDirecta struct{}
+
+func (unidadDirecta) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+type unidadQueRevierteReservas struct {
+	reservas *reservasFalso
+}
+
+func (u unidadQueRevierteReservas) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	copia := map[string]reparto.PoolReserva{}
+	for k, v := range u.reservas.porProc {
+		copia[k] = v
+	}
+	err := fn(ctx)
+	if err != nil {
+		u.reservas.porProc = copia
+	}
+	return err
+}
+
+type unidadQueRevierteRendimientos struct {
+	rendimientos *rendimientosFalso
+}
+
+func (u unidadQueRevierteRendimientos) EnUnidad(ctx context.Context, fn func(context.Context) error) error {
+	copia := map[string]reparto.PoolRendimiento{}
+	for k, v := range u.rendimientos.porClave {
+		copia[k] = v
+	}
+	err := fn(ctx)
+	if err != nil {
+		u.rendimientos.porClave = copia
+	}
+	return err
+}
+
+func cablearBolsas(b BolsasAccesorias, libro *bitacoraFalsa) BolsasAccesorias {
+	b.Corridas = corridasDePrueba()
+	b.Bitacora = libro
+	b.Unidad = unidadDirecta{}
+	b.Reloj = relojFijo{instante: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)}
+	return b
 }

@@ -77,6 +77,12 @@ func TestExplicarDevuelveElLinajeConDineroComoCadena(t *testing.T) {
 			t.Errorf("falta %q en la respuesta", clave)
 		}
 	}
+	if _, ok := cuerpo["origen"]; ok {
+		t.Errorf("una cifra de valorizacion no lleva origen: %v", cuerpo["origen"])
+	}
+	if _, ok := cuerpo["destino"]; ok {
+		t.Errorf("una cifra de valorizacion no lleva destino: %v", cuerpo["destino"])
+	}
 	split := cuerpo["split"].(map[string]any)
 	if split["version"] != float64(3) || split["porcentaje"] != "100" {
 		t.Fatalf("split = %v", split)
@@ -186,5 +192,27 @@ func TestExplicarDecodificaLaRefCodificadaPorElFrontend(t *testing.T) {
 	rec := pedir(t, servidorConExplicador(t, titular, falso), http.MethodGet, "/explicar/proc-1%3Aobra-1%3Atitular-1", "", "tok")
 	if rec.Code != http.StatusOK || falso.refPedida != "proc-1:obra-1:titular-1" {
 		t.Fatalf("codigo = %d, ref pedida = %q; se esperaba 200 con la ref decodificada", rec.Code, falso.refPedida)
+	}
+}
+
+func TestExplicarUnaCifraLiberadaIncluyeOrigenYDestino(t *testing.T) {
+	x := explicacionDeEjemplo()
+	x.Origen = &aplicacion.CorridaLinaje{ProcesoID: "p1", Periodo: "2026-01", Circuito: "nacional"}
+	x.Destino = &aplicacion.CorridaLinaje{ProcesoID: "p2", Periodo: "2027-01", Circuito: "nacional"}
+	falso := &explicadorFalso{x: x}
+	titular := aplicacion.Usuario{ID: "usr-t1", Rol: aplicacion.RolTitular, TitularID: "titular-1"}
+
+	rec := pedir(t, servidorConExplicador(t, titular, falso), http.MethodGet, "/explicar/reserva:p1:p2:obra-1:titular-1", "", "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	var cuerpo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatalf("cuerpo no es JSON: %v", err)
+	}
+	origen, _ := cuerpo["origen"].(map[string]any)
+	destino, _ := cuerpo["destino"].(map[string]any)
+	if origen["proceso_id"] != "p1" || origen["periodo"] != "2026-01" || destino["proceso_id"] != "p2" || destino["periodo"] != "2027-01" {
+		t.Fatalf("origen/destino = %v / %v", cuerpo["origen"], cuerpo["destino"])
 	}
 }

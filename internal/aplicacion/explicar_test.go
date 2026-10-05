@@ -2,6 +2,7 @@ package aplicacion
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -372,5 +373,85 @@ func TestExplicarUnAsientoViejoNoHeredaElDesgloseDeOtraCorrida(t *testing.T) {
 	}
 	if x.Obra.Puntos != "5616" {
 		t.Fatalf("obra.puntos = %q, se esperaba el de proc-1", x.Obra.Puntos)
+	}
+}
+
+func asientoDeLiberacion(importe string) Asiento {
+	payload := fmt.Sprintf(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"nacional"},"vigencia_rendimiento":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"%s"}]}`, importe)
+	return Asiento{
+		Hecho: HechoReservaLiberada, RefTipo: RefProceso, RefID: "p2",
+		ActorID: "actor-1", Payload: []byte(payload),
+	}
+}
+
+func TestExplicarUnaCifraLiberadaNombraOrigenYDestino(t *testing.T) {
+	t.Parallel()
+	b := &bitacoraFalsa{asientos: []Asiento{asientoDeLiberacion("20.00")}}
+	ref := FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-a")
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Origen == nil || x.Destino == nil {
+		t.Fatal("la cifra liberada tiene que nombrar las dos corridas")
+	}
+	if x.Origen.ProcesoID != "p1" || x.Origen.Periodo != "2026-01" || x.Origen.Circuito != "nacional" {
+		t.Fatalf("origen = %+v", x.Origen)
+	}
+	if x.Destino.ProcesoID != "p2" || x.Destino.Periodo != "2027-01" || x.Corrida.ProcesoID != "p2" {
+		t.Fatalf("destino = %+v, corrida = %+v", x.Destino, x.Corrida)
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("20.00")) || !x.Bruto.Equal(x.Neto) {
+		t.Fatalf("neto/bruto = %s/%s", x.Neto, x.Bruto)
+	}
+	if x.TitularID != "titular-a" || x.Obra.ID != "obra-1" || x.Split == nil || x.Split.IPI != "111" {
+		t.Fatalf("linea = titular %q obra %q split %+v", x.TitularID, x.Obra.ID, x.Split)
+	}
+}
+
+func TestExplicarUnaCifraLiberadaAjenaEsNoAutorizado(t *testing.T) {
+	t.Parallel()
+	b := &bitacoraFalsa{asientos: []Asiento{asientoDeLiberacion("20.00")}}
+	ref := FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-a")
+	ajeno := Usuario{ID: "usr-z", Rol: RolTitular, TitularID: "titular-z"}
+
+	if _, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), ajeno, ref); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("error = %v, se esperaba ErrNoAutorizado", err)
+	}
+}
+
+func TestExplicarUnaRedistribucionEnCeroNoEscondeElPago(t *testing.T) {
+	t.Parallel()
+	b := &bitacoraFalsa{asientos: []Asiento{asientoDeLiberacion("20.00"), asientoDeLiberacion("0.00")}}
+	ref := FormarRefReservaLiberada("p1", "p2", "obra-1", "titular-a")
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("20.00")) {
+		t.Fatalf("neto = %s, el asiento en cero no debio tapar el pago", x.Neto)
+	}
+}
+
+func TestExplicarUnRendimientoNombraOrigenYDestino(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"origen":{"proceso_id":"p1","periodo":"2026-01","circuito":"nacional"},"destino":{"proceso_id":"p2","periodo":"2027-01","circuito":"internacional"},"circuito":"nacional","vigencia":"2026","lineas":[{"obra_id":"obra-1","titular_id":"titular-a","ipi":"111","porcentaje":"40","importe":"40.00"}]}`)
+	b := &bitacoraFalsa{asientos: []Asiento{{
+		Hecho: HechoRendimientosDistribuidos, RefTipo: RefProceso, RefID: "p2",
+		Payload: payload,
+	}}}
+	ref := FormarRefRendimiento("p1", "p2", "obra-1", "titular-a")
+
+	x, err := (ExplicarCifra{Bitacora: b}).Explicar(t.Context(), auditor, ref)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if x.Origen == nil || x.Destino == nil || x.Origen.ProcesoID != "p1" || x.Destino.Circuito != "internacional" {
+		t.Fatalf("origen/destino = %+v / %+v", x.Origen, x.Destino)
+	}
+	if !x.Neto.Equal(decimal.RequireFromString("40.00")) {
+		t.Fatalf("neto = %s", x.Neto)
 	}
 }

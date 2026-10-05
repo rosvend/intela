@@ -43,6 +43,12 @@ type Explicacion struct {
 	Firmas       []FirmaLinaje
 	// Faltantes nombra los eslabones accesorios sin asiento; la cadena del dinero nunca falta.
 	Faltantes []string
+	// Origen y Destino se llenan cuando la cifra es una liberacion de reserva
+	// (RD 14.4) o un rendimiento distribuido (RD 10.1). Las dos se reparten
+	// contra una corrida anterior, asi que el linaje nombra las dos (#177).
+	// En una cifra de valorizacion quedan en nil.
+	Origen  *CorridaLinaje
+	Destino *CorridaLinaje
 }
 
 // CorridaLinaje es la corrida que produjo la cifra.
@@ -142,6 +148,9 @@ func ParsearRef(ref string) (procesoID, obraID, titularID string, err error) {
 
 // Explicar carga primero y autoriza despues: una cifra ajena que existe es 403, no 404.
 func (e ExplicarCifra) Explicar(ctx context.Context, actor Usuario, ref string) (Explicacion, error) {
+	if acc, ok := parsearRefAccesoria(ref); ok {
+		return e.explicarAccesoria(ctx, actor, ref, acc)
+	}
 	procesoID, obraID, titularID, err := ParsearRef(ref)
 	if err != nil {
 		return Explicacion{}, err
@@ -426,6 +435,78 @@ func firmasDe(delProceso []Asiento) []FirmaLinaje {
 		})
 	}
 	return firmas
+}
+
+// explicarAccesoria lee reserva.liberada o rendimientos.distribuidos. La
+// ref nombra las dos corridas; el asiento, colgado de la de destino, trae
+// periodo y circuito de las dos. No se recalcula nada.
+func (e ExplicarCifra) explicarAccesoria(ctx context.Context, actor Usuario, ref string, acc refAccesoria) (Explicacion, error) {
+	delDestino, err := e.Bitacora.De(ctx, RefProceso, acc.destino)
+	if err != nil {
+		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, err)
+	}
+	linea, origen, destino, ok := lineaAccesoria(delDestino, acc)
+	if !ok {
+		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, ErrNoEncontrado)
+	}
+	if !SoloPropiasObras(actor, []string{acc.titular}) {
+		return Explicacion{}, ErrNoAutorizado
+	}
+	importe, err := decimal.NewFromString(linea.Importe)
+	if err != nil {
+		return Explicacion{}, fmt.Errorf("explicar %q: importe: %w", ref, ErrLinajeIncompleto)
+	}
+	porcentaje, err := decimal.NewFromString(linea.Porcentaje)
+	if err != nil {
+		return Explicacion{}, fmt.Errorf("explicar %q: porcentaje: %w", ref, ErrLinajeIncompleto)
+	}
+	origenL := CorridaLinaje{ProcesoID: origen.ProcesoID, Periodo: origen.Periodo, Circuito: origen.Circuito}
+	destinoL := CorridaLinaje{ProcesoID: destino.ProcesoID, Periodo: destino.Periodo, Circuito: destino.Circuito}
+	if origenL.ProcesoID != acc.origen || destinoL.ProcesoID != acc.destino {
+		return Explicacion{}, fmt.Errorf("explicar %q: %w", ref, ErrNoEncontrado)
+	}
+	return Explicacion{
+		Ref: ref, TitularID: acc.titular,
+		Neto: importe, Bruto: importe,
+		Corrida: destinoL,
+		Origen:  &origenL, Destino: &destinoL,
+		Obra:           ObraLinaje{ID: acc.obra},
+		Split:          &SplitLinaje{TitularID: acc.titular, IPI: linea.IPI, Porcentaje: porcentaje},
+		Reportes:       []ReporteAsentado{},
+		Identificacion: []IdentificacionDeUso{},
+		Valorizacion:   []ValorizacionDeUso{},
+		Deducciones:    []DeduccionLinaje{},
+		Firmas:         []FirmaLinaje{},
+		Faltantes:      []string{},
+	}, nil
+}
+
+// lineaAccesoria prefiere el importe positivo mas reciente. Una redistribucion
+// posterior en cero no esconde el pago que ya se asento.
+func lineaAccesoria(asientos []Asiento, acc refAccesoria) (LineaDosCorridas, CorridaAsentada, CorridaAsentada, bool) {
+	var cero LineaDosCorridas
+	var origenCero, destinoCero CorridaAsentada
+	hayCero := false
+	for i := len(asientos) - 1; i >= 0; i-- {
+		a := asientos[i]
+		if a.Hecho != acc.hecho {
+			continue
+		}
+		linea, origen, destino, ok := lineaDeAsiento(a.Payload, acc.obra, acc.titular)
+		if !ok || origen.ProcesoID != acc.origen || destino.ProcesoID != acc.destino {
+			continue
+		}
+		if importePositivo(linea.Importe) {
+			return linea, origen, destino, true
+		}
+		if !hayCero {
+			cero, origenCero, destinoCero, hayCero = linea, origen, destino, true
+		}
+	}
+	if hayCero {
+		return cero, origenCero, destinoCero, true
+	}
+	return LineaDosCorridas{}, CorridaAsentada{}, CorridaAsentada{}, false
 }
 
 func (e ExplicarCifra) bolsaDe(ctx context.Context, b BolsaAsentada, faltantes []string) (BolsaLinaje, []string, error) {

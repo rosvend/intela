@@ -259,6 +259,18 @@ func construir() (http.Handler, error) {
 		Liquidacion: ordenes,
 	}
 
+	// Mismo cableado que cmd/api (#177): sin ruta hasta #34.
+	bolsas := aplicacion.BolsasAccesorias{
+		Resultados:    store,
+		Reservas:      store,
+		Rendimientos:  store,
+		Reclamaciones: store,
+		Corridas:      store,
+		Bitacora:      store,
+		Unidad:        store,
+		Reloj:         reloj.Sistema{},
+	}
+
 	// Mismo cableado que cmd/api, con la boveda en S3 (ADR 0023).
 	api := httpapi.Nueva(httpapi.Casos{
 		Salud: store,
@@ -303,6 +315,7 @@ func construir() (http.Handler, error) {
 		},
 		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
 		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
+		Bolsas:   bolsas,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

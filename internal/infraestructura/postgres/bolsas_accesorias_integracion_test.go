@@ -5,6 +5,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 // TestReplayDeReservaEsInmuneAQueLosParametrosCambienDespues es el caso
@@ -40,7 +41,20 @@ func TestReplayDeReservaEsInmuneAQueLosParametrosCambienDespues(t *testing.T) {
 		t.Fatalf("congelar la corrida original: %v", err)
 	}
 
-	b := aplicacion.BolsasAccesorias{Resultados: s, Reservas: s}
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
+		 VALUES ('proceso-2', 'nacional', 'importe_titular', '2027-01', 'bolsa-1', 'snap-1', 'IX')`); err != nil {
+		t.Fatalf("sembrar la corrida de destino: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+		 VALUES ('actor-1', 'actor-1@redes.test', 'Actor 1', 'auditor', 'hash-de-prueba-suficientemente-larga')`); err != nil {
+		t.Fatalf("sembrar actor: %v", err)
+	}
+
+	b := aplicacion.BolsasAccesorias{
+		Resultados: s, Reservas: s, Corridas: s, Bitacora: s, Unidad: s, Reloj: reloj.Sistema{},
+	}
 	if _, err := b.RegistrarReserva(ctx, "proceso-1", reparto.Nacional, dec("5")); err != nil {
 		t.Fatalf("registrar reserva: %v", err)
 	}
@@ -51,7 +65,7 @@ func TestReplayDeReservaEsInmuneAQueLosParametrosCambienDespues(t *testing.T) {
 	// un hueco en la firma por el que una tasa o ponderacion vigente HOY
 	// pueda colarse en el replay. Lo que sigue prueba la otra mitad: que el
 	// resultado es identico al proporcionado en 2026.
-	nuevas, residuo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "2026", dec("0.00"))
+	nuevas, residuo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "proceso-2", "2026", dec("0.00"), "actor-1")
 	if err != nil {
 		t.Fatalf("liberar reserva: %v", err)
 	}
