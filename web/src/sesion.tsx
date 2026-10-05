@@ -139,7 +139,7 @@ export function ProveedorDeSesion({ children }: { children: ReactNode }) {
     try {
       await cerrarSesion();
     } catch {
-      // Sin aviso: lo que importa es que el token ya no viva en este equipo.
+      // Sin aviso a proposito: ADR 0025 acepta el riesgo de que el servidor no revoque.
     }
     clearToken();
     setUsuario(null);

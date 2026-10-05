@@ -36,6 +36,7 @@ proposito.
 | [0022 Descartar un caso de identificacion es un escalon propio](0022-descartar-caso-de-identificacion.md) | Vigente |
 | [0023 La boveda de produccion es S3 con Object Lock GOVERNANCE a diez anos](0023-boveda-s3-con-object-lock-governance.md) | Vigente (provisional) |
 | [0024 La liquidacion se emite al entrar a `liquidacion_final` y espera a todas las corridas del periodo](0024-liquidacion-al-entrar-a-liquidacion-final.md) | Vigente |
+| [0025 "Salir" no avisa si el servidor no confirmo la revocacion](0025-salir-sin-aviso-de-revocacion.md) | Vigente |
 
 Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
 nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico
