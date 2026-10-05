@@ -9,8 +9,8 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
-// MaxRunasTextoSeccion acota cada seccion devuelta al modelo; la cita lleva al texto completo.
-const MaxRunasTextoSeccion = 4000
+// MaxRunasTextoSeccion cubre la seccion real mas larga (RD 3, ~8.500) con holgura; solo recorta texto anomalo.
+const MaxRunasTextoSeccion = 12000
 
 // LectorReglamento es lo unico que la herramienta necesita de aplicacion.ConsultarReglamento.
 type LectorReglamento interface {
