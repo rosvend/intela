@@ -1,6 +1,7 @@
 package reparto_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -35,5 +36,21 @@ func TestNuevoPoolRendimientoRechazaCircuitoDesconocido(t *testing.T) {
 	_, err := reparto.NuevoPoolRendimiento(reparto.Circuito("marciano"), "2026", d("100.00"))
 	if err == nil {
 		t.Fatal("se esperaba error con circuito desconocido")
+	}
+}
+
+func TestExigirMismoCircuitoRechazaCruzarCircuitos(t *testing.T) {
+	casos := []struct{ rendimiento, origen, destino reparto.Circuito }{
+		{reparto.Internacional, reparto.Nacional, reparto.Internacional},
+		{reparto.Nacional, reparto.Nacional, reparto.Internacional},
+		{reparto.Nacional, reparto.Internacional, reparto.Nacional},
+	}
+	for _, c := range casos {
+		if err := reparto.ExigirMismoCircuito(c.rendimiento, c.origen, c.destino); !errors.Is(err, reparto.ErrCircuitoCruzado) {
+			t.Fatalf("%+v: error = %v, se esperaba ErrCircuitoCruzado (RD 10.3)", c, err)
+		}
+	}
+	if err := reparto.ExigirMismoCircuito(reparto.Internacional, reparto.Internacional, reparto.Internacional); err != nil {
+		t.Fatalf("mismo circuito: %v", err)
 	}
 }

@@ -80,6 +80,9 @@ type Casos struct {
 	Explicar       Explicador
 	Ingresos       ConsultaIngresos
 	Tablero        Tablero
+	// Bolsas no tiene ruta: la agrega #34. Queda cableada para que la
+	// liberacion y su asiento compartan unidad (#177).
+	Bolsas aplicacion.BolsasAccesorias
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -111,6 +114,7 @@ type API struct {
 	explicar       Explicador
 	ingresos       ConsultaIngresos
 	tablero        Tablero
+	bolsas         aplicacion.BolsasAccesorias
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -148,6 +152,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		explicar:       casos.Explicar,
 		ingresos:       casos.Ingresos,
 		tablero:        casos.Tablero,
+		bolsas:         casos.Bolsas,
 		opts:           opts,
 		log:            log,
 	}

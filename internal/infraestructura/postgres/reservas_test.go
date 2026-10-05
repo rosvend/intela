@@ -10,6 +10,7 @@ import (
 
 	"github.com/rosvend/intela/internal/aplicacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
+	"github.com/rosvend/intela/internal/infraestructura/reloj"
 )
 
 func TestReservasCrearYReservaPorProcesoRedondaLaFilaCompleta(t *testing.T) {
@@ -727,8 +728,21 @@ func liberarPrescrita(t *testing.T, reserva, rendimientoEnLedger, rendimientoAUs
 	if err := s.AcrecerRendimiento(ctx, reparto.Nacional, "2026", rendimientoEnLedger); err != nil {
 		t.Fatalf("acrecer rendimiento: %v", err)
 	}
-	b := aplicacion.BolsasAccesorias{Resultados: s, Reservas: s, Rendimientos: s}
-	_, saldo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "2026", rendimientoAUsar)
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO procesos (id, circuito, etapa, periodo, bolsa_id, snapshot_id, reglamento)
+		 VALUES ('proceso-2', 'nacional', 'importe_titular', '2027-01', 'bolsa-1', 'snap-1', 'IX')`); err != nil {
+		t.Fatalf("sembrar la corrida de destino: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+		 VALUES ('actor-1', 'actor-1@redes.test', 'Actor 1', 'auditor', 'hash-de-prueba-suficientemente-larga')`); err != nil {
+		t.Fatalf("sembrar actor: %v", err)
+	}
+	b := aplicacion.BolsasAccesorias{
+		Resultados: s, Reservas: s, Rendimientos: s,
+		Corridas: s, Bitacora: s, Unidad: s, Reloj: reloj.Sistema{},
+	}
+	_, saldo, err := b.LiberarReservaPrescrita(ctx, "proceso-1", "proceso-2", "2026", rendimientoAUsar, "actor-1")
 	if err != nil {
 		t.Fatalf("liberar reserva: %v", err)
 	}

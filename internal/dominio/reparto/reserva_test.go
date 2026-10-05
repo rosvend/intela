@@ -50,3 +50,14 @@ func TestNuevaPoolReservaTasaAusenteEsError(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrParametroAusente: tasa cero es ausente, no cero legitimo (ADR 0004)", err)
 	}
 }
+
+func TestExigirLiberacionNacionalRechazaUnaCorridaInternacional(t *testing.T) {
+	for _, c := range [][2]reparto.Circuito{{reparto.Nacional, reparto.Internacional}, {reparto.Internacional, reparto.Nacional}} {
+		if err := reparto.ExigirLiberacionNacional(c[0], c[1]); !errors.Is(err, reparto.ErrReservaInternacional) {
+			t.Fatalf("%v: error = %v, se esperaba ErrReservaInternacional (RD 14.5.4)", c, err)
+		}
+	}
+	if err := reparto.ExigirLiberacionNacional(reparto.Nacional, reparto.Nacional); err != nil {
+		t.Fatalf("nacional a nacional: %v", err)
+	}
+}
