@@ -58,9 +58,24 @@ arrancar la API. Reemplaza entero el indice del modelo en una transaccion.
   **Provisionales** hasta calibrarlos con preguntas reales del staff.
 - Requiere la extension pgvector (migracion 00029). Local y CI usan
   `pgvector/pgvector:0.8.1-pg16`. En RDS PostgreSQL 16 la extension `vector` viene incluida y
-  la crea la migracion con el usuario maestro (`rds_superuser`). Con `bedrock`, el rol de la
-  Lambda necesita ademas `bedrock:InvokeModel` sobre el modelo y acceso al modelo habilitado
-  en la consola de Bedrock; nada de eso esta en `infra/` todavia.
+  la crea la migracion con el usuario maestro (`rds_superuser`).
+- Si el indice del modelo activo esta vacio, la API deja un `WARN` "indice vacio para el
+  modelo" con el modelo: distingue "nadie indexo" (o API e indexador con modelos distintos)
+  de "nada supera el piso".
+
+### Pendiente antes de produccion
+
+- **Red y permisos (resueltos en #216).** Las subredes privadas no tienen NAT; la Lambda llega
+  a Bedrock por el interface endpoint VPC `bedrock-runtime` que agrega #216. El mismo PR da al
+  rol de la Lambda `bedrock:InvokeModel` sobre `amazon.titan-embed-text-v2:0`. El acceso a
+  Titan esta verificado en `us-east-1` (devuelve 1024 dimensiones).
+- **Indexar en produccion no se hace desde un portatil.** RDS esta en subred privada, asi que
+  `make indexar-reglamento` contra produccion no conecta desde fuera de la VPC. El indexador
+  tiene que correr donde ya hay acceso a la BD: como paso opcional de `cmd/lambda-migrate`
+  despues de las migraciones, o como una invocacion puntual de una Lambda en la VPC con el
+  mismo `EMBEDDINGS_PROVEEDOR`/`EMBEDDINGS_MODELO` que la API. Ninguno de los dos esta
+  implementado todavia.
+- Calibrar los pisos de similitud con preguntas reales del staff.
 
 ## Cuando llegue una version nueva
 
