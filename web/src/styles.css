@@ -3718,20 +3718,9 @@ p.alerta {
   background: var(--acento-activo);
 }
 
-.agente-mensaje-asistente,
-.agente-pensando {
+.agente-mensaje-asistente {
   align-self: flex-start;
   background: var(--fondo);
-}
-
-.agente-pensando {
-  color: var(--texto-suave);
-}
-
-.agente-error {
-  align-self: flex-start;
-  background: var(--error-fondo);
-  color: var(--error);
 }
 
 .agente-entrada {
