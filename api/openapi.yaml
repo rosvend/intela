@@ -2057,11 +2057,13 @@ paths:
       tags: [tablero, titular]
       summary: Resumen del ultimo periodo liquidado del titular
       description: |
-        Neto sumado y numero de obras del ultimo periodo con lineas de
-        liquidacion del titular autenticado. Solo cuentan las corridas que ya
-        cerraron la compuerta de verificacion (llegaron a `liquidacion_final`,
-        ADR 0024): una corrida sin firmar no suma ni define el periodo. Una
-        obra repartida por dos bolsas del periodo cuenta una vez.
+        Neto sumado y numero de obras del ultimo periodo con ordenes de pago
+        del titular autenticado. La fuente es `ordenes_pago`, la misma que
+        `/mis-liquidaciones`: un periodo solo tiene ordenes cuando TODAS sus
+        corridas llegaron a `liquidacion_final` (ADR 0024), asi que un periodo
+        a medias no cuenta y se muestra el anterior. El neto incluye las
+        ordenes `diferida` y los arrastres de `R-11`. Una obra repartida por
+        dos bolsas del periodo cuenta una vez. Sin ordenes, 404.
       operationId: tableroUltimaLiquidacion
       security:
         - bearerAuth: []
@@ -2094,7 +2096,7 @@ paths:
               example:
                 error: no autorizado
         "404":
-          description: El titular no tiene lineas de corridas firmadas.
+          description: El titular no tiene ordenes de pago emitidas.
           content:
             application/json:
               schema:
@@ -5913,6 +5915,15 @@ components:
             identidad es (obra, titular). Con la obra sola, dos coautores
             ausentes de la misma obra serian la misma alerta.
           example: IPI-00000002
+        ref_titulo:
+          type: string
+          description: |
+            Titulo VIGENTE de la obra referida, solo cuando `ref_tipo` es
+            `obra` (se ausenta en los demas). Es para pintar: la referencia
+            sigue siendo `ref_id`. Viaja en el listado para que la bandeja no
+            pida `GET /obras/{id}` por tarjeta, ruta que solo sirve a
+            administrador.
+          example: La Casa de las Dos Palmas
         critica:
           type: boolean
           description: |
@@ -6532,9 +6543,21 @@ components:
       properties:
         periodo:
           type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: "2026-01"
         etapa:
           type: string
+          enum:
+            - recaudo
+            - deducciones
+            - importe_obra
+            - importe_titular
+            - liquidacion_parcial
+            - verificacion
+            - liquidacion_final
+            - pago_registro
+            - fees_in_error
+            - auditoria
           description: Etapa de `RD 13.5`, igual que en `Proceso`.
         estado:
           type: string
@@ -6567,13 +6590,14 @@ components:
       properties:
         periodo:
           type: string
+          pattern: '^[0-9]{4}(-(0[1-9]|1[0-2]))?$'
           example: "2026-01"
         neto:
           $ref: "#/components/schemas/Monto"
         obras:
           type: integer
           minimum: 0
-          description: Obras distintas con linea en el periodo.
+          description: Obras distintas del titular en las corridas de esas ordenes.
 
     ListaIngresos:
       type: object

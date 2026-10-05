@@ -10,6 +10,11 @@ describe("Cifra", () => {
     expect(screen.getByLabelText("$ 2.450.000")).toBeTruthy();
   });
 
+  it("el aria-label lleva el importe grande exacto, sin abreviar", () => {
+    render(<Cifra valor="1890000000.00" />);
+    expect(screen.getByLabelText("$ 1.890.000.000")).toBeTruthy();
+  });
+
   it("muestra la pastilla de variacion con su signo", () => {
     render(<Cifra valor="100" variacion={5.4} />);
     expect(screen.getByText("+5,4 %")).toBeTruthy();

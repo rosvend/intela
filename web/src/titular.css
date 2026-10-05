@@ -43,7 +43,7 @@
 }
 
 .titular-heroe .cifra-valor {
-  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  font-size: clamp(1.6rem, 12cqi, 3.4rem);
 }
 
 .titular-eyebrow {

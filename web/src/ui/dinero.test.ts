@@ -25,6 +25,26 @@ describe("formatearCOP", () => {
     );
   });
 
+  it("quita los ceros a la izquierda", () => {
+    expect(formatearCOP("0001234.50")).toBe("$ 1.234,50");
+    expect(formatearCOP("000")).toBe("$ 0");
+  });
+
+  it("redondea a centavos lejos de cero, igual que sumarImportes", () => {
+    expect(formatearCOP("1.999")).toBe("$ 2");
+    expect(formatearCOP("1.994")).toBe("$ 1,99");
+    expect(formatearCOP("1.995")).toBe("$ 2");
+    expect(formatearCOP("-1.995")).toBe("-$ 2");
+    expect(formatearCOP("999.999")).toBe("$ 1.000");
+    expect(sumarImportes(["1.999"])).toBe("2.00");
+  });
+
+  it("el cero nunca lleva signo", () => {
+    expect(formatearCOP("-0.001")).toBe("$ 0");
+    expect(formatearCOP("-0")).toBe("$ 0");
+    expect(formatearCOP("-0.00")).toBe("$ 0");
+  });
+
   it("devuelve el texto tal cual si no es un decimal", () => {
     expect(formatearCOP("abc")).toBe("abc");
   });
@@ -36,6 +56,27 @@ describe("formatearCOPCompacto", () => {
     expect(formatearCOPCompacto("2450000")).toBe("$ 2,5 M");
     expect(formatearCOPCompacto("13746")).toBe("$ 13,7 mil");
     expect(formatearCOPCompacto("850")).toBe("$ 850");
+  });
+
+  it("conserva el signo negativo", () => {
+    expect(formatearCOPCompacto("-2450000")).toBe("-$ 2,5 M");
+    expect(formatearCOPCompacto("-13746")).toBe("-$ 13,7 mil");
+    expect(formatearCOPCompacto("-850")).toBe("-$ 850");
+  });
+
+  it("el cero redondeado no lleva signo", () => {
+    expect(formatearCOPCompacto("-0.4")).toBe("$ 0");
+  });
+
+  it("sube de unidad cuando el redondeo alcanza el umbral", () => {
+    expect(formatearCOPCompacto("999999.99")).toBe("$ 1 M");
+    expect(formatearCOPCompacto("999950")).toBe("$ 1 M");
+    expect(formatearCOPCompacto("999949")).toBe("$ 999,9 mil");
+    expect(formatearCOPCompacto("999.5")).toBe("$ 1 mil");
+    expect(formatearCOPCompacto("999.4")).toBe("$ 999");
+    expect(formatearCOPCompacto("-999999.99")).toBe("-$ 1 M");
+    expect(formatearCOPCompacto("1000000")).toBe("$ 1 M");
+    expect(formatearCOPCompacto("1000")).toBe("$ 1 mil");
   });
 });
 
@@ -88,6 +129,15 @@ describe("sumarImportes", () => {
     expect(sumarImportes(["-0.005"])).toBe("-0.01");
     expect(sumarImportes(["0.0049"])).toBe("0.00");
     expect(sumarImportes(["60.0000"])).toBe("60.00");
+  });
+
+  it("un total que redondea a cero no lleva signo", () => {
+    expect(sumarImportes(["-0.004"])).toBe("0.00");
+    expect(sumarImportes(["-0.001", "-0.003"])).toBe("0.00");
+  });
+
+  it("los ceros a la izquierda no cambian la suma", () => {
+    expect(sumarImportes(["007.50", "0003"])).toBe("10.50");
   });
 
   it("un importe ilegible lanza: el dinero no se descarta en silencio", () => {

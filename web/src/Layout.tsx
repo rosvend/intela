@@ -19,6 +19,7 @@ import {
   UsersIcon,
 } from "@heroicons/react/24/outline";
 import { usePendientesDeIdentificacion } from "./identificacion/pendientes";
+import ErrorBoundary from "./ErrorBoundary";
 import { iniciales } from "./iniciales";
 import logo from "./logo-intela.png";
 import { RUTAS, Seccion, itemsDeNav, puedeVer } from "./navegacion";
@@ -233,7 +234,10 @@ export default function Layout() {
         </div>
       </aside>
       <main className="contenido">
-        {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
+        {/* Un fallo de render se queda en su pagina; la clave por ruta lo limpia al navegar. */}
+        <ErrorBoundary key={location.pathname}>
+          {autorizado ? <Outlet context={contexto} /> : <NoAutorizado />}
+        </ErrorBoundary>
       </main>
     </div>
   );

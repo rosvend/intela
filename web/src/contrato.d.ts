@@ -731,11 +731,13 @@ export interface paths {
         };
         /**
          * Resumen del ultimo periodo liquidado del titular
-         * @description Neto sumado y numero de obras del ultimo periodo con lineas de
-         *     liquidacion del titular autenticado. Solo cuentan las corridas que ya
-         *     cerraron la compuerta de verificacion (llegaron a `liquidacion_final`,
-         *     ADR 0024): una corrida sin firmar no suma ni define el periodo. Una
-         *     obra repartida por dos bolsas del periodo cuenta una vez.
+         * @description Neto sumado y numero de obras del ultimo periodo con ordenes de pago
+         *     del titular autenticado. La fuente es `ordenes_pago`, la misma que
+         *     `/mis-liquidaciones`: un periodo solo tiene ordenes cuando TODAS sus
+         *     corridas llegaron a `liquidacion_final` (ADR 0024), asi que un periodo
+         *     a medias no cuenta y se muestra el anterior. El neto incluye las
+         *     ordenes `diferida` y los arrastres de `R-11`. Una obra repartida por
+         *     dos bolsas del periodo cuenta una vez. Sin ordenes, 404.
          */
         get: operations["tableroUltimaLiquidacion"];
         put?: never;
@@ -2376,6 +2378,15 @@ export interface components {
              */
             ref_titular?: string;
             /**
+             * @description Titulo VIGENTE de la obra referida, solo cuando `ref_tipo` es
+             *     `obra` (se ausenta en los demas). Es para pintar: la referencia
+             *     sigue siendo `ref_id`. Viaja en el listado para que la bandeja no
+             *     pida `GET /obras/{id}` por tarjeta, ruta que solo sirve a
+             *     administrador.
+             * @example La Casa de las Dos Palmas
+             */
+            ref_titulo?: string;
+            /**
              * @description Si este tipo BLOQUEA la distribucion del periodo. Es DERIVADO del
              *     tipo, no un dato guardado: persistirlo congelaria la clasificacion
              *     en el momento de detectar.
@@ -2861,8 +2872,11 @@ export interface components {
         UltimaCorrida: {
             /** @example 2026-01 */
             periodo: string;
-            /** @description Etapa de `RD 13.5`, igual que en `Proceso`. */
-            etapa: string;
+            /**
+             * @description Etapa de `RD 13.5`, igual que en `Proceso`.
+             * @enum {string}
+             */
+            etapa: "recaudo" | "deducciones" | "importe_obra" | "importe_titular" | "liquidacion_parcial" | "verificacion" | "liquidacion_final" | "pago_registro" | "fees_in_error" | "auditoria";
             /** @enum {string} */
             estado: "en_curso" | "en_firma" | "cerrada";
         };
@@ -2879,7 +2893,7 @@ export interface components {
             /** @example 2026-01 */
             periodo: string;
             neto: components["schemas"]["Monto"];
-            /** @description Obras distintas con linea en el periodo. */
+            /** @description Obras distintas del titular en las corridas de esas ordenes. */
             obras: number;
         };
         ListaIngresos: {
@@ -5578,7 +5592,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description El titular no tiene lineas de corridas firmadas. */
+            /** @description El titular no tiene ordenes de pago emitidas. */
             404: {
                 headers: {
                     [name: string]: unknown;

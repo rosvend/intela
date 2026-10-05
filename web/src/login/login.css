@@ -1,0 +1,43 @@
+/* Pausa de las serpientes (WCAG 2.2.2): pastilla discreta abajo a la izquierda. */
+.acceso-pausa {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+  color: #ffffff;
+  opacity: 0.7;
+  cursor: pointer;
+  transition:
+    opacity 150ms ease,
+    background-color 150ms ease;
+}
+
+.acceso-pausa:hover,
+.acceso-pausa:focus-visible {
+  opacity: 1;
+  background: rgb(255 255 255 / 0.22);
+}
+
+.acceso-pausa:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.acceso-pausa-icono {
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acceso-pausa {
+    transition: none;
+  }
+}
