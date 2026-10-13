@@ -20,12 +20,14 @@ infra/
 | Tablero (`web/dist`) | Amplify Hosting, con rewrite de `/api/*` | ~$0 |
 | Base | RDS PostgreSQL `db.t4g.micro`, subred privada | **~$14/mes** |
 | Boveda de reportes | S3 con Object Lock habilitado, sin retencion por defecto | < $0.50 |
-| Red | VPC, dos subredes privadas, endpoint S3 gateway | $0 |
+| Red | VPC, dos subredes privadas, endpoint S3 gateway, NAT Gateway (`enable_nat`, ADR 0026) | ~$32/mes + trafico |
 | Vigilancia de gasto | AWS Budgets filtrado por `Project=intela` | $0 |
 
-**RDS es el unico coste fijo mensual.** S3 tambien cobra sin trafico, pero por almacenamiento, asi
-que empieza en centimos y crece con las parrillas guardadas, no con el calendario. Sin NAT Gateway,
-sin balanceador y sin VPC interface endpoints, que costarian $7.20/mes cada uno.
+**RDS y el NAT Gateway son los costes fijos mensuales** (~$14 y ~$32; total esperado ~$45-50, por
+encima del presupuesto original de $20, sobrecosto aprobado, ADR 0026). El NAT existe para que el
+asistente llegue a la API de Anthropic; `enable_nat = false` lo apaga. S3 tambien cobra sin
+trafico, pero por almacenamiento. Sin balanceador y sin VPC interface endpoints, que costarian
+$7.20/mes cada uno.
 
 ## Arrancar en una cuenta nueva
 

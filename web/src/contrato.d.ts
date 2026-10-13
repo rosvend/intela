@@ -1552,6 +1552,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agente/consulta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preguntar al asistente
+         * @description Resuelve una pregunta con hasta 5 turnos de modelo y transmite el
+         *     progreso como Server-Sent Events (`text/event-stream`):
+         *
+         *     - `tool_call`, data `EventoAgenteHerramienta`: una herramienta de
+         *       lectura empezo a correr. Uno por llamada, en orden.
+         *     - `answer`, data `EventoAgenteRespuesta`: la respuesta final. `parcial`
+         *       marca que se agoto el limite de turnos; `restringida`, que una
+         *       herramienta denego la consulta por rol y el bucle corto sin volver al
+         *       modelo.
+         *     - `error`, data `EventoAgenteError`: el modelo no respondio tras un
+         *       reintento.
+         *
+         *     Cada bloque es `event: <nombre>\ndata: <json>\n\n`. En `cmd/api` llegan
+         *     a medida que ocurren; detras de la Function URL de Lambda (respuesta en
+         *     buffer) llega el mismo cuerpo de una vez.
+         *
+         *     Los errores de validacion se responden ANTES de transmitir, como JSON.
+         *     Limite: 20 consultas por minuto por usuario; cuerpo de 64 KiB; historial
+         *     de 20 turnos y 4000 caracteres por mensaje.
+         */
+        post: operations["consultarAgente"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2281,6 +2319,33 @@ export interface components {
              * @example faltan soportes de la liquidacion parcial
              */
             motivo: string;
+        };
+        ConsultaAgente: {
+            mensaje: string;
+            /** @description Turnos previos de esta sesion de navegador. No hay almacen en el servidor. */
+            historial?: components["schemas"]["TurnoAgente"][];
+        };
+        TurnoAgente: {
+            /** @enum {string} */
+            rol: "usuario" | "asistente";
+            texto: string;
+        };
+        /** @description Data del evento SSE `tool_call`. */
+        EventoAgenteHerramienta: {
+            /** @description Nombre de la herramienta de lectura, p. ej. `buscar_reglamento`. */
+            herramienta: string;
+        };
+        /** @description Data del evento SSE `answer`. */
+        EventoAgenteRespuesta: {
+            texto: string;
+            /** @description Se agoto el limite de turnos; la respuesta no esta confirmada. */
+            parcial: boolean;
+            /** @description Una herramienta denego la consulta por rol; el texto es fijo. */
+            restringida: boolean;
+        };
+        /** @description Data del evento SSE `error`. */
+        EventoAgenteError: {
+            mensaje: string;
         };
         Error: {
             /**
@@ -8722,6 +8787,102 @@ export interface operations {
                      *       "error": "la ingesta de reportes no esta configurada en esta instalacion"
                      *     }
                      */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    consultarAgente: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "mensaje": "Que pasa si los porcentajes declarados no suman 100%?",
+                 *       "historial": [
+                 *         {
+                 *           "rol": "usuario",
+                 *           "texto": "hola"
+                 *         },
+                 *         {
+                 *           "rol": "asistente",
+                 *           "texto": "Hola, en que te ayudo?"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ConsultaAgente"];
+            };
+        };
+        responses: {
+            /** @description Flujo de eventos SSE. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example event: tool_call
+                     *     data: {"herramienta":"buscar_reglamento"}
+                     *
+                     *     event: answer
+                     *     data: {"texto":"Se retiene el total en reserva (RD 9.1.1).","parcial":false,"restringida":false}
+                     */
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Cuerpo invalido, mensaje vacio o demasiado largo, o historial fuera de limites. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "consulta invalida: el mensaje tiene que tener entre 1 y 4000 caracteres"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El cuerpo supera 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Mas de 20 consultas en el ultimo minuto para este usuario. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el asistente. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["Error"];
                 };
             };

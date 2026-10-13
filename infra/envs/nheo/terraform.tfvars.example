@@ -12,7 +12,9 @@ app_version = "local"
 # Who hears about a cost overrun. Required: a budget with no subscribers is
 # decoration.
 budget_notification_emails = ["you@example.com"]
-monthly_budget_usd         = 20
+# 45 = RDS ~14 + NAT Gateway ~32 + traffic and Lambda/S3 cents. Above the original
+# 20: the user approved the NAT overage (ADR 0026). Back to 20 if enable_nat = false.
+monthly_budget_usd         = 45
 
 # Extra tags merged into every resource. Project is forced on top of these and
 # cannot be overridden here.

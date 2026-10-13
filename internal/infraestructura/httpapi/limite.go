@@ -12,13 +12,26 @@ import (
 // RealIP ya reescribio RemoteAddr cuando hay cabecera de proxy de fiar,
 // asi que aqui se lee eso y no X-Forwarded-For otra vez.
 func limitarPorIP(maximo int, ventana time.Duration) func(http.Handler) http.Handler {
+	return limitar(maximo, ventana, ipDe)
+}
+
+// limitarPorUsuario recorta por usuario de la sesion; va detras de conSesion.
+func limitarPorUsuario(maximo int, ventana time.Duration) func(http.Handler) http.Handler {
+	return limitar(maximo, ventana, func(r *http.Request) string {
+		u, _ := UsuarioDe(r.Context())
+		return u.ID
+	})
+}
+
+// limitar es la ventana deslizante comun, por la clave que devuelva `de`.
+func limitar(maximo int, ventana time.Duration, de func(*http.Request) string) func(http.Handler) http.Handler {
 	var (
 		mu     sync.Mutex
 		golpes = map[string][]time.Time{}
 	)
 	return func(siguiente http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := ipDe(r)
+			ip := de(r)
 			ahora := time.Now()
 
 			mu.Lock()

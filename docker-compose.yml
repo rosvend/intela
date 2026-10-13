@@ -161,6 +161,11 @@ services:
       # por las de REDES SGC.
       ONI_DIRECCION_FISICA: "REDES SGC, Bogota D.C., Colombia"
       ONI_DIRECCION_ELECTRONICA: "oni@redescritores.com"
+      # El asistente (#66). Se pasan del host; sin clave responde "no disponible".
+      # AGENTE_PROVEEDOR=falso da un guion determinista sin red, para probar el panel.
+      AGENTE_PROVEEDOR: "${AGENTE_PROVEEDOR:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AGENTE_MODELO: "${AGENTE_MODELO:-}"
     volumes: [objetos:/objetos]
     ports: ["8080:8080"]
     # Sin healthcheck: la imagen es distroless y no tiene shell ni curl con

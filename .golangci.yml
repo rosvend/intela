@@ -139,6 +139,17 @@ linters:
             - pkg: github.com/aws/aws-lambda-go
               desc: "ADR 0014: Lambda is a runtime, not a use case. It is owned by cmd/lambda."
 
+        # The agent's tools (#64) wrap aplicacion READ use cases and nothing
+        # else: RBAC lives in the use case, so a tool that reached the dominio
+        # directly would skip it. Same lesson httpapi/server.go documents.
+        herramientas-sin-dominio:
+          files:
+            - "**/internal/aplicacion/herramientas/*.go"
+            - "**/internal/aplicacion/herramientas/**/*.go"
+          deny:
+            - pkg: github.com/rosvend/intela/internal/dominio
+              desc: "#64: a tool wraps an aplicacion use case (where RBAC lives); it never reads the dominio directly."
+
         # ADR 0003: "Reparto lee de Repertorio y de Recaudo. Ninguno de los dos
         # conoce a Reparto." Go already rejects cycles at compile time; this
         # additionally forbids the one-way edge, which compiles perfectly.

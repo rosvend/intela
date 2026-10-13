@@ -115,6 +115,11 @@ on:
           it names -- actionlint fails the build otherwise, which is how this
           was caught.
         required: false
+      ANTHROPIC_API_KEY:
+        description: >-
+          Optional key for the assistant's direct Anthropic provider (#66),
+          through `secrets: inherit`. Production uses it through the NAT (ADR 0026).
+        required: false
 
 permissions:
   contents: read
@@ -258,6 +263,8 @@ jobs:
         working-directory: infra/envs/${{ inputs.terraform-environment }}
         env:
           EMAILS: ${{ secrets.BUDGET_NOTIFICATION_EMAILS }}
+          # Read when agente_proveedor = "anthropic", the production default (#66, ADR 0026).
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
           TF_VAR_budget_notification_emails="$(jq -cR \

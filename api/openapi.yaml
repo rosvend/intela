@@ -94,6 +94,12 @@ tags:
       Panel de consulta del titular (OE-6). Solo `titular`. El recorte es
       el `titular_id` de la sesion: no hay parametro para pedir los de
       otro. Cada monto es neto; el bruto vive en `/explicar/{ref}`.
+  - name: agente
+    description: |
+      Asistente conversacional de SOLO LECTURA (#64). Cualquier rol: el alcance
+      lo recortan los casos de uso de cada herramienta con la sesion, nunca los
+      argumentos que elija el modelo. Nunca escribe, firma ni reparte (RD 13.5).
+      La conversacion no se guarda en el servidor.
   - name: repertorio
     description: |
       Catalogo maestro de obras: el cubo contra el que resuelve todo el
@@ -4894,6 +4900,91 @@ paths:
               example:
                 error: la ingesta de reportes no esta configurada en esta instalacion
 
+  /agente/consulta:
+    post:
+      tags: [agente]
+      summary: Preguntar al asistente
+      description: |
+        Resuelve una pregunta con hasta 5 turnos de modelo y transmite el
+        progreso como Server-Sent Events (`text/event-stream`):
+
+        - `tool_call`, data `EventoAgenteHerramienta`: una herramienta de
+          lectura empezo a correr. Uno por llamada, en orden.
+        - `answer`, data `EventoAgenteRespuesta`: la respuesta final. `parcial`
+          marca que se agoto el limite de turnos; `restringida`, que una
+          herramienta denego la consulta por rol y el bucle corto sin volver al
+          modelo.
+        - `error`, data `EventoAgenteError`: el modelo no respondio tras un
+          reintento.
+
+        Cada bloque es `event: <nombre>\ndata: <json>\n\n`. En `cmd/api` llegan
+        a medida que ocurren; detras de la Function URL de Lambda (respuesta en
+        buffer) llega el mismo cuerpo de una vez.
+
+        Los errores de validacion se responden ANTES de transmitir, como JSON.
+        Limite: 20 consultas por minuto por usuario; cuerpo de 64 KiB; historial
+        de 20 turnos y 4000 caracteres por mensaje.
+      operationId: consultarAgente
+      x-required-roles: [administrador, distribucion, contabilidad, auditor, titular]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsultaAgente"
+            example:
+              mensaje: "Que pasa si los porcentajes declarados no suman 100%?"
+              historial:
+                - rol: usuario
+                  texto: hola
+                - rol: asistente
+                  texto: "Hola, en que te ayudo?"
+      responses:
+        "200":
+          description: Flujo de eventos SSE.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: tool_call
+                data: {"herramienta":"buscar_reglamento"}
+
+                event: answer
+                data: {"texto":"Se retiene el total en reserva (RD 9.1.1).","parcial":false,"restringida":false}
+        "400":
+          description: Cuerpo invalido, mensaje vacio o demasiado largo, o historial fuera de limites.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "consulta invalida: el mensaje tiene que tener entre 1 y 4000 caracteres"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: El cuerpo supera 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Mas de 20 consultas en el ultimo minuto para este usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Esta instalacion no cablea el asistente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5807,6 +5898,56 @@ components:
             explicable ante una auditoria (`RD 16`).
           example: faltan soportes de la liquidacion parcial
 
+    ConsultaAgente:
+      type: object
+      required: [mensaje]
+      properties:
+        mensaje:
+          type: string
+          maxLength: 4000
+        historial:
+          type: array
+          maxItems: 20
+          description: Turnos previos de esta sesion de navegador. No hay almacen en el servidor.
+          items:
+            $ref: "#/components/schemas/TurnoAgente"
+    TurnoAgente:
+      type: object
+      required: [rol, texto]
+      properties:
+        rol:
+          type: string
+          enum: [usuario, asistente]
+        texto:
+          type: string
+    EventoAgenteHerramienta:
+      type: object
+      description: Data del evento SSE `tool_call`.
+      required: [herramienta]
+      properties:
+        herramienta:
+          type: string
+          description: Nombre de la herramienta de lectura, p. ej. `buscar_reglamento`.
+    EventoAgenteRespuesta:
+      type: object
+      description: Data del evento SSE `answer`.
+      required: [texto, parcial, restringida]
+      properties:
+        texto:
+          type: string
+        parcial:
+          type: boolean
+          description: Se agoto el limite de turnos; la respuesta no esta confirmada.
+        restringida:
+          type: boolean
+          description: Una herramienta denego la consulta por rol; el texto es fijo.
+    EventoAgenteError:
+      type: object
+      description: Data del evento SSE `error`.
+      required: [mensaje]
+      properties:
+        mensaje:
+          type: string
     Error:
       type: object
       required: [error]

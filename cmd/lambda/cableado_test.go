@@ -98,6 +98,18 @@ func TestAmbosBinariosCableanLasCorreccionesDeAnomalias(t *testing.T) {
 	}
 }
 
+// TestAmbosBinariosAcotanElPlazoDelAgente: sin Plazo, cinco turnos de modelo pueden pasar el timeout de la Lambda y el usuario ve un 502 mudo.
+func TestAmbosBinariosAcotanElPlazoDelAgente(t *testing.T) {
+	for _, ruta := range []string{"../api/main.go", "main.go"} {
+		campos := camposDeLiteral(t, ruta, ruta, "aplicacion", "AgenteConsulta")
+		for _, c := range []string{"Modelo", "Herramientas", "Reloj", "Plazo"} {
+			if !slices.Contains(campos, c) {
+				t.Errorf("%s: aplicacion.AgenteConsulta{...} no cablea %s; campos: %v", ruta, c, campos)
+			}
+		}
+	}
+}
+
 // camposDeLiteral devuelve los nombres de campo del literal `paquete.Tipo{...}` de un main.
 func camposDeLiteral(t *testing.T, nombreLogico, ruta, paqueteBuscado, tipoBuscado string) []string {
 	t.Helper()

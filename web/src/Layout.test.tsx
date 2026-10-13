@@ -95,6 +95,17 @@ describe("Layout", () => {
     expect(screen.queryByText("Configuración")).toBeNull();
   });
 
+  it("ofrece la burbuja del asistente a cualquier rol, tambien al titular", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("titular"));
+
+    montar();
+
+    expect(
+      await screen.findByRole("button", { name: "Abrir asistente" }),
+    ).toBeTruthy();
+  });
+
   it("con rol administrador el sidebar tiene once enlaces en sus dos secciones", async () => {
     setToken("tok");
     vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
