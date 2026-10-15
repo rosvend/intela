@@ -66,9 +66,9 @@ func init() {
 }
 
 const (
-	// La misma familia que docker-compose.yml (postgres:16.6-alpine) y que la
-	// que nombra el issue: probar contra otra version mayor no prueba nada.
-	imagen = "postgres:16-alpine"
+	// La misma que docker-compose.yml: PostgreSQL 16 con pgvector (#67, migracion 00030).
+	// Probar contra otra version mayor no prueba nada.
+	imagen = "pgvector/pgvector:0.8.1-pg16"
 
 	// No puede ser "postgres": Restore se niega a tirar la base del sistema.
 	base    = "intela_test"
