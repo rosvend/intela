@@ -829,3 +829,41 @@ func TestListarAlertasTraeElTituloDeLaObra(t *testing.T) {
 		}
 	}
 }
+
+// El titulo solo acompana a las alertas sobre una obra (#222). El ref_id es polimorfico y sin FK,
+// asi que el de un uso o una entrega puede coincidir con el id de una obra; sin el `ref_tipo =
+// 'obra'` del JOIN, la bandeja mostraria el titulo de una obra que no tiene nada que ver. En la
+// semilla de anomalias ningun ref_id coincide, y por eso la prueba de arriba no lo ve. La alerta
+// de obra con el mismo ref_id es el control: prueba que el JOIN si encuentra la obra.
+func TestListarAlertasSoloTitulaLasAlertasDeObra(t *testing.T) {
+	s, pool := sembrar(t)
+	for _, a := range []struct{ tipo, refTipo string }{
+		{anomalias.TipoONI, anomalias.RefUso},
+		{anomalias.TipoDuplicadoArchivo, anomalias.RefReporte},
+		{anomalias.TipoReservaDeclaracionIncompleta, anomalias.RefObra},
+	} {
+		if _, err := pool.Exec(t.Context(),
+			`INSERT INTO alertas (periodo, tipo, ref_tipo, ref_id, detalle, detectada)
+			 VALUES ($1, $2, $3, $4, 'x', $5)`,
+			periodoAlertas, a.tipo, a.refTipo, obraIncompleta, instanteAlertas); err != nil {
+			t.Fatalf("sembrar la alerta %s sobre %s: %v", a.tipo, a.refTipo, err)
+		}
+	}
+
+	alertas, err := s.ListarAlertas(t.Context(), aplicacion.FiltroAlertas{Periodo: periodoAlertas})
+	if err != nil {
+		t.Fatalf("ListarAlertas: %v", err)
+	}
+	if len(alertas) != 3 {
+		t.Fatalf("hay %d alertas, se esperaban 3", len(alertas))
+	}
+	for _, a := range alertas {
+		quiero := ""
+		if a.RefTipo == anomalias.RefObra {
+			quiero = "Cronica de una Muerte"
+		}
+		if a.RefTitulo != quiero {
+			t.Errorf("%s|%s:%s: ref_titulo = %q, se esperaba %q", a.Tipo, a.RefTipo, a.RefID, a.RefTitulo, quiero)
+		}
+	}
+}
