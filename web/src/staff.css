@@ -638,11 +638,11 @@
 
 /*
  * El dinero nunca se recorta: la cifra se achica con su tarjeta
- * ($ 123.456.789.012,34 mide ~9.6em, cabe en 9cqi) y, si aun asi no cabe, parte.
+ * ($ 123.456.789.012,34 mide ~9.6em, cabe en 9cqi) y, si aun asi no cabe, parte
+ * solo tras un "." de miles (los <wbr> de Cifra), nunca entre digitos (#224).
  */
 .corridas-resumen .cifra-valor {
   white-space: normal;
-  overflow-wrap: anywhere;
   font-size: clamp(1rem, 9cqi, 2.4rem);
 }
 
@@ -678,11 +678,18 @@
   animation: fila-entrar var(--dur-media) var(--curva-salida) backwards;
 }
 
+/*
+ * Flex con salto y no grid de tres columnas: con `minmax(0, 1fr)` frente a un
+ * monto `auto`, en anchos angostos la columna del pagador se quedaba en 0 y la
+ * lista mostraba montos sin nombre (#224). Ahora, si el monto no cabe al lado
+ * del nombre, baja a su propia linea; el nombre sigue en la primera, junto al
+ * punto, y solo se abrevia si no cabe ni solo en la linea entera.
+ */
 .corrida-enlace {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.4rem 0.75rem;
   padding: 0.65rem 0.6rem;
   border-radius: 10px;
   color: var(--texto);
@@ -713,16 +720,20 @@
 }
 
 .corrida-punto {
+  flex: none;
   width: 10px;
   height: 10px;
   border-radius: 3px;
   background: var(--color);
 }
 
+/* El tope deja el punto y su hueco en la misma linea que el nombre. */
 .corrida-nombre {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: calc(100% - 10px - 0.75rem);
   font-size: 0.92rem;
   font-weight: 600;
 }
@@ -733,7 +744,9 @@
   white-space: nowrap;
 }
 
+/* Sin ancho propio: el que decide si el monto baja de linea es el pagador. */
 .corrida-etapa {
+  contain: inline-size;
   font-size: 0.78rem;
   font-weight: 500;
   color: var(--texto-suave);
@@ -744,18 +757,24 @@
 }
 
 .corrida-lado {
+  margin-inline-start: auto;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.3rem;
 }
 
+/*
+ * El compacto ("$ 987.654,3 M") es corto y va entero: partido dejaba la "M"
+ * sola en otra linea y "$ 987.654," se leia como otra cifra (#224). Si no cabe
+ * junto al nombre, lo que baja es todo el lado, no un pedazo del numero.
+ */
 .corrida-monto {
   font-size: 0.88rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: end;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .corrida-avance {
@@ -823,9 +842,9 @@
   color: var(--texto-suave);
 }
 
+/* Parte solo en los <wbr> de miles que pone el componente, como Cifra (#224). */
 .corrida-cifras-valor {
   font-size: clamp(0.75rem, 9cqi, 1.1rem);
-  overflow-wrap: anywhere;
   font-weight: 700;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
@@ -1011,12 +1030,17 @@
   height: 18px;
 }
 
+/*
+ * Con salto: en anchos angostos el chip "Pendiente" se salia de la tarjeta
+ * (y a 320px hacia scrollear la pagina); ahora baja debajo del rol (#224).
+ */
 .compuerta-firmante {
   flex: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.35rem 0.75rem;
   font-size: 0.92rem;
   font-weight: 600;
 }

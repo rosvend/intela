@@ -228,6 +228,9 @@ web/dist/
 node_modules/
 web/dist/
 *.tsbuildinfo
+# Salida de las pruebas visuales de Playwright (`npm run test:visual`)
+web/test-results/
+web/playwright-report/
 
 # Terraform
 #
