@@ -208,15 +208,26 @@
   flex-wrap: wrap;
 }
 
-/* 11cqi deja "$ 1.890.000.000" en una linea en una tarjeta de ~280px; partir es el ultimo recurso. */
+/*
+ * 11cqi deja "$ 1.890.000.000" en una linea en una tarjeta de ~280px; partir es
+ * el ultimo recurso, y solo en los <wbr> que Cifra pone tras cada "." de miles.
+ * Sin overflow-wrap: anywhere, que partia entre digitos (#224).
+ */
 .cifra-valor {
   min-width: 0;
-  overflow-wrap: anywhere;
   font-size: clamp(1.1rem, 11cqi, 2.4rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--texto);
+}
+
+/*
+ * Caja atomica: si "$ " y el numero no caben juntos, el numero baja entero a la
+ * linea siguiente; solo si no cabe ni solo, parte en sus <wbr> de miles.
+ */
+.cifra-numero {
+  display: inline-block;
 }
 
 .cifra-variacion {

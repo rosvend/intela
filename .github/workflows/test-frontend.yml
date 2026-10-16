@@ -71,3 +71,13 @@ jobs:
               npm test
               ;;
           esac
+
+      # Visual tests (#224): what jsdom cannot see because it does no layout -
+      # where a line breaks, how wide a column ends up - is measured in a real
+      # Chromium against the Vite dev server, with the API mocked per test.
+      # Only the headless shell: the tests never open a window.
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: npm run test:visual
+        run: npm run test:visual
