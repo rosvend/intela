@@ -72,14 +72,19 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Architecture boundary` | `depguard` aislado, sobre los `import` reales | Hay `go.mod` y el PR toca Go |
 | `Migration versions` | Versiones goose unicas, nombres parseables, ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
-| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
-| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
-| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/`, `api/openapi.yaml` o una fuente de `SESION_INACTIVIDAD` (nota 1) |
+| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run` | Hay `web/package.json` y el PR toca `web/`, `api/openapi.yaml` o una fuente de `SESION_INACTIVIDAD` (nota 1) |
+| `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/`, `api/openapi.yaml` o una fuente de `SESION_INACTIVIDAD` (nota 1) |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
 | `Smoke (compose bring-up)` | `docker compose --profile demo up --build` y despues [`deploy/smoke.sh`](../deploy/smoke.sh) contra nginx | Hay `docker-compose.yml` y `deploy/smoke.sh`, y el PR toca algo de lo que depende el arranque |
-| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/` o `api/openapi.yaml` |
+| `Docker build (frontend)` | Construye `web/Dockerfile`. Publica solo en `main` | Hay `web/Dockerfile` y el PR toca `web/`, `api/openapi.yaml` o una fuente de `SESION_INACTIVIDAD` (nota 1) |
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
+
+Nota 1: `cmd/api/main.go`, `cmd/lambda/main.go`, `internal/aplicacion/autenticacion.go` e
+`infra/modules/api/variables.tf`. `web/src/sesion.test.tsx` lee su valor por defecto y falla si
+`SESION_INACTIVIDAD_MS` se separa (#223, ADR 0025); sin esto, la PR que cambia el valor no correria
+esa prueba.
 
 **Hoy las tres capas ya estan en `main`** (`go.mod`, `Dockerfile` y `web/`), asi que las etapas de
 Go y de frontend corren cuando el PR toca su capa, y los dos `Docker build` cuando toca los

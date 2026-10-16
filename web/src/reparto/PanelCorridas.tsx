@@ -24,6 +24,7 @@ import {
   formatearCOPCompacto,
   sumarImportes,
 } from "../ui/dinero";
+import { useSondeo } from "../useSondeo";
 import {
   TIPOS_DE_ALERTA,
   conteoDeTipo,
@@ -197,13 +198,9 @@ export default function PanelCorridas() {
     [bolsas],
   );
 
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setRecarga((n) => n + 1),
-      INTERVALO_SONDEO_MS,
-    );
-    return () => window.clearInterval(timer);
-  }, []);
+  // Con la pestana oculta o sin nadie delante no se sondea: el servidor cuenta
+  // cada peticion como uso de la sesion (ADR 0025, #223).
+  useSondeo(() => setRecarga((n) => n + 1), INTERVALO_SONDEO_MS);
 
   const periodos = useMemo(
     () =>
