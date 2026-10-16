@@ -11,6 +11,9 @@ import (
 	"github.com/rosvend/intela/internal/aplicacion"
 )
 
+// sinInactividad deja fuera de juego la caducidad por inactividad en las pruebas que miran otra cosa.
+const sinInactividad = 24 * time.Hour
+
 // enUnaHora evita el CHECK sesion_expira_despues (expira > creada).
 //
 // `creada` se rellena con el now() del servidor, asi que un `expira` calculado
@@ -24,9 +27,6 @@ import (
 // hasta 999 ns anterior a lo que se mando. En las pruebas del borde exacto eso
 // es la diferencia entre comparar dos instantes iguales y compararlos
 // desiguales, es decir, entre una prueba y una moneda al aire.
-// sinInactividad deja fuera de juego la caducidad por inactividad en las pruebas que miran otra cosa.
-const sinInactividad = 24 * time.Hour
-
 func enUnaHora() time.Time {
 	return time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
 }
