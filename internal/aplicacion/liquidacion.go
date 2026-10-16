@@ -95,12 +95,18 @@ type OrdenVista struct {
 // [Notificador] esta aqui y no en el adaptador porque R-10 cuenta 15 dias
 // "desde el envio": sin un envio que haya ocurrido de verdad, `EnviadaDia` es
 // una fecha que nadie puede oponer al titular.
+//
+// [RecuperacionAnticipos] es el sexto, y es OBLIGATORIO para emitir: una
+// emision que no pudiera descontar le giraria entero a un socio lo que debe de
+// su anticipo (R-33, RA 2.1), y eso no se ve en ninguna prueba que no lo
+// busque. Faltar es un fallo de cableado, no un "sin anticipos".
 type Liquidaciones struct {
 	Ordenes     RepositorioLiquidacion
 	Reloj       Reloj
 	Notificador Notificador
 	Bitacora    BitacoraAuditoria
 	Unidad      UnidadDeTrabajo
+	Anticipos   RecuperacionAnticipos
 }
 
 // GenerarLiquidacion emite las ordenes de pago de un periodo y circuito.
@@ -502,6 +508,21 @@ func (l Liquidaciones) emitir(
 			acumuladas = append(acumuladas, prev.MarcarAcumulada())
 		}
 
+		// R-33 (RA 2.1): el anticipo aprobado del socio se cubre con lo que
+		// esta orden le iba a girar, arrastres de R-11 incluidos -- tambien son
+		// derechos que todavia no se le pagaron (ADR 0027) --. Va DESPUES de
+		// los arrastres y ANTES del aviso: el titular tiene que ver en la
+		// orden que se le notifica el renglon que le quito parte del neto. El
+		// saldo del anticipo y su asiento se escriben con este ctx, asi que si
+		// la emision se revierte el descuento tampoco existio.
+		descuento, err := l.Anticipos.Recuperar(ctx, titularID, id, o.Neto)
+		if err != nil {
+			return fmt.Errorf("descontar el anticipo de %s en %s: %w", titularID, id, err)
+		}
+		if o, err = o.DescontarAnticipo(descuento); err != nil {
+			return fmt.Errorf("descontar el anticipo de %s en %s: %w", titularID, id, err)
+		}
+
 		// Se notifica DESPUES de armar la orden completa (arrastres incluidos)
 		// y el acuse queda en el asiento. R-10 cuenta 15 dias "desde el envio"
 		// sobre la liquidacion que se le mostro al titular (RD 13.2): bruto y
@@ -754,14 +775,18 @@ func (l Liquidaciones) cableadoParaEscribir() error {
 	return nil
 }
 
-// cableadoParaEmitir anade el Notificador, que solo hace falta al emitir: una
-// transicion de silencio no avisa a nadie, la produce el calendario.
+// cableadoParaEmitir anade el Notificador y la recuperacion de anticipos, que
+// solo hacen falta al emitir: una transicion de silencio no avisa a nadie -la
+// produce el calendario- ni gira nada que se pueda descontar.
 func (l Liquidaciones) cableadoParaEmitir() error {
 	if err := l.cableadoParaEscribir(); err != nil {
 		return err
 	}
 	if l.Notificador == nil {
 		return errors.New("liquidaciones mal cableadas: falta Notificador")
+	}
+	if l.Anticipos == nil {
+		return errors.New("liquidaciones mal cableadas: falta RecuperacionAnticipos (R-33)")
 	}
 	return nil
 }
@@ -906,6 +931,11 @@ func cuerpoLiquidacion(m MetaProceso, o liquidacion.OrdenDePago, enviadaDia stri
 		o.Bruto.StringFixed(2), o.Neto.StringFixed(2))
 	if len(o.Arrastres) > 0 {
 		fmt.Fprintf(&b, "Incluye arrastre de %s.\n", strings.Join(o.Arrastres, ", "))
+	}
+	for _, d := range o.Deducciones {
+		if d.Concepto == liquidacion.ConceptoAnticipo {
+			fmt.Fprintf(&b, "Descuento de anticipo (R-33): %s.\n", d.Monto.StringFixed(2))
+		}
 	}
 	fmt.Fprintf(&b,
 		"Sin respuesta en %d dias calendario se entiende aceptada (R-10, RD 13.2).",

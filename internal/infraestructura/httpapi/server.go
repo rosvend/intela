@@ -82,8 +82,9 @@ type Casos struct {
 	Tablero        Tablero
 	// Bolsas no tiene ruta: la agrega #34. Queda cableada para que la
 	// liberacion y su asiento compartan unidad (#177).
-	Bolsas aplicacion.BolsasAccesorias
-	Agente Agente
+	Bolsas    aplicacion.BolsasAccesorias
+	Agente    Agente
+	Anticipos Anticipos
 }
 
 // ColaRevision lista las filas que no se pudieron normalizar; las anomalias van por `/alertas` (ADR 0021).
@@ -117,6 +118,7 @@ type API struct {
 	tablero        Tablero
 	bolsas         aplicacion.BolsasAccesorias
 	agente         Agente
+	anticipos      Anticipos
 	opts           Opciones
 	log            *slog.Logger
 }
@@ -156,6 +158,7 @@ func Nueva(casos Casos, opts Opciones) *API {
 		tablero:        casos.Tablero,
 		bolsas:         casos.Bolsas,
 		agente:         casos.Agente,
+		anticipos:      casos.Anticipos,
 		opts:           opts,
 		log:            log,
 	}
@@ -306,6 +309,28 @@ func (a *API) Router() http.Handler {
 			// /mis-liquidaciones, que desde el ADR 0019 devuelve ordenes.
 			titular.Get("/mis-liquidaciones/obras", a.consultarLiquidaciones)
 			titular.Get("/mis-liquidaciones/export", a.exportarLiquidaciones)
+		})
+
+		// Anticipos a socios (R-30..R-33, #56). Tres grupos porque no
+		// comparten roles: PEDIR es solo del titular -RA 3.1.f, la solicitud
+		// la hace el propio socio y no un tercero, ni el Consejo en su nombre-;
+		// DECIDIR es solo de `administrador`, que representa al Consejo
+		// Directivo (RA 3.2.3, roles.md); y LEER lo comparten el staff -el
+		// Consejo decide, contabilidad gira (RA 3.2.4), distribucion liquida y
+		// el auditor lee todo- con el titular, al que el caso de uso recorta a
+		// los suyos por el TitularID de la sesion (OE-6).
+		protegido.Route("/anticipos", func(ant chi.Router) {
+			ant.With(requiereRol(
+				aplicacion.RolAdministrador, aplicacion.RolDistribucion,
+				aplicacion.RolContabilidad, aplicacion.RolAuditor, aplicacion.RolTitular,
+			)).Get("/", a.conAnticipos(a.listarAnticipos))
+			ant.With(requiereRol(aplicacion.RolTitular)).
+				Post("/", a.conAnticipos(a.solicitarAnticipo))
+			ant.Group(func(consejo chi.Router) {
+				consejo.Use(requiereRol(aplicacion.RolAdministrador))
+				consejo.Post("/{id}/aprobar", a.conAnticipos(a.aprobarAnticipo))
+				consejo.Post("/{id}/rechazar", a.conAnticipos(a.rechazarAnticipo))
+			})
 		})
 
 		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).

@@ -121,6 +121,7 @@ func procesosComoCmdAPI(s *Store) aplicacion.Procesos {
 			Notificador: s.AvisoPortal(),
 			Bitacora:    s,
 			Unidad:      s,
+			Anticipos:   anticiposDe(s, reloj.Sistema{}),
 		},
 	}
 }
