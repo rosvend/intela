@@ -288,6 +288,11 @@ func (s Anticipos) situacion(ctx context.Context, titularID string, ahora time.T
 	if err != nil {
 		return anticipos.Situacion{}, CupoAsentado{}, fmt.Errorf("anticipos de %s: %w", titularID, err)
 	}
+	// AddDate normaliza: desde un 29 de febrero, dos anos atras no hay 29 y
+	// cae en el 1 de marzo, no en el 28 de febrero. Como la ventana es
+	// abierta por abajo, ese dia la base pierde las ordenes enviadas el 1 de
+	// marzo de hace dos anos. Queda anotado y no corregido: la lectura de
+	// "los ultimos dos anos" en un bisiesto no la fija el reglamento.
 	desde := ahora.AddDate(-anticipos.VentanaAnios, 0, 0)
 	derechos, err := s.Repo.DerechosLiquidados(ctx, titularID, desde, ahora)
 	if err != nil {

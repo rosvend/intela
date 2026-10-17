@@ -46,8 +46,9 @@ lectura mas generosa de "generados a su favor"; se toma la linea porque es la ci
 le reconocio. Es la respuesta del equipo, sin confirmar con REDES: **P-24**.
 
 Nacional e internacional se suman sin distincion: cuentan las ordenes de los dos circuitos. Hoy
-solo el nacional emite ordenes (`Procesos.liquidar`, ADR 0024); cuando el internacional las
-emita, entran solas.
+solo el nacional emite ordenes (`Procesos.liquidar`, ADR 0024). Cuando el internacional las emita,
+entran si su reparto escribe `resultados_titular`, que es de donde sale la linea; si no, hay que
+cambiar `DerechosLiquidados`.
 
 **El SMMLV es el vigente el dia de la decision**, leido de `parametros` (ADR 0004). Si no hay, la
 solicitud falla con `ErrParametroAusente`: un tope de cero diria "no tienes cupo" sin decir por
