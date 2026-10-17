@@ -23,13 +23,19 @@ var _ RepositorioAnticipos = (*repoAnticiposMemoria)(nil)
 // doble que no las emulara dejaria pasar un caso de uso que confia en ellas sin
 // comprobar nada. Que la base las haga cumplir de verdad se prueba contra
 // Postgres en postgres/anticipos_test.go.
+//
+// Tambien emula la vigencia de un embargo: embargos guarda, por titular, el dia
+// en que se reporto uno que nadie ha levantado, y EmbargoVigente lo compara
+// con el dia que recibe, en dias civiles como la consulta real. Un doble que
+// ignorara el dia daria por bueno un caso de uso que preguntara por ayer.
 type repoAnticiposMemoria struct {
 	clases    map[string]afiliacion.Clase
-	embargos  map[string]bool
+	embargos  map[string]time.Time
 	derechos  decimal.Decimal
 	anticipos []AnticipoRegistrado
 
 	desdeRecibido, hastaRecibido time.Time
+	diaEmbargoRecibido           time.Time
 	resueltoPor                  string
 	bloqueosPorDescontar         int
 	escrituras                   int
@@ -43,8 +49,10 @@ func (r *repoAnticiposMemoria) ClaseDe(_ context.Context, titularID string) (afi
 	return c, nil
 }
 
-func (r *repoAnticiposMemoria) EmbargoVigente(_ context.Context, titularID string, _ time.Time) (bool, error) {
-	return r.embargos[titularID], nil
+func (r *repoAnticiposMemoria) EmbargoVigente(_ context.Context, titularID string, dia time.Time) (bool, error) {
+	r.diaEmbargoRecibido = dia
+	reportado, hay := r.embargos[titularID]
+	return hay && diaCivil(reportado) <= diaCivil(dia), nil
 }
 
 func (r *repoAnticiposMemoria) DerechosLiquidados(_ context.Context, _ string, desde, hasta time.Time) (decimal.Decimal, error) {
@@ -162,7 +170,7 @@ func montarAnticipos() *entornoAnticipos {
 				"tit-ana":  afiliacion.ClaseSocio,
 				"tit-beto": afiliacion.ClaseAdministrado,
 			},
-			embargos: map[string]bool{},
+			embargos: map[string]time.Time{},
 			derechos: liqDec("4000000"),
 		},
 		libro:  &bitacoraFalsa{},
@@ -249,6 +257,10 @@ func TestSolicitarAnticipoMideLaVentanaDeDosAnios(t *testing.T) {
 	if !e.repo.desdeRecibido.Equal(instanteAnticipo.AddDate(-2, 0, 0)) {
 		t.Fatalf("desde = %s, se esperaban dos anos antes del reloj", e.repo.desdeRecibido)
 	}
+	// El embargo se pregunta por el dia del reloj (RA 3.1.e), no por otro.
+	if !e.repo.diaEmbargoRecibido.Equal(instanteAnticipo) {
+		t.Fatalf("embargo consultado para %s, se esperaba el instante del reloj", e.repo.diaEmbargoRecibido)
+	}
 }
 
 // TestSolicitarAnticipoAplicaLasReglas recorre R-30, R-31 y R-32 desde el caso
@@ -264,8 +276,10 @@ func TestSolicitarAnticipoAplicaLasReglas(t *testing.T) {
 		{nombre: "un titular administrado no pide (R-30)", actor: administradoBeto, monto: "1000", quiero: anticipos.ErrNoEsSocio},
 		{nombre: "por encima del tope (R-31)", actor: socioAna, monto: "1000000.01", quiero: anticipos.ErrSuperaTope},
 		{
+			// Reportado el mismo dia de la solicitud: RA 3.1.e mira el dia de
+			// hoy, no el de ayer.
 			nombre: "con embargo reportado (R-32)", actor: socioAna, monto: "1000", quiero: anticipos.ErrEmbargoReportado,
-			ajustar: func(e *entornoAnticipos) { e.repo.embargos["tit-ana"] = true },
+			ajustar: func(e *entornoAnticipos) { e.repo.embargos["tit-ana"] = instanteAnticipo },
 		},
 		{
 			nombre: "con una solicitud en tramite (R-32)", actor: socioAna, monto: "1000", quiero: anticipos.ErrAnticipoVigente,
@@ -421,11 +435,14 @@ func TestAprobarAnticipoLoDecideElConsejo(t *testing.T) {
 }
 
 // TestAprobarAnticipoRevalidaEnLaFechaDeAprobacion: un embargo que llega entre
-// la solicitud y la aprobacion impide el desembolso (RA 3.1.e).
+// la solicitud y la aprobacion impide el desembolso (RA 3.1.e). Se reporta el
+// mismo dia en que el Consejo decide: es el dia de la aprobacion el que cuenta.
 func TestAprobarAnticipoRevalidaEnLaFechaDeAprobacion(t *testing.T) {
 	e := montarAnticipos()
 	pedido := solicitadoDeAna(t, e)
-	e.repo.embargos["tit-ana"] = true
+	decide := instanteAnticipo.Add(48 * time.Hour)
+	e.svc.Reloj = relojFijo{instante: decide}
+	e.repo.embargos["tit-ana"] = decide
 
 	_, err := e.svc.Aprobar(context.Background(), consejo, pedido.Anticipo.ID, "acta 12")
 	if !errors.Is(err, anticipos.ErrEmbargoReportado) {

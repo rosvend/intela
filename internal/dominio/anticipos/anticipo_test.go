@@ -342,17 +342,21 @@ func TestRecuperar(t *testing.T) {
 		disponible string
 		descuento  string
 		saldo      string
+		estado     Estado
 	}{
-		{"descuenta todo lo disponible si el saldo es mayor", func() Anticipo { return aprobado(t, "1000") }, "250.55", "250.55", "749.45"},
-		{"no descuenta mas que el saldo", func() Anticipo { return aprobado(t, "1000") }, "5000", "1000", "0"},
-		{"lo disponible exacto salda", func() Anticipo { return aprobado(t, "1000") }, "1000", "1000", "0"},
-		{"sin disponible no descuenta", func() Anticipo { return aprobado(t, "1000") }, "0", "0", "1000"},
-		{"un disponible negativo no suma saldo", func() Anticipo { return aprobado(t, "1000") }, "-50", "0", "1000"},
-		{"una solicitud sin aprobar no se descuenta", solicitado, "500", "0", "0"},
+		{"descuenta todo lo disponible si el saldo es mayor", func() Anticipo { return aprobado(t, "1000") }, "250.55", "250.55", "749.45", EstadoAprobado},
+		{"no descuenta mas que el saldo", func() Anticipo { return aprobado(t, "1000") }, "5000", "1000", "0", EstadoDescontado},
+		{"lo disponible exacto salda", func() Anticipo { return aprobado(t, "1000") }, "1000", "1000", "0", EstadoDescontado},
+		// Medio peso sigue siendo deuda: el anticipo se salda en cero, no por
+		// debajo de un peso, y esos centavos los cubre la liquidacion siguiente.
+		{"a falta de centavos sigue aprobado", func() Anticipo { return aprobado(t, "1000") }, "999.50", "999.50", "0.50", EstadoAprobado},
+		{"sin disponible no descuenta", func() Anticipo { return aprobado(t, "1000") }, "0", "0", "1000", EstadoAprobado},
+		{"un disponible negativo no suma saldo", func() Anticipo { return aprobado(t, "1000") }, "-50", "0", "1000", EstadoAprobado},
+		{"una solicitud sin aprobar no se descuenta", solicitado, "500", "0", "0", EstadoSolicitado},
 		{"un rechazado no se descuenta", func() Anticipo {
 			r, _ := solicitado().Rechazar("x")
 			return r
-		}, "500", "0", "0"},
+		}, "500", "0", "0", EstadoRechazado},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
@@ -363,6 +367,9 @@ func TestRecuperar(t *testing.T) {
 			}
 			if !despues.Saldo.Equal(dec(c.saldo)) {
 				t.Errorf("saldo = %s, se esperaba %s", despues.Saldo, c.saldo)
+			}
+			if despues.Estado != c.estado {
+				t.Errorf("estado = %q, se esperaba %q", despues.Estado, c.estado)
 			}
 			if despues.Saldo.IsNegative() {
 				t.Errorf("saldo negativo: %s", despues.Saldo)

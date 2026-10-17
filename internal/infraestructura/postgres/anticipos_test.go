@@ -368,6 +368,9 @@ func TestClaseDeLeeElPadron(t *testing.T) {
 //     por abajo.
 //   - prc-c: corrida con linea pero sin orden -> no se liquido, no cuenta.
 //   - prc-d: orden enviada despues de hasta -> fuera.
+//   - prc-e y prc-f: dos corridas del mismo periodo y circuito en UNA orden,
+//     con prc-e de referencia (`proceso_id`) -> cuentan las lineas de las dos
+//     (200 + 300): la lista completa esta en `procesos`, no en la referencia.
 func TestDerechosLiquidadosSumaLasLineasDeLasOrdenesDeLaVentana(t *testing.T) {
 	s, pool := sembrar(t)
 	ctx := t.Context()
@@ -393,13 +396,20 @@ func TestDerechosLiquidadosSumaLasLineasDeLasOrdenesDeLaVentana(t *testing.T) {
 	orden("prc-b", "2026-02", "1000", "1000", "2024-06-15")
 	orden("prc-d", "2026-04", "700", "700", "2026-06-16")
 
+	sembrarCorridaEnVerificacion(t, pool, "prc-e", "bolsa-e", "2026-05", "200")
+	sembrarCorridaEnVerificacion(t, pool, "prc-f", "bolsa-f", "2026-05", "300")
+	ejecutar(`INSERT INTO ordenes_pago
+	            (id, proceso_id, procesos, titular_id, periodo, circuito, bruto, neto, estado, enviada)
+	          VALUES ('liq-2026-05-nacional-'||$1, 'prc-e', ARRAY['prc-e','prc-f'], $1, '2026-05', 'nacional',
+	                  500, 500, 'enviada', '2026-03-01')`, titularAna)
+
 	desde := instanteAnticipos.AddDate(-2, 0, 0)
 	got, err := s.Anticipos().DerechosLiquidados(ctx, titularAna, desde, instanteAnticipos)
 	if err != nil {
 		t.Fatalf("DerechosLiquidados: %v", err)
 	}
-	if !got.Equal(pgDec("4000")) {
-		t.Fatalf("derechos = %s, se esperaba solo la linea de prc-a (4000)", got)
+	if !got.Equal(pgDec("4500")) {
+		t.Fatalf("derechos = %s, se esperaban las lineas de prc-a (4000), prc-e (200) y prc-f (300)", got)
 	}
 	if beto, err := s.Anticipos().DerechosLiquidados(ctx, titularBeto, desde, instanteAnticipos); err != nil || !beto.IsZero() {
 		t.Fatalf("Beto no tiene orden propia: %s, %v", beto, err)

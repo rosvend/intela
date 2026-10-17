@@ -226,8 +226,12 @@ func TestUnEmbargoReportadoImpideAprobar(t *testing.T) {
 		t.Fatalf("Solicitar: %v", err)
 	}
 
+	// Reportado HOY, por el mismo reloj del caso de uso (UTC, como diaUTC) y no
+	// por CURRENT_DATE, que depende de la zona del servidor: la regla mira el
+	// dia de la aprobacion, y un embargo de ayer no distingue si mira ese dia
+	// o el anterior.
 	ejecutorDePruebas(t, pool)(`INSERT INTO embargos (titular_id, reportado, soporte)
-	          VALUES ($1, CURRENT_DATE - 1, 'oficio juzgado 3')`, titularAna)
+	          VALUES ($1, $2::date, 'oficio juzgado 3')`, titularAna, diaUTC(reloj.Sistema{}.Ahora()))
 
 	consejo := aplicacion.Usuario{ID: usuarioAdmin, Rol: aplicacion.RolAdministrador}
 	if _, err := svc.Aprobar(ctx, consejo, pedido.Anticipo.ID, "acta 7"); !errors.Is(err, anticipos.ErrEmbargoReportado) {
@@ -242,9 +246,12 @@ func TestUnEmbargoReportadoImpideAprobar(t *testing.T) {
 	}
 }
 
-// esperarCerrojoSobreAnticipos espera, consultando pg_stat_activity, a que otra
-// sesion quede bloqueada por un cerrojo en una sentencia sobre `anticipos`.
-func esperarCerrojoSobreAnticipos(t *testing.T, vigia *pgx.Conn, ctx context.Context) {
+// esperarCerrojoEnPorDescontar espera, consultando pg_stat_activity, a que otra
+// sesion quede bloqueada por un cerrojo EN EL SELECT de PorDescontar, no en
+// cualquier sentencia sobre `anticipos`: con un cerrojo compartido (FOR SHARE)
+// el SELECT de T2 pasa sin esperar y la que se queda bloqueada es su UPDATE de
+// Descontar, que es justo lo que esta espera no puede dar por bueno.
+func esperarCerrojoEnPorDescontar(t *testing.T, vigia *pgx.Conn, ctx context.Context) {
 	t.Helper()
 	limite := time.Now().Add(10 * time.Second)
 	for time.Now().Before(limite) {
@@ -252,7 +259,9 @@ func esperarCerrojoSobreAnticipos(t *testing.T, vigia *pgx.Conn, ctx context.Con
 		if err := vigia.QueryRow(ctx,
 			`SELECT EXISTS (
 			   SELECT 1 FROM pg_stat_activity
-			    WHERE wait_event_type = 'Lock' AND query ILIKE '%anticipos%')`).Scan(&bloqueada); err != nil {
+			    WHERE datname = current_database()
+			      AND wait_event_type = 'Lock'
+			      AND ltrim(query) ILIKE 'select%from anticipos%')`).Scan(&bloqueada); err != nil {
 			t.Fatalf("consultar pg_stat_activity: %v", err)
 		}
 		if bloqueada {
@@ -260,96 +269,147 @@ func esperarCerrojoSobreAnticipos(t *testing.T, vigia *pgx.Conn, ctx context.Con
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("T2 nunca quedo esperando el cerrojo de T1 sobre el anticipo")
+	t.Fatal("T2 nunca quedo bloqueada en el SELECT de PorDescontar esperando el cerrojo de T1")
+}
+
+// repoConPausa envuelve el repositorio real y se detiene justo DESPUES de
+// PorDescontar: T1 ya leyo el saldo con su cerrojo de fila y todavia no
+// escribio nada. Es la ventana que solo un cerrojo exclusivo cierra: con uno
+// compartido T2 leeria el mismo saldo sin esperar. La pausa mira el contexto
+// por lo mismo que [bitacoraConPausa].
+type repoConPausa struct {
+	aplicacion.RepositorioAnticipos
+	listo  chan struct{}
+	seguir chan struct{}
+}
+
+func (r repoConPausa) PorDescontar(ctx context.Context, titularID string) (anticipos.Anticipo, bool, error) {
+	a, hay, err := r.RepositorioAnticipos.PorDescontar(ctx, titularID)
+	if err != nil {
+		return a, hay, err
+	}
+	close(r.listo)
+	select {
+	case <-r.seguir:
+	case <-ctx.Done():
+		return anticipos.Anticipo{}, false, ctx.Err()
+	}
+	return a, hay, nil
 }
 
 // TestDosDescuentosALaVezNoCobranDosVecesElMismoSaldo: dos liquidaciones del
 // mismo socio en periodos distintos NO comparten el cerrojo de aviso del
 // periodo, asi que lo que las serializa es el FOR UPDATE de PorDescontar.
 //
-// Se fuerza la ventana exacta, como en la prueba de concurrencia del catalogo:
-// T1 descuenta 600 de un saldo de 1000 y se pausa ANTES de asentar (fila
-// escrita y bloqueada, sin confirmar); T2 arranca ahi y el test espera, contra
-// el servidor, a que este bloqueada. Al soltar a T1, T2 tiene que leer el saldo
-// que T1 dejo (400) y descontar 400, no 600: con 1000 de deuda el socio paga
-// 1000, ni un peso mas.
+// Se fuerza la ventana exacta, como en la prueba de concurrencia del catalogo,
+// en dos puntos de T1, y en los dos el test espera, contra el servidor, a que
+// T2 este bloqueada en el SELECT de PorDescontar:
 //
-// Sin el cerrojo T2 leeria 1000 sin confirmar y descontaria 600 sobre el; si
-// ademas Descontar no comparara el saldo anterior, escribiria 400 encima del
-// 400 de T1 y el socio habria pagado 1200 y seguiria debiendo 400.
+//   - T1 descuenta 600 de un saldo de 1000 y se pausa ANTES de asentar (fila
+//     escrita y bloqueada, sin confirmar). Sin el cerrojo T2 leeria 1000 sin
+//     confirmar y descontaria 600 sobre el; si ademas Descontar no comparara
+//     el saldo anterior, escribiria 400 encima del 400 de T1 y el socio habria
+//     pagado 1200 y seguiria debiendo 400.
+//   - T1 lee el saldo y se pausa ANTES de escribirlo. Aqui solo hay el
+//     cerrojo del SELECT: con FOR SHARE, T2 lee el mismo 1000 sin esperar, y
+//     las dos acaban peleando el UPDATE.
+//
+// Al soltar a T1, T2 tiene que leer el saldo que T1 dejo (400) y descontar
+// 400, no 600: con 1000 de deuda el socio paga 1000, ni un peso mas.
 func TestDosDescuentosALaVezNoCobranDosVecesElMismoSaldo(t *testing.T) {
-	cfg, err := pgxpool.ParseConfig(testhelp.DSN(t))
-	if err != nil {
-		t.Fatalf("configurar el pool concurrente: %v", err)
+	pausas := []struct {
+		nombre string
+		pausar func(svc *aplicacion.Anticipos, s *Store, listo, seguir chan struct{})
+	}{
+		{
+			nombre: "T1 escribio el saldo y no ha asentado",
+			pausar: func(svc *aplicacion.Anticipos, s *Store, listo, seguir chan struct{}) {
+				svc.Bitacora = &bitacoraConPausa{Store: s, listo: listo, seguir: seguir}
+			},
+		},
+		{
+			nombre: "T1 leyo el saldo y no lo ha escrito",
+			pausar: func(svc *aplicacion.Anticipos, s *Store, listo, seguir chan struct{}) {
+				svc.Repo = repoConPausa{RepositorioAnticipos: s.Anticipos(), listo: listo, seguir: seguir}
+			},
+		},
 	}
-	cfg.MaxConns = 3
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("abrir el pool concurrente: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	s := sembrarEn(t, pool)
-	ctx := t.Context()
-	sembrarAprobado(t, s, "ant-1", titularAna, "1000")
+	for _, c := range pausas {
+		t.Run(c.nombre, func(t *testing.T) {
+			cfg, err := pgxpool.ParseConfig(testhelp.DSN(t))
+			if err != nil {
+				t.Fatalf("configurar el pool concurrente: %v", err)
+			}
+			cfg.MaxConns = 3
+			pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("abrir el pool concurrente: %v", err)
+			}
+			t.Cleanup(pool.Close)
+			s := sembrarEn(t, pool)
+			ctx := t.Context()
+			sembrarAprobado(t, s, "ant-1", titularAna, "1000")
 
-	vigia, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
-	if err != nil {
-		t.Fatalf("abrir conexion de vigilancia: %v", err)
-	}
-	defer func() { _ = vigia.Close(ctx) }()
+			vigia, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
+			if err != nil {
+				t.Fatalf("abrir conexion de vigilancia: %v", err)
+			}
+			defer func() { _ = vigia.Close(ctx) }()
 
-	listoT1 := make(chan struct{})
-	liberarT1 := make(chan struct{})
-	var enVuelo sync.WaitGroup
-	liberarUnaVez := sync.OnceFunc(func() { close(liberarT1) })
-	defer enVuelo.Wait()
-	defer liberarUnaVez()
+			listoT1 := make(chan struct{})
+			liberarT1 := make(chan struct{})
+			var enVuelo sync.WaitGroup
+			liberarUnaVez := sync.OnceFunc(func() { close(liberarT1) })
+			defer enVuelo.Wait()
+			defer liberarUnaVez()
 
-	recuperar := func(svc aplicacion.Anticipos, orden string, descuento *decimal.Decimal) error {
-		return s.EnUnidad(ctx, func(ctx context.Context) error {
-			d, err := svc.Recuperar(ctx, titularAna, orden, pgDec("600"))
-			*descuento = d
-			return err
+			recuperar := func(svc aplicacion.Anticipos, orden string, descuento *decimal.Decimal) error {
+				return s.EnUnidad(ctx, func(ctx context.Context) error {
+					d, err := svc.Recuperar(ctx, titularAna, orden, pgDec("600"))
+					*descuento = d
+					return err
+				})
+			}
+
+			t1 := anticiposDe(s, reloj.Sistema{})
+			c.pausar(&t1, s, listoT1, liberarT1)
+			var d1, d2 decimal.Decimal
+			fin1, fin2 := make(chan error, 1), make(chan error, 1)
+			enVuelo.Add(1)
+			go func() {
+				defer enVuelo.Done()
+				fin1 <- recuperar(t1, "liq-2026-02-nacional-tit-ana", &d1)
+			}()
+			select {
+			case <-listoT1:
+			case <-time.After(10 * time.Second):
+				t.Fatal("T1 nunca llego a su pausa")
+			}
+
+			enVuelo.Add(1)
+			go func() {
+				defer enVuelo.Done()
+				fin2 <- recuperar(anticiposDe(s, reloj.Sistema{}), "liq-2026-03-nacional-tit-ana", &d2)
+			}()
+			esperarCerrojoEnPorDescontar(t, vigia, ctx)
+
+			liberarUnaVez()
+			if err := <-fin1; err != nil {
+				t.Fatalf("descuento de T1: %v", err)
+			}
+			if err := <-fin2; err != nil {
+				t.Fatalf("descuento de T2: %v", err)
+			}
+			if !d1.Equal(pgDec("600")) || !d2.Equal(pgDec("400")) {
+				t.Fatalf("descuentos = %s y %s, se esperaba 600 y 400: T2 tiene que ver el saldo que dejo T1", d1, d2)
+			}
+			got, err := s.Anticipos().PorID(ctx, "ant-1")
+			if err != nil {
+				t.Fatalf("PorID: %v", err)
+			}
+			if !got.Anticipo.Saldo.IsZero() || got.Anticipo.Estado != anticipos.EstadoDescontado {
+				t.Fatalf("anticipo = %s/%s; con 1000 descontados tiene que quedar saldado", got.Anticipo.Estado, got.Anticipo.Saldo)
+			}
 		})
-	}
-
-	t1 := anticiposDe(s, reloj.Sistema{})
-	t1.Bitacora = &bitacoraConPausa{Store: s, listo: listoT1, seguir: liberarT1}
-	var d1, d2 decimal.Decimal
-	fin1, fin2 := make(chan error, 1), make(chan error, 1)
-	enVuelo.Add(1)
-	go func() {
-		defer enVuelo.Done()
-		fin1 <- recuperar(t1, "liq-2026-02-nacional-tit-ana", &d1)
-	}()
-	select {
-	case <-listoT1:
-	case <-time.After(10 * time.Second):
-		t.Fatal("T1 nunca llego a asentar su descuento")
-	}
-
-	enVuelo.Add(1)
-	go func() {
-		defer enVuelo.Done()
-		fin2 <- recuperar(anticiposDe(s, reloj.Sistema{}), "liq-2026-03-nacional-tit-ana", &d2)
-	}()
-	esperarCerrojoSobreAnticipos(t, vigia, ctx)
-
-	liberarUnaVez()
-	if err := <-fin1; err != nil {
-		t.Fatalf("descuento de T1: %v", err)
-	}
-	if err := <-fin2; err != nil {
-		t.Fatalf("descuento de T2: %v", err)
-	}
-	if !d1.Equal(pgDec("600")) || !d2.Equal(pgDec("400")) {
-		t.Fatalf("descuentos = %s y %s, se esperaba 600 y 400: T2 tiene que ver el saldo que dejo T1", d1, d2)
-	}
-	got, err := s.Anticipos().PorID(ctx, "ant-1")
-	if err != nil {
-		t.Fatalf("PorID: %v", err)
-	}
-	if !got.Anticipo.Saldo.IsZero() || got.Anticipo.Estado != anticipos.EstadoDescontado {
-		t.Fatalf("anticipo = %s/%s; con 1000 descontados tiene que quedar saldado", got.Anticipo.Estado, got.Anticipo.Saldo)
 	}
 }
