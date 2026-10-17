@@ -144,6 +144,8 @@ const NOMBRES_CONCEPTO: Record<string, string> = {
   gastos_administrativos: "Gastos administrativos",
   bienestar_social: "Bienestar social",
   reserva_errores_tecnicos: "Reserva para errores tecnicos",
+  // R-33: el anticipo aprobado se descuenta de la orden (RA 2.1).
+  anticipo: "Descuento de anticipo",
 };
 
 /** Nombre en lenguaje llano de un concepto de deduccion; el propio codigo si no se conoce. */

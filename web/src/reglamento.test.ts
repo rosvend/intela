@@ -67,6 +67,10 @@ describe("nombreConcepto", () => {
     );
   });
 
+  it("traduce el renglon del anticipo descontado (R-33)", () => {
+    expect(nombreConcepto("anticipo")).toBe("Descuento de anticipo");
+  });
+
   it("un concepto sin traduccion se devuelve tal cual", () => {
     expect(nombreConcepto("otro-concepto")).toBe("otro-concepto");
   });
