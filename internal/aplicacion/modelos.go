@@ -5,6 +5,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/rosvend/intela/internal/dominio/anticipos"
 	"github.com/rosvend/intela/internal/dominio/oni"
 	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
@@ -522,11 +523,18 @@ type FiltroAlertas struct {
 	Paginacion
 }
 
-type Anticipo struct {
-	ID        string
-	TitularID string
-	Monto     decimal.Decimal
-	Estado    string
+// AnticipoRegistrado es un anticipo con lo que solo sabe la persistencia:
+// cuando se pidio y quien lo resolvio y cuando. El dominio no lleva fechas
+// (depguard le deniega `time`).
+type AnticipoRegistrado struct {
+	Anticipo   anticipos.Anticipo
+	Solicitado time.Time
+
+	// Resuelto y ResueltoPor van en cero mientras el anticipo sigue
+	// `solicitado`. ResueltoPor es el usuario del Consejo Directivo que
+	// aprobo o nego (RA 3.2.3).
+	Resuelto    time.Time
+	ResueltoPor string
 }
 
 // PublicacionONI es la instantanea de un listado publicado.

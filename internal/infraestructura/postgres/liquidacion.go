@@ -197,6 +197,13 @@ func (s *Store) DiferidasDeTitular(
 // habia absorbido un arrastre. Las deducciones solo se escriben si la orden se
 // inserto de verdad, por lo mismo: borrarlas y reescribirlas sobre una orden
 // que ya existia cambiaria su desglose sin cambiar su neto.
+//
+// La excepcion es una orden que trae renglon de anticipo: para entonces
+// [aplicacion.Anticipos.Recuperar] ya bajo el saldo y asento el descuento en
+// esta misma transaccion. Si la orden ya existia, ese descuento se quedaria
+// sin la orden que lo muestra y el socio lo pagaria sin verlo (R-33). Hoy la
+// guarda de idempotencia de la emision lo hace inalcanzable; si algun dia se
+// llega, [errAnticipoSinOrden] revierte la unidad entera en vez de ignorarlo.
 func (s *Store) EmitirOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDePago) error {
 	if len(ordenes) == 0 {
 		return nil
@@ -208,6 +215,9 @@ func (s *Store) EmitirOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDe
 				return err
 			}
 			if !insertada {
+				if llevaAnticipo(o) {
+					return fmt.Errorf("emitir orden %q: %w", o.ID, errAnticipoSinOrden)
+				}
 				continue
 			}
 			for _, d := range o.Deducciones {
@@ -220,6 +230,21 @@ func (s *Store) EmitirOrdenes(ctx context.Context, ordenes []liquidacion.OrdenDe
 		}
 		return nil
 	})
+}
+
+// errAnticipoSinOrden: ver [Store.EmitirOrdenes].
+var errAnticipoSinOrden = errors.New(
+	"la orden ya existia y esta emision le descontaba un anticipo: " +
+		"el descuento se quedaria sin la orden que lo muestra")
+
+// llevaAnticipo dice si la orden trae el renglon de R-33 con algo descontado.
+func llevaAnticipo(o liquidacion.OrdenDePago) bool {
+	for _, d := range o.Deducciones {
+		if d.Concepto == liquidacion.ConceptoAnticipo && d.Monto.IsPositive() {
+			return true
+		}
+	}
+	return false
 }
 
 // insertarOrden devuelve si la fila se inserto. false no es un error: es "ya

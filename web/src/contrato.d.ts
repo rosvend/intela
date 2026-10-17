@@ -1447,6 +1447,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/anticipos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar anticipos
+         * @description El staff (`administrador`, `distribucion`, `contabilidad`, `auditor`)
+         *     ve los de todos los titulares; un `titular` solo los suyos, recortados
+         *     por el titular de la sesion y nunca por un parametro (`OE-6`). Del mas
+         *     reciente al mas antiguo.
+         */
+        get: operations["listarAnticipos"];
+        put?: never;
+        /**
+         * Solicitar un anticipo
+         * @description El socio autenticado pide un anticipo (`RA 3.2.1`). El titular sale de
+         *     la sesion: solo `titular` puede pedir, y solo para si (`RA 3.1.f`).
+         *
+         *     `R-30`, `R-31` y `R-32` se aplican al pedir: quien no tiene cupo, o
+         *     tiene un anticipo sin saldar, recibe el motivo en el acto en vez de
+         *     dejar una solicitud que el Consejo tendria que negar. Pedir no es
+         *     recibir (`RA 3.1.b`): la solicitud nace con saldo cero, y el calculo del
+         *     cupo con el que se decidio queda asentado en la bitacora (`RA 3.2.2.d`).
+         */
+        post: operations["solicitarAnticipo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/anticipos/{id}/aprobar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aprobar un anticipo
+         * @description La decision del Consejo Directivo sobre una solicitud en tramite
+         *     (`RA 3.2.3`), con la ubicacion del acta y la resolucion en el
+         *     repositorio documental (`RA 3.2.5`). Al aprobar, el saldo es todo lo
+         *     otorgado.
+         *
+         *     Las reglas se vuelven a aplicar con la situacion del dia de la
+         *     aprobacion: un embargo reportado despues de pedir, la perdida de la
+         *     calidad de socio o un cupo que bajo impiden el desembolso.
+         */
+        post: operations["aprobarAnticipo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/anticipos/{id}/rechazar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Negar un anticipo
+         * @description La negacion del Consejo Directivo, con su justificacion literal
+         *     (`RA 3.2.3`: "debera justificarlo al afiliado de manera literal a la
+         *     indicada en el Consejo Directivo"). Negado, el socio puede volver a
+         *     pedir: un rechazo no es un anticipo vigente.
+         */
+        post: operations["rechazarAnticipo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reportes": {
         parameters: {
             query?: never;
@@ -2774,11 +2858,86 @@ export interface components {
              */
             titular_id: string;
         };
+        /**
+         * @description Un anticipo de derechos de autor (`R-30` a `R-33`).
+         *
+         *         solicitado -> aprobado -> descontado
+         *         solicitado -> rechazado
+         *
+         *     `descontado` es saldado: el saldo llego a cero con los descuentos de
+         *     `R-33`. Hay saldo si y solo si el anticipo esta `aprobado`.
+         */
+        Anticipo: {
+            /** @description Identificador opaco, prefijo `ant-`. */
+            id: string;
+            /** @description Socio que lo pidio. */
+            titular_id: string;
+            monto: components["schemas"]["Monto"];
+            /**
+             * @description Lo que falta por cubrir con las ordenes de pago que siguen
+             *     (`R-33`). Cero mientras esta en tramite, si se nego o si ya se
+             *     desconto entero.
+             */
+            saldo: components["schemas"]["Monto"];
+            /** @enum {string} */
+            estado: "solicitado" | "aprobado" | "rechazado" | "descontado";
+            /** @description Destino de los recursos y necesidad (`RA 3.2.1.d` y `e`). */
+            justificacion: string;
+            /**
+             * @description Ubicacion del acta y la resolucion de aprobacion en el repositorio
+             *     documental (`RA 3.2.5`). Ausente mientras no se aprueba.
+             */
+            soporte?: string;
+            /** @description Justificacion literal de la negacion (`RA 3.2.3`). */
+            motivo_rechazo?: string;
+            /** Format: date-time */
+            solicitado: string;
+            /**
+             * Format: date-time
+             * @description Cuando decidio el Consejo. Ausente mientras esta en tramite.
+             */
+            resuelto?: string;
+            /** @description Usuario que decidio. Ausente mientras esta en tramite. */
+            resuelto_por?: string;
+        };
+        ListadoAnticipos: {
+            anticipos: components["schemas"]["Anticipo"][];
+        };
+        /**
+         * @description Lo que el socio pide (`RA 3.2.1`). El titular no viaja: sale de la
+         *     sesion.
+         */
+        SolicitudAnticipo: {
+            /**
+             * @description Importe en COP, positivo y con dos decimales a lo sumo. Cadena y no
+             *     number: un JSON number es IEEE-754 y no representa dinero.
+             * @example 1000000.00
+             */
+            monto: string;
+            /**
+             * @description Destino de los recursos y justificacion de la necesidad
+             *     (`RA 3.2.1.d` y `e`, circunstancias de `RA 2.3`). Obligatoria.
+             */
+            justificacion: string;
+        };
+        AprobacionAnticipo: {
+            /**
+             * @description Ubicacion del acta y la resolucion de aprobacion en el
+             *     repositorio documental (`RA 3.2.5`). Obligatoria.
+             */
+            soporte: string;
+        };
+        RechazoAnticipo: {
+            /** @description Justificacion literal de la negacion (`RA 3.2.3`). Obligatoria. */
+            motivo: string;
+        };
         Deduccion: {
             /**
              * @description Que se desconto. Los de la corrida son `gastos_administrativos`,
-             *     `bienestar_social` y `reserva_errores_tecnicos`. Un anticipo
-             *     entra con su propio concepto.
+             *     `bienestar_social` y `reserva_errores_tecnicos`. El descuento de un
+             *     anticipo (`R-33`) entra como `anticipo`, y no toca el bruto: el
+             *     anticipo no cambia lo que el socio genero en el periodo, solo lo
+             *     que se le gira.
              */
             concepto: string;
             /**
@@ -8388,6 +8547,483 @@ export interface operations {
              *     y reintentar resuelve esto ultimo.
              */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listarAnticipos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Anticipos visibles para la sesion. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "anticipos": [
+                     *         {
+                     *           "id": "ant-9qYQ2vJmXk3pR7wLfNbTzA",
+                     *           "titular_id": "tit-ana",
+                     *           "monto": "1000000.00",
+                     *           "saldo": "400000.00",
+                     *           "estado": "aprobado",
+                     *           "justificacion": "tratamiento medico no cubierto por la EPS (RA 2.3.b)",
+                     *           "soporte": "acta 7 de 2026, resolucion 12",
+                     *           "solicitado": "2026-06-15T14:00:00Z",
+                     *           "resuelto": "2026-06-17T09:30:00Z",
+                     *           "resuelto_por": "usr-admin"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ListadoAnticipos"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Autenticado, pero el rol no basta. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Fallo al leer los anticipos. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el modulo de anticipos. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el modulo de anticipos no esta configurado en esta instalacion"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    solicitarAnticipo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "monto": "1000000.00",
+                 *       "justificacion": "tratamiento medico no cubierto por la EPS (RA 2.3.b)"
+                 *     }
+                 */
+                "application/json": components["schemas"]["SolicitudAnticipo"];
+            };
+        };
+        responses: {
+            /**
+             * @description Solicitud registrada, en tramite. Sin `Location`: no hay
+             *     `GET /anticipos/{id}`, y el anticipo creado viaja entero en el
+             *     cuerpo.
+             */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "ant-9qYQ2vJmXk3pR7wLfNbTzA",
+                     *       "titular_id": "tit-ana",
+                     *       "monto": "1000000.00",
+                     *       "saldo": "0.00",
+                     *       "estado": "solicitado",
+                     *       "justificacion": "tratamiento medico no cubierto por la EPS (RA 2.3.b)",
+                     *       "solicitado": "2026-06-15T14:00:00Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Anticipo"];
+                };
+            };
+            /**
+             * @description Cuerpo ilegible, monto que no es una cadena decimal (un JSON
+             *     number se rechaza), no positivo o con mas de dos decimales, o sin
+             *     la justificacion de la necesidad (`RA 3.2.1.d` y `e`).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es `titular`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El titular de la sesion no figura en el padron. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description `R-32`: ya hay una solicitud en tramite (`RA 3.1.c`) o un anticipo
+             *     con saldo pendiente (`RA 3.1.d`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "hay un anticipo con saldo pendiente (R-32, RA 3.1.d): al anticipo ant-0 le quedan 400000.00 por descontar"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El cuerpo supera el tamano maximo. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description La regla lo prohibe para este titular hoy, con el motivo en el
+             *     mensaje: no es socio (`R-30`), el monto supera el tope (`R-31`, el
+             *     mensaje dice cual es) o tiene un embargo reportado (`R-32`,
+             *     `RA 3.1.e`).
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "el monto supera el tope del anticipo (R-31, RA 3.1.g y 3.1.h): se piden 2000000.00 y el tope es 1000000.00 (25% de 4000000.00 en derechos de los ultimos 2 anos, o 5 SMMLV de 1300000.00)"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el SMMLV vigente (ADR 0004) u otro fallo interno. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "parametro normativo ausente"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el modulo de anticipos. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    aprobarAnticipo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example ant-9qYQ2vJmXk3pR7wLfNbTzA */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "soporte": "acta 7 de 2026, resolucion 12"
+                 *     }
+                 */
+                "application/json": components["schemas"]["AprobacionAnticipo"];
+            };
+        };
+        responses: {
+            /** @description Anticipo aprobado, con saldo igual al monto. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Anticipo"];
+                };
+            };
+            /** @description Falta la ubicacion del soporte (`RA 3.2.5`) o el cuerpo es ilegible. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay un anticipo con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description El anticipo ya no esta en tramite -otra decision llego antes-, o el
+             *     titular tiene otro anticipo con saldo (`R-32`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description A la fecha de la aprobacion el titular ya no es socio, tiene un
+             *     embargo reportado o el monto supera su tope.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el SMMLV vigente (ADR 0004) u otro fallo interno. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el modulo de anticipos. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rechazarAnticipo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example ant-9qYQ2vJmXk3pR7wLfNbTzA */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "motivo": "no se demostro la circunstancia de RA 2.3"
+                 *     }
+                 */
+                "application/json": components["schemas"]["RechazoAnticipo"];
+            };
+        };
+        responses: {
+            /** @description Anticipo negado. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Anticipo"];
+                };
+            };
+            /** @description Falta la justificacion del rechazo o el cuerpo es ilegible. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol de la sesion no es el del Consejo Directivo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay un anticipo con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El anticipo ya no esta en tramite, otra decision llego antes. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Fallo interno. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el modulo de anticipos. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

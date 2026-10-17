@@ -12,13 +12,14 @@ import (
 // usa habiles y no se unifican.
 const PlazoAceptacionDias = 15
 
-// Conceptos de deduccion que RD 13.2 obliga a mostrar itemizados. No son
-// la lista cerrada: un anticipo (R-33) entra con su propio concepto sin
-// tocar estos.
+// Conceptos de deduccion que RD 13.2 obliga a mostrar itemizados. Los tres
+// primeros son de la corrida; el anticipo (R-33) entra con su propio concepto
+// sin tocar estos (ver [OrdenDePago.DescontarAnticipo]).
 const (
 	ConceptoAdministracion = "gastos_administrativos"
 	ConceptoSocial         = "bienestar_social"
 	ConceptoReserva        = "reserva_errores_tecnicos"
+	ConceptoAnticipo       = "anticipo"
 )
 
 // Estado de una orden. La transicion enviada -> aceptada_por_silencio /
@@ -250,6 +251,37 @@ func (o OrdenDePago) IncorporarArrastre(anterior OrdenDePago) OrdenDePago {
 	o.Neto = o.Neto.Add(anterior.Neto)
 	o.Arrastres = append(append([]string{}, o.Arrastres...), anterior.ID)
 	return o
+}
+
+// DescontarAnticipo resta del neto lo que se recupera de un anticipo (R-33,
+// RA 2.1) y lo deja en el desglose con [ConceptoAnticipo].
+//
+// El bruto no cambia: el anticipo no altera lo que el socio genero en el
+// periodo, solo lo que se le gira, y la identidad neto = bruto - deducciones
+// sigue cerrando con el renglon nuevo. Cuanto descontar no se decide aqui -es
+// del modulo de anticipos, que conoce el saldo-; aqui solo se comprueba que el
+// descuento sea una deduccion (no negativa) y que no deje el neto bajo cero.
+//
+// Un descuento cero devuelve la orden tal cual, sin un renglon de 0.00: sin
+// anticipo pendiente la orden tiene que salir exactamente como antes de R-33.
+// Aparece a lo sumo una vez por orden porque R-32 admite un solo anticipo
+// vigente, y la clave (orden_id, concepto) de `ordenes_pago_deducciones`
+// rechazaria un segundo.
+func (o OrdenDePago) DescontarAnticipo(monto decimal.Decimal) (OrdenDePago, error) {
+	if monto.IsNegative() {
+		return OrdenDePago{}, fmt.Errorf("%w: %s", ErrDeduccionNegativa, ConceptoAnticipo)
+	}
+	if monto.IsZero() {
+		return o, nil
+	}
+	if monto.GreaterThan(o.Neto) {
+		return OrdenDePago{}, fmt.Errorf("%w: el anticipo descuenta %s de un neto de %s",
+			ErrNetoNegativo, monto.StringFixed(2), o.Neto.StringFixed(2))
+	}
+	o.Deducciones = append(append([]Deduccion{}, o.Deducciones...),
+		Deduccion{Concepto: ConceptoAnticipo, Monto: monto})
+	o.Neto = o.Neto.Sub(monto)
+	return o, nil
 }
 
 // MarcarAcumulada cierra una diferida que ya se incorporo al periodo

@@ -38,6 +38,7 @@ proposito.
 | [0024 La liquidacion se emite al entrar a `liquidacion_final` y espera a todas las corridas del periodo](0024-liquidacion-al-entrar-a-liquidacion-final.md) | Vigente |
 | [0025 "Salir" no avisa si el servidor no confirmo la revocacion; el servidor cubre el riesgo](0025-salir-sin-aviso-de-revocacion.md) | Vigente, enmienda 0013 |
 | [0026 El asistente usa la API de Anthropic por un NAT Gateway; Bedrock es la alternativa prevista](0026-asistente-sobre-bedrock.md) | Vigente, base legal pendiente (P-23) |
+| [0027 Anticipos: el cupo se mide sobre lo liquidado y el descuento va en la orden de pago](0027-anticipos-cupo-sobre-lo-liquidado-y-descuento-en-la-orden.md) | Vigente, base del 25% provisional (P-24) |
 
 Para elegir el numero de un ADR nuevo **no basta con mirar `main`**. Dos ADR con el mismo numero y
 nombre de archivo distinto **no chocan en git**: el merge pasa limpio, nadie avisa, y el unico

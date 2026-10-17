@@ -45,6 +45,7 @@ func liquidacionesDe(s *Store, instante time.Time) *aplicacion.Liquidaciones {
 		Notificador: s.AvisoPortal(),
 		Bitacora:    s,
 		Unidad:      s,
+		Anticipos:   anticiposDe(s, reloj.Fijo{Instante: instante}),
 	}
 }
 
