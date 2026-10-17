@@ -139,8 +139,10 @@ func TestSolicitarAnticipoHTTP(t *testing.T) {
 	if falso.actor.TitularID != "tit-ana" {
 		t.Fatalf("actor = %+v; el titular sale de la sesion, no del cuerpo", falso.actor)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/anticipos/ant-1" {
-		t.Fatalf("Location = %q", loc)
+	// No hay GET /anticipos/{id}: un Location apuntaria a una ruta que no
+	// existe.
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q; no hay ruta del anticipo a la que apuntar", loc)
 	}
 	var cuerpo map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
@@ -155,6 +157,30 @@ func TestSolicitarAnticipoHTTP(t *testing.T) {
 
 	if rec := pedir(t, h, http.MethodPost, "/anticipos", `{"monto":`, "tok"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("cuerpo roto: %d", rec.Code)
+	}
+}
+
+// TestSolicitarAnticipoRechazaElMontoQueNoEsCadena: el contrato declara el
+// monto como cadena, porque un JSON number ya paso por coma flotante
+// (ADR 0010). Un number, aunque decimal.Decimal lo aceptaria, es un 400 que no
+// llega al caso de uso; igual que una cadena que no es un importe.
+func TestSolicitarAnticipoRechazaElMontoQueNoEsCadena(t *testing.T) {
+	for _, cuerpo := range []string{
+		`{"monto":1000000.10,"justificacion":"tratamiento medico"}`,
+		`{"monto":1000000,"justificacion":"tratamiento medico"}`,
+		`{"monto":"mil","justificacion":"tratamiento medico"}`,
+		`{"justificacion":"tratamiento medico"}`,
+	} {
+		t.Run(cuerpo, func(t *testing.T) {
+			falso := &anticiposFalso{registrado: anticipoDeEjemplo()}
+			rec := pedir(t, servidorConAnticipos(t, socioDePrueba(), falso), http.MethodPost, "/anticipos", cuerpo, "tok")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("codigo = %d, se esperaba 400. Cuerpo: %s", rec.Code, rec.Body)
+			}
+			if falso.llamadas != 0 {
+				t.Fatal("un monto que no es cadena decimal llego al caso de uso")
+			}
+		})
 	}
 }
 

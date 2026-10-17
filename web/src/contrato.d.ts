@@ -8664,11 +8664,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Solicitud registrada, en tramite. */
+            /**
+             * @description Solicitud registrada, en tramite. Sin `Location`: no hay
+             *     `GET /anticipos/{id}`, y el anticipo creado viaja entero en el
+             *     cuerpo.
+             */
             201: {
                 headers: {
-                    /** @description Ruta del anticipo creado. */
-                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -8687,8 +8689,9 @@ export interface operations {
                 };
             };
             /**
-             * @description Cuerpo ilegible, monto no positivo o con mas de dos decimales, o
-             *     sin la justificacion de la necesidad (`RA 3.2.1.d` y `e`).
+             * @description Cuerpo ilegible, monto que no es una cadena decimal (un JSON
+             *     number se rechaza), no positivo o con mas de dos decimales, o sin
+             *     la justificacion de la necesidad (`RA 3.2.1.d` y `e`).
              */
             400: {
                 headers: {

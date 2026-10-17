@@ -4628,12 +4628,10 @@ paths:
               justificacion: tratamiento medico no cubierto por la EPS (RA 2.3.b)
       responses:
         "201":
-          description: Solicitud registrada, en tramite.
-          headers:
-            Location:
-              description: Ruta del anticipo creado.
-              schema:
-                type: string
+          description: |
+            Solicitud registrada, en tramite. Sin `Location`: no hay
+            `GET /anticipos/{id}`, y el anticipo creado viaja entero en el
+            cuerpo.
           content:
             application/json:
               schema:
@@ -4648,8 +4646,9 @@ paths:
                 solicitado: "2026-06-15T14:00:00Z"
         "400":
           description: |
-            Cuerpo ilegible, monto no positivo o con mas de dos decimales, o
-            sin la justificacion de la necesidad (`RA 3.2.1.d` y `e`).
+            Cuerpo ilegible, monto que no es una cadena decimal (un JSON
+            number se rechaza), no positivo o con mas de dos decimales, o sin
+            la justificacion de la necesidad (`RA 3.2.1.d` y `e`).
           content:
             application/json:
               schema:

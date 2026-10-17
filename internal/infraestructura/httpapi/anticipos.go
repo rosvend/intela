@@ -74,11 +74,13 @@ func aAnticipoJSON(r aplicacion.AnticipoRegistrado) anticipoJSON {
 // solicitudAnticipoJSON es el cuerpo de POST /anticipos (RA 3.2.1). El titular
 // no viaja: sale de la sesion (RA 3.1.f, la solicitud la hace el propio socio).
 //
-// Monto es decimal.Decimal y no float64 por lo mismo que el bruto de una bolsa
-// (ver recaudo.go): desserializa la cadena sin pasar por coma flotante.
+// Monto es string y no decimal.Decimal: el contrato lo declara cadena, y
+// decimal.Decimal tambien acepta un JSON number, que ya llego por coma
+// flotante (ADR 0010). Con string, un number no desserializa y es un 400; la
+// cadena se convierte despues con [decimal.NewFromString], sin pasar por float.
 type solicitudAnticipoJSON struct {
-	Monto         decimal.Decimal `json:"monto"`
-	Justificacion string          `json:"justificacion"`
+	Monto         string `json:"monto"`
+	Justificacion string `json:"justificacion"`
 }
 
 type aprobacionAnticipoJSON struct {
@@ -102,18 +104,24 @@ func (a *API) solicitarAnticipo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var cuerpo solicitudAnticipoJSON
-	if !leerCuerpoAnticipo(w, r, &cuerpo, "el cuerpo tiene que ser un JSON con monto y justificacion") {
+	if !leerCuerpoAnticipo(w, r, &cuerpo, "el cuerpo tiene que ser un JSON con monto (cadena) y justificacion") {
+		return
+	}
+	monto, err := decimal.NewFromString(cuerpo.Monto)
+	if err != nil {
+		escribirError(w, http.StatusBadRequest, "el monto tiene que ser una cadena con un importe decimal")
 		return
 	}
 	registrado, err := a.anticipos.Solicitar(r.Context(), actor, aplicacion.SolicitudAnticipo{
-		Monto:         cuerpo.Monto,
+		Monto:         monto,
 		Justificacion: cuerpo.Justificacion,
 	})
 	if err != nil {
 		a.responderErrorAnticipo(w, r, err, "solicitar el anticipo")
 		return
 	}
-	w.Header().Set("Location", "/anticipos/"+registrado.Anticipo.ID)
+	// Sin Location: no hay GET /anticipos/{id} al que apuntar. El anticipo
+	// creado viaja entero en el cuerpo.
 	escribirJSON(w, http.StatusCreated, aAnticipoJSON(registrado))
 }
 
