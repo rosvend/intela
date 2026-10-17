@@ -8,7 +8,11 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProveedorDeSesion, useSesion } from "./sesion";
+import API_MAIN from "../../cmd/api/main.go?raw";
+import LAMBDA_MAIN from "../../cmd/lambda/main.go?raw";
+import AUTENTICACION from "../../internal/aplicacion/autenticacion.go?raw";
+import VARIABLES_API from "../../infra/modules/api/variables.tf?raw";
+import { ProveedorDeSesion, SESION_INACTIVIDAD_MS, useSesion } from "./sesion";
 import { setToken } from "./api";
 
 function Sonda() {
@@ -320,5 +324,63 @@ describe("salir() con reintentos", () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+});
+
+/**
+ * La API no publica su inactividad maxima, asi que el cliente copia el valor por
+ * defecto. Estas pruebas leen el Go y el Terraform (como `?raw`, igual que el
+ * contrato en `identificacion/contrato.test.ts`) para que un cambio en un lado
+ * sin el otro falle aqui y no deje el sondeo de Distribucion cortando a
+ * destiempo (#223). En AWS manda el Terraform: pasa `SESION_INACTIVIDAD`
+ * explicito y el valor por defecto del Go no llega a usarse.
+ */
+describe("SESION_INACTIVIDAD_MS", () => {
+  const MS_POR_UNIDAD: Record<string, number> = {
+    Second: 1000,
+    Minute: 60_000,
+    Hour: 3_600_000,
+  };
+
+  /** `30*time.Minute` o `30 * time.Minute` en milisegundos; NaN si no esta. */
+  function duracionGo(fuente: string, antes: RegExp): number {
+    const m = new RegExp(
+      `${antes.source}\\s*(\\d+)\\s*\\*\\s*time\\.(Second|Minute|Hour)\\b`,
+    ).exec(fuente);
+    return m ? Number(m[1]) * MS_POR_UNIDAD[m[2]] : NaN;
+  }
+
+  it.each([
+    ["cmd/api/main.go", API_MAIN],
+    ["cmd/lambda/main.go", LAMBDA_MAIN],
+  ])("es el valor por defecto de SESION_INACTIVIDAD en %s", (_, fuente) => {
+    expect(duracionGo(fuente, /config\.Duracion\("SESION_INACTIVIDAD",/)).toBe(
+      SESION_INACTIVIDAD_MS,
+    );
+  });
+
+  it("es el respaldo de Autenticacion.inactividad() cuando no se configura", () => {
+    expect(
+      duracionGo(
+        AUTENTICACION,
+        /func \(a Autenticacion\) inactividad\(\) time\.Duration \{\s*if a\.Inactividad <= 0 \{\s*return/,
+      ),
+    ).toBe(SESION_INACTIVIDAD_MS);
+  });
+
+  /** `"30m"`, `"1h"` o `"1h30m"` (sintaxis de duracion de Go) en ms; NaN si no. */
+  function duracionTexto(texto: string): number {
+    const MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1000 };
+    const partes = [...texto.matchAll(/(\d+)([hms])/g)];
+    if (partes.map(([p]) => p).join("") !== texto) return NaN;
+    return partes.reduce((ms, [, n, u]) => ms + Number(n) * MS[u], 0);
+  }
+
+  it("es el valor por defecto de session_idle_timeout en infra/modules/api", () => {
+    const m =
+      /variable "session_idle_timeout" \{[^}]*?default\s*=\s*"([^"]+)"/.exec(
+        VARIABLES_API,
+      );
+    expect(m && duracionTexto(m[1])).toBe(SESION_INACTIVIDAD_MS);
   });
 });
