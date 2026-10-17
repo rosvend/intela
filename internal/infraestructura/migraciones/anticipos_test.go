@@ -1,6 +1,7 @@
 package migraciones_test
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 )
@@ -81,4 +82,98 @@ func TestAnticiposDosVigentesDelMismoTitularDetienenLaMigracion(t *testing.T) {
 	if actual >= version {
 		t.Fatalf("version = %d; la 00031 (%d) no puede quedar aplicada", actual, version)
 	}
+}
+
+// El down de la 00031 no borra lo que no se puede reconstruir: con un anticipo
+// o un embargo registrado se niega, y la base queda como estaba. Sin la
+// negativa, bajar y volver a subir le devolvia a un aprobado de 1000 con 400
+// de saldo `saldo = monto` -le cobraba otra vez los 600 ya descontados- y le
+// borraba el embargo que impide desembolsarle (RA 3.1.e). Mismo precedente que
+// TestDownDeParametrosTextualesNoDejaSnapshotsSinValor.
+func TestDownDeAnticiposSeNiegaConAnticiposOEmbargos(t *testing.T) {
+	casos := []struct {
+		nombre, sembrar, cita string
+	}{
+		{
+			nombre:  "con un anticipo aprobado y descontado en parte",
+			sembrar: `INSERT INTO anticipos (id, titular_id, monto, saldo, estado) VALUES ('ant-1', 'tit-1', 1000, 400, 'aprobado')`,
+			cita:    "R-33",
+		},
+		{
+			nombre:  "con un embargo reportado",
+			sembrar: `INSERT INTO embargos (titular_id, reportado, soporte) VALUES ('tit-1', DATE '2026-03-01', 'oficio juzgado 3')`,
+			cita:    "RA 3.1.e",
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			p, db, version := proveedorEnLaVersionAnteriorA(t, "_anticipos_saldo_y_embargos.sql")
+			ctx := t.Context()
+			if _, err := p.UpTo(ctx, version); err != nil {
+				t.Fatalf("subir la 00031: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO titulares (id, nombre, ipi, persona_natural, clase)
+			                                  VALUES ('tit-1', 'Uno', 'IPI-1', TRUE, 'socio')`); err != nil {
+				t.Fatalf("titular: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, c.sembrar); err != nil {
+				t.Fatalf("sembrar: %v", err)
+			}
+			antes := huellaDeAnticipos(t, db)
+
+			_, err := p.DownTo(ctx, version-1)
+			if err == nil || !strings.Contains(err.Error(), c.cita) {
+				t.Fatalf("el down tenia que negarse citando %s, dio: %v", c.cita, err)
+			}
+			actual, err := p.GetDBVersion(ctx)
+			if err != nil {
+				t.Fatalf("version: %v", err)
+			}
+			if actual != version {
+				t.Fatalf("version = %d tras la negativa, se esperaba %d: la 00031 sigue aplicada", actual, version)
+			}
+			if despues := huellaDeAnticipos(t, db); despues != antes {
+				t.Fatalf("tras la negativa la base cambio:\nantes   %s\ndespues %s", antes, despues)
+			}
+		})
+	}
+}
+
+// Con las dos tablas vacias no hay nada que perder: el down de la 00031 baja,
+// y la vuelve a subir limpio. Es el camino que recorre una base recien
+// desplegada, y el de TestUpYDownRecorrenTodasLasMigraciones.
+func TestDownDeAnticiposSinDatosBaja(t *testing.T) {
+	p, db, version := proveedorEnLaVersionAnteriorA(t, "_anticipos_saldo_y_embargos.sql")
+	ctx := t.Context()
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("subir la 00031: %v", err)
+	}
+	if _, err := p.DownTo(ctx, version-1); err != nil {
+		t.Fatalf("bajar con las tablas vacias tenia que funcionar: %v", err)
+	}
+	var embargos *string
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass('embargos')::text`).Scan(&embargos); err != nil {
+		t.Fatalf("buscar la tabla embargos: %v", err)
+	}
+	if embargos != nil {
+		t.Fatal("tras el down la tabla embargos sigue existiendo")
+	}
+	if _, err := p.UpTo(ctx, version); err != nil {
+		t.Fatalf("volver a subir: %v", err)
+	}
+}
+
+// huellaDeAnticipos resume lo que el down de la 00031 borraria: cada anticipo
+// con su estado, su saldo y su justificacion, y cada embargo con su oficio.
+func huellaDeAnticipos(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var huella string
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COALESCE((SELECT string_agg(id || ':' || estado || ':' || saldo::text || ':' || justificacion, ',' ORDER BY id)
+		                   FROM anticipos), '') || ' | ' ||
+		       COALESCE((SELECT string_agg(titular_id || ':' || reportado::text || ':' || soporte, ',' ORDER BY id)
+		                   FROM embargos), '')`).Scan(&huella); err != nil {
+		t.Fatalf("leer anticipos y embargos: %v", err)
+	}
+	return huella
 }

@@ -80,6 +80,27 @@ CREATE INDEX embargos_titular ON embargos (titular_id);
 
 -- +goose Down
 
+-- Con un anticipo o un embargo registrado, el down se niega en vez de borrar
+-- lo que no se puede reconstruir, igual que el de 00025. Bajar soltaria el
+-- saldo, la justificacion, el motivo y quien resolvio, y el Up siguiente
+-- volveria a poner cada aprobado en `saldo = monto`: lo ya descontado se le
+-- cobraria otra vez al socio (R-33). Y sin la tabla `embargos` desaparecen los
+-- oficios que impiden desembolsar (RA 3.1.e).
+-- +goose StatementBegin
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM anticipos) THEN
+    RAISE EXCEPTION
+      'R-33: hay anticipos registrados; revertir 00031 les borraria el saldo y volver a subirla cobraria otra vez lo ya descontado';
+  END IF;
+  IF EXISTS (SELECT 1 FROM embargos) THEN
+    RAISE EXCEPTION
+      'RA 3.1.e: hay embargos reportados; revertir 00031 borraria los oficios que impiden desembolsar un anticipo';
+  END IF;
+END
+$$;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 DROP TABLE IF EXISTS embargos;
 DROP INDEX IF EXISTS anticipos_uno_vigente_por_titular;
