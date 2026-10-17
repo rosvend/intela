@@ -246,6 +246,80 @@ func TestUnEmbargoReportadoImpideAprobar(t *testing.T) {
 	}
 }
 
+// TestEmitirSobreUnaOrdenQueYaExistiaRevierteElDescuento: si la orden que
+// mostraria el descuento de R-33 ya existia, ON CONFLICT DO NOTHING no la
+// escribe, y el saldo y el asiento que Recuperar escribio en la misma unidad
+// se quedarian sin orden: el socio pagaria 600 que ninguna orden le muestra.
+// La emision falla y la unidad se revierte entera. Una orden que ya existia SIN
+// renglon de anticipo sigue siendo el no-op idempotente de siempre.
+func TestEmitirSobreUnaOrdenQueYaExistiaRevierteElDescuento(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+	sembrarFirmantes(t, pool)
+	ejecutar := ejecutorDePruebas(t, pool)
+	sembrarCorridaEnVerificacion(t, pool, "prc-a", "bolsa-a", "2026-02", "600")
+	id := "liq-2026-02-nacional-" + titularAna
+	ejecutar(`INSERT INTO ordenes_pago
+	            (id, proceso_id, procesos, titular_id, periodo, circuito, bruto, neto, estado, enviada)
+	          VALUES ($1, 'prc-a', ARRAY['prc-a'], $2, '2026-02', 'nacional', 600, 540, 'enviada', '2026-03-01')`,
+		id, titularAna)
+	ejecutar(`INSERT INTO ordenes_pago_deducciones (orden_id, concepto, monto) VALUES ($1, 'gastos_administrativos', 60)`, id)
+	sembrarAprobado(t, s, "ant-1", titularAna, "1000")
+
+	// Con la deduccion de administracion de toda orden: la que hace fallar es
+	// el renglon de anticipo, no cualquier renglon.
+	orden, err := liquidacion.NuevaOrden(liquidacion.DatosOrden{
+		ID: id, ProcesoID: "prc-a", Procesos: []string{"prc-a"}, TitularID: titularAna,
+		Periodo: "2026-02", Circuito: "nacional", EnviadaDia: "2026-03-01", Bruto: pgDec("600"),
+		Deducciones: []liquidacion.Deduccion{{Concepto: liquidacion.ConceptoAdministracion, Monto: pgDec("60")}},
+	})
+	if err != nil {
+		t.Fatalf("NuevaOrden: %v", err)
+	}
+	if err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		return s.EmitirOrdenes(ctx, []liquidacion.OrdenDePago{orden})
+	}); err != nil {
+		t.Fatalf("una orden que ya existia sin anticipo es un no-op: %v", err)
+	}
+
+	svc := anticiposDe(s, reloj.Sistema{})
+	err = s.EnUnidad(ctx, func(ctx context.Context) error {
+		descuento, err := svc.Recuperar(ctx, titularAna, id, orden.Neto)
+		if err != nil {
+			return err
+		}
+		conAnticipo, err := orden.DescontarAnticipo(descuento)
+		if err != nil {
+			return err
+		}
+		return s.EmitirOrdenes(ctx, []liquidacion.OrdenDePago{conAnticipo})
+	})
+	if !errors.Is(err, errAnticipoSinOrden) {
+		t.Fatalf("emitir sobre una orden que ya existia con anticipo: err = %v, se esperaba errAnticipoSinOrden", err)
+	}
+
+	got, err := s.Anticipos().PorID(ctx, "ant-1")
+	if err != nil {
+		t.Fatalf("PorID: %v", err)
+	}
+	if !got.Anticipo.Saldo.Equal(pgDec("1000")) || got.Anticipo.Estado != anticipos.EstadoAprobado {
+		t.Fatalf("anticipo = %s/%s; el descuento tenia que revertirse con la emision", got.Anticipo.Estado, got.Anticipo.Saldo)
+	}
+	libro, err := s.De(ctx, aplicacion.RefAnticipo, "ant-1")
+	if err != nil {
+		t.Fatalf("asientos del anticipo: %v", err)
+	}
+	for _, a := range libro {
+		if a.Hecho == aplicacion.HechoAnticipoDescontado {
+			t.Fatalf("quedo el asiento %+v de un descuento revertido", a)
+		}
+	}
+	o := ordenDePeriodo(t, s, "2026-02", titularAna)
+	if _, hay := renglonAnticipo(o); hay || !o.Neto.Equal(pgDec("540")) || len(o.Deducciones) != 1 {
+		t.Fatalf("la orden que ya existia cambio: neto %s, deducciones %+v", o.Neto, o.Deducciones)
+	}
+}
+
 // esperarCerrojoEnPorDescontar espera, consultando pg_stat_activity, a que otra
 // sesion quede bloqueada por un cerrojo EN EL SELECT de PorDescontar, no en
 // cualquier sentencia sobre `anticipos`: con un cerrojo compartido (FOR SHARE)
