@@ -9,6 +9,9 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
+const MENSAJE_SONDEO =
+  "Un sondeo va por useSondeo: con setInterval sostiene la sesion desatendida (ADR 0025, #223).";
+
 export default tseslint.config(
   { ignores: ["dist/**", "node_modules/**", "src/contrato.d.ts"] },
   js.configs.recommended,
@@ -40,6 +43,29 @@ export default tseslint.config(
           selector: "Literal[regex.pattern=/\\(\\?<[=!]/]",
           message:
             "Lookbehind (?<= / ?<!) rompe Safari < 16.4, el target del build. Reescribe el regex con lookahead.",
+        },
+      ],
+    },
+  },
+  {
+    // Cada peticion con el token corre la inactividad de la sesion en el
+    // servidor: un sondeo con `setInterval` directo sostiene una pestana
+    // desatendida hasta SESION_TTL. Todo sondeo va por `useSondeo`
+    // (ADR 0025, #223). Las pruebas quedan fuera: no piden al servidor.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/useSondeo.ts", "src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        { name: "setInterval", message: MENSAJE_SONDEO },
+      ],
+      "no-restricted-properties": [
+        "error",
+        { object: "window", property: "setInterval", message: MENSAJE_SONDEO },
+        {
+          object: "globalThis",
+          property: "setInterval",
+          message: MENSAJE_SONDEO,
         },
       ],
     },

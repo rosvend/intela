@@ -179,7 +179,6 @@ export default function Layout() {
           })}
         </nav>
         <div className="sidebar-pie" ref={menuRef}>
-          {/* El aviso de salida sin revocar lo muestra Login: al salir este Layout se desmonta. */}
           <button
             type="button"
             className="sidebar-perfil"
@@ -225,6 +224,7 @@ export default function Layout() {
                 type="button"
                 role="menuitem"
                 className="sidebar-menu-item"
+                // Sin aviso si la revocacion no llega: salir() reintenta y el servidor cubre el resto (ADR 0025).
                 onClick={() => void salir()}
               >
                 <ArrowRightOnRectangleIcon
