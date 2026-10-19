@@ -75,7 +75,7 @@ export default function Burbuja() {
           onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
         >
           <header className="agente-cabecera">
-            <p className="agente-titulo">Asistente</p>
+            <p className="agente-titulo">Asistente de IA</p>
             <button
               type="button"
               className="agente-cerrar"
@@ -104,6 +104,9 @@ export default function Burbuja() {
           onClick={() => setAbierto(true)}
         >
           <Mascota />
+          <span className="agente-burbuja-texto" aria-hidden="true">
+            Pregunta a la IA
+          </span>
         </button>
       )}
     </div>
@@ -171,7 +174,7 @@ function Entrada({
       <textarea
         ref={campo}
         aria-label="Tu pregunta"
-        rows={2}
+        rows={1}
         maxLength={4000}
         value={texto}
         disabled={deshabilitada}

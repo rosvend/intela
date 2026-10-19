@@ -132,6 +132,15 @@ describe("Burbuja", () => {
     expect(screen.queryByText(/no se guarda/)).toBeNull();
   });
 
+  it("titula el panel 'Asistente de IA' y la burbuja dice para que sirve", () => {
+    const { container } = montar();
+    expect(container.querySelector(".agente-burbuja-texto")?.textContent).toBe(
+      "Pregunta a la IA",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    expect(screen.getByText("Asistente de IA")).toBeTruthy();
+  });
+
   it("la burbuja es la mascota del asistente", () => {
     const { container } = montar();
     expect(container.querySelector(".agente-burbuja .mascota")).not.toBeNull();
