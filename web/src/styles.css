@@ -3846,6 +3846,19 @@ p.alerta {
   }
 }
 
+/* Sale por donde entro: hacia la esquina de la mascota, mas rapido que la entrada. */
+.agente-panel--cerrando {
+  animation: agente-cerrar 150ms var(--curva-salida) forwards;
+  pointer-events: none;
+}
+
+@keyframes agente-cerrar {
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+}
+
 .agente-cabecera {
   display: flex;
   align-items: center;
@@ -4009,6 +4022,17 @@ p.alerta {
   .agente-panel,
   .agente-mensaje {
     animation: none;
+  }
+
+  /* Sin desplazamiento, pero el cierre sigue siendo un fundido. */
+  .agente-panel--cerrando {
+    animation: agente-cerrar-suave 150ms ease forwards;
+  }
+
+  @keyframes agente-cerrar-suave {
+    to {
+      opacity: 0;
+    }
   }
 }
 
