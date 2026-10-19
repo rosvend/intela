@@ -13,21 +13,21 @@ export default function Mascota() {
         <g transform="rotate(-20 27.4 14.4)">
           <rect
             className="mascota-ojo"
-            x="25.6"
-            y="11.2"
-            width="3.6"
-            height="6.4"
-            rx="1.8"
+            x="25.2"
+            y="10.6"
+            width="4.4"
+            height="7.6"
+            rx="2.2"
           />
         </g>
         <g transform="rotate(-20 36.8 14.4)">
           <rect
             className="mascota-ojo"
-            x="35"
-            y="11.2"
-            width="3.6"
-            height="6.4"
-            rx="1.8"
+            x="34.6"
+            y="10.6"
+            width="4.4"
+            height="7.6"
+            rx="2.2"
           />
         </g>
       </g>
