@@ -265,7 +265,8 @@ var erroresVisiblesAlModelo = []error{
 func mensajeParaModelo(err error) string {
 	for _, visible := range erroresVisiblesAlModelo {
 		if errors.Is(err, visible) {
-			if errors.Is(err, ErrArgumentosInvalidos) {
+			// El detalle le dice al modelo como corregir la llamada (p. ej. el rango del limite).
+			if errors.Is(err, ErrArgumentosInvalidos) || errors.Is(err, ErrFiltroInvalido) {
 				return err.Error()
 			}
 			return visible.Error()

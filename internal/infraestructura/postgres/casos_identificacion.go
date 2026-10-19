@@ -22,6 +22,9 @@ var _ aplicacion.RepositorioCasosIdentificacion = (*Store)(nil)
 // respuesta de una resolucion (#175) lea el caso con la MISMA sentencia que la
 // lista, en vez de con una hermana que diverge en cuanto alguien anade una
 // columna a una sola.
+//
+// $8 (PeriodoCubreMeses) deja que un $3 AAAA case tambien con sus AAAA-MM. El
+// LIKE no admite comodines del llamador: $3 ya llega validado como periodo.
 const sqlCasosIdentificacion = `
 WITH base AS (
   SELECT u.id, u.titulo, u.titulo_original, u.fuente, COALESCE(u.modalidad, '') AS modalidad,
@@ -31,7 +34,7 @@ WITH base AS (
     JOIN reportes r ON r.id = u.reporte_id
    WHERE (u.escalon = ANY($1::text[]) OR u.escalon = $4)
      AND ($2 = '' OR u.fuente = $2)
-     AND ($3 = '' OR r.periodo = $3)
+     AND ($3 = '' OR r.periodo = $3 OR ($8 AND r.periodo LIKE $3 || '-%'))
      AND ($7 = '' OR u.id = $7)
 ),
 pagina AS (
@@ -70,7 +73,7 @@ func (s *Store) ListarCasosIdentificacion(ctx context.Context, q aplicacion.Cons
 		limite = nil
 	}
 	filas, err := s.ejecutorDe(ctx).Query(ctx, sqlCasosIdentificacion,
-		q.Escalones, q.Fuente, q.Periodo, identificacion.EscalonONI, limite, p.Desplazamiento, q.UsoID)
+		q.Escalones, q.Fuente, q.Periodo, identificacion.EscalonONI, limite, p.Desplazamiento, q.UsoID, q.PeriodoCubreMeses)
 	if err != nil {
 		return aplicacion.PaginaCasos{}, traducirError(err, "listar casos de identificacion")
 	}
