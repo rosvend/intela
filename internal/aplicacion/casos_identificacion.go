@@ -39,6 +39,10 @@ type ConsultaCasos struct {
 	Escalones []string
 	Fuente    string
 	Periodo   string
+	// PeriodoCubreMeses hace que un Periodo AAAA case tambien con sus AAAA-MM.
+	// Lo pide el asistente (#69), que da a AAAA la semantica anual de
+	// estado_corrida; GET /identificacion/casos sigue comparando por igualdad.
+	PeriodoCubreMeses bool
 	// UsoID lee UN caso concreto: la respuesta de una resolucion reusa la
 	// misma sentencia que la lista, para que las dos no puedan divergir.
 	UsoID string
