@@ -34,6 +34,17 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "error",
       eqeqeq: ["error", "always"],
       "no-console": ["warn", { allow: ["warn", "error"] }],
+      // Vite compila para Safari 14, que no tiene lookbehind: esbuild lo
+      // vuelve `new RegExp(...)` y ese constructor lanza SyntaxError al
+      // cargar el bundle, que deja la app entera en blanco (#224).
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[regex.pattern=/\\(\\?<[=!]/]",
+          message:
+            "Lookbehind (?<= / ?<!) rompe Safari < 16.4, el target del build. Reescribe el regex con lookahead.",
+        },
+      ],
     },
   },
   {

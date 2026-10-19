@@ -230,3 +230,78 @@ func TestMarcarAcumuladaSoloCierraUnaDiferida(t *testing.T) {
 		t.Fatal("marcar acumulada no puede cerrar una enviada")
 	}
 }
+
+// TestDescontarAnticipo es el lado de la orden de R-33: el descuento entra al
+// desglose con su propio concepto, sin tocar las deducciones de la corrida, y
+// sale del neto. El bruto no cambia: el anticipo no altera lo que el socio
+// genero, solo lo que se le gira.
+func TestDescontarAnticipo(t *testing.T) {
+	casos := []struct {
+		nombre string
+		monto  string
+		neto   string
+		err    error
+	}{
+		{nombre: "descuenta parte del neto", monto: "150.25", neto: "499.75"},
+		{nombre: "descuenta el neto entero", monto: "650", neto: "0"},
+		{nombre: "no descuenta mas que el neto", monto: "650.01", err: ErrNetoNegativo},
+		{nombre: "un descuento negativo no es descuento", monto: "-1", err: ErrDeduccionNegativa},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			base := ordenPrueba(t, "1000.00", []Deduccion{
+				{Concepto: ConceptoAdministracion, Monto: dec("200.00")},
+				{Concepto: ConceptoSocial, Monto: dec("100.00")},
+				{Concepto: ConceptoReserva, Monto: dec("50.00")},
+			})
+			o, err := base.DescontarAnticipo(dec(c.monto))
+			if c.err != nil {
+				if !errors.Is(err, c.err) {
+					t.Fatalf("err = %v, se esperaba %v", err, c.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DescontarAnticipo: %v", err)
+			}
+			if !o.Neto.Equal(dec(c.neto)) {
+				t.Fatalf("Neto = %s, se esperaba %s", o.Neto, c.neto)
+			}
+			if !o.Bruto.Equal(base.Bruto) {
+				t.Fatalf("Bruto = %s, el anticipo no cambia el bruto %s", o.Bruto, base.Bruto)
+			}
+			if len(o.Deducciones) != 4 {
+				t.Fatalf("deducciones = %+v, se esperaban las tres de la corrida mas el anticipo", o.Deducciones)
+			}
+			ultima := o.Deducciones[3]
+			if ultima.Concepto != ConceptoAnticipo || !ultima.Monto.Equal(dec(c.monto)) {
+				t.Fatalf("deduccion del anticipo = %+v", ultima)
+			}
+			// La identidad de RD 13.2 sigue cerrando: neto = bruto - deducciones.
+			suma := decimal.Zero
+			for _, d := range o.Deducciones {
+				suma = suma.Add(d.Monto)
+			}
+			if !o.Bruto.Sub(suma).Equal(o.Neto) {
+				t.Fatalf("bruto %s - deducciones %s != neto %s", o.Bruto, suma, o.Neto)
+			}
+			// La orden de la que se partio no se toca (valor, no puntero).
+			if len(base.Deducciones) != 3 || !base.Neto.Equal(dec("650.00")) {
+				t.Fatalf("la orden original cambio: %+v", base)
+			}
+		})
+	}
+}
+
+// TestDescontarAnticipoCeroNoTocaLaOrden: sin anticipo pendiente la orden sale
+// exactamente como sin este paso, sin un renglon de 0.00 en el desglose.
+func TestDescontarAnticipoCeroNoTocaLaOrden(t *testing.T) {
+	base := ordenPrueba(t, "1000.00", []Deduccion{{Concepto: ConceptoAdministracion, Monto: dec("200.00")}})
+	o, err := base.DescontarAnticipo(decimal.Zero)
+	if err != nil {
+		t.Fatalf("DescontarAnticipo: %v", err)
+	}
+	if len(o.Deducciones) != 1 || !o.Neto.Equal(base.Neto) {
+		t.Fatalf("orden = %+v, se esperaba igual a %+v", o, base)
+	}
+}

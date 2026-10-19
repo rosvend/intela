@@ -223,22 +223,54 @@ func envio() time.Time {
 	return time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 }
 
-// entornoLiq cablea los cinco puertos como lo hace cmd/api, y deja a mano los
-// dobles sobre los que se comprueba el ADR 0006 (el libro) y R-10 (los avisos).
+// recuperacionFalsa es el doble de [RecuperacionAnticipos]: a cada titular le
+// descuenta lo que le quede en saldos, sin pasar de lo disponible, y anota cada
+// llamada. Sin saldos es el socio sin anticipo, que es el caso de casi todas
+// las pruebas de este fichero.
+type recuperacionFalsa struct {
+	saldos   map[string]decimal.Decimal
+	err      error
+	llamadas []llamadaRecuperar
+}
+
+type llamadaRecuperar struct {
+	TitularID, OrdenID string
+	Disponible         decimal.Decimal
+}
+
+func (r *recuperacionFalsa) Recuperar(_ context.Context, titularID, ordenID string, disponible decimal.Decimal) (decimal.Decimal, error) {
+	r.llamadas = append(r.llamadas, llamadaRecuperar{TitularID: titularID, OrdenID: ordenID, Disponible: disponible})
+	if r.err != nil {
+		return decimal.Zero, r.err
+	}
+	saldo := r.saldos[titularID]
+	if !saldo.IsPositive() || !disponible.IsPositive() {
+		return decimal.Zero, nil
+	}
+	descuento := decimal.Min(saldo, disponible)
+	r.saldos[titularID] = saldo.Sub(descuento)
+	return descuento, nil
+}
+
+// entornoLiq cablea los seis puertos como lo hace cmd/api, y deja a mano los
+// dobles sobre los que se comprueba el ADR 0006 (el libro), R-10 (los avisos)
+// y R-33 (los anticipos).
 type entornoLiq struct {
-	repo   *repoLiqMemoria
-	libro  *bitacoraFalsa
-	avisos *notificadorFalso
-	unidad *unidadFalsa
-	svc    Liquidaciones
+	repo      *repoLiqMemoria
+	libro     *bitacoraFalsa
+	avisos    *notificadorFalso
+	unidad    *unidadFalsa
+	anticipos *recuperacionFalsa
+	svc       Liquidaciones
 }
 
 func montar(repo *repoLiqMemoria, instante time.Time) *entornoLiq {
 	e := &entornoLiq{
-		repo:   repo,
-		libro:  &bitacoraFalsa{},
-		avisos: &notificadorFalso{},
-		unidad: &unidadFalsa{},
+		repo:      repo,
+		libro:     &bitacoraFalsa{},
+		avisos:    &notificadorFalso{},
+		unidad:    &unidadFalsa{},
+		anticipos: &recuperacionFalsa{saldos: map[string]decimal.Decimal{}},
 	}
 	e.svc = Liquidaciones{
 		Ordenes:     repo,
@@ -246,6 +278,7 @@ func montar(repo *repoLiqMemoria, instante time.Time) *entornoLiq {
 		Notificador: e.avisos,
 		Bitacora:    e.libro,
 		Unidad:      e.unidad,
+		Anticipos:   e.anticipos,
 	}
 	return e
 }
