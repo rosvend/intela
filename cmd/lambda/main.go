@@ -166,12 +166,28 @@ func construir() (http.Handler, error) {
 	// El aviso va por el portal (RD 13.8.8) y en la misma transaccion que la
 	// orden: el titular la ve en /mis-liquidaciones desde el commit que la
 	// emite, y un aviso no puede sobrevivir a una orden revertida (#193).
+	//
+	// Los anticipos (R-30..R-33) van antes porque la emision los necesita: el
+	// descuento de R-33 se escribe en la misma unidad que la orden, y una
+	// liquidacion sin el giraria entero lo que el socio debe. El repositorio
+	// va por un envoltorio (ver postgres/anticipos.go): Listar, DeTitular y
+	// PorID ya son de otros puertos del *Store. El SMMLV lo resuelve el mismo
+	// *Store que la liquidacion, desde `parametros` (ADR 0004).
+	anticipos := aplicacion.Anticipos{
+		Repo:     store.Anticipos(),
+		SMMLV:    store,
+		IDs:      cripto.TokensAleatorios{},
+		Reloj:    reloj.Sistema{},
+		Bitacora: store,
+		Unidad:   store,
+	}
 	ordenes := aplicacion.Liquidaciones{
 		Ordenes:     store,
 		Reloj:       reloj.Sistema{},
 		Notificador: store.AvisoPortal(),
 		Bitacora:    store,
 		Unidad:      store,
+		Anticipos:   anticipos,
 	}
 
 	// El mismo *Store cubre ONI, declaraciones, padron y recaudo, y tambien
@@ -337,11 +353,12 @@ func construir() (http.Handler, error) {
 			Repo: store, Bitacora: store, Unidad: store, Reloj: reloj.Sistema{},
 			Ejemplos: store, Rankeador: triage.Heuristico{},
 		},
-		Explicar: aplicacion.ExplicarCifra{Bitacora: store},
-		Ingresos: aplicacion.ConsultaIngresos{Repo: store},
-		Tablero:  aplicacion.Tablero{Repo: store},
-		Bolsas:   bolsas,
-		Agente:   agente,
+		Explicar:  aplicacion.ExplicarCifra{Bitacora: store},
+		Ingresos:  aplicacion.ConsultaIngresos{Repo: store},
+		Tablero:   aplicacion.Tablero{Repo: store},
+		Bolsas:    bolsas,
+		Agente:    agente,
+		Anticipos: anticipos,
 	}, httpapi.Opciones{
 		OrigenesPermitidos: config.Lista("CORS_ORIGENES"),
 		Log:                registro,

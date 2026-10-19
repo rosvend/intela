@@ -333,6 +333,7 @@ func vaciar(ctx context.Context, pool *pgxpool.Pool, d Dataset) error {
 	for _, tabla := range []string{
 		"reclamaciones",
 		"anticipos",
+		"embargos",
 		"calendario",
 		"cola_trabajos",
 		"resultados_parte_no_distribuida",

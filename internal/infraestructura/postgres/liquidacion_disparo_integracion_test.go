@@ -37,6 +37,7 @@ func comprobarLiquidacionEmitida(
 	ctx := t.Context()
 	liq := aplicacion.Liquidaciones{
 		Ordenes: s, Reloj: reloj.Sistema{}, Notificador: s.AvisoPortal(), Bitacora: s, Unidad: s,
+		Anticipos: anticiposDe(s, reloj.Sistema{}),
 	}
 
 	admin, err := liq.Listar(ctx, aplicacion.Usuario{Rol: aplicacion.RolAdministrador})
@@ -137,6 +138,7 @@ func procesosConLiquidacion(s *Store, ordenes aplicacion.RepositorioLiquidacion)
 		Repo: s, Unidad: s, Bitacora: s, Reloj: reloj.Sistema{},
 		Liquidacion: aplicacion.Liquidaciones{
 			Ordenes: ordenes, Reloj: reloj.Sistema{}, Notificador: s.AvisoPortal(), Bitacora: s, Unidad: s,
+			Anticipos: anticiposDe(s, reloj.Sistema{}),
 		},
 	}
 }
@@ -454,6 +456,7 @@ func TestAvanzarEtapaDisparaLiquidacionPuntaAPuntaHTTP(t *testing.T) {
 
 	liq := aplicacion.Liquidaciones{
 		Ordenes: s, Reloj: reloj.Sistema{}, Notificador: s.AvisoPortal(), Bitacora: s, Unidad: s,
+		Anticipos: anticiposDe(s, reloj.Sistema{}),
 	}
 	proc := procesosConLiquidacion(s, s)
 
