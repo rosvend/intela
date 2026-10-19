@@ -56,6 +56,44 @@ describe("PildoraCita", () => {
     expect(screen.getByText(/Ctrl\+C/)).toBeTruthy();
   });
 
+  it("sin portapapeles, en un asiento selecciona solo la ref, sin la palabra", async () => {
+    render(<PildoraCita clase="asiento" valor="p1:obra-7" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+
+    expect(window.getSelection()?.toString()).toBe("p1:obra-7");
+  });
+
+  it("el aviso de copiado no monta una region status propia", async () => {
+    conPortapapeles(vi.fn().mockResolvedValue(undefined));
+    render(<PildoraCita clase="reglamento" valor="RD 9.1.1" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+
+    expect(screen.getByText("Cita copiada")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("el aviso de copiado se retira solo a los dos segundos", async () => {
+    vi.useFakeTimers();
+    conPortapapeles(vi.fn().mockResolvedValue(undefined));
+    render(<PildoraCita clase="reglamento" valor="RD 9.1.1" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+    expect(screen.getByText("Cita copiada")).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.queryByText("Cita copiada")).toBeNull();
+  });
+
   it("una cita de asiento se distingue de un numeral de reglamento", () => {
     render(
       <>
@@ -64,7 +102,6 @@ describe("PildoraCita", () => {
       </>,
     );
     const [asiento, numeral] = screen.getAllByRole("button");
-    expect(screen.queryByRole("status")).toBeNull();
     expect(asiento.className).toContain("cita--asiento");
     expect(asiento.textContent).toContain("asiento");
     expect(numeral.className).toContain("cita--reglamento");
@@ -86,5 +123,20 @@ describe("TextoConCitas", () => {
     expect(container.textContent).toBe(
       "Se retiene en reserva (RD 13.1.3), ver asiento p1:obra-7.",
     );
+  });
+
+  it("conserva la mayuscula de Asiento tal como la escribio el agente", () => {
+    const { container } = render(<TextoConCitas texto="Asiento p1:obra-7" />);
+    expect(container.textContent).toBe("Asiento p1:obra-7");
+    expect(
+      screen.getByRole("button", { name: "Copiar cita Asiento p1:obra-7" }),
+    ).toBeTruthy();
+  });
+
+  it("el HTML que escriba el modelo se ve como texto, nunca se interpreta", () => {
+    const texto = '<img src=x onerror="alert(1)"> ver RD 9.1.1';
+    const { container } = render(<TextoConCitas texto={texto} />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toBe(texto);
   });
 });

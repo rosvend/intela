@@ -9,7 +9,12 @@ export default function TextoConCitas({ texto }: { texto: string }) {
         f.tipo === "texto" ? (
           f.texto
         ) : (
-          <PildoraCita key={i} clase={f.clase} valor={f.valor} />
+          <PildoraCita
+            key={i}
+            clase={f.clase}
+            valor={f.valor}
+            palabra={f.clase === "asiento" ? f.palabra : undefined}
+          />
         ),
       )}
     </>

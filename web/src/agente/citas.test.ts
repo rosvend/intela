@@ -29,19 +29,57 @@ describe("partirCitas", () => {
       partirCitas("Sale del asiento p-2026.01:obra-7:tit-3. Y RD 9.1.1"),
     ).toEqual([
       { tipo: "texto", texto: "Sale del " },
-      { tipo: "cita", clase: "asiento", valor: "p-2026.01:obra-7:tit-3" },
+      {
+        tipo: "cita",
+        clase: "asiento",
+        valor: "p-2026.01:obra-7:tit-3",
+        palabra: "asiento",
+      },
       { tipo: "texto", texto: ". Y " },
       { tipo: "cita", clase: "reglamento", valor: "RD 9.1.1" },
     ]);
   });
 
-  it("reconoce Asiento con mayuscula y una ref sin punto final", () => {
+  it("reconoce Asiento con mayuscula, la conserva y acepta una ref sin punto final", () => {
     expect(partirCitas("Asiento p1:obra-7")).toEqual([
-      { tipo: "cita", clase: "asiento", valor: "p1:obra-7" },
+      {
+        tipo: "cita",
+        clase: "asiento",
+        valor: "p1:obra-7",
+        palabra: "Asiento",
+      },
     ]);
     expect(partirCitas("asiento p1:obra-7.")).toEqual([
-      { tipo: "cita", clase: "asiento", valor: "p1:obra-7" },
+      {
+        tipo: "cita",
+        clase: "asiento",
+        valor: "p1:obra-7",
+        palabra: "asiento",
+      },
       { tipo: "texto", texto: "." },
+    ]);
+  });
+
+  it("una ref de titular se toma entera, sin el punto final", () => {
+    expect(partirCitas("asiento p1:obra-7:tit-3.")).toEqual([
+      {
+        tipo: "cita",
+        clase: "asiento",
+        valor: "p1:obra-7:tit-3",
+        palabra: "asiento",
+      },
+      { tipo: "texto", texto: "." },
+    ]);
+  });
+
+  it("acepta la ref accesoria de 5 segmentos que tambien explica ExplicarCifra", () => {
+    expect(partirCitas("asiento reserva:p1:p2:obra-7:tit-3")).toEqual([
+      {
+        tipo: "cita",
+        clase: "asiento",
+        valor: "reserva:p1:p2:obra-7:tit-3",
+        palabra: "asiento",
+      },
     ]);
   });
 
@@ -51,7 +89,10 @@ describe("partirCitas", () => {
     "Asiento contable del proceso p1.",
     "Asiento 42",
     "asiento a:b:c:d",
-  ])("no hace pildora de una palabra suelta tras asiento: %s", (texto) => {
+    "asiento p1:obra-7:tit-3:extra.",
+    "asiento p1:obra-ñ",
+    "asiento p1:canción",
+  ])("no hace pildora de algo que no es una ref entera: %s", (texto) => {
     expect(partirCitas(texto)).toEqual([{ tipo: "texto", texto }]);
   });
 

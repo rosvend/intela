@@ -1,7 +1,12 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { useEffect, useRef, useState } from "react";
 
-type Props = { clase: "reglamento" | "asiento"; valor: string };
+// palabra: como la escribio el agente ("asiento" o "Asiento"); solo aplica a la clase asiento.
+type Props = {
+  clase: "reglamento" | "asiento";
+  valor: string;
+  palabra?: string;
+};
 
 const AVISOS = {
   copiada: "Cita copiada",
@@ -9,7 +14,11 @@ const AVISOS = {
 } as const;
 
 /** Cita del agente como pildora: se ve distinta del texto, se selecciona y un clic la copia. */
-export default function PildoraCita({ clase, valor }: Props) {
+export default function PildoraCita({
+  clase,
+  valor,
+  palabra = "asiento",
+}: Props) {
   const texto = useRef<HTMLSpanElement>(null);
   const [estado, setEstado] = useState<"inactivo" | keyof typeof AVISOS>(
     "inactivo",
@@ -35,7 +44,7 @@ export default function PildoraCita({ clase, valor }: Props) {
     }
   }
 
-  const nombre = clase === "asiento" ? `asiento ${valor}` : valor;
+  const nombre = clase === "asiento" ? `${palabra} ${valor}` : valor;
   return (
     <>
       <button
@@ -45,7 +54,7 @@ export default function PildoraCita({ clase, valor }: Props) {
         title="Copiar cita"
         onClick={copiar}
       >
-        {clase === "asiento" && <span className="cita-clase">asiento </span>}
+        {clase === "asiento" && <span className="cita-clase">{palabra} </span>}
         <span ref={texto}>{valor}</span>
         {estado === "copiada" && (
           <CheckIcon className="cita-icono" aria-hidden="true" />
