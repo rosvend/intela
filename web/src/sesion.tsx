@@ -55,6 +55,15 @@ export const cerrarSesion = (): Promise<Response> =>
 // Esperas antes del segundo y del tercer DELETE (ADR 0025): cortas, para que "Salir" no se note.
 const ESPERAS_REINTENTO_SALIDA_MS = [300, 800];
 
+/**
+ * La inactividad maxima de una sesion: el valor por defecto de
+ * `SESION_INACTIVIDAD` en `cmd/api`, `cmd/lambda` y el modulo `infra/modules/api`
+ * de Terraform (ADR 0025). La API no lo publica, asi que aqui va copiado, y
+ * `sesion.test.tsx` lee esas fuentes y falla si se separan. Lo usa `useSondeo`
+ * para que un sondeo no sostenga una sesion que nadie esta usando (#223).
+ */
+export const SESION_INACTIVIDAD_MS = 30 * 60_000;
+
 /** Pide la revocacion con el token aun guardado; un 4xx no se reintenta (401 = ya revocada). */
 async function revocarConReintentos() {
   for (const espera of [...ESPERAS_REINTENTO_SALIDA_MS, null]) {

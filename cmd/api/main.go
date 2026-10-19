@@ -88,7 +88,7 @@ func ejecutar(log *slog.Logger) error {
 		Tokens:   cripto.TokensAleatorios{},
 		TTL:      config.Duracion("SESION_TTL", 12*time.Hour),
 		// ASVS V3.3.2: sin uso durante este lapso la sesion caduca en el servidor (ADR 0025).
-		Inactividad: config.Duracion("SESION_INACTIVIDAD", 30*time.Minute),
+		Inactividad: config.Duracion("SESION_INACTIVIDAD", aplicacion.InactividadPorDefecto),
 	}
 
 	admision := aplicacion.Admision{

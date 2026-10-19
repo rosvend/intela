@@ -55,9 +55,15 @@ type Autenticacion struct {
 	// TTL de una sesion. Cero no significa "eterna": ver IniciarSesion.
 	TTL time.Duration
 
-	// Inactividad maxima entre dos usos de una sesion (ASVS V3.3.2). Cero vale 30 minutos.
+	// Inactividad maxima entre dos usos de una sesion (ASVS V3.3.2). Cero vale InactividadPorDefecto.
 	Inactividad time.Duration
 }
+
+// InactividadPorDefecto es la inactividad maxima de una sesion cuando no se configura
+// SESION_INACTIVIDAD (ADR 0025). El frontend copia este valor en SESION_INACTIVIDAD_MS para que
+// el sondeo de Distribucion no sostenga una sesion desatendida, y web/src/sesion.test.tsx falla
+// si se separan (#223).
+const InactividadPorDefecto = 30 * time.Minute
 
 // ttl evita que una configuracion vacia emita credenciales permanentes.
 //
@@ -75,7 +81,7 @@ func (a Autenticacion) ttl() time.Duration {
 // inactividad aplica el mismo criterio que ttl: un campo sin cablear no apaga la caducidad.
 func (a Autenticacion) inactividad() time.Duration {
 	if a.Inactividad <= 0 {
-		return 30 * time.Minute
+		return InactividadPorDefecto
 	}
 	return a.Inactividad
 }
