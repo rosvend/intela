@@ -6,8 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/rosvend/intela/internal/aplicacion"
 )
+
+// sinInactividad deja fuera de juego la caducidad por inactividad en las pruebas que miran otra cosa.
+const sinInactividad = 24 * time.Hour
 
 // enUnaHora evita el CHECK sesion_expira_despues (expira > creada).
 //
@@ -22,9 +27,6 @@ import (
 // hasta 999 ns anterior a lo que se mando. En las pruebas del borde exacto eso
 // es la diferencia entre comparar dos instantes iguales y compararlos
 // desiguales, es decir, entre una prueba y una moneda al aire.
-// sinInactividad deja fuera de juego la caducidad por inactividad en las pruebas que miran otra cosa.
-const sinInactividad = 24 * time.Hour
-
 func enUnaHora() time.Time {
 	return time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
 }
@@ -284,25 +286,83 @@ func TestSesionTocaElUltimoUsoComoMuchoUnaVezPorMinuto(t *testing.T) {
 	if err := s.Crear(ctx, "token", usuarioAdmin, creada, enUnaHora()); err != nil {
 		t.Fatalf("Crear: %v", err)
 	}
-	ultimoUso := func() time.Time {
-		t.Helper()
-		var u time.Time
-		if err := pool.QueryRow(ctx, `SELECT ultimo_uso FROM sesiones`).Scan(&u); err != nil {
-			t.Fatalf("leer ultimo_uso: %v", err)
-		}
-		return u.UTC()
-	}
 
 	if _, err := s.PorToken(ctx, "token", creada.Add(30*time.Second), 30*time.Minute); err != nil {
 		t.Fatalf("PorToken: %v", err)
 	}
-	if u := ultimoUso(); !u.Equal(creada) {
+	if u := leerUltimoUso(t, pool, "token"); !u.Equal(creada) {
 		t.Fatalf("ultimo_uso = %v, a los 30 s no se tenia que tocar (%v)", u, creada)
 	}
 	if _, err := s.PorToken(ctx, "token", creada.Add(2*time.Minute), 30*time.Minute); err != nil {
 		t.Fatalf("PorToken: %v", err)
 	}
-	if u := ultimoUso(); !u.Equal(creada.Add(2 * time.Minute)) {
+	if u := leerUltimoUso(t, pool, "token"); !u.Equal(creada.Add(2 * time.Minute)) {
 		t.Fatalf("ultimo_uso = %v, se esperaba el minuto 2", u)
+	}
+}
+
+// leerUltimoUso lee el ultimo_uso de UNA sesion, buscandola por el resumen de su token.
+func leerUltimoUso(t *testing.T, pool *pgxpool.Pool, token string) time.Time {
+	t.Helper()
+	var u time.Time
+	if err := pool.QueryRow(t.Context(),
+		`SELECT ultimo_uso FROM sesiones WHERE token = $1`, resumir(token)).Scan(&u); err != nil {
+		t.Fatalf("leer ultimo_uso: %v", err)
+	}
+	return u.UTC()
+}
+
+// Una peticion rechazada por inactividad no corre ultimo_uso (#222). Si lo corriera, la segunda
+// peticion con el mismo token volveria a pasar: la caducidad de ASVS V3.3.2 se anularia con solo
+// pedir dos veces. Lo impide el `EXISTS (SELECT 1 FROM viva)` del toque.
+//
+// Errorf y no Fatalf a partir del rechazo: si la guarda se rompe, el informe tiene que mostrar las
+// dos caras del fallo, el ultimo_uso corrido y la sesion que revive.
+func TestSesionRechazadaPorInactividadNoReviveAlReintentar(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+	creada := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.Crear(ctx, "token", usuarioAdmin, creada, enUnaHora()); err != nil {
+		t.Fatalf("Crear: %v", err)
+	}
+
+	if _, err := s.PorToken(ctx, "token", creada.Add(31*time.Minute), 30*time.Minute); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("tras 31 min sin uso la sesion ya no vale, se obtuvo %v", err)
+	}
+	if u := leerUltimoUso(t, pool, "token"); !u.Equal(creada) {
+		t.Errorf("el rechazo por inactividad corrio ultimo_uso a %v, tenia que seguir en %v", u, creada)
+	}
+	if _, err := s.PorToken(ctx, "token", creada.Add(32*time.Minute), 30*time.Minute); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Errorf("la sesion inactiva revivio al pedirla otra vez, se obtuvo %v", err)
+	}
+}
+
+// El toque corre el ultimo_uso de la sesion que se presento y de ninguna otra (#222). Sin el
+// `token = $1` del UPDATE, cada peticion valida de un usuario correria el de toda la tabla, y la
+// sesion que otro dejo abierta no caducaria nunca por inactividad mientras alguien trabaje.
+func TestSesionElToqueNoMantieneVivaLaSesionDeOtroUsuario(t *testing.T) {
+	s, pool := sembrar(t)
+	ctx := t.Context()
+	creada := time.Now().UTC().Truncate(time.Microsecond)
+	for _, c := range []struct{ token, usuario string }{
+		{"de-ana", usuarioTitular}, {"del-admin", usuarioAdmin},
+	} {
+		if err := s.Crear(ctx, c.token, c.usuario, creada, enUnaHora()); err != nil {
+			t.Fatalf("Crear %s: %v", c.token, err)
+		}
+	}
+
+	// Ana entra y se va; el admin sigue usando la suya cada 20 minutos.
+	for _, minuto := range []time.Duration{20, 40} {
+		if _, err := s.PorToken(ctx, "del-admin", creada.Add(minuto*time.Minute), 30*time.Minute); err != nil {
+			t.Fatalf("usada en el minuto %d la sesion del admin tiene que valer: %v", minuto, err)
+		}
+	}
+
+	if u := leerUltimoUso(t, pool, "de-ana"); !u.Equal(creada) {
+		t.Errorf("el uso de otra sesion corrio el ultimo_uso de Ana a %v, tenia que seguir en %v", u, creada)
+	}
+	if _, err := s.PorToken(ctx, "de-ana", creada.Add(40*time.Minute), 30*time.Minute); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Errorf("tras 40 min sin uso la sesion de Ana sigue viva por el uso de otro usuario, se obtuvo %v", err)
 	}
 }
