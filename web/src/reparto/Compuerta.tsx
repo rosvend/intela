@@ -17,6 +17,7 @@ export default function Compuerta({
   rol,
   advertencia,
   enviando = false,
+  bloqueada = false,
   error,
   onFirmar,
   onRechazar,
@@ -32,6 +33,11 @@ export default function Compuerta({
    */
   advertencia?: string;
   enviando?: boolean;
+  /**
+   * Lo que se ve puede no ser la revision vigente (el sondeo estuvo en pausa):
+   * no se deja firmar ni rechazar hasta que llegue (#223).
+   */
+  bloqueada?: boolean;
   error?: string;
   onFirmar: () => void;
   onRechazar: (motivo: string) => void;
@@ -50,7 +56,7 @@ export default function Compuerta({
   function confirmarRechazo(evento: FormEvent) {
     evento.preventDefault();
     const texto = motivo.trim();
-    if (!texto) return;
+    if (!texto || bloqueada) return;
     onRechazar(texto);
   }
 
@@ -102,7 +108,7 @@ export default function Compuerta({
           <button
             type="button"
             className="boton-primario"
-            disabled={enviando}
+            disabled={enviando || bloqueada}
             onClick={onFirmar}
           >
             {enviando ? "Firmando…" : "Firmar"}
@@ -110,7 +116,7 @@ export default function Compuerta({
           <button
             type="button"
             className="boton-secundario"
-            disabled={enviando}
+            disabled={enviando || bloqueada}
             onClick={() => setRechazando(true)}
           >
             Rechazar
@@ -137,7 +143,7 @@ export default function Compuerta({
             <button
               type="submit"
               className="boton-peligro"
-              disabled={enviando || motivo.trim() === ""}
+              disabled={enviando || bloqueada || motivo.trim() === ""}
             >
               Confirmar rechazo
             </button>

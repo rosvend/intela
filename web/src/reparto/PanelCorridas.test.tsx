@@ -10,7 +10,8 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "../api";
-import { ProveedorDeSesion, Rol } from "../sesion";
+import RutaProtegida from "../RutaProtegida";
+import { ProveedorDeSesion, Rol, SESION_INACTIVIDAD_MS } from "../sesion";
 import PanelCorridas from "./PanelCorridas";
 import { resumenDePrueba } from "./resumenDePrueba";
 import { INTERVALO_SONDEO_MS, Proceso, RUTAS_REPARTO } from "./tipos";
@@ -906,5 +907,428 @@ describe("PanelCorridas", () => {
         "Último rechazo: faltan soportes de la liquidacion parcial",
       );
     });
+  });
+});
+
+/**
+ * #223. El servidor no distingue un sondeo de una accion de la persona: cada
+ * peticion con el token corre `ultimo_uso`. Si el sondeo no para, una pestana
+ * de Distribucion desatendida sostiene la sesion hasta `SESION_TTL` (12 h). El
+ * que tiene que parar es el sondeo (ADR 0025, Consecuencias).
+ */
+describe("PanelCorridas: el sondeo no sostiene una sesion desatendida (#223)", () => {
+  const MINUTO = 60_000;
+  const TIC = INTERVALO_SONDEO_MS;
+  /**
+   * A medio camino entre dos tics. Ahi se mira y ahi actua la persona: es el
+   * punto mas lejos de cualquier tic, asi que el tiempo real que
+   * `shouldAdvanceTime` cuela entre dos sentencias no cambia lo que se cuenta.
+   */
+  const MEDIO = TIC / 2;
+  /** El ultimo tic que todavia pide: el anterior al corte. */
+  const ultimoTicAntesDe = (corte: number) =>
+    Math.ceil(corte / TIC) * TIC - TIC;
+
+  /** Cada peticion que sale. */
+  let llamadas: string[];
+  /** Lo que el servidor dice del token: `false` es la sesion ya caducada. */
+  let sesionViva: boolean;
+  /**
+   * El instante del montaje en el reloj falso. Es el mismo con que `useSondeo`
+   * arranca el intervalo y la ventana, asi que los tics caen en
+   * `inicio + k * TIC` exactos.
+   */
+  let inicio: number;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal("fetch", vi.fn());
+    setToken("tok");
+    llamadas = [];
+    sesionViva = true;
+    // Administracion: el sondeo pide procesos, bolsas y el resumen de alertas.
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (!sesionViva) return json({ error: "sesion no valida" }, 401);
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === RUTAS_REPARTO.procesos) return json([nacional]);
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  function montarDistribucion() {
+    const montado = montar();
+    inicio = Date.now();
+    return montado;
+  }
+
+  /** De un salto, en un solo `act`. */
+  async function saltar(ms: number) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  /**
+   * Hasta `t` despues del montaje. `shouldAdvanceTime` suma el tiempo real que
+   * tarda la prueba; medir desde `inicio` lo descuenta, asi que los cortes caen
+   * donde dice la prueba y no unos milisegundos mas tarde.
+   *
+   * En un solo `act` React junta los tics del tramo en una sola ronda de
+   * peticiones. Para contar sondeos uno a uno, el tramo tiene que cubrir un
+   * solo tic: por eso cada corte se mira de un `MEDIO` antes a un `MEDIO`
+   * despues del tic.
+   */
+  async function hasta(t: number) {
+    await saltar(Math.max(0, inicio + t - Date.now()));
+  }
+
+  const sondeos = () =>
+    llamadas.filter((path) => path === RUTAS_REPARTO.procesos).length;
+
+  function fijarVisibilidad(estado: DocumentVisibilityState) {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => estado,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+
+  async function cargado() {
+    await screen.findByRole("list", { name: "Corridas" });
+  }
+
+  it("31 minutos sin teclado ni puntero: el ultimo sondeo sale antes de SESION_INACTIVIDAD y no vuelve solo", async () => {
+    montarDistribucion();
+    await cargado();
+
+    // La ventana corre desde el montaje: el ultimo tic que pide es el de los
+    // 29:45 y el de los 30:00 ya no (con los valores de hoy).
+    const ultimo = ultimoTicAntesDe(SESION_INACTIVIDAD_MS);
+
+    // Durante la ventana sigue pidiendo.
+    await hasta(ultimo - MEDIO);
+    expect(sondeos()).toBeGreaterThan(1);
+
+    const antes = sondeos();
+    await hasta(ultimo + MEDIO);
+    expect(sondeos()).toBe(antes + 1);
+
+    // El tic siguiente ya no, y el minuto 31 sin interaccion tampoco trae
+    // ninguna peticion, de ningun tipo.
+    const tras30 = llamadas.length;
+    await hasta(ultimo + TIC + MEDIO);
+    expect(llamadas.length).toBe(tras30);
+    await hasta(31 * MINUTO);
+    expect(llamadas.length).toBe(tras30);
+
+    // Ni hasta SESION_TTL: el sondeo no vuelve solo.
+    await saltar(12 * 60 * MINUTO);
+    expect(llamadas.length).toBe(tras30);
+  });
+
+  /**
+   * Accion a los 20:07,5, entre dos tics: sigue pidiendo pasado el corte
+   * original (30:00) y para a los SESION_INACTIVIDAD de la accion (con los
+   * valores de hoy, el ultimo tic que pide es el de los 50:00).
+   */
+  async function laAccionCorreLaVentana(actuar: () => void) {
+    montarDistribucion();
+    await cargado();
+    const accion = 20 * MINUTO + MEDIO;
+    await hasta(accion);
+
+    actuar();
+
+    // Pasado el corte original, un tic mas pide.
+    const pasado = ultimoTicAntesDe(SESION_INACTIVIDAD_MS) + 5 * MINUTO;
+    await hasta(pasado - MEDIO);
+    let antes = sondeos();
+    await hasta(pasado + MEDIO);
+    expect(sondeos()).toBe(antes + 1);
+
+    const ultimo = ultimoTicAntesDe(accion + SESION_INACTIVIDAD_MS);
+    await hasta(ultimo - MEDIO);
+    antes = sondeos();
+    await hasta(ultimo + MEDIO);
+    expect(sondeos()).toBe(antes + 1);
+    const tras = llamadas.length;
+    await hasta(ultimo + TIC + MEDIO);
+    expect(llamadas.length).toBe(tras);
+
+    await saltar(12 * 60 * MINUTO);
+    expect(llamadas.length).toBe(tras);
+  }
+
+  it.each([
+    ["una tecla", () => fireEvent.keyDown(document.body, { key: "ArrowDown" })],
+    ["un clic", () => fireEvent.pointerDown(document.body)],
+    ["mover el puntero", () => fireEvent.pointerMove(document.body)],
+    ["la rueda", () => fireEvent.wheel(document.body)],
+  ])("%s corre la ventana desde ese momento", async (_, actuar) => {
+    await laAccionCorreLaVentana(actuar);
+  });
+
+  it("cuenta aunque un componente detenga la propagacion del evento", async () => {
+    // Como un onKeyDown que hace stopPropagation: el evento no sube a window.
+    const detener = (e: Event) => e.stopPropagation();
+    await laAccionCorreLaVentana(() => {
+      document.body.addEventListener("keydown", detener);
+      try {
+        fireEvent.keyDown(document.body, { key: "Enter" });
+      } finally {
+        document.body.removeEventListener("keydown", detener);
+      }
+    });
+  });
+
+  it("tras el corte, la siguiente accion de la persona pide enseguida y, si la sesion ya cayo, lleva a la pantalla de entrada", async () => {
+    render(
+      <MemoryRouter initialEntries={["/distribucion"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route path="/login" element={<p>Pantalla de entrada</p>} />
+            <Route element={<RutaProtegida />}>
+              <Route path="/distribucion" element={<PanelCorridas />} />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+    inicio = Date.now();
+    await cargado();
+    await hasta(31 * MINUTO);
+    // El ultimo sondeo salio antes de los 30 min; SESION_INACTIVIDAD despues,
+    // el servidor ya no reconoce el token.
+    await saltar(SESION_INACTIVIDAD_MS);
+    sesionViva = false;
+    expect(screen.queryByText("Pantalla de entrada")).toBeNull();
+
+    const antes = sondeos();
+    await act(async () => {
+      fireEvent.pointerDown(document.body);
+    });
+
+    expect(sondeos()).toBe(antes + 1);
+    await screen.findByText("Pantalla de entrada");
+    expect(localStorage.getItem("intela.token")).toBeNull();
+  });
+
+  it("con la pestana oculta no pide; al volver pide enseguida y sigue cada 15 s", async () => {
+    montarDistribucion();
+    await cargado();
+    await hasta(MINUTO + MEDIO);
+
+    act(() => fijarVisibilidad("hidden"));
+    const alOcultarse = llamadas.length;
+    await hasta(6 * MINUTO);
+    // Ni aunque llegue un evento: con la pestana oculta no se pide nada.
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "a" });
+    });
+    await hasta(11 * MINUTO);
+    expect(llamadas.length).toBe(alOcultarse);
+
+    const antes = sondeos();
+    act(() => fijarVisibilidad("visible"));
+    expect(sondeos()).toBe(antes + 1);
+    await saltar(TIC);
+    expect(sondeos()).toBe(antes + 2);
+  });
+
+  it("volver a la pestana despues de la inactividad no es actividad: espera a la persona", async () => {
+    montarDistribucion();
+    await cargado();
+    await hasta(MINUTO + MEDIO);
+
+    act(() => fijarVisibilidad("hidden"));
+    await saltar(SESION_INACTIVIDAD_MS);
+    const antes = llamadas.length;
+    act(() => fijarVisibilidad("visible"));
+    await saltar(5 * MINUTO);
+    expect(llamadas.length).toBe(antes);
+
+    const sondeosAntes = sondeos();
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "Tab" });
+    });
+    expect(sondeos()).toBe(sondeosAntes + 1);
+  });
+
+  it("en pausa avisa y no deja firmar hasta que llega una respuesta pedida despues de reanudar", async () => {
+    // Mientras la pantalla estaba en pausa se regenero la corrida: la
+    // revision vigente ya no es la que se ve.
+    let revision = 1;
+    let retenida: ((r: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.firmar("proc-nac") && init?.method === "POST")
+        return new Response(null, { status: 204 });
+      if (path === RUTAS_REPARTO.procesos) {
+        const cuerpo = json([{ ...nacional, revision }]);
+        if (revision === 1) return cuerpo;
+        return new Promise<Response>((resolver) => {
+          retenida = () => resolver(cuerpo);
+        });
+      }
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+    const firmas = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([url, init]) =>
+            String(url) === RUTAS_REPARTO.firmar("proc-nac") &&
+            init?.method === "POST",
+        ).length;
+
+    montarDistribucion();
+    const firmar = await screen.findByRole("button", { name: "Firmar" });
+    expect(firmar).toHaveProperty("disabled", false);
+    expect(screen.queryByText(/en pausa/)).toBeNull();
+
+    await hasta(31 * MINUTO);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+    expect(firmar).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Rechazar" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+
+    // Vuelve y pulsa Enter sobre Firmar: el sondeo se reanuda, pero la
+    // respuesta no ha llegado y lo que se ve sigue siendo la revision 1.
+    revision = 2;
+    await act(async () => {
+      firmar.focus();
+      fireEvent.keyDown(firmar, { key: "Enter" });
+      fireEvent.click(firmar);
+    });
+    expect(retenida).toBeDefined();
+    expect(firmar).toHaveProperty("disabled", true);
+    expect(firmas()).toBe(0);
+
+    await act(async () => {
+      retenida?.(new Response());
+    });
+    await waitFor(() => expect(screen.queryByText(/en pausa/)).toBeNull());
+    // La revision 2 vuelve a montar la compuerta: es otro boton.
+    const firmarVigente = screen.getByRole("button", { name: "Firmar" });
+    expect(firmarVigente).toHaveProperty("disabled", false);
+    fireEvent.click(firmarVigente);
+    await waitFor(() => expect(firmas()).toBe(1));
+  });
+
+  it("una respuesta que llega con el sondeo en pausa no lo da por al dia", async () => {
+    let retenida: (() => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos) {
+        const cuerpo = json([nacional]);
+        // El sondeo de los 29:45 tarda en volver y llega ya en pausa.
+        if (sondeos() < 2 || Date.now() - inicio < 29 * MINUTO) return cuerpo;
+        return new Promise<Response>((resolver) => {
+          retenida = () => resolver(cuerpo);
+        });
+      }
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montarDistribucion();
+    const firmar = await screen.findByRole("button", { name: "Firmar" });
+    await hasta(31 * MINUTO);
+    expect(retenida).toBeDefined();
+    expect(firmar).toHaveProperty("disabled", true);
+
+    await act(async () => {
+      retenida?.();
+    });
+    await saltar(MINUTO);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+    expect(firmar).toHaveProperty("disabled", true);
+  });
+
+  it("en pausa no deja avanzar la corrida", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === RUTAS_REPARTO.procesos)
+        return json([{ ...nacional, etapa: "deducciones" }]);
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montarDistribucion();
+    const avanzar = await screen.findByRole("button", { name: /^Avanzar a/ });
+    expect(avanzar).toHaveProperty("disabled", false);
+    await hasta(31 * MINUTO);
+    expect(avanzar).toHaveProperty("disabled", true);
+
+    await act(async () => {
+      fireEvent.pointerDown(document.body);
+    });
+    await waitFor(() => expect(avanzar).toHaveProperty("disabled", false));
+  });
+
+  it("con la pestana oculta tambien avisa la pausa, y la quita la respuesta al volver", async () => {
+    montarDistribucion();
+    await cargado();
+    await hasta(MINUTO + MEDIO);
+
+    act(() => fijarVisibilidad("hidden"));
+    await saltar(TIC);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+
+    await act(async () => fijarVisibilidad("visible"));
+    await waitFor(() => expect(screen.queryByText(/en pausa/)).toBeNull());
+  });
+
+  it("al desmontar suelta el temporizador y los escuchadores", async () => {
+    const espias = [window, document].map((blanco) => ({
+      pone: vi.spyOn(blanco, "addEventListener"),
+      quita: vi.spyOn(blanco, "removeEventListener"),
+    }));
+    const { unmount } = montarDistribucion();
+    await cargado();
+
+    unmount();
+
+    for (const { pone, quita } of espias) {
+      const sueltos = pone.mock.calls.filter(
+        ([tipo, fn]) =>
+          !quita.mock.calls.some(([t, f]) => t === tipo && f === fn),
+      );
+      expect(sueltos.map(([tipo]) => tipo)).toEqual([]);
+    }
+    // Y nada lo revive: ni la persona ni la pestana.
+    const antes = llamadas.length;
+    fireEvent.keyDown(document.body, { key: "a" });
+    fireEvent.pointerMove(document.body);
+    fijarVisibilidad("hidden");
+    fijarVisibilidad("visible");
+    expect(vi.getTimerCount()).toBe(0);
+    await saltar(60 * MINUTO);
+    expect(llamadas.length).toBe(antes);
   });
 });

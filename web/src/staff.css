@@ -885,6 +885,14 @@
   letter-spacing: -0.01em;
 }
 
+.corrida-pausa {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  background: var(--alerta-fondo);
+  font-size: 0.88rem;
+}
+
 .corrida-rechazo {
   margin: 0.75rem 0 0;
   padding: 0.7rem 0.9rem;

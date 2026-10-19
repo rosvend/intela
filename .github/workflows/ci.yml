@@ -126,7 +126,10 @@ jobs:
           # The contract is in here because the frontend commits types generated
           # from it (ADR 0010) and `npm test` checks them for drift: a PR that only
           # changes api/openapi.yaml has to re-run the frontend stages too.
-          P_FRONTEND='(^web/|^api/openapi\.yaml$|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
+          # Same reason for the session inactivity defaults: web/src/sesion.test.tsx
+          # reads them and fails if SESION_INACTIVIDAD_MS drifts (#223). That
+          # cmd/api and cmd/lambda use the Go one is checked by the Go tests.
+          P_FRONTEND='(^web/|^api/openapi\.yaml$|^internal/aplicacion/autenticacion\.go$|^infra/modules/api/variables\.tf$|^\.github/workflows/(ci|build-frontend|lint-frontend|test-frontend|container|deploy)\.yml$)'
           P_CONTRACT='(^api/|^\.github/workflows/(ci|contract)\.yml$)'
           # The Go sources are in here on purpose: the backend image is built
           # FROM them, so a change to `internal/` that breaks the build has to

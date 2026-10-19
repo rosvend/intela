@@ -110,6 +110,48 @@ func TestAmbosBinariosAcotanElPlazoDelAgente(t *testing.T) {
 	}
 }
 
+// TestAmbosBinariosUsanLaInactividadPorDefecto: el frontend copia
+// aplicacion.InactividadPorDefecto en SESION_INACTIVIDAD_MS y su prueba solo lee
+// esa constante (#223). Un literal aqui separaria el binario de la copia sin que
+// nada fallara.
+func TestAmbosBinariosUsanLaInactividadPorDefecto(t *testing.T) {
+	for _, ruta := range []string{"../api/main.go", "main.go"} {
+		fichero, err := parser.ParseFile(token.NewFileSet(), ruta, nil, 0)
+		if err != nil {
+			t.Fatalf("parsear %s: %v", ruta, err)
+		}
+		var defectos []string
+		ast.Inspect(fichero, func(n ast.Node) bool {
+			llamada, ok := n.(*ast.CallExpr)
+			if !ok || len(llamada.Args) != 2 || !esSelector(llamada.Fun, "config", "Duracion") {
+				return true
+			}
+			if clave, ok := llamada.Args[0].(*ast.BasicLit); !ok || clave.Value != `"SESION_INACTIVIDAD"` {
+				return true
+			}
+			if esSelector(llamada.Args[1], "aplicacion", "InactividadPorDefecto") {
+				defectos = append(defectos, "aplicacion.InactividadPorDefecto")
+			} else {
+				defectos = append(defectos, "otro valor")
+			}
+			return true
+		})
+		if !slices.Equal(defectos, []string{"aplicacion.InactividadPorDefecto"}) {
+			t.Errorf("%s: config.Duracion(\"SESION_INACTIVIDAD\", ...) tiene que aparecer una vez con aplicacion.InactividadPorDefecto; encontrado: %v", ruta, defectos)
+		}
+	}
+}
+
+// esSelector dice si e es `paquete.nombre`.
+func esSelector(e ast.Expr, paquete, nombre string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != nombre {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == paquete
+}
+
 // camposDeLiteral devuelve los nombres de campo del literal `paquete.Tipo{...}` de un main.
 func camposDeLiteral(t *testing.T, nombreLogico, ruta, paqueteBuscado, tipoBuscado string) []string {
 	t.Helper()

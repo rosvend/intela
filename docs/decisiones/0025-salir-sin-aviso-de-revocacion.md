@@ -45,6 +45,45 @@ cuatro mitigaciones, y las cuatro estan en el codigo:
 El aviso se quita porque asustaba a la persona con algo que ella no podia resolver. Con las
 mitigaciones 1 a 3 ya no hace falta que lo resuelva ella.
 
+### Los sondeos de la interfaz no cuentan como uso (#223)
+
+La mitigacion 2 mide la inactividad por peticiones: cada una que lleva el token corre
+`ultimo_uso`, y el servidor no sabe si la pidio una persona o un temporizador. Distribucion sondea
+cada 15 s (`INTERVALO_SONDEO_MS`), y con un `setInterval` sin condiciones una pestana abierta y
+desatendida sostenia la sesion hasta `SESION_TTL`: para esa pantalla la inactividad no existia
+(https://github.com/rosvend/intela/issues/223).
+
+Se corrige en el cliente. Todo sondeo va por `web/src/useSondeo.ts`, que:
+
+- no pide nada con la pestana oculta (`document.visibilityState`) y, al volver a verse, pide
+  enseguida si la persona sigue dentro de la ventana;
+- deja de pedir cuando pasan `SESION_INACTIVIDAD_MS` sin teclado ni puntero (`keydown`,
+  `pointerdown`, `pointermove`, `wheel`). Que la pestana vuelva a verse no cuenta como actividad;
+- con la siguiente accion de la persona pide enseguida. Si la sesion ya cayo, ese 401 lleva a la
+  pantalla de entrada como cualquier otro.
+
+ESLint rechaza `setInterval` en `web/src/` fuera de `useSondeo.ts` (`eslint.config.js`), asi que un
+sondeo nuevo no puede saltarse estas condiciones sin que la CI lo vea.
+
+Mientras el sondeo esta parado, Distribucion puede ensenar una revision que ya no es la vigente, y
+`POST /procesos/{id}/firmar` no le dice al servidor cual vio la persona. Por eso `useSondeo` dice
+cuando esta en pausa, la pantalla lo muestra, y Firmar, Rechazar y Avanzar quedan deshabilitados
+hasta que llega la primera respuesta pedida despues de reanudar: no basta con reanudar, porque el
+clic que reanuda podria salir con el dato viejo. La garantia de fondo es del servidor (que firmar y
+avanzar lleven la revision esperada y respondan 409 si no coincide) y queda como trabajo aparte.
+
+`SESION_INACTIVIDAD_MS` (`web/src/sesion.tsx`) es una copia de `aplicacion.InactividadPorDefecto`,
+porque la API no publica la inactividad. `web/src/sesion.test.tsx` lee esa constante e
+`infra/modules/api/variables.tf`, y falla si alguno se separa; `ci.yml` vuelve a correr las etapas
+del frontend cuando una PR toca cualquiera de los dos. Que `cmd/api` y `cmd/lambda` usen la
+constante lo vigila `cmd/lambda/cableado_test.go`. Un valor distinto puesto en un entorno concreto
+(variable de entorno o de Terraform) no lo ve esa prueba.
+
+La alternativa era el servidor: que una peticion marcada como sondeo no corra `ultimo_uso`. Se
+descarta por ahora porque cambia el contrato del puerto `Sesiones` y la API, toca el mismo `WHERE`
+de `PorToken` que esta cambiando #222, y no evita que una pestana oculta siga pidiendo. Si se
+quiere que la inactividad sea exacta tambien en Distribucion, esa es la salida.
+
 ## Enmienda a la 0013
 
 La `0013` sigue vigente: token opaco, resumen SHA-256, revocar es `DELETE`. Esta decision le anade
@@ -76,8 +115,17 @@ Si el `DELETE` falla tres veces, un token copiado fuera del navegador vale como 
 `SESION_INACTIVIDAD` sin uso, o hasta que su dueno vuelva a iniciar sesion, y nunca mas de
 `SESION_TTL`.
 
-Quien deja una pestana abierta mas de 30 minutos sin hacer nada vuelve a la pantalla de entrada. Si
-eso molesta, se sube `SESION_INACTIVIDAD`; no se quita.
+En una pantalla que no sondea, la sesion cae `SESION_INACTIVIDAD` despues de la ultima peticion, y
+la siguiente accion de la persona la lleva a la pantalla de entrada. En Distribucion no es exacto:
+el ultimo sondeo sale antes de `SESION_INACTIVIDAD` sin teclado ni puntero, y la inactividad del
+servidor corre desde ese sondeo. Con la pestana a la vista la sesion cae, como mucho, dos veces
+`SESION_INACTIVIDAD` (60 min con los valores de hoy) despues de la ultima accion de la persona. Si
+la pestana se oculta, el sondeo para en el siguiente tic y la sesion cae `SESION_INACTIVIDAD`
+despues. Quien vuelve antes de que caiga sigue dentro sin volver a entrar. Antes de #223 esa
+pantalla la sostenia hasta `SESION_TTL`.
+
+Si eso molesta, se sube `SESION_INACTIVIDAD`; no se quita. Si se cambia, se cambia tambien
+`SESION_INACTIVIDAD_MS`.
 
 Un usuario no puede tener dos sesiones a la vez. Si se necesita, la salida es "cerrar mis otras
 sesiones" y una decision nueva que sustituya esta.
