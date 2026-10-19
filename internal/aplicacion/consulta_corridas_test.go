@@ -35,7 +35,7 @@ func TestEstadoCorridaNacionalEnVerificacionNombraLasFirmasQueFaltan(t *testing.
 	if !e.Compuerta || !slices.Equal(e.FirmasFaltantes, []string{"contabilidad"}) {
 		t.Fatalf("compuerta=%v faltantes=%v: la firma de contabilidad es de otra revision y no cuenta", e.Compuerta, e.FirmasFaltantes)
 	}
-	if e.SiguienteEtapa != "liquidacion_final" || !strings.Contains(e.Pendiente, "Contabilidad") {
+	if e.SiguienteEtapa != "liquidacion_final" || !strings.Contains(e.Pendiente, "falta la firma de Contabilidad") {
 		t.Fatalf("siguiente=%q pendiente=%q", e.SiguienteEtapa, e.Pendiente)
 	}
 	if e.EtapaExplicada == "" || e.CircuitoExplicado == "" {
@@ -164,8 +164,10 @@ func TestCorridasDePeriodoFiltraYOrdena(t *testing.T) {
 }
 
 func TestCorridasDePeriodoRechazaUnPeriodoMalFormado(t *testing.T) {
-	_, err := ConsultarEstadoCorrida{Procesos: repoConCorridas()}.DePeriodo(context.Background(), staffDistribucion, "enero")
-	if !errors.Is(err, ErrPeriodoInvalido) {
-		t.Fatalf("err = %v, se esperaba ErrPeriodoInvalido", err)
+	for _, periodo := range []string{"enero", "2026-13", "2026-00"} {
+		_, err := ConsultarEstadoCorrida{Procesos: repoConCorridas()}.DePeriodo(context.Background(), staffDistribucion, periodo)
+		if !errors.Is(err, ErrPeriodoInvalido) {
+			t.Errorf("%q: err = %v, se esperaba ErrPeriodoInvalido", periodo, err)
+		}
 	}
 }

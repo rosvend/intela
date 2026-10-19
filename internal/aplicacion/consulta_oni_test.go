@@ -27,6 +27,9 @@ func TestConsultarONILeeSoloLaColaONIConSusFiltros(t *testing.T) {
 	if !slices.Equal(q.Escalones, []string{identificacion.EscalonONI}) || q.Periodo != "2026-01" || q.Fuente != "caracol" || q.Limite != 5 {
 		t.Fatalf("consulta = %+v: solo el escalon ONI, con periodo, fuente y limite", q)
 	}
+	if !q.PeriodoCubreMeses {
+		t.Fatalf("consulta = %+v: un periodo AAAA tiene que cubrir sus meses, como en estado_corrida", q)
+	}
 	if cola.Pendientes != 7 || len(cola.Obras) != 1 {
 		t.Fatalf("cola = %+v", cola)
 	}
@@ -52,8 +55,10 @@ func TestConsultarONIPorDefectoPideVeinte(t *testing.T) {
 
 func TestConsultarONIRechazaFiltrosMalFormados(t *testing.T) {
 	uc := ConsultarONI{Casos: &casosFalsos{}}
-	if _, err := uc.Ejecutar(context.Background(), adminONI, FiltroONI{Periodo: "2026/01"}); !errors.Is(err, ErrPeriodoInvalido) {
-		t.Errorf("periodo: err = %v", err)
+	for _, periodo := range []string{"2026/01", "2026-13", "2026-00"} {
+		if _, err := uc.Ejecutar(context.Background(), adminONI, FiltroONI{Periodo: periodo}); !errors.Is(err, ErrPeriodoInvalido) {
+			t.Errorf("periodo %q: err = %v", periodo, err)
+		}
 	}
 	for _, l := range []int{-1, LimiteONIMaximo + 1} {
 		if _, err := uc.Ejecutar(context.Background(), adminONI, FiltroONI{Limite: l}); !errors.Is(err, ErrFiltroInvalido) {

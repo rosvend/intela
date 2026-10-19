@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/rosvend/intela/internal/aplicacion"
+	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 	"github.com/rosvend/intela/internal/infraestructura/postgres"
 	"github.com/rosvend/intela/internal/infraestructura/postgres/testhelp"
 )
 
 // sembrarProcesoYONI deja una corrida nacional en verificacion con una firma y dos ONI de 2026-01 (una por fuente).
-func sembrarProcesoYONI(t *testing.T) aplicacion.CatalogoHerramientas {
+func sembrarProcesoYONI(t *testing.T) (aplicacion.CatalogoHerramientas, *postgres.Store) {
 	t.Helper()
 	pool := testhelp.Pool(t)
 	store := postgres.Nuevo(pool)
@@ -43,7 +44,7 @@ func sembrarProcesoYONI(t *testing.T) aplicacion.CatalogoHerramientas {
 	if err != nil {
 		t.Fatalf("Herramientas: %v", err)
 	}
-	return c
+	return c, store
 }
 
 func ejecutarJSON(t *testing.T, c aplicacion.CatalogoHerramientas, actor aplicacion.Usuario, nombre, args string) (string, error) {
@@ -57,7 +58,7 @@ func ejecutarJSON(t *testing.T, c aplicacion.CatalogoHerramientas, actor aplicac
 }
 
 func TestIntegracionEstadoCorridaYListarONIContraPostgres(t *testing.T) {
-	c := sembrarProcesoYONI(t)
+	c, store := sembrarProcesoYONI(t)
 	admin := aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador}
 
 	estado, err := ejecutarJSON(t, c, aplicacion.Usuario{ID: "usr-aud", Rol: aplicacion.RolAuditor}, "estado_corrida", `{"proceso_id":"proc-1"}`)
@@ -79,6 +80,21 @@ func TestIntegracionEstadoCorridaYListarONIContraPostgres(t *testing.T) {
 	}
 	if !strings.Contains(oni, `"pendientes_total":1`) || !strings.Contains(oni, `"titulo":"La reina"`) || strings.Contains(oni, "El rey") {
 		t.Errorf("listar_oni filtrado por fuente: %s", oni)
+	}
+
+	// AAAA cubre sus meses en listar_oni igual que en estado_corrida: no un cero falso.
+	if anual, err := ejecutarJSON(t, c, admin, "listar_oni", `{"periodo":"2026"}`); err != nil || !strings.Contains(anual, `"pendientes_total":2`) {
+		t.Errorf("listar_oni por anio: %v %s", err, anual)
+	}
+	if _, err := ejecutarJSON(t, c, admin, "listar_oni", `{"periodo":"2026-13"}`); !errors.Is(err, aplicacion.ErrPeriodoInvalido) {
+		t.Errorf("listar_oni con mes 13: err = %v, se esperaba ErrPeriodoInvalido", err)
+	}
+	// GET /identificacion/casos no pide PeriodoCubreMeses y sigue comparando por igualdad.
+	pag, err := store.ListarCasosIdentificacion(t.Context(), aplicacion.ConsultaCasos{
+		Escalones: []string{identificacion.EscalonONI}, Periodo: "2026", Paginacion: aplicacion.Paginacion{Limite: 10},
+	})
+	if err != nil || pag.Pendientes != 0 {
+		t.Errorf("cola HTTP con periodo AAAA: pendientes=%d err=%v, se esperaba igualdad estricta", pag.Pendientes, err)
 	}
 
 	titular := aplicacion.Usuario{ID: "usr-tit", Rol: aplicacion.RolTitular, TitularID: "tit-1"}

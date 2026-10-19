@@ -37,9 +37,9 @@ func ListarONI(uc ConsultaONI) aplicacion.Herramienta {
 		Nombre: "listar_oni",
 		Descripcion: "Lista la cola de obras no identificadas (ONI, RD 13.8): usos reportados que no se pudieron asociar a una obra del catálogo. " +
 			"pendientes_total es cuántas hay en total con esos filtros; obras trae las más antiguas primero, hasta limite (por defecto 20, máximo 100). " +
-			"Filtros opcionales: periodo del reporte (AAAA o AAAA-MM) y fuente (canal o plataforma que reportó). No trae importes.",
+			"Filtros opcionales: periodo del reporte (AAAA-MM, o AAAA para todo el año) y fuente (canal o plataforma que reportó). No trae importes.",
 		Esquema: json.RawMessage(`{"type":"object","properties":{` +
-			`"periodo":{"type":"string","description":"AAAA o AAAA-MM."},` +
+			`"periodo":{"type":"string","description":"AAAA-MM, o AAAA para todos los meses de ese año."},` +
 			`"fuente":{"type":"string","description":"Fuente exacta del reporte, p. ej. caracol."},` +
 			`"limite":{"type":"integer","description":"Cuántas obras devolver, de 1 a 100."}` +
 			`},"additionalProperties":false}`),

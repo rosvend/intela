@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rosvend/intela/internal/dominio/identificacion"
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 )
 
 // Tope de la cola ONI que se lee de una vez.
@@ -15,7 +16,9 @@ const (
 	LimiteONIMaximo     = 100
 )
 
-// FiltroONI acota la cola; un campo vacio no filtra.
+// FiltroONI acota la cola; un campo vacio no filtra. Un Periodo AAAA cubre sus
+// meses, igual que en ConsultarEstadoCorrida: el asistente usa las dos con la
+// misma convencion y un cero falso en un conteo de cola es peor que un error.
 type FiltroONI struct {
 	Periodo string
 	Fuente  string
@@ -53,7 +56,7 @@ func (c ConsultarONI) Ejecutar(ctx context.Context, actor Usuario, f FiltroONI) 
 		return ColaONI{}, ErrNoAutorizado
 	}
 	periodo := strings.TrimSpace(f.Periodo)
-	if periodo != "" && !periodoRe.MatchString(periodo) {
+	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return ColaONI{}, ErrPeriodoInvalido
 	}
 	if f.Limite < 0 || f.Limite > LimiteONIMaximo {
@@ -63,10 +66,11 @@ func (c ConsultarONI) Ejecutar(ctx context.Context, actor Usuario, f FiltroONI) 
 		f.Limite = LimiteONIPorDefecto
 	}
 	pag, err := c.Casos.ListarCasosIdentificacion(ctx, ConsultaCasos{
-		Escalones:  []string{identificacion.EscalonONI},
-		Fuente:     strings.TrimSpace(f.Fuente),
-		Periodo:    periodo,
-		Paginacion: Paginacion{Limite: f.Limite},
+		Escalones:         []string{identificacion.EscalonONI},
+		Fuente:            strings.TrimSpace(f.Fuente),
+		Periodo:           periodo,
+		PeriodoCubreMeses: true,
+		Paginacion:        Paginacion{Limite: f.Limite},
 	})
 	if err != nil {
 		return ColaONI{}, fmt.Errorf("listar ONI: %w", err)

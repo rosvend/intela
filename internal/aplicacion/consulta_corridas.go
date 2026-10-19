@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/rosvend/intela/internal/dominio/recaudo"
 	"github.com/rosvend/intela/internal/dominio/reparto"
 )
 
@@ -60,7 +61,7 @@ func (c ConsultarEstadoCorrida) DePeriodo(ctx context.Context, actor Usuario, pe
 		return nil, ErrNoAutorizado
 	}
 	periodo = strings.TrimSpace(periodo)
-	if periodo != "" && !periodoRe.MatchString(periodo) {
+	if periodo != "" && !recaudo.PeriodoValido(periodo) {
 		return nil, ErrPeriodoInvalido
 	}
 	vs, err := c.Procesos.ListarProcesos(ctx)
