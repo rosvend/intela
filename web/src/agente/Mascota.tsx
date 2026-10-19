@@ -2,32 +2,26 @@
 export default function Mascota() {
   return (
     <svg className="mascota" viewBox="0 0 48 48" aria-hidden="true">
-      <defs>
-        <radialGradient id="mascota-brillo" cx="35%" cy="30%" r="80%">
-          <stop offset="0" stopColor="#9c2444" />
-          <stop offset="1" stopColor="#7d1a35" />
-        </radialGradient>
-      </defs>
-      <circle cx="24" cy="24" r="22" fill="url(#mascota-brillo)" />
+      <circle className="mascota-cara" cx="24" cy="24" r="22" />
       <g className="mascota-ojos">
         <g transform="rotate(-20 27.4 14.4)">
           <rect
             className="mascota-ojo"
-            x="25.2"
-            y="10.6"
-            width="4.4"
-            height="7.6"
-            rx="2.2"
+            x="24.9"
+            y="10.1"
+            width="5"
+            height="8.6"
+            rx="2.5"
           />
         </g>
         <g transform="rotate(-20 36.8 14.4)">
           <rect
             className="mascota-ojo"
-            x="34.6"
-            y="10.6"
-            width="4.4"
-            height="7.6"
-            rx="2.2"
+            x="34.3"
+            y="10.1"
+            width="5"
+            height="8.6"
+            rx="2.5"
           />
         </g>
       </g>

@@ -3686,6 +3686,11 @@ p.alerta {
   flex-shrink: 0;
 }
 
+/* Relleno plano: un degradado se tramea (dithering) y la esfera se ve granulada al ampliar. */
+.mascota-cara {
+  fill: var(--acento);
+}
+
 .mascota-ojo {
   fill: #fff;
   transform-box: fill-box;
