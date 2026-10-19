@@ -171,3 +171,18 @@ func TestCorridasDePeriodoRechazaUnPeriodoMalFormado(t *testing.T) {
 		}
 	}
 }
+
+func TestEstadoCorridaEnLiquidacionFinalNombraElLoteDelCircuito(t *testing.T) {
+	repo := repoConCorridas(
+		ProcesoVista{ID: "proc-n", Circuito: reparto.Nacional, Etapa: reparto.EtapaLiquidacionFinal, Periodo: "2026-01", Revision: 1},
+		ProcesoVista{ID: "proc-i", Circuito: reparto.Internacional, Etapa: reparto.EtapaRecaudo, Periodo: "2026-01", Revision: 1},
+	)
+	e, err := ConsultarEstadoCorrida{Procesos: repo}.PorID(context.Background(), staffDistribucion, "proc-n")
+	if err != nil {
+		t.Fatalf("PorID: %v", err)
+	}
+	// La liquidacion espera solo a las corridas del (periodo, circuito): la internacional atrasada no la bloquea.
+	if !strings.Contains(e.Pendiente, "todas las corridas nacionales del periodo lleguen a esta etapa; las del circuito internacional no la bloquean") {
+		t.Fatalf("pendiente = %q", e.Pendiente)
+	}
+}

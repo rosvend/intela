@@ -131,7 +131,7 @@ func pendienteDe(p reparto.ProcesoDeReparto, e EstadoCorrida) string {
 	case p.Etapa == reparto.EtapaDeducciones || reparto.Etapa(e.SiguienteEtapa) == reparto.EtapaVerificacion:
 		return fmt.Sprintf("Falta que el administrador la avance a %s. Antes se revisa que el periodo no tenga anomalías críticas abiertas; si las tiene, no avanza hasta resolverlas.", siguiente)
 	case p.Circuito == reparto.Nacional && p.Etapa == reparto.EtapaLiquidacionFinal:
-		return fmt.Sprintf("Falta que el administrador la avance a %s. Para salir, la liquidación del periodo tiene que estar emitida, y eso espera a que todas las corridas del periodo lleguen a esta etapa.", siguiente)
+		return fmt.Sprintf("Falta que el administrador la avance a %s. Para salir, la liquidación del periodo tiene que estar emitida, y eso espera a que todas las corridas nacionales del periodo lleguen a esta etapa; las del circuito internacional no la bloquean.", siguiente)
 	default:
 		return fmt.Sprintf("Falta que el administrador la avance a %s.", siguiente)
 	}
