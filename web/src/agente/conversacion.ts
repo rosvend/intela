@@ -6,10 +6,14 @@ export type EventoHerramienta = Esquemas["EventoAgenteHerramienta"];
 export type EventoRespuesta = Esquemas["EventoAgenteRespuesta"];
 export type EventoError = Esquemas["EventoAgenteError"];
 
-/** El servidor rechaza un historial mas largo (api/openapi.yaml, ConsultaAgente). */
 /** Mensaje unico cuando el asistente falla sin un texto curado del servidor. */
 export const NO_DISPONIBLE = "El asistente no está disponible en este momento.";
 
+/** Aviso cuando el servidor cierra el turno con una respuesta vacia (agente.go emite resp.Texto sin guarda). */
+export const SIN_RESPUESTA =
+  "El asistente no devolvió ninguna respuesta. Intenta reformular la pregunta.";
+
+/** El servidor rechaza un historial mas largo (api/openapi.yaml, ConsultaAgente). */
 export const MAX_HISTORIAL = 20;
 
 /** Un turno de la conversacion. Vive solo en el estado del componente: no se guarda. */
@@ -38,6 +42,10 @@ export function aplicarEvento(t: Turno, nombre: string, datos: unknown): Turno {
       return { ...t, herramientas: [...t.herramientas, datos.herramienta] };
     case "answer":
       if (typeof datos.texto !== "string") return t;
+      // Una respuesta vacia es un fallo: nunca un turno "listo" que se pinta en blanco.
+      if (datos.texto.trim() === "") {
+        return { ...t, texto: SIN_RESPUESTA, estado: "error" };
+      }
       return {
         ...t,
         texto: datos.texto,

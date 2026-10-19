@@ -1,7 +1,12 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
-import { aplicarEvento, turnoPendiente, type Turno } from "./conversacion";
+import {
+  aplicarEvento,
+  SIN_RESPUESTA,
+  turnoPendiente,
+  type Turno,
+} from "./conversacion";
 import TurnoAgente from "./TurnoAgente";
 
 type Evento = [nombre: string, datos: unknown];
@@ -62,7 +67,7 @@ describe("TurnoAgente", () => {
     expect(container.querySelector("[aria-current]")).toBeNull();
     expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.queryByRole("note")).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(container.querySelector(".agente-aviso--fallo")).toBeNull();
   });
 
   it("una respuesta sin herramientas no pinta una lista vacia", () => {
@@ -72,7 +77,7 @@ describe("TurnoAgente", () => {
   });
 
   it("el evento error es un aviso en linea con el mensaje del servidor", () => {
-    render(
+    const { container } = render(
       <TurnoAgente
         turno={turno(herramienta("buscar_obra"), [
           "error",
@@ -80,17 +85,55 @@ describe("TurnoAgente", () => {
         ])}
       />,
     );
-    expect(screen.getByRole("alert").textContent).toContain(
+    expect(container.querySelector(".agente-aviso--fallo")?.textContent).toBe(
       "El asistente no está disponible en este momento.",
     );
     expect(screen.queryByRole("list")).toBeTruthy();
+    // El panel es la unica region viva: el fallo no monta una propia dentro de ella.
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("un error sin texto nunca queda en blanco", () => {
-    render(<TurnoAgente turno={{ ...turnoPendiente(), estado: "error" }} />);
-    expect(screen.getByRole("alert").textContent).toBe(
+    const { container } = render(
+      <TurnoAgente turno={{ ...turnoPendiente(), estado: "error" }} />,
+    );
+    expect(container.querySelector(".agente-aviso--fallo")?.textContent).toBe(
       "El asistente no está disponible en este momento.",
     );
+  });
+
+  it.each(["", "   "])(
+    "una respuesta vacia (%j) se avisa como fallo, nunca como una burbuja en blanco",
+    (texto) => {
+      const { container } = render(
+        <TurnoAgente
+          turno={turno(herramienta("listar_oni"), respuesta(texto))}
+        />,
+      );
+      expect(container.querySelector(".agente-respuesta")).toBeNull();
+      expect(container.querySelector(".agente-aviso--fallo")?.textContent).toBe(
+        SIN_RESPUESTA,
+      );
+    },
+  );
+
+  it("si el turno falla, la herramienta en curso no lleva check de terminada", () => {
+    const { container } = render(
+      <TurnoAgente
+        turno={turno(
+          herramienta("buscar_reglamento"),
+          herramienta("buscar_obra"),
+          [
+            "error",
+            { mensaje: "El asistente no está disponible en este momento." },
+          ],
+        )}
+      />,
+    );
+    const pasos = container.querySelectorAll(".agente-paso");
+    expect(pasos[0].querySelector(".agente-paso-icono")).toBeTruthy();
+    expect(pasos[1].querySelector(".agente-paso-icono")).toBeNull();
+    expect(pasos[1].className).toContain("agente-paso--inconcluso");
   });
 
   it("una respuesta parcial lleva un aviso que una completa no lleva", () => {

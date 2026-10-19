@@ -3798,6 +3798,11 @@ p.alerta {
   color: var(--acento);
 }
 
+/* La herramienta en curso cuando el turno fallo: no se sabe si termino. */
+.agente-paso--inconcluso {
+  border-style: dashed;
+}
+
 .agente-paso-icono {
   width: 0.75rem;
   height: 0.75rem;

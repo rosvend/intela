@@ -12,10 +12,7 @@ import TextoConCitas from "./TextoConCitas";
 export default function TurnoAgente({ turno }: { turno: Turno }) {
   return (
     <div className="turno-agente">
-      <Pasos
-        herramientas={turno.herramientas}
-        vivo={turno.estado === "pendiente"}
-      />
+      <Pasos herramientas={turno.herramientas} estado={turno.estado} />
       {turno.estado === "error" && <Fallo texto={turno.texto} />}
       {turno.estado === "listo" && <Respuesta turno={turno} />}
     </div>
@@ -24,29 +21,37 @@ export default function TurnoAgente({ turno }: { turno: Turno }) {
 
 function Pasos({
   herramientas,
-  vivo,
+  estado,
 }: {
   herramientas: string[];
-  vivo: boolean;
+  estado: Turno["estado"];
 }) {
+  const vivo = estado === "pendiente";
   const etiquetas = herramientas.map(etiquetaHerramienta);
   if (vivo && etiquetas.length === 0) etiquetas.push("Leyendo tu pregunta…");
   if (etiquetas.length === 0) return null;
   return (
     <ol className="agente-pasos" aria-label="Pasos del asistente">
       {etiquetas.map((etiqueta, i) => {
-        const activo = vivo && i === etiquetas.length - 1;
+        const ultimo = i === etiquetas.length - 1;
+        const activo = vivo && ultimo;
+        // Si el turno fallo, la ultima herramienta no se sabe terminada: sin check.
+        const inconcluso = estado === "error" && ultimo;
+        const clase = activo
+          ? "agente-paso agente-paso--activo"
+          : inconcluso
+            ? "agente-paso agente-paso--inconcluso"
+            : "agente-paso";
         return (
           <li
             key={i}
-            className={
-              activo ? "agente-paso agente-paso--activo" : "agente-paso"
-            }
+            className={clase}
             aria-current={activo ? "step" : undefined}
           >
-            {activo ? (
+            {activo && (
               <span className="agente-paso-pulso" aria-hidden="true" />
-            ) : (
+            )}
+            {!activo && !inconcluso && (
               <CheckIcon className="agente-paso-icono" aria-hidden="true" />
             )}
             {etiqueta}
@@ -97,9 +102,10 @@ function Respuesta({ turno }: { turno: Turno }) {
 }
 
 // El texto llega curado (evento error o mensaje JSON de la API); vacio, se dice igual que no hay asistente.
+// Sin role="alert": el contenedor aria-live del panel ya lo anuncia y una region dentro de otra lo repetiria.
 function Fallo({ texto }: { texto: string }) {
   return (
-    <p className="agente-aviso agente-aviso--fallo" role="alert">
+    <p className="agente-aviso agente-aviso--fallo">
       <NoSymbolIcon className="agente-aviso-icono" aria-hidden="true" />
       <span>{texto.trim() || NO_DISPONIBLE}</span>
     </p>

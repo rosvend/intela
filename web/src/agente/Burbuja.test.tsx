@@ -120,8 +120,7 @@ describe("Burbuja", () => {
     montar();
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
     preguntar("hola");
-    const alerta = await screen.findByRole("alert");
-    expect(alerta.textContent).toContain("demasiadas solicitudes");
+    expect(await screen.findByText(/demasiadas solicitudes/)).toBeTruthy();
     expect(
       (screen.getByLabelText("Tu pregunta") as HTMLTextAreaElement).disabled,
     ).toBe(false);
@@ -199,9 +198,44 @@ describe("Burbuja", () => {
     montar();
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
     preguntar("#fallo hola");
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "no está disponible",
+    const fallo = await screen.findByText(/no está disponible/);
+    // El fallo es su propio aviso, fuera de la burbuja gris del asistente.
+    expect(fallo.closest(".agente-mensaje-asistente")).toBeNull();
+    expect(fallo.closest("[aria-live]")).toBeTruthy();
+  });
+
+  it("un flujo que se corta tras un tool_call, sin answer, termina en aviso y no sigue pulsando", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      respuestaSSE('event: tool_call\ndata: {"herramienta":"listar_oni"}\n\n'),
     );
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    preguntar("cuantas ONI hay?");
+
+    expect(
+      await screen.findByText(
+        "El asistente no está disponible en este momento.",
+      ),
+    ).toBeTruthy();
+    expect(document.querySelector("[aria-current]")).toBeNull();
+    expect(document.querySelector(".agente-paso-pulso")).toBeNull();
+  });
+
+  it("una respuesta con texto vacio por el flujo se avisa, sin burbuja en blanco", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      respuestaSSE(
+        'event: tool_call\ndata: {"herramienta":"listar_oni"}\n\n' +
+          'event: answer\ndata: {"texto":"","parcial":false,"restringida":false}\n\n',
+      ),
+    );
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    preguntar("cuantas ONI hay?");
+
+    expect(
+      await screen.findByText(/no devolvió ninguna respuesta/),
+    ).toBeTruthy();
+    expect(document.querySelector(".agente-respuesta")).toBeNull();
   });
 
   it("conserva la conversacion al cerrar y reabrir", async () => {
