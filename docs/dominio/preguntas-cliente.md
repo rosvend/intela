@@ -57,6 +57,7 @@ que la cita -- ese es el punto de tener el dominio aislado.
 | P-21 | Clave de registro por fuente para el detector de duplicados (#37): `cine`, `rcn`, `expreso-bolivariano` | @rosvend | Provisional (`cine`) / **Abierta** (`rcn`, transporte) |
 | P-22 | Que significa descartar un caso ONI y quien puede hacerlo | @rosvend, @sanmemu09 | Respondida provisionalmente |
 | P-24 | Base y ventana del 25% de `RA 3.1.g`, y quien reporta un embargo (`RA 3.1.e`) | @rosvend | Provisional |
+| P-25 | Que pasa con el descuento de un anticipo si el socio objeta la orden (`R-10`, `RA 2.1`) | @rosvend | Provisional |
 
 ## Respuestas
 
@@ -274,7 +275,21 @@ Respuesta del equipo, provisional: (a) la linea de reparto del socio, ya deducid
 fecha de envio de la orden de pago, `(hoy - 2 anos, hoy]`; (c) un oficio por embargo, con su
 fecha de reporte y de levantamiento, que hoy se registra a mano.
 Consecuencia: ADR 0027, `DerechosLiquidados` en `postgres/anticipos.go` y la tabla `embargos`
-(migracion 00031). Si la respuesta de REDES es otra, cambia esa consulta, no el dominio.
+(migracion 00031). Si la respuesta de REDES es otra, cambia esa consulta, no el dominio. Las
+ordenes objetadas cuentan en la base: el estado de la orden no filtra. Registrar y levantar
+embargos tiene issue propia (#233).
+
+### P-25 Descuento de un anticipo en una orden que el socio objeta
+
+Estado: **Provisional** (equipo, 2026-10-19, issue #56).
+Pregunta: el anticipo se descuenta de la orden de pago al emitirla (`R-33`, `RA 2.1`), y el socio
+tiene 15 dias para objetarla (`R-10`, `RD 13.2`). Falta que REDES confirme si el descuento queda
+firme aunque el socio objete, o si la objecion lo suspende hasta que se resuelva la reclamacion.
+Respuesta del equipo, provisional: queda firme al emitir. Si la reclamacion baja el bruto de esa
+orden por debajo de lo descontado, el exceso vuelve al saldo del anticipo con un asiento
+compensatorio, sin editar el del descuento.
+Consecuencia: ADR 0027. Hoy no hay reclamacion que corrija ordenes, asi que no hay codigo que
+cambiar; si REDES responde lo contrario, el descuento pasa a depender del estado de la orden.
 
 ## Agenda para la reunion con REDES
 Ordenada por lo que mas desbloquea. Las cuatro primeras son las que hoy impiden producir una

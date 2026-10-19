@@ -40,7 +40,7 @@ en ninguna prueba.
 | `/reportes/*` | `administrador` | `administrador` |
 | `/procesos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` | `administrador` (`POST /procesos`, `POST /procesos/{id}/avanzar`); `distribucion`, `contabilidad` (`POST /procesos/{id}/firmar`, `POST /procesos/{id}/rechazar`) |
 | `/explicar/{ref}` | `titular` (solo lineas suyas, `OE-6`), `auditor`, `administrador` | — |
-| `/anticipos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` (todos); `titular` (solo los suyos, `OE-6`) | `titular` (`POST /anticipos`, `RA 3.1.f`); `administrador` (`POST /anticipos/{id}/aprobar`, `POST /anticipos/{id}/rechazar`, `RA 3.2.3`) |
+| `/anticipos/*` | `administrador`, `distribucion`, `contabilidad`, `auditor` (todos; `distribucion` sin la justificacion); `titular` (solo los suyos, `OE-6`) | `titular` (`POST /anticipos`, `RA 3.1.f`); `administrador` (`POST /anticipos/{id}/aprobar`, `POST /anticipos/{id}/rechazar`, `RA 3.2.3`); `contabilidad` (`POST /anticipos/{id}/girar`, `RA 3.2.4`) |
 
 `/recaudo/*` y `/bolsas/*` son el mismo modulo partido por capacidad, y el
 corte es deliberado: por `/recaudo/*` **entra dinero**, asi que escribe
@@ -102,10 +102,13 @@ firmar "como `distribucion`" y la doble firma dejaria de separar a dos
 personas. La lectura la comparten los cuatro roles del modulo, `auditor`
 incluido, porque leer en que etapa esta una corrida no mueve nada.
 
-`/anticipos/*` (#56, ADR 0027) es el otro prefijo cuya escritura se parte en dos, y aqui la
-diferencia es del reglamento y no de capacidad: **pide** solo `titular`, porque `RA 3.1.f` exige
-que la solicitud la haga "directamente el Socio" y no admite terceros -tampoco al Consejo en su
-nombre-, y el titular sale de la sesion, nunca del cuerpo. **Decide** solo `administrador`, que es
-el Consejo Directivo que aprueba o niega cada anticipo uno por uno (`RA 3.2.3`). **Lee** el staff
-entero -el Consejo decide, contabilidad gira (`RA 3.2.4`), distribucion liquida y el auditor lee
-todo- y el titular, recortado a los suyos por el caso de uso.
+`/anticipos/*` (#56, ADR 0027) es el otro prefijo cuya escritura se parte, y aqui la diferencia
+es del reglamento y no de capacidad: **pide** solo `titular`, porque `RA 3.1.f` exige que la
+solicitud la haga "directamente el Socio" y no admite terceros -tampoco al Consejo en su nombre-,
+y el titular sale de la sesion, nunca del cuerpo. **Decide** solo `administrador`, que es el
+Consejo Directivo que aprueba o niega cada anticipo uno por uno (`RA 3.2.3`). **Gira** solo
+`contabilidad`, que representa a Tesoreria (`RA 3.2.4`), y nunca la misma persona que aprobo: la
+aprobacion y el giro son las dos firmas de la salida de dinero. **Lee** el staff entero -el
+Consejo decide, contabilidad gira, distribucion liquida y el auditor lee todo- y el titular,
+recortado a los suyos por el caso de uso. La justificacion es la necesidad personal del socio, y a
+`distribucion` le llega vacia.
