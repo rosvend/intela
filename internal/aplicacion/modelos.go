@@ -535,6 +535,12 @@ type AnticipoRegistrado struct {
 	// aprobo o nego (RA 3.2.3).
 	Resuelto    time.Time
 	ResueltoPor string
+
+	// Girado y GiradoPor van en cero mientras no se registra la
+	// transferencia (RA 3.2.4). GiradoPor es el usuario de contabilidad que
+	// la registro: otra persona que quien aprobo.
+	Girado    time.Time
+	GiradoPor string
 }
 
 // PublicacionONI es la instantanea de un listado publicado.

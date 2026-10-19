@@ -113,10 +113,27 @@ func (r *repoAnticiposMemoria) Resolver(_ context.Context, a anticipos.Anticipo,
 	return ErrNoEncontrado
 }
 
+func (r *repoAnticiposMemoria) RegistrarGiro(_ context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error {
+	for i, otro := range r.anticipos {
+		if otro.Anticipo.ID != a.ID {
+			continue
+		}
+		if otro.Anticipo.Estado != anticipos.EstadoAprobado || otro.Anticipo.Girado {
+			return anticipos.ErrEstadoInvalido
+		}
+		r.escrituras++
+		r.anticipos[i].Anticipo = a
+		r.anticipos[i].Girado = cuando
+		r.anticipos[i].GiradoPor = actorID
+		return nil
+	}
+	return ErrNoEncontrado
+}
+
 func (r *repoAnticiposMemoria) PorDescontar(_ context.Context, titularID string) (anticipos.Anticipo, bool, error) {
 	r.bloqueosPorDescontar++
 	for _, a := range r.anticipos {
-		if a.Anticipo.TitularID == titularID && a.Anticipo.Estado == anticipos.EstadoAprobado {
+		if a.Anticipo.TitularID == titularID && a.Anticipo.Estado == anticipos.EstadoAprobado && a.Anticipo.Girado {
 			return a.Anticipo, true, nil
 		}
 	}
@@ -521,19 +538,60 @@ func TestListarAnticipos(t *testing.T) {
 		{Anticipo: anticipos.Anticipo{ID: "ant-2", TitularID: "tit-otro", Estado: anticipos.EstadoRechazado}},
 	}
 	for _, staff := range []Usuario{consejo, tesoreria, {ID: "d", Rol: RolDistribucion}, {ID: "a", Rol: RolAuditor}} {
-		got, err := e.svc.Listar(context.Background(), staff)
+		got, err := e.svc.Listar(context.Background(), staff, "")
 		if err != nil || len(got) != 2 {
 			t.Fatalf("%s: %d anticipos, err %v", staff.Rol, len(got), err)
 		}
 	}
-	got, err := e.svc.Listar(context.Background(), socioAna)
+	got, err := e.svc.Listar(context.Background(), socioAna, "")
 	if err != nil || len(got) != 1 || got[0].Anticipo.ID != "ant-1" {
 		t.Fatalf("titular: %+v, err %v", got, err)
 	}
 	for _, nadie := range []Usuario{{}, {ID: "x", Rol: RolTitular}} {
-		if _, err := e.svc.Listar(context.Background(), nadie); !errors.Is(err, ErrNoAutorizado) {
+		if _, err := e.svc.Listar(context.Background(), nadie, ""); !errors.Is(err, ErrNoAutorizado) {
 			t.Fatalf("%+v: err = %v", nadie, err)
 		}
+	}
+}
+
+// TestListarAnticiposFiltraPorEstado: el Consejo pide lo que sigue en tramite;
+// un estado que no existe es un error y no una lista vacia.
+func TestListarAnticiposFiltraPorEstado(t *testing.T) {
+	e := montarAnticipos()
+	e.repo.anticipos = []AnticipoRegistrado{
+		{Anticipo: anticipos.Anticipo{ID: "ant-1", TitularID: "tit-ana", Estado: anticipos.EstadoSolicitado}},
+		{Anticipo: anticipos.Anticipo{ID: "ant-2", TitularID: "tit-otro", Estado: anticipos.EstadoRechazado}},
+	}
+	got, err := e.svc.Listar(context.Background(), consejo, "solicitado")
+	if err != nil || len(got) != 1 || got[0].Anticipo.ID != "ant-1" {
+		t.Fatalf("solicitado: %+v, err %v", got, err)
+	}
+	if _, err := e.svc.Listar(context.Background(), consejo, "pagado"); !errors.Is(err, anticipos.ErrSolicitudInvalida) {
+		t.Fatalf("estado inexistente: err = %v", err)
+	}
+}
+
+// TestListarAnticiposNoLeMuestraLaNecesidadADistribucion: la justificacion es
+// la necesidad personal del socio (RA 3.2.1.d y e). La ven quienes deciden,
+// giran o auditan, y el propio socio; distribucion liquida y no la necesita.
+func TestListarAnticiposNoLeMuestraLaNecesidadADistribucion(t *testing.T) {
+	e := montarAnticipos()
+	e.repo.anticipos = []AnticipoRegistrado{
+		{Anticipo: anticipos.Anticipo{ID: "ant-1", TitularID: "tit-ana", Estado: anticipos.EstadoSolicitado, Justificacion: "cirugia"}},
+	}
+	for _, u := range []Usuario{consejo, tesoreria, {ID: "a", Rol: RolAuditor}, socioAna} {
+		got, err := e.svc.Listar(context.Background(), u, "")
+		if err != nil || got[0].Anticipo.Justificacion != "cirugia" {
+			t.Fatalf("%s: %+v, err %v", u.Rol, got, err)
+		}
+	}
+	got, err := e.svc.Listar(context.Background(), Usuario{ID: "d", Rol: RolDistribucion}, "")
+	if err != nil || got[0].Anticipo.Justificacion != "" {
+		t.Fatalf("distribucion: %+v, err %v", got, err)
+	}
+	// El recorte es de la vista: el repositorio no se toca.
+	if e.repo.anticipos[0].Anticipo.Justificacion != "cirugia" {
+		t.Fatal("Listar no puede escribir sobre lo que lee")
 	}
 }
 
@@ -549,11 +607,113 @@ func aprobadoDeAna(t *testing.T, e *entornoAnticipos) AnticipoRegistrado {
 	return a
 }
 
+// giradoDeAna es el anticipo de Ana aprobado por el Consejo y girado por
+// contabilidad: el unico que R-33 descuenta.
+func giradoDeAna(t *testing.T, e *entornoAnticipos) AnticipoRegistrado {
+	t.Helper()
+	aprobado := aprobadoDeAna(t, e)
+	a, err := e.svc.Girar(context.Background(), tesoreria, aprobado.Anticipo.ID, "transferencia 2026-0042")
+	if err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+	e.libro.asientos = nil
+	e.repo.escrituras = 0
+	return a
+}
+
+// TestGirarAnticipo es el peso que sale (RA 3.2.4): lo registra contabilidad,
+// con la ubicacion de la transferencia (RA 3.3), y queda asentado.
+func TestGirarAnticipo(t *testing.T) {
+	e := montarAnticipos()
+	aprobado := aprobadoDeAna(t, e)
+
+	g, err := e.svc.Girar(context.Background(), tesoreria, aprobado.Anticipo.ID, "transferencia 2026-0042")
+	if err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+	if !g.Anticipo.Girado || g.GiradoPor != tesoreria.ID || !g.Girado.Equal(instanteAnticipo) ||
+		g.ResueltoPor != consejo.ID {
+		t.Fatalf("girado = %+v", g)
+	}
+	quedo, _ := e.repo.PorID(context.Background(), aprobado.Anticipo.ID)
+	if !quedo.Anticipo.Girado || quedo.Anticipo.SoporteGiro != "transferencia 2026-0042" {
+		t.Fatalf("persistido = %+v", quedo.Anticipo)
+	}
+	if len(e.libro.asientos) != 1 {
+		t.Fatalf("asientos = %d", len(e.libro.asientos))
+	}
+	as := e.libro.asientos[0]
+	if as.Hecho != HechoAnticipoGirado || as.ActorID != tesoreria.ID || as.RefID != aprobado.Anticipo.ID {
+		t.Fatalf("asiento = %+v", as)
+	}
+	if p := payloadAnticipo(t, as); p.SoporteGiro != "transferencia 2026-0042" || p.Saldo != "1000000.00" {
+		t.Fatalf("payload = %+v", p)
+	}
+
+	// No se gira dos veces.
+	if _, err := e.svc.Girar(context.Background(), tesoreria, aprobado.Anticipo.ID, "otra"); !errors.Is(err, anticipos.ErrEstadoInvalido) {
+		t.Fatalf("segundo giro: err = %v", err)
+	}
+}
+
+// TestGirarAnticipoEsLaSegundaFirma: solo contabilidad registra el giro, y
+// nunca la misma persona que aprobo. El dinero no sale con una firma.
+func TestGirarAnticipoEsLaSegundaFirma(t *testing.T) {
+	for _, u := range []Usuario{consejo, socioAna, {ID: "d", Rol: RolDistribucion}, {ID: "a", Rol: RolAuditor}} {
+		e := montarAnticipos()
+		aprobado := aprobadoDeAna(t, e)
+		if _, err := e.svc.Girar(context.Background(), u, aprobado.Anticipo.ID, "t-1"); !errors.Is(err, ErrNoAutorizado) {
+			t.Fatalf("%s: err = %v", u.Rol, err)
+		}
+	}
+
+	e := montarAnticipos()
+	aprobado := aprobadoDeAna(t, e)
+	// La misma persona con los dos roles a la vez no existe en el sistema; se
+	// fuerza con el id para probar la guarda.
+	mismo := Usuario{ID: consejo.ID, Rol: RolContabilidad}
+	if _, err := e.svc.Girar(context.Background(), mismo, aprobado.Anticipo.ID, "t-1"); !errors.Is(err, ErrNoAutorizado) {
+		t.Fatalf("quien aprobo gira: err = %v", err)
+	}
+	if e.repo.escrituras != 0 || len(e.libro.asientos) != 0 {
+		t.Fatal("un giro rechazado no escribe ni asienta")
+	}
+}
+
+// TestGirarAnticipoRevisaElEmbargoEnLaFechaDelGiro: RA 3.1.e prohibe
+// desembolsar. Un embargo reportado despues de aprobar detiene el giro.
+func TestGirarAnticipoRevisaElEmbargoEnLaFechaDelGiro(t *testing.T) {
+	e := montarAnticipos()
+	aprobado := aprobadoDeAna(t, e)
+	e.repo.embargos["tit-ana"] = instanteAnticipo
+	if _, err := e.svc.Girar(context.Background(), tesoreria, aprobado.Anticipo.ID, "t-1"); !errors.Is(err, anticipos.ErrEmbargoReportado) {
+		t.Fatalf("err = %v", err)
+	}
+	if diaCivil(e.repo.diaEmbargoRecibido) != diaCivil(instanteAnticipo) {
+		t.Fatalf("el embargo se miro el %s y no el dia del giro", diaCivil(e.repo.diaEmbargoRecibido))
+	}
+}
+
+// TestRecuperarNoDescuentaLoQueNoSeHaGirado: aprobado no es girado. Hasta que
+// contabilidad registra la transferencia, el socio no ha recibido nada y la
+// liquidacion se le paga entera.
+func TestRecuperarNoDescuentaLoQueNoSeHaGirado(t *testing.T) {
+	e := montarAnticipos()
+	aprobadoDeAna(t, e)
+	descuento, err := e.svc.Recuperar(context.Background(), "tit-ana", "liq-1", liqDec("400000"))
+	if err != nil || !descuento.IsZero() {
+		t.Fatalf("descuento = %s, err %v", descuento, err)
+	}
+	if e.repo.escrituras != 0 || len(e.libro.asientos) != 0 {
+		t.Fatal("sin giro no se escribe ni se asienta descuento")
+	}
+}
+
 // TestRecuperarDescuentaYAsienta es la mitad de R-33 que vive en anticipos:
 // el saldo baja, queda escrito, y el asiento dice de que orden salio.
 func TestRecuperarDescuentaYAsienta(t *testing.T) {
 	e := montarAnticipos()
-	a := aprobadoDeAna(t, e)
+	a := giradoDeAna(t, e)
 
 	descuento, err := e.svc.Recuperar(context.Background(), "tit-ana", "liq-2026-nacional-tit-ana", liqDec("400000"))
 	if err != nil {
@@ -614,7 +774,7 @@ func TestRecuperarSinAnticipoNoEscribe(t *testing.T) {
 		t.Fatalf("sin anticipo: descuento %s, err %v", descuento, err)
 	}
 
-	aprobadoDeAna(t, e)
+	giradoDeAna(t, e)
 	descuento, err = e.svc.Recuperar(context.Background(), "tit-ana", "liq-1", decimal.Zero)
 	if err != nil || !descuento.IsZero() {
 		t.Fatalf("neto cero: descuento %s, err %v", descuento, err)
@@ -626,7 +786,7 @@ func TestRecuperarSinAnticipoNoEscribe(t *testing.T) {
 
 func TestRecuperarSiElAsientoFallaDevuelveElError(t *testing.T) {
 	e := montarAnticipos()
-	aprobadoDeAna(t, e)
+	giradoDeAna(t, e)
 	e.libro.err = errors.New("bitacora caida")
 	if _, err := e.svc.Recuperar(context.Background(), "tit-ana", "liq-1", liqDec("10")); err == nil {
 		t.Fatal("un descuento sin asiento no esta hecho (ADR 0006): el error tiene que subir para revertir la emision")

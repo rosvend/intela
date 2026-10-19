@@ -27,7 +27,13 @@ ALTER TABLE anticipos
   -- Cuando y quien del Consejo Directivo decidio (RA 3.2.3). NULL mientras
   -- el anticipo sigue en tramite.
   ADD COLUMN resuelto TIMESTAMPTZ,
-  ADD COLUMN resuelto_por TEXT REFERENCES usuarios(id);
+  ADD COLUMN resuelto_por TEXT REFERENCES usuarios(id),
+  -- El giro al socio (RA 3.2.4) y la ubicacion del registro de la
+  -- transferencia (RA 3.3). Aprobar no es girar: R-33 solo descuenta un
+  -- anticipo con giro registrado, porque antes el socio no ha recibido nada.
+  ADD COLUMN girado TIMESTAMPTZ,
+  ADD COLUMN girado_por TEXT REFERENCES usuarios(id),
+  ADD COLUMN soporte_giro TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -42,7 +48,17 @@ ALTER TABLE anticipos
   -- uno descontado ya se cubrio: el descuento que deja el saldo en cero es el
   -- que lo pasa a `descontado`. Es lo que hace que "aprobado" y "con saldo
   -- pendiente" sean la misma pregunta para R-32.
-  ADD CONSTRAINT anticipo_saldo_solo_aprobado CHECK ((estado = 'aprobado') = (saldo > 0));
+  ADD CONSTRAINT anticipo_saldo_solo_aprobado CHECK ((estado = 'aprobado') = (saldo > 0)),
+  -- El giro va completo -cuando, quien y el registro- o no va.
+  ADD CONSTRAINT anticipo_giro_completo CHECK (
+    (girado IS NULL AND girado_por IS NULL AND soporte_giro = '')
+    OR (girado IS NOT NULL AND girado_por IS NOT NULL AND btrim(soporte_giro) <> '')),
+  -- Solo se gira lo aprobado: una solicitud en tramite o un rechazo no
+  -- tienen transferencia. Que solo se descuente lo girado lo garantizan
+  -- PorDescontar y el dominio, no este CHECK, para no tumbar la migracion
+  -- sobre filas `descontado` del andamiaje que no sabrian decir si se giraron.
+  ADD CONSTRAINT anticipo_giro_solo_aprobado CHECK (
+    girado IS NULL OR estado IN ('aprobado', 'descontado'));
 -- +goose StatementEnd
 
 -- R-32 (RA 3.1.c y 3.1.d) en la base: un solo anticipo vigente -en tramite o
@@ -105,8 +121,13 @@ $$;
 DROP TABLE IF EXISTS embargos;
 DROP INDEX IF EXISTS anticipos_uno_vigente_por_titular;
 ALTER TABLE anticipos
+  DROP CONSTRAINT IF EXISTS anticipo_giro_solo_aprobado,
+  DROP CONSTRAINT IF EXISTS anticipo_giro_completo,
   DROP CONSTRAINT IF EXISTS anticipo_saldo_solo_aprobado,
   DROP CONSTRAINT IF EXISTS anticipo_saldo_acotado,
+  DROP COLUMN IF EXISTS soporte_giro,
+  DROP COLUMN IF EXISTS girado_por,
+  DROP COLUMN IF EXISTS girado,
   DROP COLUMN IF EXISTS resuelto_por,
   DROP COLUMN IF EXISTS resuelto,
   DROP COLUMN IF EXISTS motivo_rechazo,

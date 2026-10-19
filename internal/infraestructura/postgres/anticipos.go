@@ -41,7 +41,8 @@ func (s *Store) Anticipos() aplicacion.RepositorioAnticipos {
 }
 
 const columnasAnticipo = `id, titular_id, monto, saldo, estado, justificacion,
-	clave_soporte, motivo_rechazo, solicitado, resuelto, resuelto_por`
+	clave_soporte, motivo_rechazo, solicitado, resuelto, resuelto_por,
+	girado, girado_por, soporte_giro`
 
 func escanearAnticipo(fila pgx.Row) (aplicacion.AnticipoRegistrado, error) {
 	var (
@@ -49,11 +50,14 @@ func escanearAnticipo(fila pgx.Row) (aplicacion.AnticipoRegistrado, error) {
 		estado      string
 		resuelto    *time.Time
 		resueltoPor *string
+		girado      *time.Time
+		giradoPor   *string
 	)
 	if err := fila.Scan(
 		&r.Anticipo.ID, &r.Anticipo.TitularID, &r.Anticipo.Monto, &r.Anticipo.Saldo, &estado,
 		&r.Anticipo.Justificacion, &r.Anticipo.Soporte, &r.Anticipo.MotivoRechazo,
 		&r.Solicitado, &resuelto, &resueltoPor,
+		&girado, &giradoPor, &r.Anticipo.SoporteGiro,
 	); err != nil {
 		return aplicacion.AnticipoRegistrado{}, err
 	}
@@ -63,6 +67,13 @@ func escanearAnticipo(fila pgx.Row) (aplicacion.AnticipoRegistrado, error) {
 	}
 	if resueltoPor != nil {
 		r.ResueltoPor = *resueltoPor
+	}
+	if girado != nil {
+		r.Anticipo.Girado = true
+		r.Girado = *girado
+	}
+	if giradoPor != nil {
+		r.GiradoPor = *giradoPor
 	}
 	return r, nil
 }
@@ -224,8 +235,27 @@ func (r repoAnticipos) Resolver(ctx context.Context, a anticipos.Anticipo, cuand
 	return r.porQueNoSeEscribio(ctx, a.ID, "resolver")
 }
 
-// PorDescontar devuelve el anticipo aprobado del titular con su fila bloqueada
-// (`FOR UPDATE`), o false si no tiene.
+// RegistrarGiro escribe la transferencia SOLO si el anticipo sigue aprobado y
+// sin girar, por lo mismo que [repoAnticipos.Resolver]: dos registros
+// simultaneos del mismo giro no pueden quedar los dos.
+func (r repoAnticipos) RegistrarGiro(ctx context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error {
+	etiqueta, err := r.s.ejecutorDe(ctx).Exec(ctx,
+		`UPDATE anticipos
+		    SET girado = $2, girado_por = $3, soporte_giro = $4
+		  WHERE id = $1 AND estado = $5 AND girado IS NULL`,
+		a.ID, cuando, actorID, a.SoporteGiro, string(anticipos.EstadoAprobado))
+	if err != nil {
+		return traducirError(err, "registrar el giro del anticipo %q", a.ID)
+	}
+	if etiqueta.RowsAffected() == 1 {
+		return nil
+	}
+	return r.porQueNoSeEscribio(ctx, a.ID, "registrar el giro de")
+}
+
+// PorDescontar devuelve el anticipo aprobado Y GIRADO del titular con su fila
+// bloqueada (`FOR UPDATE`), o false si no tiene. Uno aprobado que tesoreria no
+// ha girado no se descuenta (RA 3.2.4).
 //
 // Exige transaccion, igual que [Store.DiferidasDeTitular] y por lo mismo: dos
 // liquidaciones del mismo socio que NO comparten el cerrojo de aviso del
@@ -239,7 +269,7 @@ func (r repoAnticipos) PorDescontar(ctx context.Context, titularID string) (anti
 	}
 	a, err := escanearAnticipo(tx.QueryRow(ctx,
 		`SELECT `+columnasAnticipo+` FROM anticipos
-		  WHERE titular_id = $1 AND estado = $2
+		  WHERE titular_id = $1 AND estado = $2 AND girado IS NOT NULL
 		  FOR UPDATE`, titularID, string(anticipos.EstadoAprobado)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return anticipos.Anticipo{}, false, nil

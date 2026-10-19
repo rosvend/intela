@@ -300,11 +300,58 @@ func aprobado(t *testing.T, monto string) Anticipo {
 	return a
 }
 
+// girado es un anticipo aprobado y ya transferido al socio: el unico que R-33
+// descuenta.
+func girado(t *testing.T, monto string) Anticipo {
+	t.Helper()
+	a, err := aprobado(t, monto).Girar("transferencia 2026-0042", false)
+	if err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+	return a
+}
+
+func TestGirar(t *testing.T) {
+	g, err := aprobado(t, "1000").Girar("  transferencia 2026-0042 ", false)
+	if err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+	if !g.Girado || g.SoporteGiro != "transferencia 2026-0042" {
+		t.Fatalf("girado = %t, soporte = %q", g.Girado, g.SoporteGiro)
+	}
+	// El giro no mueve el saldo: lo comprometido al aprobar es lo que se debe.
+	if g.Estado != EstadoAprobado || !g.Saldo.Equal(dec("1000")) {
+		t.Fatalf("estado = %q, saldo = %s", g.Estado, g.Saldo)
+	}
+
+	casos := []struct {
+		nombre   string
+		anticipo Anticipo
+		soporte  string
+		embargo  bool
+		err      error
+	}{
+		{"una solicitud no se gira", solicitado(), "t-1", false, ErrEstadoInvalido},
+		{"no se gira dos veces", g, "t-2", false, ErrEstadoInvalido},
+		{"sin registro de la transferencia", aprobado(t, "1000"), " ", false, ErrResolucionIncompleta},
+		// RA 3.1.e prohibe desembolsar: un embargo entre aprobar y girar
+		// detiene el giro.
+		{"con embargo reportado", aprobado(t, "1000"), "t-3", true, ErrEmbargoReportado},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if _, err := c.anticipo.Girar(c.soporte, c.embargo); !errors.Is(err, c.err) {
+				t.Fatalf("err = %v, se esperaba %v", err, c.err)
+			}
+		})
+	}
+}
+
 // TestRecuperarAtraviesaVariasLiquidaciones es R-33: el anticipo se cubre con
 // los derechos de las liquidaciones que siguen, una tras otra, hasta saldarse; y
 // a partir de ahi la liquidacion vuelve a pagarse entera.
 func TestRecuperarAtraviesaVariasLiquidaciones(t *testing.T) {
-	a := aprobado(t, "1000")
+	a := girado(t, "1000")
 	pasos := []struct {
 		disponible, descuento, saldo string
 		estado                       Estado
@@ -344,15 +391,18 @@ func TestRecuperar(t *testing.T) {
 		saldo      string
 		estado     Estado
 	}{
-		{"descuenta todo lo disponible si el saldo es mayor", func() Anticipo { return aprobado(t, "1000") }, "250.55", "250.55", "749.45", EstadoAprobado},
-		{"no descuenta mas que el saldo", func() Anticipo { return aprobado(t, "1000") }, "5000", "1000", "0", EstadoDescontado},
-		{"lo disponible exacto salda", func() Anticipo { return aprobado(t, "1000") }, "1000", "1000", "0", EstadoDescontado},
+		{"descuenta todo lo disponible si el saldo es mayor", func() Anticipo { return girado(t, "1000") }, "250.55", "250.55", "749.45", EstadoAprobado},
+		{"no descuenta mas que el saldo", func() Anticipo { return girado(t, "1000") }, "5000", "1000", "0", EstadoDescontado},
+		{"lo disponible exacto salda", func() Anticipo { return girado(t, "1000") }, "1000", "1000", "0", EstadoDescontado},
 		// Medio peso sigue siendo deuda: el anticipo se salda en cero, no por
 		// debajo de un peso, y esos centavos los cubre la liquidacion siguiente.
-		{"a falta de centavos sigue aprobado", func() Anticipo { return aprobado(t, "1000") }, "999.50", "999.50", "0.50", EstadoAprobado},
-		{"sin disponible no descuenta", func() Anticipo { return aprobado(t, "1000") }, "0", "0", "1000", EstadoAprobado},
-		{"un disponible negativo no suma saldo", func() Anticipo { return aprobado(t, "1000") }, "-50", "0", "1000", EstadoAprobado},
+		{"a falta de centavos sigue aprobado", func() Anticipo { return girado(t, "1000") }, "999.50", "999.50", "0.50", EstadoAprobado},
+		{"sin disponible no descuenta", func() Anticipo { return girado(t, "1000") }, "0", "0", "1000", EstadoAprobado},
+		{"un disponible negativo no suma saldo", func() Anticipo { return girado(t, "1000") }, "-50", "0", "1000", EstadoAprobado},
 		{"una solicitud sin aprobar no se descuenta", solicitado, "500", "0", "0", EstadoSolicitado},
+		// RA 3.2.4: aprobar no es girar. Hasta que Tesoreria registra la
+		// transferencia, el socio no ha recibido nada que se le pueda cobrar.
+		{"un aprobado sin girar no se descuenta", func() Anticipo { return aprobado(t, "1000") }, "500", "0", "1000", EstadoAprobado},
 		{"un rechazado no se descuenta", func() Anticipo {
 			r, _ := solicitado().Rechazar("x")
 			return r

@@ -48,16 +48,18 @@ func renglonAnticipo(o liquidacion.OrdenDePago) (decimal.Decimal, bool) {
 }
 
 // TestAnticipoDePuntaAPunta es el criterio de integracion de la issue: aprobar
-// un anticipo -> la liquidacion siguiente lo descuenta -> el saldo llega a
-// cero -> el pago entero vuelve.
+// un anticipo -> girarlo -> la liquidacion siguiente lo descuenta -> el saldo
+// llega a cero -> el pago entero vuelve.
 //
 // Ana es socio. Una primera corrida le liquida 4.000.000 (los derechos de la
 // ventana), asi que su tope es el 25%: 1.000.000, por debajo de 5 SMMLV
-// (6.500.000 con el SMMLV sembrado). Tres corridas despues:
+// (6.500.000 con el SMMLV sembrado). La corrida que se liquida entre la
+// aprobacion y el giro se paga entera (RA 3.2.4: el socio aun no recibio
+// nada). Girado, tres corridas despues:
 //
-//	2026-02  600.000 -> descuenta 600.000, neto 0,       saldo 400.000
-//	2026-03  700.000 -> descuenta 400.000, neto 300.000, saldo 0 (descontado)
-//	2026-04  500.000 -> sin descuento,     neto 500.000
+//	2026-03  600.000 -> descuenta 600.000, neto 0,       saldo 400.000
+//	2026-04  700.000 -> descuenta 400.000, neto 300.000, saldo 0 (descontado)
+//	2026-05  500.000 -> sin descuento,     neto 500.000
 func TestAnticipoDePuntaAPunta(t *testing.T) {
 	s, pool := sembrar(t)
 	ctx := t.Context()
@@ -67,6 +69,7 @@ func TestAnticipoDePuntaAPunta(t *testing.T) {
 	svc := anticiposDe(s, reloj.Sistema{})
 	socio := aplicacion.Usuario{ID: usuarioTitular, Rol: aplicacion.RolTitular, TitularID: titularAna}
 	consejo := aplicacion.Usuario{ID: usuarioAdmin, Rol: aplicacion.RolAdministrador}
+	contabilidad := aplicacion.Usuario{ID: usuarioContabilidad, Rol: aplicacion.RolContabilidad}
 
 	liquidar := func(proceso, bolsa, periodo, importe string) {
 		t.Helper()
@@ -107,14 +110,25 @@ func TestAnticipoDePuntaAPunta(t *testing.T) {
 		t.Fatalf("solicitud con saldo pendiente: err = %v", err)
 	}
 
+	// Aprobado y sin girar: la liquidacion se paga entera.
+	liquidar("prc-g", "bolsa-prc-g", "2026-02", "200000")
+	if o := ordenDePeriodo(t, s, "2026-02", titularAna); !o.Neto.Equal(pgDec("200000")) {
+		t.Fatalf("2026-02 sin giro: neto = %s, se esperaba 200000", o.Neto)
+	} else if d, hay := renglonAnticipo(o); hay {
+		t.Fatalf("2026-02 sin giro: renglon de anticipo %s", d)
+	}
+	if _, err := svc.Girar(ctx, contabilidad, pedido.Anticipo.ID, "transferencia 2026-0042"); err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+
 	pasos := []struct {
 		proceso, periodo, importe string
 		descuento, neto, saldo    string
 		estado                    anticipos.Estado
 	}{
-		{"prc-1", "2026-02", "600000", "600000", "0", "400000", anticipos.EstadoAprobado},
-		{"prc-2", "2026-03", "700000", "400000", "300000", "0", anticipos.EstadoDescontado},
-		{"prc-3", "2026-04", "500000", "", "500000", "0", anticipos.EstadoDescontado},
+		{"prc-1", "2026-03", "600000", "600000", "0", "400000", anticipos.EstadoAprobado},
+		{"prc-2", "2026-04", "700000", "400000", "300000", "0", anticipos.EstadoDescontado},
+		{"prc-3", "2026-05", "500000", "", "500000", "0", anticipos.EstadoDescontado},
 	}
 	for _, p := range pasos {
 		liquidar(p.proceso, "bolsa-"+p.proceso, p.periodo, p.importe)
@@ -139,8 +153,8 @@ func TestAnticipoDePuntaAPunta(t *testing.T) {
 		}
 	}
 
-	// El libro del anticipo (ADR 0006): solicitud, aprobacion y un descuento
-	// por cada orden que lo cubrio, con la orden y el monto.
+	// El libro del anticipo (ADR 0006): solicitud, aprobacion, giro y un
+	// descuento por cada orden que lo cubrio, con la orden y el monto.
 	libro, err := s.De(ctx, aplicacion.RefAnticipo, pedido.Anticipo.ID)
 	if err != nil {
 		t.Fatalf("asientos del anticipo: %v", err)
@@ -160,6 +174,7 @@ func TestAnticipoDePuntaAPunta(t *testing.T) {
 	}
 	quiero := []string{
 		aplicacion.HechoAnticipoSolicitado, aplicacion.HechoAnticipoAprobado,
+		aplicacion.HechoAnticipoGirado,
 		aplicacion.HechoAnticipoDescontado, aplicacion.HechoAnticipoDescontado,
 	}
 	if len(hechos) != len(quiero) {
@@ -170,8 +185,8 @@ func TestAnticipoDePuntaAPunta(t *testing.T) {
 			t.Fatalf("hechos del anticipo = %v, se esperaba %v", hechos, quiero)
 		}
 	}
-	if descuentos["liq-2026-02-nacional-"+titularAna] != "600000.00" ||
-		descuentos["liq-2026-03-nacional-"+titularAna] != "400000.00" {
+	if descuentos["liq-2026-03-nacional-"+titularAna] != "600000.00" ||
+		descuentos["liq-2026-04-nacional-"+titularAna] != "400000.00" {
 		t.Fatalf("descuentos asentados = %v", descuentos)
 	}
 
@@ -264,7 +279,7 @@ func TestEmitirSobreUnaOrdenQueYaExistiaRevierteElDescuento(t *testing.T) {
 	          VALUES ($1, 'prc-a', ARRAY['prc-a'], $2, '2026-02', 'nacional', 600, 540, 'enviada', '2026-03-01')`,
 		id, titularAna)
 	ejecutar(`INSERT INTO ordenes_pago_deducciones (orden_id, concepto, monto) VALUES ($1, 'gastos_administrativos', 60)`, id)
-	sembrarAprobado(t, s, "ant-1", titularAna, "1000")
+	sembrarGirado(t, s, "ant-1", titularAna, "1000")
 
 	// Con la deduccion de administracion de toda orden: la que hace fallar es
 	// el renglon de anticipo, no cualquier renglon.
@@ -422,7 +437,7 @@ func TestDosDescuentosALaVezNoCobranDosVecesElMismoSaldo(t *testing.T) {
 			t.Cleanup(pool.Close)
 			s := sembrarEn(t, pool)
 			ctx := t.Context()
-			sembrarAprobado(t, s, "ant-1", titularAna, "1000")
+			sembrarGirado(t, s, "ant-1", titularAna, "1000")
 
 			vigia, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
 			if err != nil {

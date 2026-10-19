@@ -31,6 +31,10 @@ const (
 	HechoAnticipoAprobado = "anticipo.aprobado"
 	// HechoAnticipoRechazado lleva la justificacion literal (RA 3.2.3).
 	HechoAnticipoRechazado = "anticipo.rechazado"
+	// HechoAnticipoGirado es el peso que SALE: la transferencia al socio
+	// (RA 3.2.4) con la ubicacion de su registro (RA 3.3). Desde aqui R-33
+	// puede descontar.
+	HechoAnticipoGirado = "anticipo.girado"
 	// HechoAnticipoDescontado es R-33: cuanto se recupero, de que orden y que
 	// saldo quedo.
 	HechoAnticipoDescontado = "anticipo.descontado"
@@ -43,6 +47,8 @@ const prefijoAnticipo = "ant-"
 // El rol `administrador` representa aqui al Consejo Directivo, igual que en
 // [Admision]: es quien aprueba o niega cada anticipo uno por uno (RA 3.2.3).
 // La delegacion en el Gerente del paragrafo de RA 3.2.3 no esta modelada.
+// `contabilidad` registra el giro (RA 3.2.4, RA 3.3), y tiene que ser otra
+// persona que quien aprobo: el dinero no sale con una sola firma (ADR 0027).
 //
 // # Por que una unidad de trabajo
 //
@@ -157,6 +163,59 @@ func (s Anticipos) Rechazar(ctx context.Context, actor Usuario, id, motivo strin
 		})
 }
 
+// Girar registra la transferencia al socio de un anticipo aprobado (RA 3.2.4).
+// soporte es la ubicacion del registro de la transferencia (RA 3.3).
+//
+// Solo `contabilidad`, y nunca quien aprobo: la aprobacion del Consejo y el
+// registro del giro son las dos firmas de la salida de dinero (ADR 0027). El
+// embargo se vuelve a mirar con la fecha del giro, porque RA 3.1.e prohibe
+// desembolsar, no aprobar.
+func (s Anticipos) Girar(ctx context.Context, actor Usuario, id, soporte string) (AnticipoRegistrado, error) {
+	if actor.Rol != RolContabilidad {
+		return AnticipoRegistrado{}, ErrNoAutorizado
+	}
+	if err := s.cableadoParaDecidir(); err != nil {
+		return AnticipoRegistrado{}, err
+	}
+	ahora := s.Reloj.Ahora().UTC()
+
+	var girado AnticipoRegistrado
+	err := s.Unidad.EnUnidad(ctx, func(ctx context.Context) error {
+		actual, err := s.Repo.PorID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("anticipo %q: %w", id, err)
+		}
+		if actual.ResueltoPor == actor.ID {
+			return fmt.Errorf("%w: quien aprobo el anticipo %q no registra su giro", ErrNoAutorizado, id)
+		}
+		embargo, err := s.Repo.EmbargoVigente(ctx, actual.Anticipo.TitularID, ahora)
+		if err != nil {
+			return fmt.Errorf("embargos de %s: %w", actual.Anticipo.TitularID, err)
+		}
+		nuevo, err := actual.Anticipo.Girar(soporte, embargo)
+		if err != nil {
+			return err
+		}
+		if err := s.Repo.RegistrarGiro(ctx, nuevo, ahora, actor.ID); err != nil {
+			return fmt.Errorf("registrar el giro del anticipo %q: %w", id, err)
+		}
+		p := asientoDeAnticipo(nuevo, actual.Anticipo.Estado)
+		p.SoporteGiro = nuevo.SoporteGiro
+		if err := s.asentar(ctx, HechoAnticipoGirado, nuevo.ID, actor.ID, p); err != nil {
+			return err
+		}
+		girado = actual
+		girado.Anticipo = nuevo
+		girado.Girado = ahora
+		girado.GiradoPor = actor.ID
+		return nil
+	})
+	if err != nil {
+		return AnticipoRegistrado{}, err
+	}
+	return girado, nil
+}
+
 // decision es lo que distingue aprobar de rechazar: el resto -quien decide, la
 // unidad, la escritura condicional y el asiento- es comun.
 type decision func(ctx context.Context, actual anticipos.Anticipo, ahora time.Time) (anticipos.Anticipo, *CupoAsentado, error)
@@ -209,26 +268,46 @@ func (s Anticipos) resolver(ctx context.Context, actor Usuario, id, hecho string
 // Listar es GET /anticipos. El staff ve los de todos -el Consejo decide,
 // contabilidad gira (RA 3.2.4), distribucion liquida y el auditor lee todo-; un
 // titular ve solo los suyos, recortados por el TitularID de la sesion (OE-6).
-func (s Anticipos) Listar(ctx context.Context, actor Usuario) ([]AnticipoRegistrado, error) {
+//
+// estado, si no va vacio, deja solo los de ese estado: lo que el Consejo mira
+// es lo que sigue `solicitado`. Un estado que no existe es
+// [anticipos.ErrSolicitudInvalida], no una lista vacia que parezca "no hay".
+//
+// La justificacion es la necesidad personal del socio (RA 3.2.1.d y e, RA
+// 2.3) y solo la ven quienes deciden, giran o auditan, ademas del propio
+// socio. `distribucion` liquida y no la necesita: le llega vacia.
+func (s Anticipos) Listar(ctx context.Context, actor Usuario, estado string) ([]AnticipoRegistrado, error) {
 	if s.Repo == nil {
 		return nil, errors.New("anticipos mal cableados: falta RepositorioAnticipos")
 	}
+	filtro, err := anticipos.ParseEstado(estado)
+	if err != nil {
+		return nil, err
+	}
+	var lista []AnticipoRegistrado
 	switch {
 	case esStaff(actor.Rol):
-		lista, err := s.Repo.Listar(ctx)
-		if err != nil {
+		if lista, err = s.Repo.Listar(ctx); err != nil {
 			return nil, fmt.Errorf("listar anticipos: %w", err)
 		}
-		return lista, nil
 	case actor.Rol == RolTitular && strings.TrimSpace(actor.TitularID) != "":
-		lista, err := s.Repo.DeTitular(ctx, actor.TitularID)
-		if err != nil {
+		if lista, err = s.Repo.DeTitular(ctx, actor.TitularID); err != nil {
 			return nil, fmt.Errorf("anticipos de %s: %w", actor.TitularID, err)
 		}
-		return lista, nil
 	default:
 		return nil, ErrNoAutorizado
 	}
+	out := make([]AnticipoRegistrado, 0, len(lista))
+	for _, r := range lista {
+		if filtro != "" && r.Anticipo.Estado != filtro {
+			continue
+		}
+		if actor.Rol == RolDistribucion {
+			r.Anticipo.Justificacion = ""
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // Recuperar es R-33 (RA 2.1): descuenta del importe que la orden ordenID iba a
@@ -397,6 +476,7 @@ type AsientoAnticipo struct {
 	Justificacion string `json:"justificacion,omitempty"`
 	Soporte       string `json:"soporte,omitempty"`
 	MotivoRechazo string `json:"motivo_rechazo,omitempty"`
+	SoporteGiro   string `json:"soporte_giro,omitempty"`
 
 	// Cupo va en la solicitud y en la aprobacion: es el calculo con el que se
 	// decidio, en la fecha de cada una.

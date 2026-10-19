@@ -17,6 +17,10 @@ import (
 //
 // `descontado` es "saldado": el saldo llego a cero con los descuentos de R-33.
 // No hay vuelta atras desde ninguno de los finales.
+//
+// El giro (RA 3.2.4) no es un estado sino un hecho dentro de `aprobado`: el
+// Consejo aprueba y Tesoreria gira despues, hasta diez dias habiles mas tarde.
+// Solo un anticipo girado se descuenta (ver [Anticipo.Girar]).
 type Estado string
 
 const (
@@ -25,6 +29,18 @@ const (
 	EstadoRechazado  Estado = "rechazado"
 	EstadoDescontado Estado = "descontado"
 )
+
+// ParseEstado lee un estado de su texto. La cadena vacia es "ninguno" y vuelve
+// vacia sin error; cualquier otro texto que no sea un estado es
+// [ErrSolicitudInvalida].
+func ParseEstado(s string) (Estado, error) {
+	switch e := Estado(strings.TrimSpace(s)); e {
+	case "", EstadoSolicitado, EstadoAprobado, EstadoRechazado, EstadoDescontado:
+		return e, nil
+	default:
+		return "", fmt.Errorf("%w: el estado %q no existe", ErrSolicitudInvalida, s)
+	}
+}
 
 // Anticipo es una liquidacion adelantada de derechos de autor (RA 2.1).
 //
@@ -53,6 +69,14 @@ type Anticipo struct {
 
 	// MotivoRechazo es la justificacion literal de la negacion (RA 3.2.3).
 	MotivoRechazo string
+
+	// Girado dice si el dinero ya salio hacia el socio (RA 3.2.4).
+	// SoporteGiro es la ubicacion del registro de la transferencia (RA 3.3,
+	// "Registro: Resolucion y registro de transferencia"). Mientras no hay
+	// giro, R-33 no descuenta nada: no se le cobra al socio lo que todavia no
+	// recibio.
+	Girado      bool
+	SoporteGiro string
 }
 
 // Solicitud es lo que el socio pide (RA 3.2.1). El id lo genera quien llama.
@@ -144,6 +168,30 @@ func (a Anticipo) Aprobar(soporte string, sit Situacion) (Anticipo, error) {
 	return a, nil
 }
 
+// Girar registra la transferencia al socio de un anticipo aprobado (RA 3.2.4).
+// soporte es la ubicacion del registro de la transferencia (RA 3.3).
+//
+// Revisa otra vez el embargo, porque lo que RA 3.1.e prohibe es desembolsar:
+// un embargo que llega entre la aprobacion y el giro detiene el giro. El
+// saldo no cambia: nacio al aprobar como lo comprometido, y desde el giro es
+// lo que R-33 puede descontar.
+func (a Anticipo) Girar(soporte string, embargoReportado bool) (Anticipo, error) {
+	if a.Estado != EstadoAprobado || a.Girado {
+		return Anticipo{}, fmt.Errorf("%w: girar exige un anticipo %q sin girar y esta en %q (girado: %t)",
+			ErrEstadoInvalido, EstadoAprobado, a.Estado, a.Girado)
+	}
+	soporte = strings.TrimSpace(soporte)
+	if soporte == "" {
+		return Anticipo{}, fmt.Errorf("%w: girar exige la ubicacion del registro de la transferencia (RA 3.3)", ErrResolucionIncompleta)
+	}
+	if embargoReportado {
+		return Anticipo{}, fmt.Errorf("%w: titular %s", ErrEmbargoReportado, a.TitularID)
+	}
+	a.Girado = true
+	a.SoporteGiro = soporte
+	return a, nil
+}
+
 // Rechazar es la negacion del Consejo Directivo. RA 3.2.3: "En caso de
 // negacion, debera justificarlo al afiliado de manera literal a la indicada en
 // el Consejo Directivo", asi que sin motivo no hay rechazo.
@@ -170,10 +218,10 @@ func (a Anticipo) Rechazar(motivo string) (Anticipo, error) {
 // enteras.
 //
 // Devuelve el descuento y el anticipo despues de aplicarlo. Si no hay nada que
-// descontar -no esta aprobado, no hay saldo o no hay disponible- el descuento
-// es cero y el anticipo vuelve igual.
+// descontar -no esta aprobado, no se ha girado, no hay saldo o no hay
+// disponible- el descuento es cero y el anticipo vuelve igual.
 func (a Anticipo) Recuperar(disponible decimal.Decimal) (decimal.Decimal, Anticipo) {
-	if a.Estado != EstadoAprobado || !a.Saldo.IsPositive() || !disponible.IsPositive() {
+	if a.Estado != EstadoAprobado || !a.Girado || !a.Saldo.IsPositive() || !disponible.IsPositive() {
 		return decimal.Zero, a
 	}
 	descuento := decimal.Min(a.Saldo, disponible)

@@ -27,10 +27,12 @@ var (
 	ErrEmbargoReportado = errors.New("el afiliado tiene embargos reportados (R-32, RA 3.1.e)")
 
 	// ErrEstadoInvalido: la transicion no sale del estado en que esta el
-	// anticipo. Solo una solicitud en tramite se aprueba o se rechaza.
+	// anticipo. Solo una solicitud en tramite se aprueba o se rechaza, y solo
+	// un aprobado sin girar se gira.
 	ErrEstadoInvalido = errors.New("el anticipo no esta en un estado que admita esa decision")
 
 	// ErrResolucionIncompleta: una aprobacion sin la ubicacion de su soporte
-	// (RA 3.2.5) o un rechazo sin justificacion (RA 3.2.3).
+	// (RA 3.2.5), un rechazo sin justificacion (RA 3.2.3) o un giro sin el
+	// registro de la transferencia (RA 3.3).
 	ErrResolucionIncompleta = errors.New("la decision sobre el anticipo esta incompleta")
 )

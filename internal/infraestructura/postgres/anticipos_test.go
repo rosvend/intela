@@ -63,6 +63,8 @@ func TestMigracionAnticiposDejaLasRestriccionesValidadas(t *testing.T) {
 	for _, c := range []struct{ tabla, nombre string }{
 		{"anticipos", "anticipo_saldo_acotado"},
 		{"anticipos", "anticipo_saldo_solo_aprobado"},
+		{"anticipos", "anticipo_giro_completo"},
+		{"anticipos", "anticipo_giro_solo_aprobado"},
 		{"embargos", "embargo_vigencia_coherente"},
 	} {
 		var validada bool
@@ -141,6 +143,26 @@ func TestEsquemaDeAnticiposRechazaLoQueElDominioNoProduce(t *testing.T) {
 	}
 	if err := insertar("ant-5", titularBeto, "solicitado", "100", "0"); err != nil {
 		t.Fatalf("el vigente de otro titular: %v", err)
+	}
+
+	// El giro (RA 3.2.4) va completo y solo sobre lo aprobado.
+	girar := func(id, porQuien, soporte string) error {
+		_, err := pool.Exec(ctx,
+			`UPDATE anticipos SET girado = now(), girado_por = $2, soporte_giro = $3 WHERE id = $1`,
+			id, porQuien, soporte)
+		return err
+	}
+	if got := codigoPg(girar("ant-1", usuarioAdmin, " ")); got != "23514/anticipo_giro_completo" {
+		t.Fatalf("giro sin registro de la transferencia: %s", got)
+	}
+	if got := codigoPg(girar("ant-5", usuarioAdmin, "t-5")); got != "23514/anticipo_giro_solo_aprobado" {
+		t.Fatalf("giro de una solicitud: %s", got)
+	}
+	if got := codigoPg(girar("ant-4", usuarioAdmin, "t-4")); got != "23514/anticipo_giro_solo_aprobado" {
+		t.Fatalf("giro de un rechazado: %s", got)
+	}
+	if err := girar("ant-1", usuarioAdmin, "t-1"); err != nil {
+		t.Fatalf("giro de un aprobado: %v", err)
 	}
 }
 
@@ -243,6 +265,67 @@ func sembrarAprobado(t *testing.T, s *Store, id, titular, monto string) {
 	}
 }
 
+// sembrarGirado es sembrarAprobado mas el giro de contabilidad (RA 3.2.4): el
+// unico anticipo que PorDescontar devuelve.
+func sembrarGirado(t *testing.T, s *Store, id, titular, monto string) {
+	t.Helper()
+	ctx := t.Context()
+	sembrarAprobado(t, s, id, titular, monto)
+	if _, err := s.ejecutorDe(ctx).Exec(ctx,
+		`INSERT INTO usuarios (id, email, nombre, rol, password_hash)
+		 VALUES ($1, 'conta@redes.co', 'Contabilidad', 'contabilidad', $2)
+		 ON CONFLICT (id) DO NOTHING`, usuarioContabilidad, hashBcrypt); err != nil {
+		t.Fatalf("usuario de contabilidad: %v", err)
+	}
+	repo := s.Anticipos()
+	a, err := repo.PorID(ctx, id)
+	if err != nil {
+		t.Fatalf("PorID: %v", err)
+	}
+	g, err := a.Anticipo.Girar("transferencia "+id, false)
+	if err != nil {
+		t.Fatalf("Girar: %v", err)
+	}
+	if err := repo.RegistrarGiro(ctx, g, instanteAnticipos, usuarioContabilidad); err != nil {
+		t.Fatalf("RegistrarGiro: %v", err)
+	}
+}
+
+// TestRegistrarGiroSoloUnaVezYSoloDeUnAprobado: el giro es condicional como la
+// decision del Consejo, y queda leible con quien y cuando.
+func TestRegistrarGiroSoloUnaVezYSoloDeUnAprobado(t *testing.T) {
+	s, _ := sembrar(t)
+	ctx := t.Context()
+	repo := s.Anticipos()
+
+	pedido := solicitudPrueba("ant-1", titularAna, "1000")
+	if err := repo.Registrar(ctx, pedido, instanteAnticipos); err != nil {
+		t.Fatalf("Registrar: %v", err)
+	}
+	// Forzado: el dominio no gira una solicitud, pero la base tampoco la acepta.
+	forzado := pedido
+	forzado.Girado, forzado.SoporteGiro = true, "t-0"
+	if err := repo.RegistrarGiro(ctx, forzado, instanteAnticipos, usuarioAdmin); !errors.Is(err, anticipos.ErrEstadoInvalido) {
+		t.Fatalf("girar una solicitud: err = %v", err)
+	}
+	if err := repo.RegistrarGiro(ctx, solicitudPrueba("ant-x", titularAna, "1"), instanteAnticipos, usuarioAdmin); !errors.Is(err, aplicacion.ErrNoEncontrado) {
+		t.Fatalf("girar uno que no existe: err = %v", err)
+	}
+
+	sembrarGirado(t, s, "ant-2", titularBeto, "500")
+	got, err := repo.PorID(ctx, "ant-2")
+	if err != nil {
+		t.Fatalf("PorID: %v", err)
+	}
+	if !got.Anticipo.Girado || got.Anticipo.SoporteGiro != "transferencia ant-2" ||
+		got.GiradoPor != usuarioContabilidad || !got.Girado.Equal(instanteAnticipos) {
+		t.Fatalf("girado = %+v", got)
+	}
+	if err := repo.RegistrarGiro(ctx, got.Anticipo, instanteAnticipos, usuarioContabilidad); !errors.Is(err, anticipos.ErrEstadoInvalido) {
+		t.Fatalf("segundo giro: err = %v", err)
+	}
+}
+
 // TestPorDescontarExigeUnidadYDescontarEsCondicional: el cerrojo de fila solo
 // protege dentro de una transaccion, asi que fuera de una se niega; y
 // Descontar no escribe sobre un saldo que otro ya movio.
@@ -254,6 +337,21 @@ func TestPorDescontarExigeUnidadYDescontarEsCondicional(t *testing.T) {
 
 	if _, _, err := repo.PorDescontar(ctx, titularAna); !errors.Is(err, errFueraDeUnidad) {
 		t.Fatalf("PorDescontar sin unidad: err = %v, se esperaba errFueraDeUnidad", err)
+	}
+	// Aprobado no es girado (RA 3.2.4): sin transferencia no hay que descontar.
+	if err := s.EnUnidad(ctx, func(ctx context.Context) error {
+		_, hay, err := repo.PorDescontar(ctx, titularAna)
+		if err != nil || hay {
+			t.Fatalf("un aprobado sin girar se descuenta: hay=%v err=%v", hay, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("unidad: %v", err)
+	}
+	a, _ := repo.PorID(ctx, "ant-1")
+	g, _ := a.Anticipo.Girar("transferencia 1", false)
+	if err := repo.RegistrarGiro(ctx, g, instanteAnticipos, usuarioAdmin); err != nil {
+		t.Fatalf("RegistrarGiro: %v", err)
 	}
 
 	err := s.EnUnidad(ctx, func(ctx context.Context) error {

@@ -1364,10 +1364,17 @@ type RepositorioAnticipos interface {
 	// [anticipos.ErrEstadoInvalido] y no escribe nada.
 	Resolver(ctx context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error
 
-	// PorDescontar devuelve el anticipo aprobado del titular CON SU FILA
-	// BLOQUEADA, o false si no tiene. Sin el cerrojo, dos liquidaciones del
-	// mismo socio (dos periodos, o los dos circuitos) leerian el mismo saldo y
-	// descontarian las dos el anticipo entero.
+	// RegistrarGiro escribe la transferencia al socio (RA 3.2.4), y SOLO si
+	// el anticipo sigue aprobado y sin girar; si no, devuelve
+	// [anticipos.ErrEstadoInvalido] y no escribe nada.
+	RegistrarGiro(ctx context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error
+
+	// PorDescontar devuelve el anticipo aprobado y girado del titular CON SU
+	// FILA BLOQUEADA, o false si no tiene. Uno aprobado sin giro no cuenta:
+	// el socio todavia no recibio nada que se le pueda descontar. Sin el
+	// cerrojo, dos liquidaciones del mismo socio (dos periodos, o los dos
+	// circuitos) leerian el mismo saldo y descontarian las dos el anticipo
+	// entero.
 	PorDescontar(ctx context.Context, titularID string) (anticipos.Anticipo, bool, error)
 
 	// Descontar escribe el saldo y el estado que dejo un descuento, y SOLO si
