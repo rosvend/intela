@@ -274,10 +274,16 @@
   letter-spacing: 0;
 }
 
+/*
+ * Con salto: a 320px el boton "Ver mis liquidaciones" del titular no cabia junto
+ * al texto y hacia scrollear `.contenido` de lado (#224).
+ */
 .panel-pie {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem 0.75rem;
   margin: 1.25rem -1.5rem -1.5rem;
   padding: 0.85rem 1.5rem;
   background: var(--fondo);

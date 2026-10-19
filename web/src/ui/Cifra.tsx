@@ -2,8 +2,12 @@ import { Fragment, ReactNode, useEffect, useState } from "react";
 import { aNumero, formatearCOP } from "./dinero";
 import "./ui.css";
 
-/** Un "." entre digitos: el separador de miles de `formatearCOP`. */
-const TRAS_SEPARADOR_DE_MILES = /(?<=\d\.)(?=\d)/;
+/**
+ * Un "." seguido de digito: el separador de miles de `formatearCOP`. Con
+ * lookahead y no lookbehind: el build apunta a Safari 14 y un `(?<=` ahi lanza
+ * SyntaxError al cargar el bundle, que deja la app entera en blanco.
+ */
+const SEPARADOR_DE_MILES = /\.(?=\d)/;
 
 /**
  * El importe ya formateado, con un `<wbr>` detras de cada "." de miles: el
@@ -13,10 +17,11 @@ const TRAS_SEPARADOR_DE_MILES = /(?<=\d\.)(?=\d)/;
  * caracteres a `textContent`.
  */
 export function conCortesDeMiles(importe: string): ReactNode {
-  return importe.split(TRAS_SEPARADOR_DE_MILES).map((grupo, i) => (
+  const grupos = importe.split(SEPARADOR_DE_MILES);
+  return grupos.map((grupo, i) => (
     <Fragment key={i}>
       {i > 0 && <wbr />}
-      {grupo}
+      {i < grupos.length - 1 ? `${grupo}.` : grupo}
     </Fragment>
   ));
 }
@@ -72,7 +77,10 @@ export default function Cifra({
 
   // El numero va en su propia caja para que baje entero tras "$ " antes que
   // partirse: "$ 1.111.111.110." en una linea se lee como otra cifra (#224).
-  const [, signo = "", numero = mostrado] = /^(\D*)(.*)$/.exec(mostrado) ?? [];
+  // `|$` hace que siempre haya corte: sin digitos, todo va en el signo.
+  const corte = mostrado.search(/\d|$/);
+  const signo = mostrado.slice(0, corte);
+  const numero = mostrado.slice(corte);
   return (
     <span className="cifra">
       <span className="cifra-valor" aria-label={final} role="text">

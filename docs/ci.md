@@ -73,7 +73,7 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Migration versions` | Versiones goose unicas, nombres parseables, ninguna nueva por debajo de la aplicada en main | Hay `migrations/` y el PR toca migraciones |
 | `OpenAPI contract` | `redocly lint` con el ruleset de `api/redocly.yaml` | Hay `api/openapi.yaml` y el PR toca `api/` |
 | `Lint (frontend)` | `eslint`, `prettier --check`, `tsc --noEmit` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
-| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run`. Despues `npm run test:visual`: Playwright en Chromium headless para lo que jsdom no ve (layout, saltos de linea) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
+| `Test (frontend)` | `npm test`: `contrato:check` (deriva de los tipos generados de `api/openapi.yaml`, ADR 0010) y `vitest run`. Despues `npm run test:visual`: Playwright en Chromium headless para lo que jsdom no ve (layout, saltos de linea). El navegador se cachea por version de Playwright y, si falla, las trazas quedan como artefacto `playwright-test-results` | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Frontend build` | `npm ci` y `npm run build` (`tsc -b` + `vite build`) | Hay `web/package.json` y el PR toca `web/` o `api/openapi.yaml` |
 | `Docker build (backend)` | Construye `Dockerfile`. Publica solo en `main` | Hay `Dockerfile` y el PR toca el contenedor |
 | `Smoke (compose bring-up)` | `docker compose --profile demo up --build` y despues [`deploy/smoke.sh`](../deploy/smoke.sh) contra nginx | Hay `docker-compose.yml` y `deploy/smoke.sh`, y el PR toca algo de lo que depende el arranque |
