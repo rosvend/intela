@@ -181,6 +181,13 @@ a {
 .shell {
   display: grid;
   grid-template-columns: 240px 1fr;
+  /*
+   * Fila explicita: con `auto` la fila crece hasta el contenido mas alto (una
+   * pagina larga como Distribucion), el sidebar se estira con ella y el pie
+   * del perfil sube y baja segun la pestana. `minmax(0, 1fr)` la clava al
+   * alto del shell y el contenido scrollea dentro de `.contenido`.
+   */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -3700,49 +3707,143 @@ p.alerta {
 }
 
 /*
- * Asistente (#66): burbuja abajo a la izquierda del area de contenido -no
- * encima del perfil del sidebar- y panel superpuesto, no una ruta.
+ * Asistente (#66): mascota abajo a la derecha que abre un panel superpuesto,
+ * no una ruta. Los gestos de movimiento son raros (abrir/cerrar, parpadeo) y
+ * solo usan transform y opacity.
  */
 .agente-burbuja,
 .agente-panel {
   position: fixed;
-  left: calc(240px + 1.5rem);
+  right: 1.5rem;
   bottom: 1.5rem;
   z-index: 40;
 }
 
 .agente-burbuja {
-  width: 3.25rem;
-  height: 3.25rem;
-  border-radius: 50%;
-  border: none;
-  background: var(--acento);
-  color: #fff;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 1rem 0.35rem 0.35rem;
+  border-radius: var(--radio-boton);
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  color: var(--texto);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(28, 29, 33, 0.18);
+  box-shadow: var(--sombra-flotante);
+  transition: transform var(--dur-rapida) var(--curva-salida);
+  animation: agente-flotar 4s ease-in-out infinite;
 }
 
-.agente-burbuja:hover {
-  background: var(--acento-hondo);
+.agente-burbuja:active {
+  transform: scale(0.96);
 }
 
-.agente-burbuja svg {
-  width: 1.5rem;
-  height: 1.5rem;
+.agente-burbuja:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agente-burbuja:hover {
+    animation-play-state: paused;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes agente-flotar {
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+.mascota {
+  shape-rendering: geometricPrecision;
+  display: block;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+}
+
+/* Relleno plano: un degradado se tramea (dithering) y la esfera se ve granulada al ampliar. */
+.mascota-cara {
+  fill: var(--acento);
+}
+
+.mascota-ojo {
+  fill: #fff;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agente-parpadeo 5s infinite;
+}
+
+@keyframes agente-parpadeo {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.1);
+  }
+}
+
+/* Los ojos viven arriba a la derecha; de vez en cuando cruzan a la izquierda y vuelven. */
+.mascota-ojos {
+  animation: agente-mirar 9s var(--curva-salida) infinite;
+}
+
+@keyframes agente-mirar {
+  0%,
+  38%,
+  74%,
+  100% {
+    transform: translateX(0);
+  }
+  44%,
+  68% {
+    transform: translateX(-16px);
+  }
+}
+
+.agente-titulo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agente-titulo-fila .mascota {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agente-burbuja:hover .mascota-ojo {
+    animation-duration: 1.2s;
+  }
 }
 
 .agente-panel {
-  width: min(24rem, calc(100vw - 240px - 3rem));
+  width: min(24rem, calc(100vw - 3rem));
   height: min(34rem, calc(100vh - 3rem));
   display: flex;
   flex-direction: column;
   background: var(--superficie);
   border: 1px solid var(--borde);
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(28, 29, 33, 0.18);
+  border-radius: var(--radio-tarjeta);
+  box-shadow: var(--sombra-flotante);
   overflow: hidden;
+  transform-origin: bottom right;
+  animation: agente-abrir 200ms var(--curva-salida);
+}
+
+@keyframes agente-abrir {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
 }
 
 .agente-cabecera {
@@ -3759,13 +3860,24 @@ p.alerta {
 }
 
 .agente-cerrar {
+  display: grid;
+  place-items: center;
   border: none;
+  border-radius: 50%;
   background: none;
   color: var(--texto-suave);
   cursor: pointer;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0.15rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0.35rem;
+  transition:
+    background-color var(--dur-rapida) ease,
+    color var(--dur-rapida) ease;
+}
+
+.agente-cerrar:hover {
+  background: var(--fondo);
+  color: var(--texto);
 }
 
 .agente-mensajes {
@@ -3785,28 +3897,41 @@ p.alerta {
 
 .agente-mensaje {
   margin: 0;
-  padding: 0.5rem 0.75rem;
-  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  border-radius: 18px;
   max-width: 85%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 0.9rem;
   line-height: 1.4;
+  animation: agente-entrar 200ms var(--curva-salida);
 }
 
+@keyframes agente-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Fondos con cuerpo: el rosa palido y el gris claro se confundian con el blanco del panel. */
 .agente-mensaje-usuario {
   align-self: flex-end;
-  background: var(--acento-activo);
+  background: var(--acento);
+  color: #fff;
+  border-bottom-right-radius: 6px;
 }
 
 .agente-mensaje-asistente {
   align-self: flex-start;
   max-width: 100%;
-  background: var(--fondo);
+  background: #e9e9f0;
+  border-bottom-left-radius: 6px;
 }
 
 .agente-entrada {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   padding: 0.75rem;
   border-top: 1px solid var(--borde);
@@ -3816,19 +3941,43 @@ p.alerta {
   flex: 1;
   resize: none;
   font: inherit;
-  padding: 0.5rem;
+  line-height: 1.25rem;
+  height: 2.5rem; /* igual que el boton de envio */
+  padding: 0.6rem 1rem;
   border: 1px solid var(--borde);
-  border-radius: 8px;
+  border-radius: var(--radio-campo);
+  transition: border-color var(--dur-rapida) ease;
+}
+
+.agente-entrada textarea:focus-visible {
+  outline: none;
+  border-color: var(--acento);
 }
 
 .agente-entrada button {
+  flex-shrink: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%;
   background: var(--acento);
   color: #fff;
   width: 2.5rem;
+  height: 2.5rem;
   cursor: pointer;
-  padding: 0.5rem;
+  padding: 0.55rem;
+  transition:
+    transform var(--dur-rapida) var(--curva-salida),
+    background-color var(--dur-rapida) ease,
+    opacity var(--dur-rapida) ease;
+}
+
+.agente-entrada button:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agente-entrada button:hover:not(:disabled) {
+    background: var(--acento-hondo);
+  }
 }
 
 .agente-entrada button:disabled {
@@ -3836,10 +3985,37 @@ p.alerta {
   cursor: default;
 }
 
+/* Esperando la primera señal del servidor: el mismo giro de marca que Cargando, en linea. */
+.agente-pensando {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--texto-medio);
+  font-size: 0.85rem;
+}
+
+.agente-pensando-logo {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agente-burbuja,
+  .mascota-ojos,
+  .mascota-ojo {
+    animation: none;
+  }
+
+  .agente-panel,
+  .agente-mensaje {
+    animation: none;
+  }
+}
+
 @media (max-width: 900px) {
   .agente-burbuja,
   .agente-panel {
-    left: 1rem;
+    right: 1rem;
     bottom: 1rem;
   }
 
@@ -4035,10 +4211,4 @@ p.alerta {
 
 .agente-aviso--restringida strong {
   color: var(--texto);
-}
-
-.agente-no-se-guarda {
-  margin: 0;
-  color: var(--texto-suave);
-  font-size: 0.72rem;
 }
