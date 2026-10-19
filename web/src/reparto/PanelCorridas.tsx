@@ -17,7 +17,7 @@ import { formatearEntero } from "../tablero/formato";
 import { Bolsa, etiquetaDeFuente } from "../tablero/recaudo";
 import { useRecurso } from "../tablero/useDashboard";
 import BarraApilada, { colorDe } from "../ui/BarraApilada";
-import Cifra from "../ui/Cifra";
+import Cifra, { conCortesDeMiles } from "../ui/Cifra";
 import {
   aNumero,
   formatearCOP,
@@ -601,7 +601,7 @@ function CifrasDeCorrida({
         <li>
           <span className="corrida-cifras-rotulo">Bolsa bruta</span>
           <span className="corrida-cifras-valor">
-            {formatearCOP(corrida.bruto)}
+            {conCortesDeMiles(formatearCOP(corrida.bruto))}
           </span>
         </li>
       )}

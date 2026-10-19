@@ -151,6 +151,9 @@ export default function Layout() {
                       key={item.to}
                       to={item.to}
                       end={item.to === "/"}
+                      // A 720px o menos la barra es un riel de iconos sin
+                      // rotulo visible: el title lo muestra al pasar el mouse.
+                      title={item.label}
                       className={({ isActive }) =>
                         isActive
                           ? "sidebar-item sidebar-item-activo"

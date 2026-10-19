@@ -238,7 +238,11 @@ describe("Inicio de staff", () => {
     expect(
       within(within(recaudo).getByRole("list")).getByText("Caracol"),
     ).toBeTruthy();
-    expect(within(recaudo).getByText("$ 1.890.000.000")).toBeTruthy();
+    // Cifra parte el numero en su propia caja (#224): el total se busca por
+    // su nombre accesible y se comprueba que lo visible sea el mismo importe.
+    expect(within(recaudo).getByLabelText("$ 1.890.000.000").textContent).toBe(
+      "$ 1.890.000.000",
+    );
     expect(
       within(recaudo).getByRole("group", { name: "Recaudo por fuente" }),
     ).toBeTruthy();
@@ -268,7 +272,8 @@ describe("Inicio de staff", () => {
     montar();
 
     const recaudo = await encontrar("Recaudo del periodo por fuente");
-    await within(recaudo).findByText("$ 1.500.000");
+    const total = await within(recaudo).findByLabelText("$ 1.500.000");
+    expect(total.textContent).toBe("$ 1.500.000");
     expect(within(recaudo).queryByText("Datos de demostración")).toBeNull();
     expect(
       within(within(recaudo).getByRole("list")).getByText("RCN"),

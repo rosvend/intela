@@ -71,3 +71,43 @@ jobs:
               npm test
               ;;
           esac
+
+      # Visual tests (#224): what jsdom cannot see because it does no layout -
+      # where a line breaks, how wide a column ends up - is measured in a real
+      # Chromium against the Vite dev server, with the API mocked per test.
+      # Only the headless shell: the tests never open a window.
+      # The browser is cached per Playwright version (the one the lockfile
+      # pins); on a hit only the apt packages are installed, which the cache
+      # cannot hold.
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-shell
+
+      - name: Install Chromium for Playwright
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: npm run test:visual
+        run: npm run test:visual
+
+      # A layout test that fails with no trace cannot be diagnosed: CI runs on
+      # Ubuntu, contributors on other systems. `trace: retain-on-failure` in
+      # playwright.config.ts writes them here.
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-test-results
+          path: ${{ inputs.working-directory }}/test-results/
+          retention-days: 7
