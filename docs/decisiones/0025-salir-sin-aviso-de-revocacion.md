@@ -62,12 +62,22 @@ Se corrige en el cliente. Todo sondeo va por `web/src/useSondeo.ts`, que:
 - con la siguiente accion de la persona pide enseguida. Si la sesion ya cayo, ese 401 lleva a la
   pantalla de entrada como cualquier otro.
 
-`SESION_INACTIVIDAD_MS` (`web/src/sesion.tsx`) es una copia del valor por defecto de
-`SESION_INACTIVIDAD`, porque la API no lo publica. `web/src/sesion.test.tsx` lee `cmd/api`,
-`cmd/lambda`, `internal/aplicacion/autenticacion.go` e `infra/modules/api/variables.tf`, y falla si
-alguno se separa; `ci.yml` vuelve a correr las etapas del frontend cuando una PR toca cualquiera de
-esos archivos. Un valor distinto puesto en un entorno concreto (variable de entorno o de Terraform)
-no lo ve esa prueba.
+ESLint rechaza `setInterval` en `web/src/` fuera de `useSondeo.ts` (`eslint.config.js`), asi que un
+sondeo nuevo no puede saltarse estas condiciones sin que la CI lo vea.
+
+Mientras el sondeo esta parado, Distribucion puede ensenar una revision que ya no es la vigente, y
+`POST /procesos/{id}/firmar` no le dice al servidor cual vio la persona. Por eso `useSondeo` dice
+cuando esta en pausa, la pantalla lo muestra, y Firmar, Rechazar y Avanzar quedan deshabilitados
+hasta que llega la primera respuesta pedida despues de reanudar: no basta con reanudar, porque el
+clic que reanuda podria salir con el dato viejo. La garantia de fondo es del servidor (que firmar y
+avanzar lleven la revision esperada y respondan 409 si no coincide) y queda como trabajo aparte.
+
+`SESION_INACTIVIDAD_MS` (`web/src/sesion.tsx`) es una copia de `aplicacion.InactividadPorDefecto`,
+porque la API no publica la inactividad. `web/src/sesion.test.tsx` lee esa constante e
+`infra/modules/api/variables.tf`, y falla si alguno se separa; `ci.yml` vuelve a correr las etapas
+del frontend cuando una PR toca cualquiera de los dos. Que `cmd/api` y `cmd/lambda` usen la
+constante lo vigila `cmd/lambda/cableado_test.go`. Un valor distinto puesto en un entorno concreto
+(variable de entorno o de Terraform) no lo ve esa prueba.
 
 La alternativa era el servidor: que una peticion marcada como sondeo no corra `ultimo_uso`. Se
 descarta por ahora porque cambia el contrato del puerto `Sesiones` y la API, toca el mismo `WHERE`
@@ -115,8 +125,7 @@ despues. Quien vuelve antes de que caiga sigue dentro sin volver a entrar. Antes
 pantalla la sostenia hasta `SESION_TTL`.
 
 Si eso molesta, se sube `SESION_INACTIVIDAD`; no se quita. Si se cambia, se cambia tambien
-`SESION_INACTIVIDAD_MS`. Un sondeo nuevo que no pase por `useSondeo` vuelve a abrir #223, y no hay
-ninguna comprobacion automatica que lo impida.
+`SESION_INACTIVIDAD_MS`.
 
 Un usuario no puede tener dos sesiones a la vez. Si se necesita, la salida es "cerrar mis otras
 sesiones" y una decision nueva que sustituya esta.

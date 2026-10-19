@@ -8,8 +8,6 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import API_MAIN from "../../cmd/api/main.go?raw";
-import LAMBDA_MAIN from "../../cmd/lambda/main.go?raw";
 import AUTENTICACION from "../../internal/aplicacion/autenticacion.go?raw";
 import VARIABLES_API from "../../infra/modules/api/variables.tf?raw";
 import { ProveedorDeSesion, SESION_INACTIVIDAD_MS, useSesion } from "./sesion";
@@ -334,6 +332,13 @@ describe("salir() con reintentos", () => {
  * sin el otro falle aqui y no deje el sondeo de Distribucion cortando a
  * destiempo (#223). En AWS manda el Terraform: pasa `SESION_INACTIVIDAD`
  * explicito y el valor por defecto del Go no llega a usarse.
+ *
+ * Del Go basta `aplicacion.InactividadPorDefecto`: que `cmd/api` y `cmd/lambda`
+ * la usen lo vigila `cmd/lambda/cableado_test.go`.
+ *
+ * Se exige igualdad aunque solo un sentido es peligroso: con el cliente por
+ * encima del servidor, el sondeo sostiene la sesion mas de lo configurado. Por
+ * debajo solo corta antes, pero dos valores para lo mismo confunden.
  */
 describe("SESION_INACTIVIDAD_MS", () => {
   const MS_POR_UNIDAD: Record<string, number> = {
@@ -342,30 +347,12 @@ describe("SESION_INACTIVIDAD_MS", () => {
     Hour: 3_600_000,
   };
 
-  /** `30*time.Minute` o `30 * time.Minute` en milisegundos; NaN si no esta. */
-  function duracionGo(fuente: string, antes: RegExp): number {
-    const m = new RegExp(
-      `${antes.source}\\s*(\\d+)\\s*\\*\\s*time\\.(Second|Minute|Hour)\\b`,
-    ).exec(fuente);
-    return m ? Number(m[1]) * MS_POR_UNIDAD[m[2]] : NaN;
-  }
-
-  it.each([
-    ["cmd/api/main.go", API_MAIN],
-    ["cmd/lambda/main.go", LAMBDA_MAIN],
-  ])("es el valor por defecto de SESION_INACTIVIDAD en %s", (_, fuente) => {
-    expect(duracionGo(fuente, /config\.Duracion\("SESION_INACTIVIDAD",/)).toBe(
-      SESION_INACTIVIDAD_MS,
-    );
-  });
-
-  it("es el respaldo de Autenticacion.inactividad() cuando no se configura", () => {
-    expect(
-      duracionGo(
+  it("es aplicacion.InactividadPorDefecto", () => {
+    const m =
+      /const InactividadPorDefecto = (\d+) \* time\.(Second|Minute|Hour)\b/.exec(
         AUTENTICACION,
-        /func \(a Autenticacion\) inactividad\(\) time\.Duration \{\s*if a\.Inactividad <= 0 \{\s*return/,
-      ),
-    ).toBe(SESION_INACTIVIDAD_MS);
+      );
+    expect(m && Number(m[1]) * MS_POR_UNIDAD[m[2]]).toBe(SESION_INACTIVIDAD_MS);
   });
 
   /** `"30m"`, `"1h"` o `"1h30m"` (sintaxis de duracion de Go) en ms; NaN si no. */

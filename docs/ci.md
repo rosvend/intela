@@ -81,10 +81,11 @@ disciplina al abrir la PR, no un rojo automatico.
 | `Infrastructure` | `terraform fmt`, `validate` modulo a modulo, reglas de frontera. En PR ademas planifica y comenta | Hay `infra/` y el PR toca la infraestructura o lo que empaqueta |
 | `Deploy (production)` | Aplica Terraform, sube el tablero y verifica salud | Solo en `push` a `main`, tras la compuerta |
 
-Nota 1: `cmd/api/main.go`, `cmd/lambda/main.go`, `internal/aplicacion/autenticacion.go` e
+Nota 1: `internal/aplicacion/autenticacion.go` (`InactividadPorDefecto`) e
 `infra/modules/api/variables.tf`. `web/src/sesion.test.tsx` lee su valor por defecto y falla si
 `SESION_INACTIVIDAD_MS` se separa (#223, ADR 0025); sin esto, la PR que cambia el valor no correria
-esa prueba.
+esa prueba. Que `cmd/api` y `cmd/lambda` usen esa constante lo vigila `cmd/lambda/cableado_test.go`,
+en las etapas de Go.
 
 **Hoy las tres capas ya estan en `main`** (`go.mod`, `Dockerfile` y `web/`), asi que las etapas de
 Go y de frontend corren cuando el PR toca su capa, y los dos `Docker build` cuando toca los

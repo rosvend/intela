@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SESION_INACTIVIDAD_MS } from "./sesion";
 
 /**
@@ -17,6 +17,13 @@ const EVENTOS_DE_LA_PERSONA = [
 // actividad; y pasivos, para no frenar el desplazamiento.
 const OPCIONES: AddEventListenerOptions = { capture: true, passive: true };
 
+export type Sondeo = {
+  /** El sondeo paro y la pantalla todavia no recibio datos posteriores. */
+  enPausa: boolean;
+  /** La pantalla llama esto cuando le llega la respuesta de un sondeo. */
+  recibido: () => void;
+};
+
 /**
  * Llama a `sondear` cada `intervaloMs`, pero solo mientras alguien atiende la
  * pantalla.
@@ -34,36 +41,54 @@ const OPCIONES: AddEventListenerOptions = { capture: true, passive: true };
  *   401 lleva a la pantalla de entrada (`api()` y `RutaProtegida`).
  *
  * Al montar no se pide: la pantalla acaba de pedir sus datos. Todo sondeo que
- * lleve el token va por aqui; un `setInterval` directo vuelve a abrir #223.
+ * lleve el token va por aqui; ESLint rechaza un `setInterval` directo en el
+ * resto de `src/` (#223).
+ *
+ * Mientras el sondeo esta parado lo que hay en pantalla puede tener horas, asi
+ * que `enPausa` lo dice. No vuelve a `false` al reanudar sino cuando la pantalla
+ * avisa con `recibido()` de que llego una respuesta pedida despues de reanudar:
+ * hasta entonces sigue mostrando lo viejo, y una firma no puede salir sobre
+ * algo que la persona no ha visto.
  */
-export function useSondeo(sondear: () => void, intervaloMs: number): void {
+export function useSondeo(sondear: () => void, intervaloMs: number): Sondeo {
   const ultimo = useRef(sondear);
   useEffect(() => {
     ultimo.current = sondear;
   }, [sondear]);
 
+  const [enPausa, setEnPausa] = useState(false);
+  // En un ref y no en el efecto: `recibido` necesita saber si el sondeo corre.
+  const temporizador = useRef<number | undefined>(undefined);
+
+  // Una respuesta que llega con el sondeo parado salio antes de la pausa: no
+  // pone la pantalla al dia.
+  const recibido = useCallback(() => {
+    if (temporizador.current !== undefined) setEnPausa(false);
+  }, []);
+
   useEffect(() => {
     let actividad = Date.now();
-    let temporizador: number | undefined;
 
     const oculta = () => document.visibilityState === "hidden";
     const atendida = () => Date.now() - actividad < SESION_INACTIVIDAD_MS;
 
     function parar() {
-      window.clearInterval(temporizador);
-      temporizador = undefined;
+      window.clearInterval(temporizador.current);
+      temporizador.current = undefined;
     }
 
     function arrancar() {
-      temporizador = window.setInterval(() => {
-        if (oculta() || !atendida()) parar();
-        else ultimo.current();
+      temporizador.current = window.setInterval(() => {
+        if (oculta() || !atendida()) {
+          parar();
+          setEnPausa(true);
+        } else ultimo.current();
       }, intervaloMs);
     }
 
     // Lo que hay en pantalla puede llevar rato sin refrescarse: se pide ya.
     function reanudar() {
-      if (temporizador !== undefined || oculta() || !atendida()) return;
+      if (temporizador.current !== undefined || oculta() || !atendida()) return;
       ultimo.current();
       arrancar();
     }
@@ -88,4 +113,6 @@ export function useSondeo(sondear: () => void, intervaloMs: number): void {
       document.removeEventListener("visibilitychange", reanudar);
     };
   }, [intervaloMs]);
+
+  return { enPausa, recibido };
 }

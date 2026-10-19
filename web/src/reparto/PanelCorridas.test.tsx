@@ -1167,6 +1167,143 @@ describe("PanelCorridas: el sondeo no sostiene una sesion desatendida (#223)", (
     expect(sondeos()).toBe(sondeosAntes + 1);
   });
 
+  it("en pausa avisa y no deja firmar hasta que llega una respuesta pedida despues de reanudar", async () => {
+    // Mientras la pantalla estaba en pausa se regenero la corrida: la
+    // revision vigente ya no es la que se ve.
+    let revision = 1;
+    let retenida: ((r: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.firmar("proc-nac") && init?.method === "POST")
+        return new Response(null, { status: 204 });
+      if (path === RUTAS_REPARTO.procesos) {
+        const cuerpo = json([{ ...nacional, revision }]);
+        if (revision === 1) return cuerpo;
+        return new Promise<Response>((resolver) => {
+          retenida = () => resolver(cuerpo);
+        });
+      }
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+    const firmas = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([url, init]) =>
+            String(url) === RUTAS_REPARTO.firmar("proc-nac") &&
+            init?.method === "POST",
+        ).length;
+
+    montarDistribucion();
+    const firmar = await screen.findByRole("button", { name: "Firmar" });
+    expect(firmar).toHaveProperty("disabled", false);
+    expect(screen.queryByText(/en pausa/)).toBeNull();
+
+    await hasta(31 * MINUTO);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+    expect(firmar).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Rechazar" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+
+    // Vuelve y pulsa Enter sobre Firmar: el sondeo se reanuda, pero la
+    // respuesta no ha llegado y lo que se ve sigue siendo la revision 1.
+    revision = 2;
+    await act(async () => {
+      firmar.focus();
+      fireEvent.keyDown(firmar, { key: "Enter" });
+      fireEvent.click(firmar);
+    });
+    expect(retenida).toBeDefined();
+    expect(firmar).toHaveProperty("disabled", true);
+    expect(firmas()).toBe(0);
+
+    await act(async () => {
+      retenida?.(new Response());
+    });
+    await waitFor(() => expect(screen.queryByText(/en pausa/)).toBeNull());
+    // La revision 2 vuelve a montar la compuerta: es otro boton.
+    const firmarVigente = screen.getByRole("button", { name: "Firmar" });
+    expect(firmarVigente).toHaveProperty("disabled", false);
+    fireEvent.click(firmarVigente);
+    await waitFor(() => expect(firmas()).toBe(1));
+  });
+
+  it("una respuesta que llega con el sondeo en pausa no lo da por al dia", async () => {
+    let retenida: (() => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("distribucion"));
+      if (path === RUTAS_REPARTO.procesos) {
+        const cuerpo = json([nacional]);
+        // El sondeo de los 29:45 tarda en volver y llega ya en pausa.
+        if (sondeos() < 2 || Date.now() - inicio < 29 * MINUTO) return cuerpo;
+        return new Promise<Response>((resolver) => {
+          retenida = () => resolver(cuerpo);
+        });
+      }
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montarDistribucion();
+    const firmar = await screen.findByRole("button", { name: "Firmar" });
+    await hasta(31 * MINUTO);
+    expect(retenida).toBeDefined();
+    expect(firmar).toHaveProperty("disabled", true);
+
+    await act(async () => {
+      retenida?.();
+    });
+    await saltar(MINUTO);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+    expect(firmar).toHaveProperty("disabled", true);
+  });
+
+  it("en pausa no deja avanzar la corrida", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      llamadas.push(path);
+      if (path === "/api/auth/session") return json(usuario("administrador"));
+      if (path === RUTAS_REPARTO.procesos)
+        return json([{ ...nacional, etapa: "deducciones" }]);
+      if (path === RUTAS_REPARTO.bolsas) return json([]);
+      if (path.startsWith("/api/alertas")) return json(resumenDePrueba());
+      return json({ error: "ruta no encontrada" }, 404);
+    });
+
+    montarDistribucion();
+    const avanzar = await screen.findByRole("button", { name: /^Avanzar a/ });
+    expect(avanzar).toHaveProperty("disabled", false);
+    await hasta(31 * MINUTO);
+    expect(avanzar).toHaveProperty("disabled", true);
+
+    await act(async () => {
+      fireEvent.pointerDown(document.body);
+    });
+    await waitFor(() => expect(avanzar).toHaveProperty("disabled", false));
+  });
+
+  it("con la pestana oculta tambien avisa la pausa, y la quita la respuesta al volver", async () => {
+    montarDistribucion();
+    await cargado();
+    await hasta(MINUTO + MEDIO);
+
+    act(() => fijarVisibilidad("hidden"));
+    await saltar(TIC);
+    expect(screen.getByText(/en pausa/)).toBeTruthy();
+
+    await act(async () => fijarVisibilidad("visible"));
+    await waitFor(() => expect(screen.queryByText(/en pausa/)).toBeNull());
+  });
+
   it("al desmontar suelta el temporizador y los escuchadores", async () => {
     const espias = [window, document].map((blanco) => ({
       pone: vi.spyOn(blanco, "addEventListener"),

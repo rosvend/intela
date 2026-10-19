@@ -200,7 +200,15 @@ export default function PanelCorridas() {
 
   // Con la pestana oculta o sin nadie delante no se sondea: el servidor cuenta
   // cada peticion como uso de la sesion (ADR 0025, #223).
-  useSondeo(() => setRecarga((n) => n + 1), INTERVALO_SONDEO_MS);
+  const { enPausa, recibido } = useSondeo(
+    () => setRecarga((n) => n + 1),
+    INTERVALO_SONDEO_MS,
+  );
+  // Los procesos traen la revision y sus firmas, que es lo que se autoriza:
+  // con su respuesta la pantalla vuelve a estar al dia.
+  useEffect(() => {
+    if (procesos.tipo !== "cargando") recibido();
+  }, [procesos, recibido]);
 
   const periodos = useMemo(
     () =>
@@ -254,7 +262,10 @@ export default function PanelCorridas() {
     fallo: string,
     llamada: (id: string) => Promise<void>,
   ) {
-    if (!seleccionado || (estado.clave === clave && estado.enviando)) return;
+    // Tras una pausa del sondeo, lo que se ve puede ser una revision que ya no
+    // es la vigente, y firmar no le dice al servidor cual se vio (#223).
+    if (!seleccionado || enPausa || (estado.clave === clave && estado.enviando))
+      return;
     fijar({ clave, enviando: true, error: "" });
     try {
       await llamada(seleccionado.id);
@@ -309,6 +320,14 @@ export default function PanelCorridas() {
       )}
       {procesos.tipo === "listo" && id === undefined && todas.length === 0 && (
         <p className="muted">No hay procesos de reparto abiertos.</p>
+      )}
+
+      {enPausa && (
+        <p className="corrida-pausa" role="status">
+          La actualización automática está en pausa. Mueve el puntero o pulsa
+          una tecla para actualizar: firmar y avanzar vuelven a estar
+          disponibles cuando lleguen los datos.
+        </p>
       )}
 
       {procesos.tipo === "listo" && elegida && seleccionado && grupo && (
@@ -434,6 +453,7 @@ export default function PanelCorridas() {
                     : ""
               }
               enviando={firma.clave === clave && firma.enviando}
+              bloqueada={enPausa}
               error={firma.clave === clave ? firma.error : ""}
               onFirmar={() => void firmar("firmar")}
               onRechazar={(motivo) => void firmar("rechazar", motivo)}
@@ -444,6 +464,7 @@ export default function PanelCorridas() {
                 siguiente={siguienteEtapa(seleccionado)}
                 confirmando={confirmando}
                 enviando={avance.clave === clave && avance.enviando}
+                bloqueada={enPausa}
                 error={avance.clave === clave ? avance.error : ""}
                 onPedir={() => setConfirmando(true)}
                 onCancelar={() => setConfirmando(false)}
@@ -606,6 +627,7 @@ function AccionAvanzar({
   siguiente,
   confirmando,
   enviando,
+  bloqueada,
   error,
   onPedir,
   onCancelar,
@@ -614,6 +636,8 @@ function AccionAvanzar({
   siguiente?: Etapa;
   confirmando: boolean;
   enviando: boolean;
+  /** Los datos pueden no ser los vigentes: no se deja avanzar (#223). */
+  bloqueada: boolean;
   error: string;
   onPedir: () => void;
   onCancelar: () => void;
@@ -633,7 +657,7 @@ function AccionAvanzar({
             <button
               type="button"
               className="boton-primario"
-              disabled={enviando}
+              disabled={enviando || bloqueada}
               onClick={onConfirmar}
             >
               Confirmar avance
@@ -651,7 +675,7 @@ function AccionAvanzar({
           <button
             type="button"
             className="boton-primario"
-            disabled={enviando}
+            disabled={enviando || bloqueada}
             onClick={onPedir}
           >
             {enviando ? "Avanzando…" : `Avanzar a ${destino}`}
