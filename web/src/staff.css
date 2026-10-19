@@ -1120,6 +1120,26 @@
   }
 }
 
+/*
+ * Los CTA de navegacion van en vinotinto, no en blanco: son la accion de la
+ * tarjeta. La clase sigue siendo `boton-secundario` (los botones de cerrar,
+ * cancelar y volver a hacer algo siguen en blanco).
+ */
+.boton-secundario.boton-enlace,
+.boton-secundario.boton-cta {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: #fff;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .boton-secundario.boton-enlace:hover,
+  .boton-secundario.boton-cta:hover {
+    background: var(--acento-hondo);
+    border-color: var(--acento-hondo);
+  }
+}
+
 .tarjeta-accion {
   margin-top: 0.75rem;
 }
