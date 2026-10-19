@@ -110,7 +110,7 @@ function Respuesta({ turno }: { turno: Turno }) {
           </span>
         </p>
       )}
-      <p
+      <div
         className={
           turno.parcial
             ? "agente-respuesta agente-respuesta--parcial"
@@ -118,7 +118,7 @@ function Respuesta({ turno }: { turno: Turno }) {
         }
       >
         <TextoConCitas texto={turno.texto} />
-      </p>
+      </div>
     </>
   );
 }
