@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/rosvend/intela/internal/dominio/afiliacion"
+	"github.com/rosvend/intela/internal/dominio/anticipos"
 	"github.com/rosvend/intela/internal/dominio/identificacion"
 	"github.com/rosvend/intela/internal/dominio/liquidacion"
 	"github.com/rosvend/intela/internal/dominio/oni"
@@ -1314,7 +1315,92 @@ type RepositorioAlertas interface {
 	ContarAlertasConAccion(ctx context.Context, periodo, accion string) (int, error)
 }
 
+// RepositorioAnticipos persiste los anticipos (R-30..R-33) y lee lo que sus
+// reglas miran del socio.
+//
+// Sustituye al Listar/Guardar del andamiaje, que no podia expresar ni el saldo
+// ni la decision condicional. Tres de sus nombres -Listar, DeTitular, PorID-
+// los usan ya otros puertos que satisface el mismo *Store de postgres con otras
+// firmas, asi que el adaptador es un envoltorio (`Store.Anticipos()`, ver
+// postgres/anticipos.go), igual que `Store.CatalogoObras()`.
+//
+// # Lo que solo vale dentro de una [UnidadDeTrabajo]
+//
+// PorDescontar bloquea la fila del anticipo, y un cerrojo que se suelta antes
+// de la escritura que protege no protege nada: el adaptador tiene que RECHAZAR
+// la llamada sin transaccion en curso, igual que
+// [RepositorioLiquidacion.DiferidasDeTitular].
 type RepositorioAnticipos interface {
-	Listar(ctx context.Context) ([]Anticipo, error)
-	Guardar(ctx context.Context, a Anticipo) error
+	// ClaseDe es la clase del titular en el padron (`titulares.clase`), que es
+	// lo que decide R-30. [ErrNoEncontrado] si el titular no figura.
+	ClaseDe(ctx context.Context, titularID string) (afiliacion.Clase, error)
+
+	// EmbargoVigente dice si el titular tiene un embargo reportado y no
+	// levantado en ese dia (RA 3.1.e, ADR 0027).
+	EmbargoVigente(ctx context.Context, titularID string, dia time.Time) (bool, error)
+
+	// DerechosLiquidados es la base del 25% de RA 3.1.g (ADR 0027): la suma de
+	// las lineas de reparto ordinario del titular que entraron en ordenes de
+	// pago enviadas en (desde, hasta]. Cero, no un error, si no hay ninguna.
+	DerechosLiquidados(ctx context.Context, titularID string, desde, hasta time.Time) (decimal.Decimal, error)
+
+	// DeTitular devuelve todos los anticipos del titular, en cualquier estado:
+	// R-32 los mira todos.
+	DeTitular(ctx context.Context, titularID string) ([]AnticipoRegistrado, error)
+
+	// Listar es el listado de administracion, todos los titulares.
+	Listar(ctx context.Context) ([]AnticipoRegistrado, error)
+
+	// PorID devuelve un anticipo o [ErrNoEncontrado].
+	PorID(ctx context.Context, id string) (AnticipoRegistrado, error)
+
+	// Registrar inserta una solicitud nueva. La base sostiene R-32 aunque dos
+	// solicitudes lleguen a la vez: si el titular ya tiene otra en tramite o
+	// aprobada, devuelve [anticipos.ErrAnticipoVigente].
+	Registrar(ctx context.Context, a anticipos.Anticipo, cuando time.Time) error
+
+	// Resolver escribe la aprobacion o el rechazo, y SOLO si el anticipo sigue
+	// `solicitado`: si otra decision llego antes, devuelve
+	// [anticipos.ErrEstadoInvalido] y no escribe nada.
+	Resolver(ctx context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error
+
+	// RegistrarGiro escribe la transferencia al socio (RA 3.2.4), y SOLO si
+	// el anticipo sigue aprobado y sin girar; si no, devuelve
+	// [anticipos.ErrEstadoInvalido] y no escribe nada.
+	RegistrarGiro(ctx context.Context, a anticipos.Anticipo, cuando time.Time, actorID string) error
+
+	// PorDescontar devuelve el anticipo aprobado y girado del titular CON SU
+	// FILA BLOQUEADA, o false si no tiene. Uno aprobado sin giro no cuenta:
+	// el socio todavia no recibio nada que se le pueda descontar. Sin el
+	// cerrojo, dos liquidaciones del mismo socio (dos periodos, o los dos
+	// circuitos) leerian el mismo saldo y descontarian las dos el anticipo
+	// entero.
+	PorDescontar(ctx context.Context, titularID string) (anticipos.Anticipo, bool, error)
+
+	// Descontar escribe el saldo y el estado que dejo un descuento, y SOLO si
+	// la fila sigue aprobada y con saldoAnterior: si otra escritura la movio
+	// entre medias devuelve [anticipos.ErrEstadoInvalido] y no escribe. Es la
+	// segunda barrera detras del cerrojo de PorDescontar; sin ella, un
+	// llamador que se saltara el cerrojo pisaria el saldo de otro descuento y
+	// el socio pagaria dos veces la misma deuda sin que nada fallara.
+	Descontar(ctx context.Context, a anticipos.Anticipo, saldoAnterior decimal.Decimal) error
+}
+
+// FuenteSMMLV resuelve el salario minimo vigente en una fecha. Un SMMLV
+// ausente es [ErrParametroAusente], nunca un cero (ADR 0004). La satisface el
+// mismo adaptador que [RepositorioLiquidacion].
+type FuenteSMMLV interface {
+	SMMLVVigente(ctx context.Context, en time.Time) (decimal.Decimal, error)
+}
+
+// RecuperacionAnticipos es lo que [Liquidaciones] necesita de anticipos: el
+// descuento de R-33 sobre lo que una orden de pago iba a girar. La satisface
+// [Anticipos]; el puerto existe para que la liquidacion no arrastre los puertos
+// de los anticipos ni se pruebe con ellos, igual que [EmisionLiquidacion] para
+// [Procesos].
+//
+// Se llama DENTRO de la unidad de trabajo de la emision, con su ctx: el
+// descuento, el saldo y la orden son un solo hecho.
+type RecuperacionAnticipos interface {
+	Recuperar(ctx context.Context, titularID, ordenID string, disponible decimal.Decimal) (decimal.Decimal, error)
 }
