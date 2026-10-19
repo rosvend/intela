@@ -522,3 +522,13 @@ func TestCatalogoHerramientasVacioNoExponeEsquemas(t *testing.T) {
 		t.Errorf("esquemas = %+v", got)
 	}
 }
+
+func TestMensajeParaModeloConservaElDetalleDeUnFiltroInvalido(t *testing.T) {
+	err := fmt.Errorf("%w: el limite va de 1 a %d", ErrFiltroInvalido, LimiteONIMaximo)
+	if got := mensajeParaModelo(err); !strings.Contains(got, "el limite va de 1 a 100") {
+		t.Fatalf("mensaje = %q: sin el detalle el modelo no sabe como corregir la llamada", got)
+	}
+	if got := mensajeParaModelo(fmt.Errorf("listar: %w", errors.New("pq: conexion rechazada"))); strings.Contains(got, "pq") {
+		t.Fatalf("mensaje = %q: un error interno no se le muestra al modelo", got)
+	}
+}
