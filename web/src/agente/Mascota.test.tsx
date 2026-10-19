@@ -10,5 +10,7 @@ describe("Mascota", () => {
     const svg = container.querySelector("svg.mascota");
     expect(svg?.getAttribute("aria-hidden")).toBe("true");
     expect(svg?.querySelectorAll(".mascota-ojo")).toHaveLength(2);
+    // Los dos ojos van en un solo grupo para mirar de lado juntos.
+    expect(svg?.querySelectorAll(".mascota-ojos .mascota-ojo")).toHaveLength(2);
   });
 });

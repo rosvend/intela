@@ -139,6 +139,9 @@ describe("Burbuja", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
     expect(screen.getByText("Asistente de IA")).toBeTruthy();
+    expect(
+      screen.getByRole("dialog").querySelector(".agente-cabecera .mascota"),
+    ).not.toBeNull();
   });
 
   it("la burbuja es la mascota del asistente", () => {

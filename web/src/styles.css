@@ -3703,6 +3703,35 @@ p.alerta {
   }
 }
 
+/* Los ojos viven arriba a la derecha; de vez en cuando cruzan a la izquierda y vuelven. */
+.mascota-ojos {
+  animation: agente-mirar 9s var(--curva-salida) infinite;
+}
+
+@keyframes agente-mirar {
+  0%,
+  38%,
+  74%,
+  100% {
+    transform: translateX(0);
+  }
+  44%,
+  68% {
+    transform: translateX(-16px);
+  }
+}
+
+.agente-titulo-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agente-titulo-fila .mascota {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .agente-burbuja:hover .mascota-ojo {
     animation-duration: 1.2s;
@@ -3885,6 +3914,7 @@ p.alerta {
 
 @media (prefers-reduced-motion: reduce) {
   .agente-burbuja,
+  .mascota-ojos,
   .mascota-ojo {
     animation: none;
   }

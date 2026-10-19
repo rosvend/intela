@@ -75,7 +75,10 @@ export default function Burbuja() {
           onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
         >
           <header className="agente-cabecera">
-            <p className="agente-titulo">Asistente de IA</p>
+            <div className="agente-titulo-fila">
+              <Mascota />
+              <p className="agente-titulo">Asistente de IA</p>
+            </div>
             <button
               type="button"
               className="agente-cerrar"
