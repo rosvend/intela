@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type Ref } from "react";
-import {
-  ChatBubbleLeftRightIcon,
-  PaperAirplaneIcon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
+import { PaperAirplaneIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { apiStream, esErrorDeApi } from "../api";
 import ErrorBoundary from "../ErrorBoundary";
 import {
@@ -13,11 +9,11 @@ import {
   turnoPendiente,
   type Turno,
 } from "./conversacion";
-import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
+import Mascota from "./Mascota";
 import TurnoAgente from "./TurnoAgente";
 
 /**
- * Asistente de solo lectura (#66): burbuja flotante abajo a la izquierda que
+ * Asistente de solo lectura (#66): burbuja flotante abajo a la derecha que
  * abre un panel superpuesto. La conversacion vive en este estado -el panel se
  * monta y desmonta, la burbuja no-, asi que sobrevive a cerrar y abrir pero no
  * a recargar la pagina: el servidor no la guarda.
@@ -79,10 +75,7 @@ export default function Burbuja() {
           onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
         >
           <header className="agente-cabecera">
-            <div>
-              <p className="agente-titulo">Asistente</p>
-              <AvisoNoSeGuarda />
-            </div>
+            <p className="agente-titulo">Asistente</p>
             <button
               type="button"
               className="agente-cerrar"
@@ -110,7 +103,7 @@ export default function Burbuja() {
           aria-label="Abrir asistente"
           onClick={() => setAbierto(true)}
         >
-          <ChatBubbleLeftRightIcon aria-hidden="true" />
+          <Mascota />
         </button>
       )}
     </div>

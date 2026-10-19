@@ -4,6 +4,7 @@ import {
   LockClosedIcon,
   NoSymbolIcon,
 } from "@heroicons/react/24/outline";
+import marca from "../marca-intela.png";
 import { NO_DISPONIBLE, type Turno } from "./conversacion";
 import { etiquetaHerramienta } from "./herramientas";
 import TextoConCitas from "./TextoConCitas";
@@ -34,7 +35,7 @@ function Pasos({
 }) {
   const vivo = estado === "pendiente";
   const etiquetas = herramientas.map(etiquetaHerramienta);
-  if (vivo && etiquetas.length === 0) etiquetas.push("Leyendo tu pregunta…");
+  if (vivo && etiquetas.length === 0) return <Pensando />;
   if (etiquetas.length === 0) return null;
   return (
     <ol className="agente-pasos" aria-label="Pasos del asistente">
@@ -66,6 +67,20 @@ function Pasos({
         );
       })}
     </ol>
+  );
+}
+
+/** Mismo spinner de marca que `Cargando`, en linea: el panel es chico y no cabe su bloque centrado. */
+function Pensando() {
+  return (
+    <div className="agente-pensando" role="status">
+      <span
+        className="logo-spinner agente-pensando-logo"
+        style={{ maskImage: `url(${marca})`, WebkitMaskImage: `url(${marca})` }}
+        aria-hidden="true"
+      />
+      Pensando…
+    </div>
   );
 }
 

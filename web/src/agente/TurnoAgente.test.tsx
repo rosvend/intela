@@ -1,6 +1,5 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import AvisoNoSeGuarda from "./AvisoNoSeGuarda";
 import {
   aplicarEvento,
   SIN_RESPUESTA,
@@ -47,11 +46,18 @@ describe("TurnoAgente", () => {
     expect(pasos[0].getAttribute("aria-current")).toBeNull();
   });
 
-  it("mientras no llega nada, dice que esta trabajando en vez de quedar en blanco", () => {
-    render(<TurnoAgente turno={turnoPendiente()} />);
-    expect(screen.getByRole("listitem").textContent).toBe(
-      "Leyendo tu pregunta…",
-    );
+  it("mientras no llega nada, muestra el spinner de la plataforma con 'Pensando…' en vez de quedar en blanco", () => {
+    const { container } = render(<TurnoAgente turno={turnoPendiente()} />);
+    const estado = screen.getByRole("status");
+    expect(estado.textContent).toBe("Pensando…");
+    expect(container.querySelector(".logo-spinner")).not.toBeNull();
+    expect(screen.queryByRole("list")).toBeNull();
+  });
+
+  it("en cuanto llega una herramienta, el spinner cede su lugar a los chips", () => {
+    render(<TurnoAgente turno={turno(herramienta("buscar_obra"))} />);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("listitem")).toBeTruthy();
   });
 
   it("la respuesta final deja los chips como rastro, sin paso activo, y pinta las citas", () => {
@@ -202,14 +208,5 @@ describe("TurnoAgente", () => {
 
     const enBuffer = render(<TurnoAgente turno={turno(...eventos)} />);
     expect(enBuffer.container.innerHTML).toBe(htmlEnVivo);
-  });
-});
-
-describe("AvisoNoSeGuarda", () => {
-  afterEach(cleanup);
-
-  it("dice en una linea que la conversacion no se guarda", () => {
-    render(<AvisoNoSeGuarda />);
-    expect(screen.getByText("Esta conversación no se guarda.")).toBeTruthy();
   });
 });
