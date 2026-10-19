@@ -3679,6 +3679,7 @@ p.alerta {
 }
 
 .mascota {
+  shape-rendering: geometricPrecision;
   display: block;
   width: 2.5rem;
   height: 2.5rem;
