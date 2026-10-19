@@ -4132,8 +4132,36 @@ p.alerta {
   margin: 0;
   font-size: 0.9rem;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Markdown de la respuesta: bloques compactos; el salto simple de linea se conserva. */
+.agente-respuesta p {
+  margin: 0 0 0.5rem;
+  white-space: pre-line;
+}
+
+.agente-respuesta ul,
+.agente-respuesta ol {
+  margin: 0 0 0.5rem;
+  padding-left: 1.25rem;
+}
+
+.agente-respuesta li + li {
+  margin-top: 0.15rem;
+}
+
+.agente-respuesta > :last-child {
+  margin-bottom: 0;
+}
+
+.agente-respuesta code {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--borde);
+  border-radius: 4px;
+  background: var(--fondo);
+  font-family: var(--mono);
+  font-size: 0.85em;
 }
 
 /* Parcial: el mismo texto, con el borde punteado de algo sin confirmar. */
