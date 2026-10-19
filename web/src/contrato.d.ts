@@ -1460,6 +1460,9 @@ export interface paths {
          *     ve los de todos los titulares; un `titular` solo los suyos, recortados
          *     por el titular de la sesion y nunca por un parametro (`OE-6`). Del mas
          *     reciente al mas antiguo.
+         *
+         *     La `justificacion` es la necesidad personal del socio: a
+         *     `distribucion`, que liquida y no la necesita, le llega vacia.
          */
         get: operations["listarAnticipos"];
         put?: never;
@@ -1495,7 +1498,8 @@ export interface paths {
          * @description La decision del Consejo Directivo sobre una solicitud en tramite
          *     (`RA 3.2.3`), con la ubicacion del acta y la resolucion en el
          *     repositorio documental (`RA 3.2.5`). Al aprobar, el saldo es todo lo
-         *     otorgado.
+         *     otorgado, pero `R-33` no lo descuenta hasta que contabilidad registra
+         *     el giro (`POST /anticipos/{id}/girar`).
          *
          *     Las reglas se vuelven a aplicar con la situacion del dia de la
          *     aprobacion: un embargo reportado despues de pedir, la perdida de la
@@ -1525,6 +1529,33 @@ export interface paths {
          *     pedir: un rechazo no es un anticipo vigente.
          */
         post: operations["rechazarAnticipo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/anticipos/{id}/girar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Registrar el giro de un anticipo
+         * @description Contabilidad registra la transferencia al socio de un anticipo
+         *     aprobado (`RA 3.2.4`), con la ubicacion del registro de la
+         *     transferencia (`RA 3.3`). Es la segunda firma de la salida de dinero:
+         *     quien aprobo no puede registrar el giro (ADR 0027). Desde el giro, las
+         *     ordenes de pago siguientes descuentan el anticipo (`R-33`).
+         *
+         *     El embargo se vuelve a mirar con la fecha del giro: `RA 3.1.e`
+         *     prohibe desembolsar a quien tenga embargos reportados.
+         */
+        post: operations["girarAnticipo"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2865,7 +2896,9 @@ export interface components {
          *         solicitado -> rechazado
          *
          *     `descontado` es saldado: el saldo llego a cero con los descuentos de
-         *     `R-33`. Hay saldo si y solo si el anticipo esta `aprobado`.
+         *     `R-33`. Hay saldo si y solo si el anticipo esta `aprobado`. El giro
+         *     (`RA 3.2.4`) no es un estado: es un hecho dentro de `aprobado`, y solo
+         *     un anticipo girado se descuenta.
          */
         Anticipo: {
             /** @description Identificador opaco, prefijo `ant-`. */
@@ -2899,6 +2932,15 @@ export interface components {
             resuelto?: string;
             /** @description Usuario que decidio. Ausente mientras esta en tramite. */
             resuelto_por?: string;
+            /**
+             * Format: date-time
+             * @description Cuando contabilidad registro la transferencia (`RA 3.2.4`). Ausente sin giro.
+             */
+            girado?: string;
+            /** @description Usuario de contabilidad que registro el giro. Ausente sin giro. */
+            girado_por?: string;
+            /** @description Ubicacion del registro de la transferencia (`RA 3.3`). Ausente sin giro. */
+            soporte_giro?: string;
         };
         ListadoAnticipos: {
             anticipos: components["schemas"]["Anticipo"][];
@@ -2924,6 +2966,13 @@ export interface components {
             /**
              * @description Ubicacion del acta y la resolucion de aprobacion en el
              *     repositorio documental (`RA 3.2.5`). Obligatoria.
+             */
+            soporte: string;
+        };
+        GiroAnticipo: {
+            /**
+             * @description Ubicacion del registro de la transferencia al socio (`RA 3.3`).
+             *     Obligatoria.
              */
             soporte: string;
         };
@@ -8558,7 +8607,10 @@ export interface operations {
     };
     listarAnticipos: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Solo los anticipos en ese estado. Sin el, todos. */
+                estado?: "solicitado" | "aprobado" | "rechazado" | "descontado";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -8584,12 +8636,24 @@ export interface operations {
                      *           "soporte": "acta 7 de 2026, resolucion 12",
                      *           "solicitado": "2026-06-15T14:00:00Z",
                      *           "resuelto": "2026-06-17T09:30:00Z",
-                     *           "resuelto_por": "usr-admin"
+                     *           "resuelto_por": "usr-admin",
+                     *           "girado": "2026-06-19T11:00:00Z",
+                     *           "girado_por": "usr-conta",
+                     *           "soporte_giro": "transferencia 2026-0042"
                      *         }
                      *       ]
                      *     }
                      */
                     "application/json": components["schemas"]["ListadoAnticipos"];
+                };
+            };
+            /** @description El estado del filtro no existe. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description Falta el token, o esta caducado o revocado. */
@@ -9006,6 +9070,120 @@ export interface operations {
             };
             /** @description El anticipo ya no esta en tramite, otra decision llego antes. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Fallo interno. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Esta instalacion no cablea el modulo de anticipos. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    girarAnticipo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example ant-9qYQ2vJmXk3pR7wLfNbTzA */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "soporte": "transferencia 2026-0042"
+                 *     }
+                 */
+                "application/json": components["schemas"]["GiroAnticipo"];
+            };
+        };
+        responses: {
+            /** @description Giro registrado. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Anticipo"];
+                };
+            };
+            /** @description Falta la ubicacion del registro de la transferencia o el cuerpo es ilegible. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Falta el token, o esta caducado o revocado. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "sesion invalida o expirada"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El rol no es contabilidad, o es la misma persona que aprobo. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "no autorizado"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No hay un anticipo con ese identificador. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El anticipo no esta aprobado o ya se giro. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description El titular tiene un embargo reportado a la fecha del giro (`RA 3.1.e`). */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

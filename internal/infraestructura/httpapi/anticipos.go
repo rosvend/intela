@@ -21,7 +21,8 @@ type Anticipos interface {
 	Solicitar(ctx context.Context, actor aplicacion.Usuario, in aplicacion.SolicitudAnticipo) (aplicacion.AnticipoRegistrado, error)
 	Aprobar(ctx context.Context, actor aplicacion.Usuario, id, soporte string) (aplicacion.AnticipoRegistrado, error)
 	Rechazar(ctx context.Context, actor aplicacion.Usuario, id, motivo string) (aplicacion.AnticipoRegistrado, error)
-	Listar(ctx context.Context, actor aplicacion.Usuario) ([]aplicacion.AnticipoRegistrado, error)
+	Girar(ctx context.Context, actor aplicacion.Usuario, id, soporte string) (aplicacion.AnticipoRegistrado, error)
+	Listar(ctx context.Context, actor aplicacion.Usuario, estado string) ([]aplicacion.AnticipoRegistrado, error)
 }
 
 var _ Anticipos = aplicacion.Anticipos{}
@@ -44,6 +45,9 @@ type anticipoJSON struct {
 	Solicitado    time.Time  `json:"solicitado"`
 	Resuelto      *time.Time `json:"resuelto,omitempty"`
 	ResueltoPor   string     `json:"resuelto_por,omitempty"`
+	Girado        *time.Time `json:"girado,omitempty"`
+	GiradoPor     string     `json:"girado_por,omitempty"`
+	SoporteGiro   string     `json:"soporte_giro,omitempty"`
 }
 
 type listadoAnticiposJSON struct {
@@ -63,10 +67,16 @@ func aAnticipoJSON(r aplicacion.AnticipoRegistrado) anticipoJSON {
 		MotivoRechazo: a.MotivoRechazo,
 		Solicitado:    r.Solicitado,
 		ResueltoPor:   r.ResueltoPor,
+		GiradoPor:     r.GiradoPor,
+		SoporteGiro:   a.SoporteGiro,
 	}
 	if !r.Resuelto.IsZero() {
 		resuelto := r.Resuelto
 		out.Resuelto = &resuelto
+	}
+	if !r.Girado.IsZero() {
+		girado := r.Girado
+		out.Girado = &girado
 	}
 	return out
 }
@@ -84,6 +94,12 @@ type solicitudAnticipoJSON struct {
 }
 
 type aprobacionAnticipoJSON struct {
+	Soporte string `json:"soporte"`
+}
+
+// giroAnticipoJSON es el cuerpo de POST /anticipos/{id}/girar: la ubicacion
+// del registro de la transferencia (RA 3.3).
+type giroAnticipoJSON struct {
 	Soporte string `json:"soporte"`
 }
 
@@ -133,7 +149,7 @@ func (a *API) listarAnticipos(w http.ResponseWriter, r *http.Request) {
 		noAutenticado(w, "sesion invalida o expirada")
 		return
 	}
-	lista, err := a.anticipos.Listar(r.Context(), actor)
+	lista, err := a.anticipos.Listar(r.Context(), actor, r.URL.Query().Get("estado"))
 	if err != nil {
 		a.responderErrorAnticipo(w, r, err, "listar los anticipos")
 		return
@@ -183,6 +199,27 @@ func (a *API) rechazarAnticipo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	escribirJSON(w, http.StatusOK, aAnticipoJSON(resuelto))
+}
+
+// girarAnticipo es POST /anticipos/{id}/girar: contabilidad registra la
+// transferencia al socio (RA 3.2.4). Es la segunda firma de la salida de
+// dinero; desde aqui R-33 descuenta (ADR 0027).
+func (a *API) girarAnticipo(w http.ResponseWriter, r *http.Request) {
+	actor, hay := UsuarioDe(r.Context())
+	if !hay {
+		noAutenticado(w, "sesion invalida o expirada")
+		return
+	}
+	var cuerpo giroAnticipoJSON
+	if !leerCuerpoAnticipo(w, r, &cuerpo, "el cuerpo tiene que ser un JSON con el soporte de la transferencia") {
+		return
+	}
+	girado, err := a.anticipos.Girar(r.Context(), actor, chi.URLParam(r, "id"), cuerpo.Soporte)
+	if err != nil {
+		a.responderErrorAnticipo(w, r, err, "girar el anticipo")
+		return
+	}
+	escribirJSON(w, http.StatusOK, aAnticipoJSON(girado))
 }
 
 func leerCuerpoAnticipo(w http.ResponseWriter, r *http.Request, destino any, mensaje string) bool {

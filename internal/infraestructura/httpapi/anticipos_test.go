@@ -45,9 +45,15 @@ func (f *anticiposFalso) Rechazar(_ context.Context, actor aplicacion.Usuario, i
 	return f.registrado, f.err
 }
 
-func (f *anticiposFalso) Listar(_ context.Context, actor aplicacion.Usuario) ([]aplicacion.AnticipoRegistrado, error) {
+func (f *anticiposFalso) Girar(_ context.Context, actor aplicacion.Usuario, id, soporte string) (aplicacion.AnticipoRegistrado, error) {
 	f.llamadas++
-	f.actor = actor
+	f.actor, f.idRecibido, f.textoRecibo = actor, id, soporte
+	return f.registrado, f.err
+}
+
+func (f *anticiposFalso) Listar(_ context.Context, actor aplicacion.Usuario, estado string) ([]aplicacion.AnticipoRegistrado, error) {
+	f.llamadas++
+	f.actor, f.textoRecibo = actor, estado
 	return f.lista, f.err
 }
 
@@ -95,6 +101,7 @@ func TestAnticiposRolesPorRuta(t *testing.T) {
 		{http.MethodPost, "/anticipos", `{"monto":"1000.00","justificacion":"x"}`, []aplicacion.Rol{aplicacion.RolTitular}, http.StatusCreated},
 		{http.MethodPost, "/anticipos/ant-1/aprobar", `{"soporte":"acta"}`, []aplicacion.Rol{aplicacion.RolAdministrador}, http.StatusOK},
 		{http.MethodPost, "/anticipos/ant-1/rechazar", `{"motivo":"no"}`, []aplicacion.Rol{aplicacion.RolAdministrador}, http.StatusOK},
+		{http.MethodPost, "/anticipos/ant-1/girar", `{"soporte":"transferencia"}`, []aplicacion.Rol{aplicacion.RolContabilidad}, http.StatusOK},
 	}
 	for _, r := range rutas {
 		for _, rol := range todos {
@@ -280,5 +287,47 @@ func TestAnticiposSinCablearResponde503(t *testing.T) {
 	h := Nueva(Casos{Auth: &autenticacionFalsa{usuario: socioDePrueba()}}, Opciones{}).Router()
 	if rec := pedir(t, h, http.MethodGet, "/anticipos", "", "tok"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("codigo = %d, se esperaba 503", rec.Code)
+	}
+}
+
+// TestGirarAnticipoHTTP: contabilidad manda la ubicacion de la transferencia y
+// la respuesta lleva cuando y quien giro.
+func TestGirarAnticipoHTTP(t *testing.T) {
+	contabilidad := aplicacion.Usuario{ID: "usr-conta", Rol: aplicacion.RolContabilidad}
+	girado := anticipoDeEjemplo()
+	girado.Anticipo.Girado = true
+	girado.Anticipo.SoporteGiro = "transferencia 2026-0042"
+	girado.Girado = solicitadoEl.Add(72 * time.Hour)
+	girado.GiradoPor = "usr-conta"
+	falso := &anticiposFalso{registrado: girado}
+
+	rec := pedir(t, servidorConAnticipos(t, contabilidad, falso),
+		http.MethodPost, "/anticipos/ant-9/girar", `{"soporte":"transferencia 2026-0042"}`, "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d. Cuerpo: %s", rec.Code, rec.Body)
+	}
+	if falso.idRecibido != "ant-9" || falso.textoRecibo != "transferencia 2026-0042" || falso.actor.ID != "usr-conta" {
+		t.Fatalf("girar recibio %q/%q/%+v", falso.idRecibido, falso.textoRecibo, falso.actor)
+	}
+	var cuerpo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cuerpo); err != nil {
+		t.Fatal(err)
+	}
+	if cuerpo["girado_por"] != "usr-conta" || cuerpo["soporte_giro"] != "transferencia 2026-0042" ||
+		cuerpo["girado"] != "2026-06-18T14:00:00Z" {
+		t.Fatalf("cuerpo = %v", cuerpo)
+	}
+}
+
+// TestListarAnticiposPasaElFiltroDeEstado: ?estado= llega tal cual al caso de
+// uso, que es quien sabe si el estado existe.
+func TestListarAnticiposPasaElFiltroDeEstado(t *testing.T) {
+	consejo := aplicacion.Usuario{ID: "usr-admin", Rol: aplicacion.RolAdministrador}
+	falso := &anticiposFalso{}
+	if rec := pedir(t, servidorConAnticipos(t, consejo, falso), http.MethodGet, "/anticipos?estado=solicitado", "", "tok"); rec.Code != http.StatusOK {
+		t.Fatalf("codigo = %d", rec.Code)
+	}
+	if falso.textoRecibo != "solicitado" {
+		t.Fatalf("estado recibido = %q", falso.textoRecibo)
 	}
 }

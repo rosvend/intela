@@ -4548,10 +4548,21 @@ paths:
         ve los de todos los titulares; un `titular` solo los suyos, recortados
         por el titular de la sesion y nunca por un parametro (`OE-6`). Del mas
         reciente al mas antiguo.
+
+        La `justificacion` es la necesidad personal del socio: a
+        `distribucion`, que liquida y no la necesita, le llega vacia.
       operationId: listarAnticipos
       security:
         - bearerAuth: []
       x-required-roles: [administrador, distribucion, contabilidad, auditor, titular]
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          description: Solo los anticipos en ese estado. Sin el, todos.
+          schema:
+            type: string
+            enum: [solicitado, aprobado, rechazado, descontado]
       responses:
         "200":
           description: Anticipos visibles para la sesion.
@@ -4571,6 +4582,15 @@ paths:
                     solicitado: "2026-06-15T14:00:00Z"
                     resuelto: "2026-06-17T09:30:00Z"
                     resuelto_por: usr-admin
+                    girado: "2026-06-19T11:00:00Z"
+                    girado_por: usr-conta
+                    soporte_giro: transferencia 2026-0042
+        "400":
+          description: El estado del filtro no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Falta el token, o esta caducado o revocado.
           content:
@@ -4726,7 +4746,8 @@ paths:
         La decision del Consejo Directivo sobre una solicitud en tramite
         (`RA 3.2.3`), con la ubicacion del acta y la resolucion en el
         repositorio documental (`RA 3.2.5`). Al aprobar, el saldo es todo lo
-        otorgado.
+        otorgado, pero `R-33` no lo descuenta hasta que contabilidad registra
+        el giro (`POST /anticipos/{id}/girar`).
 
         Las reglas se vuelven a aplicar con la situacion del dia de la
         aprobacion: un embargo reportado despues de pedir, la perdida de la
@@ -4879,6 +4900,98 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: El anticipo ya no esta en tramite, otra decision llego antes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Fallo interno.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Esta instalacion no cablea el modulo de anticipos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /anticipos/{id}/girar:
+    post:
+      tags: [anticipos]
+      summary: Registrar el giro de un anticipo
+      description: |
+        Contabilidad registra la transferencia al socio de un anticipo
+        aprobado (`RA 3.2.4`), con la ubicacion del registro de la
+        transferencia (`RA 3.3`). Es la segunda firma de la salida de dinero:
+        quien aprobo no puede registrar el giro (ADR 0027). Desde el giro, las
+        ordenes de pago siguientes descuentan el anticipo (`R-33`).
+
+        El embargo se vuelve a mirar con la fecha del giro: `RA 3.1.e`
+        prohibe desembolsar a quien tenga embargos reportados.
+      operationId: girarAnticipo
+      security:
+        - bearerAuth: []
+      x-required-roles: [contabilidad]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: ant-9qYQ2vJmXk3pR7wLfNbTzA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GiroAnticipo"
+            example:
+              soporte: transferencia 2026-0042
+      responses:
+        "200":
+          description: Giro registrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Anticipo"
+        "400":
+          description: Falta la ubicacion del registro de la transferencia o el cuerpo es ilegible.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Falta el token, o esta caducado o revocado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: sesion invalida o expirada
+        "403":
+          description: El rol no es contabilidad, o es la misma persona que aprobo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: no autorizado
+        "404":
+          description: No hay un anticipo con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: El anticipo no esta aprobado o ya se giro.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: El titular tiene un embargo reportado a la fecha del giro (`RA 3.1.e`).
           content:
             application/json:
               schema:
@@ -6865,7 +6978,9 @@ components:
             solicitado -> rechazado
 
         `descontado` es saldado: el saldo llego a cero con los descuentos de
-        `R-33`. Hay saldo si y solo si el anticipo esta `aprobado`.
+        `R-33`. Hay saldo si y solo si el anticipo esta `aprobado`. El giro
+        (`RA 3.2.4`) no es un estado: es un hecho dentro de `aprobado`, y solo
+        un anticipo girado se descuenta.
       properties:
         id:
           type: string
@@ -6906,6 +7021,16 @@ components:
         resuelto_por:
           type: string
           description: Usuario que decidio. Ausente mientras esta en tramite.
+        girado:
+          type: string
+          format: date-time
+          description: Cuando contabilidad registro la transferencia (`RA 3.2.4`). Ausente sin giro.
+        girado_por:
+          type: string
+          description: Usuario de contabilidad que registro el giro. Ausente sin giro.
+        soporte_giro:
+          type: string
+          description: Ubicacion del registro de la transferencia (`RA 3.3`). Ausente sin giro.
 
     ListadoAnticipos:
       type: object
@@ -6945,6 +7070,16 @@ components:
           description: |
             Ubicacion del acta y la resolucion de aprobacion en el
             repositorio documental (`RA 3.2.5`). Obligatoria.
+
+    GiroAnticipo:
+      type: object
+      required: [soporte]
+      properties:
+        soporte:
+          type: string
+          description: |
+            Ubicacion del registro de la transferencia al socio (`RA 3.3`).
+            Obligatoria.
 
     RechazoAnticipo:
       type: object

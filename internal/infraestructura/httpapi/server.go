@@ -331,6 +331,10 @@ func (a *API) Router() http.Handler {
 				consejo.Post("/{id}/aprobar", a.conAnticipos(a.aprobarAnticipo))
 				consejo.Post("/{id}/rechazar", a.conAnticipos(a.rechazarAnticipo))
 			})
+			// GIRAR es de contabilidad (RA 3.2.4): la segunda firma de la
+			// salida de dinero, por otra persona que quien aprobo.
+			ant.With(requiereRol(aplicacion.RolContabilidad)).
+				Post("/{id}/girar", a.conAnticipos(a.girarAnticipo))
 		})
 
 		// Lectura: 4 roles; escritura: admin+distribucion (ADR 0021).
