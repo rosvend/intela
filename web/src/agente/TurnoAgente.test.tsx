@@ -166,6 +166,24 @@ describe("TurnoAgente", () => {
     expect(container.querySelector(".agente-respuesta")).toBeNull();
   });
 
+  it("en una consulta restringida, la herramienta denegada no lleva check de terminada", () => {
+    const { container } = render(
+      <TurnoAgente
+        turno={turno(
+          herramienta("buscar_reglamento"),
+          herramienta("estado_corrida"),
+          respuesta("Esa consulta está fuera de lo que tu rol puede ver.", {
+            restringida: true,
+          }),
+        )}
+      />,
+    );
+    const pasos = container.querySelectorAll(".agente-paso");
+    expect(pasos[0].querySelector(".agente-paso-icono")).toBeTruthy();
+    expect(pasos[1].querySelector(".agente-paso-icono")).toBeNull();
+    expect(pasos[1].className).toContain("agente-paso--inconcluso");
+  });
+
   it("los eventos en buffer (todos de una vez) pintan lo mismo que en streaming", () => {
     const eventos: Evento[] = [
       herramienta("buscar_obra"),

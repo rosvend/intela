@@ -92,6 +92,8 @@ describe("partirCitas", () => {
     "asiento p1:obra-7:tit-3:extra.",
     "asiento p1:obra-ñ",
     "asiento p1:canción",
+    "asiento a:b:c:d:e",
+    "asiento p1:obra/7",
   ])("no hace pildora de algo que no es una ref entera: %s", (texto) => {
     expect(partirCitas(texto)).toEqual([{ tipo: "texto", texto }]);
   });

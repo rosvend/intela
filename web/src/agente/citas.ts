@@ -5,14 +5,15 @@ export type Fragmento =
   | { tipo: "cita"; clase: "asiento"; valor: string; palabra: string };
 
 // Segmento de una ref de asiento. Las refs que acepta ExplicarCifra (explicar.go) son
-// proceso:obra[:titular] (ParsearRef) y las accesorias de 5 segmentos (parsearRefAccesoria).
+// proceso:obra[:titular] (ParsearRef) y las accesorias reserva|rendimiento:origen:destino:obra:titular
+// (parsearRefAccesoria, bolsas_asientos.go).
 const SEG = String.raw`[\w-]+(?:\.[\w-]+)*`;
-const REF = String.raw`${SEG}(?:(?::${SEG}){4}|(?::${SEG}){1,2})`;
-// Numeral de RD/RT/RS/RA (convencion de CLAUDE.md) o "asiento <ref>". La ref no puede
-// seguir con nada que pudiera continuarla (letra Unicode, digito, _, - o :): asi una ref
-// mas larga o con tildes se queda en texto en vez de cortarse a mitad de palabra.
+const REF = String.raw`(?:(?:reserva|rendimiento)(?::${SEG}){4}|${SEG}(?::${SEG}){1,2})`;
+// Numeral de RD/RT/RS/RA (convencion de CLAUDE.md) o "asiento <ref>". La ref solo termina en fin
+// de texto, espacio o puntuacion de cierre: si sigue cualquier otra cosa (letra con tilde, -, :, /)
+// la ref seria otra, y se deja como texto antes que copiar una ref cortada.
 const CITA = new RegExp(
-  String.raw`\b(?:R[DTSA]\s\d+(?:\.\d+)*)|\b([Aa]siento)\s+(${REF})(?![\p{L}\p{N}_:-])`,
+  String.raw`\b(?:R[DTSA]\s\d+(?:\.\d+)*)|\b([Aa]siento)\s+(${REF})(?=$|[\s.,;!?)\]}"'»…])`,
   "gu",
 );
 

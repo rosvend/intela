@@ -12,7 +12,11 @@ import TextoConCitas from "./TextoConCitas";
 export default function TurnoAgente({ turno }: { turno: Turno }) {
   return (
     <div className="turno-agente">
-      <Pasos herramientas={turno.herramientas} estado={turno.estado} />
+      <Pasos
+        herramientas={turno.herramientas}
+        estado={turno.estado}
+        denegada={turno.restringida === true}
+      />
       {turno.estado === "error" && <Fallo texto={turno.texto} />}
       {turno.estado === "listo" && <Respuesta turno={turno} />}
     </div>
@@ -22,9 +26,11 @@ export default function TurnoAgente({ turno }: { turno: Turno }) {
 function Pasos({
   herramientas,
   estado,
+  denegada,
 }: {
   herramientas: string[];
   estado: Turno["estado"];
+  denegada: boolean;
 }) {
   const vivo = estado === "pendiente";
   const etiquetas = herramientas.map(etiquetaHerramienta);
@@ -35,8 +41,9 @@ function Pasos({
       {etiquetas.map((etiqueta, i) => {
         const ultimo = i === etiquetas.length - 1;
         const activo = vivo && ultimo;
-        // Si el turno fallo, la ultima herramienta no se sabe terminada: sin check.
-        const inconcluso = estado === "error" && ultimo;
+        // Sin check en la ultima herramienta si el turno fallo (no se sabe terminada) o si
+        // fue restringida: el servidor la denego sin ejecutarla (agente.go, ErrNoAutorizado).
+        const inconcluso = (estado === "error" || denegada) && ultimo;
         const clase = activo
           ? "agente-paso agente-paso--activo"
           : inconcluso
