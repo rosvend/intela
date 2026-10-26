@@ -52,14 +52,26 @@ describe("Burbuja", () => {
     ).toBeTruthy();
   });
 
-  it("al abrir enfoca la pregunta y al cerrar devuelve el foco a la burbuja", () => {
+  it("al abrir enfoca la pregunta y al cerrar devuelve el foco a la burbuja", async () => {
     montar();
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
     expect(document.activeElement).toBe(screen.getByLabelText("Tu pregunta"));
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Abrir asistente" }),
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Abrir asistente" }),
+      ),
     );
+  });
+
+  it("al cerrar, el panel se anima de salida y solo despues se desmonta", async () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar asistente" }));
+    expect(
+      screen.getByRole("dialog").classList.contains("agente-panel--cerrando"),
+    ).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("envia la pregunta y pinta la respuesta que llega por el flujo", async () => {
@@ -266,7 +278,7 @@ describe("Burbuja", () => {
     preguntar("hola");
     await screen.findByText("guardado en memoria");
     fireEvent.click(screen.getByRole("button", { name: "Cerrar asistente" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente" }));
     expect(screen.getByText("guardado en memoria")).toBeTruthy();
   });

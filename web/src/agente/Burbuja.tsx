@@ -12,6 +12,9 @@ import {
 import Mascota from "./Mascota";
 import TurnoAgente from "./TurnoAgente";
 
+/** Igual a la animacion `agente-cerrar` de styles.css. */
+const DURACION_CIERRE_MS = 150;
+
 /**
  * Asistente de solo lectura (#66): burbuja flotante abajo a la derecha que
  * abre un panel superpuesto. La conversacion vive en este estado -el panel se
@@ -20,6 +23,7 @@ import TurnoAgente from "./TurnoAgente";
  */
 export default function Burbuja() {
   const [abierto, setAbierto] = useState(false);
+  const [cerrando, setCerrando] = useState(false);
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [enviando, setEnviando] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
@@ -32,6 +36,16 @@ export default function Burbuja() {
     else if (yaAbierto.current) opener.current?.focus();
     yaAbierto.current ||= abierto;
   }, [abierto]);
+
+  // El panel sale animado y se desmonta al terminar; un temporizador y no `animationend`, que no llega con movimiento reducido.
+  function cerrar() {
+    if (cerrando) return;
+    setCerrando(true);
+    setTimeout(() => {
+      setAbierto(false);
+      setCerrando(false);
+    }, DURACION_CIERRE_MS);
+  }
 
   async function preguntar(mensaje: string) {
     const historial = historialPara(turnos);
@@ -69,10 +83,12 @@ export default function Burbuja() {
     <div className="agente">
       {abierto && (
         <section
-          className="agente-panel"
+          className={
+            cerrando ? "agente-panel agente-panel--cerrando" : "agente-panel"
+          }
           role="dialog"
           aria-label="Asistente de Intela"
-          onKeyDown={(e) => e.key === "Escape" && setAbierto(false)}
+          onKeyDown={(e) => e.key === "Escape" && cerrar()}
         >
           <header className="agente-cabecera">
             <div className="agente-titulo-fila">
@@ -83,7 +99,7 @@ export default function Burbuja() {
               type="button"
               className="agente-cerrar"
               aria-label="Cerrar asistente"
-              onClick={() => setAbierto(false)}
+              onClick={cerrar}
             >
               <XMarkIcon aria-hidden="true" />
             </button>
