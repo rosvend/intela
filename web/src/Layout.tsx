@@ -67,6 +67,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [navAbierta, setNavAbierta] = useState(false);
+  const refBotonNav = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // El `if (!usuario)` va tras todos los hooks: un retorno entre hooks rompe las reglas de React.
@@ -113,7 +114,17 @@ export default function Layout() {
   useEffect(() => {
     if (!navAbierta) return;
     function alTeclar(evento: KeyboardEvent) {
-      if (evento.key === "Escape") setNavAbierta(false);
+      if (evento.key !== "Escape") return;
+      // El cajon cerrado queda `visibility: hidden`: sin esto el foco cae al
+      // body y quien navega con teclado pierde su sitio.
+      if (
+        document
+          .getElementById("navegacion-principal")
+          ?.contains(document.activeElement)
+      ) {
+        refBotonNav.current?.focus();
+      }
+      setNavAbierta(false);
     }
     document.addEventListener("keydown", alTeclar);
     return () => document.removeEventListener("keydown", alTeclar);
@@ -136,6 +147,7 @@ export default function Layout() {
         <button
           type="button"
           className="barra-movil-menu"
+          ref={refBotonNav}
           onClick={() => setNavAbierta((abierta) => !abierta)}
           aria-expanded={navAbierta}
           aria-controls="navegacion-principal"

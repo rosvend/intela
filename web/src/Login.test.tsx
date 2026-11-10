@@ -326,4 +326,27 @@ describe("Login", () => {
     expect(screen.getByLabelText("Correo electrónico")).toBeTruthy();
     expect(screen.getByLabelText("Contraseña")).toBeTruthy();
   });
+
+  it("Editar y cambiar el correo descartan el error y la contraseña anteriores", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "credenciales invalidas" }), {
+        status: 401,
+      }),
+    );
+    montar();
+    await completarYEnviar("admin@redes.co", "mala");
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    // El error hablaba de la contraseña: no sigue colgado del correo.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), {
+      target: { value: "otro@redes.co" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(
+      (screen.getByLabelText("Contraseña") as HTMLInputElement).value,
+    ).toBe("");
+  });
 });

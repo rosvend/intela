@@ -128,6 +128,11 @@
     overflow-x: hidden;
   }
 
+  /* La pista de 280px no cabe en 320px: que se encoja al ancho disponible. */
+  .anomalias-leyenda {
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  }
+
   /* 16px+: iOS no hace zoom al enfocar; 44px de alto como minimo tactil. */
   .contenido
     input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
@@ -175,6 +180,8 @@
   }
 
   /* Iconos de ayuda: se ven chicos, pero el area tactil se extiende con ::after. */
+  .contenido button.tarjeta-ayuda,
+  .contenido button.revision-icono-boton,
   .contenido .tarjeta-ayuda,
   .contenido .revision-icono-boton {
     position: relative;

@@ -162,7 +162,10 @@ export default function Login() {
               <button
                 type="button"
                 className="enlace acceso-editar"
-                onClick={() => setPaso("correo")}
+                onClick={() => {
+                  setError("");
+                  setPaso("correo");
+                }}
               >
                 Editar
               </button>
@@ -216,7 +219,12 @@ export default function Login() {
                   placeholder="nombre@redes.co"
                   ref={refEmail}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    // Otro correo, otra contraseña: lo anterior ya no aplica.
+                    setError("");
+                    setClave("");
+                  }}
                   aria-describedby={error ? idError : undefined}
                   aria-invalid={error ? true : undefined}
                 />
