@@ -91,27 +91,29 @@ export default function TablaRechazos({
 
   return (
     <>
-      <table className="tabla-rechazos" aria-label="Filas rechazadas">
-        <thead>
-          <tr>
-            <th scope="col">Id</th>
-            <th scope="col">Título</th>
-            <th scope="col">IDs de la fuente</th>
-            <th scope="col">Motivo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {mostradas.map((rechazo) => (
-            <tr key={rechazo.id}>
-              <td className="tabla-rechazos-id">{rechazo.id}</td>
-              <td>{rechazo.titulo}</td>
-              {/* Una linea `clave=valor` por identificador (ADR 0018). */}
-              <td className="tabla-rechazos-ids">{rechazo.ids_fuente}</td>
-              <td>{rechazo.motivo}</td>
+      <div className="tabla-scroll">
+        <table className="tabla-rechazos" aria-label="Filas rechazadas">
+          <thead>
+            <tr>
+              <th scope="col">Id</th>
+              <th scope="col">Título</th>
+              <th scope="col">IDs de la fuente</th>
+              <th scope="col">Motivo</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {mostradas.map((rechazo) => (
+              <tr key={rechazo.id}>
+                <td className="tabla-rechazos-id">{rechazo.id}</td>
+                <td>{rechazo.titulo}</td>
+                {/* Una linea `clave=valor` por identificador (ADR 0018). */}
+                <td className="tabla-rechazos-ids">{rechazo.ids_fuente}</td>
+                <td>{rechazo.motivo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {hayMas && (
         <p className="tabla-rechazos-aviso">
           Mostrando {formatearEntero(mostradas.length)} de{" "}

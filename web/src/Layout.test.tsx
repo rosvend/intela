@@ -442,4 +442,50 @@ describe("Layout", () => {
 
     await waitFor(() => expect(enlace.textContent).toContain("9"));
   });
+  it("el boton de menu movil abre y cierra la navegacion con aria-expanded", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("administrador"));
+
+    montar();
+
+    const boton = await screen.findByRole("button", {
+      name: "Abrir menú de navegación",
+    });
+    expect(boton.getAttribute("aria-expanded")).toBe("false");
+    expect(boton.getAttribute("aria-controls")).toBe("navegacion-principal");
+    expect(document.getElementById("navegacion-principal")).toBeTruthy();
+
+    fireEvent.click(boton);
+    expect(boton.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(boton.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("elegir un modulo cierra la navegacion movil", async () => {
+    setToken("tok");
+    vi.mocked(fetch).mockResolvedValue(respuestaUsuario("titular"));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ProveedorDeSesion>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="*" element={<p>contenido</p>} />
+            </Route>
+          </Routes>
+        </ProveedorDeSesion>
+      </MemoryRouter>,
+    );
+
+    const boton = await screen.findByRole("button", {
+      name: "Abrir menú de navegación",
+    });
+    fireEvent.click(boton);
+    fireEvent.click(screen.getByRole("link", { name: "Mis liquidaciones" }));
+
+    await waitFor(() =>
+      expect(boton.getAttribute("aria-expanded")).toBe("false"),
+    );
+  });
 });

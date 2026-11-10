@@ -406,20 +406,20 @@ function TablaCatalogo({
                 {obra.titulo}
               </Link>
             </td>
-            <td>{obra.genero}</td>
+            <td data-etiqueta="Género">{obra.genero}</td>
             {/* El anio va sin agrupar miles, por eso no pasa por
                 `formatearEntero`: "1.991" no es un anio. */}
-            <td>{obra.anio}</td>
+            <td data-etiqueta="Año">{obra.anio}</td>
             {/* El valor del enum, sin traducir: es la clasificacion del
                 reglamento (RD 9.1.1) y no hay traduccion de la casa que no
                 invente. Solo se le pone mayuscula inicial al mostrarlo. */}
-            <td>{formatearTipo(obra.tipo)}</td>
-            <td className="catalogo-identificador">
+            <td data-etiqueta="Tipo">{formatearTipo(obra.tipo)}</td>
+            <td className="catalogo-identificador" data-etiqueta="IDA">
               {/* El contrato declara `ida` opcional y de texto, con la cadena
                   vacia como "no se conoce": el guion dice eso y no otra cosa. */}
               {obra.ida !== undefined && obra.ida !== "" ? obra.ida : "—"}
             </td>
-            <td>
+            <td data-etiqueta="Declaración">
               <div className="catalogo-declaracion">
                 <EtiquetaDeDeclaracion obra={obra} />
                 {/* La suma va SIEMPRE, tambien sin declaracion: es lo que el

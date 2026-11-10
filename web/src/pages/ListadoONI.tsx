@@ -92,28 +92,30 @@ function Contenido({ listado }: { listado: ListadoONI }) {
       {listado.obras.length === 0 ? (
         <p>Este periodo no dejo obras sin identificar.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Titulo</th>
-              <th>Fuente</th>
-              <th>Identificadores</th>
-              <th>Modalidad</th>
-              <th>Publicado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {listado.obras.map((o) => (
-              <tr key={o.id}>
-                <td>{o.titulo}</td>
-                <td>{o.fuente}</td>
-                <td>{o.ids_fuente || "—"}</td>
-                <td>{o.modalidad}</td>
-                <td>{formatearFecha(o.fecha_proceso)}</td>
+        <div className="tabla-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Titulo</th>
+                <th>Fuente</th>
+                <th>Identificadores</th>
+                <th>Modalidad</th>
+                <th>Publicado</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {listado.obras.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.titulo}</td>
+                  <td>{o.fuente}</td>
+                  <td>{o.ids_fuente || "—"}</td>
+                  <td>{o.modalidad}</td>
+                  <td>{formatearFecha(o.fecha_proceso)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );

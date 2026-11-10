@@ -459,87 +459,6 @@ a {
 }
 
 /*
- * Anchos angostos: la barra lateral se pliega a una columna de iconos (#224).
- * Con 240px fijos, a 360px de ventana el contenido se quedaba con 120px: las
- * cifras se partian en una columna de digitos, el pagador de cada corrida
- * desaparecia de la lista y la pagina scrolleaba de lado. Los rotulos salen
- * de la vista pero no del arbol accesible: el enlace se sigue llamando como
- * su modulo. `minmax(0, 1fr)`: lo que no quepa scrollea dentro de
- * `.contenido`, no arrastra la barra con la pagina.
- */
-@media (max-width: 720px) {
-  .shell {
-    grid-template-columns: 4rem minmax(0, 1fr);
-  }
-
-  .sidebar {
-    padding: 1rem 0.5rem;
-  }
-
-  .sidebar-logo {
-    width: 100%;
-    height: 1.25rem;
-    margin: 0 0 1rem;
-    mask-position: center;
-    -webkit-mask-position: center;
-  }
-
-  .sidebar-titulo-seccion,
-  .sidebar-item-texto {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    clip-path: inset(50%);
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  .sidebar-item {
-    position: relative;
-    justify-content: center;
-    padding: 0.6rem;
-  }
-
-  .sidebar-badge {
-    position: absolute;
-    top: 0;
-    right: 0;
-    font-size: 0.65rem;
-    padding: 0 0.3rem;
-  }
-
-  .sidebar-pie {
-    justify-content: center;
-    padding: 0.75rem 0 0;
-  }
-
-  .sidebar-perfil {
-    flex: none;
-  }
-
-  /* El boton ya se llama "Abrir menu de usuario" (aria-label): no se pierde nada. */
-  .sidebar-usuario,
-  .sidebar-caret {
-    display: none;
-  }
-
-  /*
-   * Fijo y no absoluto: dentro de la barra de 4rem el menu se cortaria. Por
-   * encima de la burbuja del asistente (z-index 40), que en este ancho queda
-   * junto al riel, justo donde se abre el menu.
-   */
-  .sidebar-menu {
-    position: fixed;
-    left: 4.5rem;
-    right: auto;
-    bottom: 0.75rem;
-    min-width: 12rem;
-    z-index: 50;
-  }
-}
-
-/*
  * La UNICA region que scrollea dentro del shell autenticado: alta como su
  * columna del grid (100%, que es el `height: 100vh` de `.shell`) y con su
  * propio scroll. Una lista larga -/catalogo, /auditoria- crece dentro de
@@ -903,31 +822,116 @@ a {
    */
 }
 
-/* ---------- acceso: apilado ---------- */
+/* ---------- acceso: segundo paso (correo elegido) ---------- */
 
+.acceso-identidad {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--texto-medio);
+  text-align: center;
+}
+
+.acceso-identidad p {
+  margin: 0;
+}
+
+.acceso-identidad-correo {
+  overflow-wrap: anywhere;
+  color: var(--texto);
+  font-weight: 600;
+}
+
+.acceso-editar {
+  margin-top: 0.25rem;
+}
+
+.acceso-olvido {
+  align-self: flex-start;
+  font-size: 0.85rem;
+}
+
+/* ---------- acceso: movil ---------- */
+
+/*
+ * En movil el panel de marca sobra: es decoracion y el formulario es a lo que
+ * se viene. Se oculta (el lienzo deja de animar) y el formulario ocupa la
+ * pantalla, alineado a la izquierda como en las apps de acceso nativas.
+ */
 @media (max-width: 900px) {
   .acceso {
     grid-template-columns: 1fr;
     min-height: 100dvh;
   }
 
-  .acceso-formulario {
-    padding: 2.5rem 1.5rem;
+  .acceso-marca {
+    display: none;
   }
 
-  /* Mismo valor que en escritorio (`.acceso-logo`, arriba): sin esta regla el
-     media query volvia a 2rem y deshacia el ajuste en pantallas chicas. */
+  .acceso-formulario {
+    align-items: flex-start;
+    padding: 1.5rem 1.5rem 2rem;
+  }
+
+  .acceso-columna {
+    max-width: 28rem;
+    min-height: calc(100dvh - 3.5rem);
+    display: flex;
+    flex-direction: column;
+  }
+
   .acceso-logo {
+    margin: 0 0 3rem;
+  }
+
+  .acceso-titulo,
+  .acceso-entradilla,
+  .acceso-identidad {
+    text-align: left;
+  }
+
+  .acceso-titulo {
+    font-size: 2rem;
     margin-bottom: 1.5rem;
   }
 
-  /*
-   * Alto fijo y no un porcentaje: en movil el panel va debajo del formulario,
-   * y con `1fr` se estiraria a lo que sobre -- que con el teclado abierto es
-   * casi nada, y sin teclado media pantalla de rojo.
-   */
-  .acceso-marca {
-    height: 20rem;
+  .acceso-entradilla {
+    margin: 0 0 1.5rem;
+  }
+
+  /* 16px: por debajo iOS hace zoom al enfocar el campo. */
+  .acceso-campo input {
+    font-size: 1rem;
+    min-height: 3.5rem;
+    padding: 0.9rem 1.25rem;
+  }
+
+  .acceso-clave input {
+    padding-right: 3.5rem;
+  }
+
+  .acceso-ojo {
+    width: 2.75rem;
+    height: 2.75rem;
+    right: 0.5rem;
+  }
+
+  .acceso-formulario .boton-primario {
+    min-height: 3.5rem;
+    font-size: 1rem;
+  }
+
+  .acceso-editar,
+  .acceso-olvido {
+    min-height: 2.75rem;
+    font-size: 0.95rem;
+  }
+
+  /* El pie queda abajo de la columna, lejos del pulgar que escribe. */
+  .acceso-cambio {
+    margin-top: auto;
+    padding-top: 2rem;
+    font-size: 0.95rem;
   }
 }
 
@@ -4045,23 +4049,6 @@ p.alerta {
 
   .agente-panel {
     width: calc(100vw - 2rem);
-  }
-}
-
-/*
- * Con la barra plegada a 4rem (<=720px, #224) la burbuja va junto al riel, no
- * encima: en `left: 1rem` tapaba el boton de perfil, que en el riel es solo el
- * avatar, y con el el unico camino a "Salir". Va despues del bloque de 900px
- * a proposito: los dos aplican a este ancho y gana el ultimo.
- */
-@media (max-width: 720px) {
-  .agente-burbuja,
-  .agente-panel {
-    left: calc(4rem + 1rem);
-  }
-
-  .agente-panel {
-    width: calc(100vw - 4rem - 2rem);
   }
 }
 

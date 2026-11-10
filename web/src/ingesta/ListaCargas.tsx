@@ -146,78 +146,83 @@ export default function ListaCargas({ periodo }: { periodo: string }) {
 
   return (
     <>
-      <table className="tabla-cargas" aria-label="Cargas hechas">
-        <thead>
-          <tr>
-            <th scope="col">Recibido</th>
-            <th scope="col">Fuente</th>
-            <th scope="col">Periodo</th>
-            <th scope="col">Huella</th>
-            <th scope="col" className="tabla-cargas-numero">
-              Aceptadas
-            </th>
-            <th scope="col" className="tabla-cargas-numero">
-              Rechazadas
-            </th>
-            <th scope="col" aria-label="Acciones" />
-          </tr>
-        </thead>
-        <tbody>
-          {cargas.map((carga) => {
-            const abierta = abiertas.has(carga.id);
-            const idLog = `rechazos-${carga.id}`;
-            return (
-              <Fragment key={carga.id}>
-                <tr>
-                  <td>
-                    <time dateTime={carga.recibido}>
-                      {formatearInstante(carga.recibido)}
-                    </time>
-                  </td>
-                  <td>{carga.fuente}</td>
-                  <td>{carga.periodo}</td>
-                  <td>
-                    <code className="huella" title={carga.sha256}>
-                      {huellaCorta(carga.sha256)}
-                    </code>
-                  </td>
-                  <td className="tabla-cargas-numero">
-                    {formatearEntero(carga.aceptados)}
-                  </td>
-                  <td className="tabla-cargas-numero">
-                    {formatearEntero(carga.rechazados)}
-                  </td>
-                  <td>
-                    {carga.rechazados > 0 && (
-                      <button
-                        type="button"
-                        className="tabla-cargas-boton"
-                        aria-expanded={abierta}
-                        aria-controls={idLog}
-                        onClick={() => alternar(carga.id)}
-                      >
-                        {abierta
-                          ? "Ocultar rechazos"
-                          : `Ver rechazos (${formatearEntero(carga.rechazados)})`}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-                {abierta && (
-                  <tr id={idLog} className="tabla-cargas-log">
-                    <td colSpan={COLUMNAS}>
-                      {/* El recuento de la fila es el TOTAL de la carga y viaja
-                        hasta el log: es con lo que se dice "de M" sin afirmar
-                        una cifra que nadie conto. */}
-                      <RechazosDeCarga id={carga.id} total={carga.rechazados} />
+      <div className="tabla-scroll">
+        <table className="tabla-cargas" aria-label="Cargas hechas">
+          <thead>
+            <tr>
+              <th scope="col">Recibido</th>
+              <th scope="col">Fuente</th>
+              <th scope="col">Periodo</th>
+              <th scope="col">Huella</th>
+              <th scope="col" className="tabla-cargas-numero">
+                Aceptadas
+              </th>
+              <th scope="col" className="tabla-cargas-numero">
+                Rechazadas
+              </th>
+              <th scope="col" aria-label="Acciones" />
+            </tr>
+          </thead>
+          <tbody>
+            {cargas.map((carga) => {
+              const abierta = abiertas.has(carga.id);
+              const idLog = `rechazos-${carga.id}`;
+              return (
+                <Fragment key={carga.id}>
+                  <tr>
+                    <td>
+                      <time dateTime={carga.recibido}>
+                        {formatearInstante(carga.recibido)}
+                      </time>
+                    </td>
+                    <td>{carga.fuente}</td>
+                    <td>{carga.periodo}</td>
+                    <td>
+                      <code className="huella" title={carga.sha256}>
+                        {huellaCorta(carga.sha256)}
+                      </code>
+                    </td>
+                    <td className="tabla-cargas-numero">
+                      {formatearEntero(carga.aceptados)}
+                    </td>
+                    <td className="tabla-cargas-numero">
+                      {formatearEntero(carga.rechazados)}
+                    </td>
+                    <td>
+                      {carga.rechazados > 0 && (
+                        <button
+                          type="button"
+                          className="tabla-cargas-boton"
+                          aria-expanded={abierta}
+                          aria-controls={idLog}
+                          onClick={() => alternar(carga.id)}
+                        >
+                          {abierta
+                            ? "Ocultar rechazos"
+                            : `Ver rechazos (${formatearEntero(carga.rechazados)})`}
+                        </button>
+                      )}
                     </td>
                   </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+                  {abierta && (
+                    <tr id={idLog} className="tabla-cargas-log">
+                      <td colSpan={COLUMNAS}>
+                        {/* El recuento de la fila es el TOTAL de la carga y viaja
+                        hasta el log: es con lo que se dice "de M" sin afirmar
+                        una cifra que nadie conto. */}
+                        <RechazosDeCarga
+                          id={carga.id}
+                          total={carga.rechazados}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <div className="tabla-rechazos-pie">
         <span>
           {`Cargas ${formatearEntero(desde)} a ${formatearEntero(hasta)}`}

@@ -83,7 +83,10 @@ function Referencia({
 }) {
   if (asiento.ref_tipo === "obra" && asiento.ref_id !== sinEnlaceA) {
     return (
-      <Link to={`/auditoria/obra/${encodeURIComponent(asiento.ref_id)}`}>
+      <Link
+        className="enlace-tactil"
+        to={`/auditoria/obra/${encodeURIComponent(asiento.ref_id)}`}
+      >
         Historia de la obra {asiento.ref_id}
       </Link>
     );
@@ -157,49 +160,53 @@ function DetalleSplits({
           </Fragment>
         )}
       </dl>
-      <table className="tabla-partes">
-        <caption>Reparto declarado en esta versión</caption>
-        <thead>
-          <tr>
-            <th>Titular</th>
-            <th>IPI</th>
-            <th className="tabla-partes-numero">Porcentaje</th>
-          </tr>
-        </thead>
-        <tbody>
-          {partes.map((parte) => (
-            <tr key={parte.titularId}>
-              <td className="detalle-identificador">{parte.titularId}</td>
-              <td className="detalle-identificador">{parte.ipi}</td>
-              <td className="tabla-partes-numero">{parte.porcentaje}%</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {cambios !== undefined && cambios.length > 0 && (
+      <div className="tabla-scroll">
         <table className="tabla-partes">
-          <caption>Contra la versión anterior</caption>
+          <caption>Reparto declarado en esta versión</caption>
           <thead>
             <tr>
               <th>Titular</th>
-              <th className="tabla-partes-numero">Antes</th>
-              <th className="tabla-partes-numero">Ahora</th>
+              <th>IPI</th>
+              <th className="tabla-partes-numero">Porcentaje</th>
             </tr>
           </thead>
           <tbody>
-            {cambios.map((cambio) => (
-              <tr key={cambio.titularId}>
-                <td className="detalle-identificador">{cambio.titularId}</td>
-                <td className="tabla-partes-numero">
-                  {cambio.antes === null ? "—" : `${cambio.antes}%`}
-                </td>
-                <td className="tabla-partes-numero">
-                  {cambio.despues === null ? "—" : `${cambio.despues}%`}
-                </td>
+            {partes.map((parte) => (
+              <tr key={parte.titularId}>
+                <td className="detalle-identificador">{parte.titularId}</td>
+                <td className="detalle-identificador">{parte.ipi}</td>
+                <td className="tabla-partes-numero">{parte.porcentaje}%</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+      {cambios !== undefined && cambios.length > 0 && (
+        <div className="tabla-scroll">
+          <table className="tabla-partes">
+            <caption>Contra la versión anterior</caption>
+            <thead>
+              <tr>
+                <th>Titular</th>
+                <th className="tabla-partes-numero">Antes</th>
+                <th className="tabla-partes-numero">Ahora</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cambios.map((cambio) => (
+                <tr key={cambio.titularId}>
+                  <td className="detalle-identificador">{cambio.titularId}</td>
+                  <td className="tabla-partes-numero">
+                    {cambio.antes === null ? "—" : `${cambio.antes}%`}
+                  </td>
+                  <td className="tabla-partes-numero">
+                    {cambio.despues === null ? "—" : `${cambio.despues}%`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
