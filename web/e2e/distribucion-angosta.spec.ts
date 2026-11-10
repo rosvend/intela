@@ -226,8 +226,12 @@ for (const ancho of [320, 360, 420]) {
     test("la burbuja del asistente no tapa el menu de usuario", async ({
       page,
     }) => {
-      // Con la barra plegada el boton de perfil es solo el avatar: si algo lo
-      // tapa, el click de Playwright falla en vez de llegar a otro elemento.
+      // El boton de perfil vive en el cajon de navegacion: se abre primero. Si
+      // algo lo tapa, el click de Playwright falla en vez de llegar a otro
+      // elemento.
+      await page
+        .getByRole("button", { name: "Abrir menú de navegación" })
+        .click({ timeout: 5_000 });
       await page
         .getByRole("button", { name: "Abrir menú de usuario" })
         .click({ timeout: 5_000 });
