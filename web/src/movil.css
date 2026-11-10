@@ -1,0 +1,426 @@
+/*
+ * Adaptacion a telefono y tablet vertical del shell autenticado: cajon y
+ * objetivos tactiles hasta 900px; tarjetas y formularios hasta 720px. Va despues de
+ * styles.css, staff.css, revision.css y titular.css: gana por orden.
+ * La barra lateral pasa a cajon fuera de lienzo con una barra superior.
+ */
+
+/* Tablas: la caja scrollea de lado, no la pagina. */
+.tabla-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* En escritorio la barra superior y el velo no existen. */
+.barra-movil,
+.sidebar-velo {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .barra-movil {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    min-height: 3.5rem;
+    background: var(--superficie);
+    border-bottom: 1px solid var(--borde);
+  }
+
+  .barra-movil-menu {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--acento);
+    cursor: pointer;
+  }
+
+  .barra-movil-menu:focus-visible {
+    outline: 2px solid var(--acento);
+    outline-offset: 2px;
+  }
+
+  .barra-movil-icono {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  .barra-movil-logo {
+    width: 6.5rem;
+    height: 1.25rem;
+    background-color: var(--acento);
+    mask: no-repeat left center / contain;
+    -webkit-mask: no-repeat left center / contain;
+  }
+
+  .barra-movil-logo[style] {
+    mask-repeat: no-repeat;
+    mask-size: contain;
+    mask-position: left center;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    -webkit-mask-position: left center;
+  }
+
+  /* Cajon: cerrado queda invisible y fuera del orden de tabulacion. */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 60;
+    width: min(18rem, 85vw);
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    transform: translateX(-100%);
+    visibility: hidden;
+    box-shadow: var(--sombra-flotante);
+    transition:
+      transform var(--dur-media) var(--curva-salida),
+      visibility 0s linear var(--dur-media);
+  }
+
+  .sidebar-abierto {
+    transform: none;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .sidebar-velo {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(28, 29, 33, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-media) var(--curva-salida);
+  }
+
+  .sidebar-velo-abierto {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-item,
+  .sidebar-menu-item,
+  .sidebar-perfil {
+    min-height: 2.75rem;
+  }
+
+  .sidebar-menu {
+    z-index: 70;
+  }
+
+  .contenido {
+    /* Abajo, hueco para la burbuja del asistente. */
+    padding: 1rem 1rem 5.5rem;
+    overflow-x: hidden;
+  }
+
+  /* La pista de 280px no cabe en 320px: que se encoja al ancho disponible. */
+  .anomalias-leyenda {
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  }
+
+  /* 16px+: iOS no hace zoom al enfocar; 44px de alto como minimo tactil. */
+  .contenido
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  .contenido select,
+  .contenido textarea {
+    font-size: 1rem;
+    min-height: 2.75rem;
+  }
+
+  .contenido button:not(.barra-segmento),
+  .contenido .boton-primario,
+  .contenido .enlace-tenue {
+    min-height: 2.75rem;
+  }
+
+  .contenido input[type="checkbox"],
+  .contenido input[type="radio"] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  /* El asistente: burbuja abajo a la derecha, panel casi a pantalla completa. */
+  .agente-burbuja,
+  .agente-panel {
+    right: 1rem;
+    bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+
+  .agente-burbuja {
+    min-height: 2.75rem;
+  }
+
+  .agente-panel {
+    width: calc(100vw - 2rem);
+    height: min(34rem, calc(100dvh - 2rem));
+    max-height: calc(100dvh - 2rem);
+  }
+
+  /* Botones redondos de accion: 44px reales. */
+  .catalogo-pagina,
+  .boton-icono,
+  .bandeja-paso {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  /* Iconos de ayuda: se ven chicos, pero el area tactil se extiende con ::after. */
+  .contenido button.tarjeta-ayuda,
+  .contenido button.revision-icono-boton,
+  .contenido .tarjeta-ayuda,
+  .contenido .revision-icono-boton {
+    position: relative;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .tarjeta-ayuda::after,
+  .revision-icono-boton::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2.75rem;
+    height: 2.75rem;
+    transform: translate(-50%, -50%);
+  }
+
+  .boton-secundario,
+  .boton-fantasma,
+  .boton-peligro,
+  .boton-una,
+  .boton-enlace-flecha,
+  .tabla-cargas-boton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+  }
+
+  .detalle-volver a,
+  .enlace-tactil {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
+  .agente-entrada textarea {
+    font-size: 1rem;
+  }
+
+  .agente-entrada button,
+  .agente-cerrar {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+/* Tarjetas y formularios a ancho de telefono. */
+@media (max-width: 720px) {
+  /* Catalogo: cada obra es una tarjeta; la etiqueta de la columna sale de data-etiqueta. */
+  .tabla-catalogo,
+  .tabla-catalogo tbody,
+  .tabla-catalogo tr,
+  .tabla-catalogo td {
+    display: block;
+  }
+
+  .tabla-catalogo thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .tabla-catalogo tr {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--borde);
+  }
+
+  .tabla-catalogo td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.3rem 0;
+    border: none;
+    text-align: right;
+  }
+
+  .tabla-catalogo td[data-etiqueta]::before {
+    content: attr(data-etiqueta);
+    color: var(--texto-suave);
+    font-size: 0.8rem;
+    text-align: left;
+  }
+
+  .tabla-catalogo .catalogo-titulo {
+    display: block;
+    text-align: left;
+    font-size: 1.05rem;
+  }
+
+  .tabla-catalogo .catalogo-titulo a {
+    display: inline-block;
+    padding: 0.6rem 0;
+  }
+
+  .tabla-catalogo td:last-child {
+    width: auto;
+  }
+
+  .catalogo-pagina {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .buscador-lupa {
+    min-width: 2.75rem;
+  }
+
+  /* Lista ONI: cada registro es una tarjeta (uso y estado arriba, acciones debajo). */
+  .oni-tabla,
+  .oni-tabla tbody {
+    display: block;
+  }
+
+  .oni-tabla thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .oni-tabla tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--borde);
+  }
+
+  .oni-tabla td {
+    padding: 0;
+    border: none;
+  }
+
+  .oni-tabla td:nth-child(3),
+  .oni-tabla td:nth-child(4) {
+    display: none;
+  }
+
+  .oni-tabla td.oni-acciones {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    white-space: normal;
+  }
+
+  /* Alta de titular (publica, fuera del shell). */
+  .wizard {
+    margin: 1rem auto;
+    padding: 0 1rem 2rem;
+  }
+
+  .wizard fieldset {
+    min-width: 0;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radio-tarjeta);
+  }
+
+  .wizard input:not([type="radio"]):not([type="checkbox"]),
+  .wizard select,
+  .wizard textarea {
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.5rem 1rem;
+    font: inherit;
+    font-size: 1rem;
+    border: 1px solid var(--borde);
+    border-radius: var(--radio-campo);
+    background: var(--superficie);
+    color: var(--texto);
+  }
+
+  .wizard input[type="radio"],
+  .wizard input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: 0.1rem;
+  }
+
+  .wizard label.opcion {
+    min-height: 2.75rem;
+    align-items: center;
+  }
+
+  .wizard .acciones {
+    flex-direction: column-reverse;
+  }
+
+  .wizard .acciones button {
+    min-height: 2.75rem;
+    padding: 0.65rem 1rem;
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid var(--borde);
+    border-radius: var(--radio-boton);
+    background: var(--superficie);
+    color: var(--texto);
+    cursor: pointer;
+  }
+
+  .wizard .acciones button:last-child {
+    border-color: var(--acento);
+    background: var(--acento);
+    color: #fff;
+  }
+
+  .wizard .acciones button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .wizard summary {
+    min-height: 2.75rem;
+    display: flex;
+    align-items: center;
+  }
+
+  .pasos {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  dl.revision {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
+  }
+
+  dl.revision dd {
+    margin-bottom: 0.6rem;
+    overflow-wrap: anywhere;
+  }
+}

@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRightOnRectangleIcon,
   ArrowUpTrayIcon,
+  Bars3Icon,
   BanknotesIcon,
   BookOpenIcon,
   ChartPieIcon,
@@ -65,6 +66,8 @@ export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuAbierto, setMenuAbierto] = useState(false);
+  const [navAbierta, setNavAbierta] = useState(false);
+  const refBotonNav = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // El `if (!usuario)` va tras todos los hooks: un retorno entre hooks rompe las reglas de React.
@@ -103,6 +106,30 @@ export default function Layout() {
     };
   }, [menuAbierto]);
 
+  // Navegacion movil (<=720px): cerrar al cambiar de ruta o con Escape.
+  useEffect(() => {
+    setNavAbierta(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navAbierta) return;
+    function alTeclar(evento: KeyboardEvent) {
+      if (evento.key !== "Escape") return;
+      // El cajon cerrado queda `visibility: hidden`: sin esto el foco cae al
+      // body y quien navega con teclado pierde su sitio.
+      if (
+        document
+          .getElementById("navegacion-principal")
+          ?.contains(document.activeElement)
+      ) {
+        refBotonNav.current?.focus();
+      }
+      setNavAbierta(false);
+    }
+    document.addEventListener("keydown", alTeclar);
+    return () => document.removeEventListener("keydown", alTeclar);
+  }, [navAbierta]);
+
   // RutaProtegida garantiza sesion; esto solo estrecha el tipo para TypeScript.
   if (!usuario) return null;
 
@@ -116,7 +143,35 @@ export default function Layout() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <header className="barra-movil">
+        <button
+          type="button"
+          className="barra-movil-menu"
+          ref={refBotonNav}
+          onClick={() => setNavAbierta((abierta) => !abierta)}
+          aria-expanded={navAbierta}
+          aria-controls="navegacion-principal"
+          aria-label="Abrir menú de navegación"
+        >
+          <Bars3Icon className="barra-movil-icono" aria-hidden="true" />
+        </button>
+        <span
+          className="barra-movil-logo"
+          style={{ maskImage: `url(${logo})`, WebkitMaskImage: `url(${logo})` }}
+          aria-hidden="true"
+        />
+      </header>
+      <div
+        className={
+          navAbierta ? "sidebar-velo sidebar-velo-abierto" : "sidebar-velo"
+        }
+        onClick={() => setNavAbierta(false)}
+        aria-hidden="true"
+      />
+      <aside
+        id="navegacion-principal"
+        className={navAbierta ? "sidebar sidebar-abierto" : "sidebar"}
+      >
         <span
           className="sidebar-logo"
           style={{ maskImage: `url(${logo})`, WebkitMaskImage: `url(${logo})` }}
@@ -154,6 +209,7 @@ export default function Layout() {
                       // A 720px o menos la barra es un riel de iconos sin
                       // rotulo visible: el title lo muestra al pasar el mouse.
                       title={item.label}
+                      onClick={() => setNavAbierta(false)}
                       className={({ isActive }) =>
                         isActive
                           ? "sidebar-item sidebar-item-activo"

@@ -86,6 +86,7 @@ describe("flujo de autenticacion (integracion)", () => {
     fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "admin@redes.co" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     fireEvent.change(screen.getByLabelText("Contraseña"), {
       target: { value: "intela-dev" },
     });
@@ -112,6 +113,7 @@ describe("flujo de autenticacion (integracion)", () => {
     fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "ana@redes.co" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     fireEvent.change(screen.getByLabelText("Contraseña"), {
       target: { value: "intela-dev" },
     });
@@ -182,6 +184,7 @@ describe("flujo de autenticacion (integracion)", () => {
     fireEvent.change(screen.getByLabelText("Correo electrónico"), {
       target: { value: "admin@redes.co" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     fireEvent.change(screen.getByLabelText("Contraseña"), {
       target: { value: "intela-dev" },
     });

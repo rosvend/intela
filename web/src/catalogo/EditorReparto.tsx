@@ -729,34 +729,35 @@ function FilasDelReparto({
 
   return (
     <div className="catalogo-caja">
-      <table
-        className="tabla-partes editor-filas"
-        aria-label="Borrador del reparto"
-      >
-        <thead>
-          <tr>
-            <th scope="col">Titular</th>
-            <th scope="col">IPI</th>
-            <th scope="col" className="tabla-partes-numero">
-              Porcentaje
-            </th>
-            <th scope="col" aria-label="Acciones" />
-          </tr>
-        </thead>
-        <tbody>
-          {filas.map((fila) => (
-            <tr
-              key={fila.clave}
-              ref={(nodo) => {
-                // Al desmontarse la fila React llama con `null`, y esa clave hay
-                // que borrarla: si no, el mapa se queda con el nodo de una fila
-                // que ya no esta y el foco podria irse a un elemento muerto.
-                if (nodo === null) refsDeFilas.current.delete(fila.clave);
-                else refsDeFilas.current.set(fila.clave, nodo);
-              }}
-            >
-              <td>
-                {/* El nombre, cuando la fila lo sabe, con el `titular_id` al
+      <div className="tabla-scroll">
+        <table
+          className="tabla-partes editor-filas"
+          aria-label="Borrador del reparto"
+        >
+          <thead>
+            <tr>
+              <th scope="col">Titular</th>
+              <th scope="col">IPI</th>
+              <th scope="col" className="tabla-partes-numero">
+                Porcentaje
+              </th>
+              <th scope="col" aria-label="Acciones" />
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((fila) => (
+              <tr
+                key={fila.clave}
+                ref={(nodo) => {
+                  // Al desmontarse la fila React llama con `null`, y esa clave hay
+                  // que borrarla: si no, el mapa se queda con el nodo de una fila
+                  // que ya no esta y el foco podria irse a un elemento muerto.
+                  if (nodo === null) refsDeFilas.current.delete(fila.clave);
+                  else refsDeFilas.current.set(fila.clave, nodo);
+                }}
+              >
+                <td>
+                  {/* El nombre, cuando la fila lo sabe, con el `titular_id` al
                     lado. El identificador va SIEMPRE -es la identidad que viaja
                     en la declaracion y lo que deja conciliar la fila con la API,
                     y ademas distingue homonimos-, y el nombre solo lo tiene la
@@ -765,11 +766,13 @@ function FilasDelReparto({
                     caso NO pinta hueco ni guion -no falta un dato, falta un
                     nombre que esa version nunca guardo- y el espacio que separa
                     los dos va con el nombre, para que no quede suelto. */}
-                {fila.nombre !== "" && <span>{fila.nombre} </span>}
-                <span className="detalle-identificador">{fila.titularId}</span>
-              </td>
-              <td>
-                {/* El IPI se rellena con el que el padron tiene hoy para ese
+                  {fila.nombre !== "" && <span>{fila.nombre} </span>}
+                  <span className="detalle-identificador">
+                    {fila.titularId}
+                  </span>
+                </td>
+                <td>
+                  {/* El IPI se rellena con el que el padron tiene hoy para ese
                     titular, y se puede corregir: la parte que se guarda lleva
                     el IPI declarado. Quien lo concilia es el backend, en
                     exigirPuedenRecibirReparto (internal/aplicacion/declaraciones.go),
@@ -778,64 +781,65 @@ function FilasDelReparto({
                     con 400. Esta pantalla no lo comprueba porque no tiene el
                     padron; lo que no puede hacer es dar por bueno lo que
                     escriba. */}
-                <input
-                  className="editor-campo"
-                  type="text"
-                  autoComplete="off"
-                  aria-label={`IPI de ${fila.titularId}`}
-                  value={fila.ipi}
-                  onChange={(e) =>
-                    onCambiar(fila.clave, { ipi: e.target.value })
-                  }
-                />
-              </td>
-              <td className="tabla-partes-numero">
-                <input
-                  className="editor-campo editor-campo-numero"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  aria-label={`Porcentaje de ${fila.titularId}`}
-                  value={fila.porcentaje}
-                  onChange={(e) =>
-                    onCambiar(fila.clave, { porcentaje: e.target.value })
-                  }
-                />
-              </td>
-              <td>
-                {/* Boton redondo con ×: el nombre accesible es lo que anuncia un
+                  <input
+                    className="editor-campo"
+                    type="text"
+                    autoComplete="off"
+                    aria-label={`IPI de ${fila.titularId}`}
+                    value={fila.ipi}
+                    onChange={(e) =>
+                      onCambiar(fila.clave, { ipi: e.target.value })
+                    }
+                  />
+                </td>
+                <td className="tabla-partes-numero">
+                  <input
+                    className="editor-campo editor-campo-numero"
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    aria-label={`Porcentaje de ${fila.titularId}`}
+                    value={fila.porcentaje}
+                    onChange={(e) =>
+                      onCambiar(fila.clave, { porcentaje: e.target.value })
+                    }
+                  />
+                </td>
+                <td>
+                  {/* Boton redondo con ×: el nombre accesible es lo que anuncia un
                     lector de pantalla. Se nombra al titular por su nombre cuando
                     la fila lo sabe -la que se agrego del padron- y se cae al
                     identificador cuando no -la sembrada desde el historial
                     (D-006)-, con el mismo criterio con el que la primera columna
                     se lee. Sin nombre, "Quitar a tit-3 del reparto" nombra sin
                     decir de quien. */}
-                <button
-                  type="button"
-                  className="boton-icono"
-                  aria-label={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
-                  title={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
-                  onClick={() => onQuitar(fila.clave)}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    aria-hidden="true"
-                    focusable="false"
+                  <button
+                    type="button"
+                    className="boton-icono"
+                    aria-label={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
+                    title={`Quitar a ${comoSeNombraLaFila(fila)} del reparto`}
+                    onClick={() => onQuitar(fila.clave)}
                   >
-                    <path d="M3 3l8 8M11 3l-8 8" />
-                  </svg>
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d="M3 3l8 8M11 3l-8 8" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -921,61 +925,63 @@ function PadronDelEditor({
     const titulares = lista.elementos;
     contenido = (
       <div className="catalogo-caja">
-        <table className="tabla-partes" aria-label="Padrón de titulares">
-          <thead>
-            <tr>
-              <th scope="col">Nombre</th>
-              <th scope="col">Titular</th>
-              <th scope="col">IPI</th>
-              <th scope="col">Clase</th>
-              <th scope="col">Puede ser parte</th>
-            </tr>
-          </thead>
-          <tbody>
-            {titulares.map((titular) => (
-              <tr key={titular.id}>
-                {/* "Nombre" a secas y no el rotulo del padron actual: esta
+        <div className="tabla-scroll">
+          <table className="tabla-partes" aria-label="Padrón de titulares">
+            <thead>
+              <tr>
+                <th scope="col">Nombre</th>
+                <th scope="col">Titular</th>
+                <th scope="col">IPI</th>
+                <th scope="col">Clase</th>
+                <th scope="col">Puede ser parte</th>
+              </tr>
+            </thead>
+            <tbody>
+              {titulares.map((titular) => (
+                <tr key={titular.id}>
+                  {/* "Nombre" a secas y no el rotulo del padron actual: esta
                     tabla ES el padron leido ahora, no el nombre de un titular
                     junto a una version historica. El dia que un nombre se
                     pinte al lado de una version, ese si lleva el rotulo
                     (D-006). */}
-                <td>{titular.nombre}</td>
-                <td className="detalle-identificador">{titular.id}</td>
-                {/* Vacio es "no se conoce": el padron solo exige IPI a las
+                  <td>{titular.nombre}</td>
+                  <td className="detalle-identificador">{titular.id}</td>
+                  {/* Vacio es "no se conoce": el padron solo exige IPI a las
                     personas naturales, y esta celda no puede decir mas. */}
-                <td className="detalle-identificador">
-                  {titular.ipi !== "" ? titular.ipi : "—"}
-                </td>
-                <td>{titular.clase}</td>
-                <td>
-                  {puedeSerParte(titular) ? (
-                    enElReparto.includes(titular.id) ? (
-                      <span className="muted">Ya está en el reparto</span>
+                  <td className="detalle-identificador">
+                    {titular.ipi !== "" ? titular.ipi : "—"}
+                  </td>
+                  <td>{titular.clase}</td>
+                  <td>
+                    {puedeSerParte(titular) ? (
+                      enElReparto.includes(titular.id) ? (
+                        <span className="muted">Ya está en el reparto</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="catalogo-limpiar"
+                          onClick={() => onAgregar(titular)}
+                        >
+                          Añadir al reparto
+                        </button>
+                      )
                     ) : (
-                      <button
-                        type="button"
-                        className="catalogo-limpiar"
-                        onClick={() => onAgregar(titular)}
-                      >
-                        Añadir al reparto
-                      </button>
-                    )
-                  ) : (
-                    // La explicacion, no un hueco: el titular existe en el
-                    // padron y no se ofrece, y sin esta frase pareceria que
-                    // falta un dato. La regla la impone el backend al guardar
-                    // -400 con su propio mensaje-, y este es el mismo hecho
-                    // dicho antes.
-                    <span className="editor-no-elegible">
-                      No: solo un escritor persona natural puede ser titular de
-                      una declaración (R-01, RD 4.5)
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      // La explicacion, no un hueco: el titular existe en el
+                      // padron y no se ofrece, y sin esta frase pareceria que
+                      // falta un dato. La regla la impone el backend al guardar
+                      // -400 con su propio mensaje-, y este es el mismo hecho
+                      // dicho antes.
+                      <span className="editor-no-elegible">
+                        No: solo un escritor persona natural puede ser titular
+                        de una declaración (R-01, RD 4.5)
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <Paginador
           etiqueta="Titulares"
           desplazamiento={desplazamiento}

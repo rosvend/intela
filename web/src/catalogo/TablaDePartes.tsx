@@ -144,32 +144,36 @@ export function TablaDePartes({
 }) {
   return (
     <div className="catalogo-caja">
-      <table className="tabla-partes" aria-label={titulo}>
-        <thead>
-          <tr>
-            <th scope="col">Titular</th>
-            <th scope="col">IPI</th>
-            <th scope="col">{ROTULO_NOMBRE_EN_PADRON_ACTUAL}</th>
-            <th scope="col" className="tabla-partes-numero">
-              Porcentaje
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {partes.map((parte) => (
-            // El `titular_id` como clave: el backend rechaza una declaracion
-            // con un titular repetido, asi que no hay dos filas con el mismo.
-            <tr key={parte.titular_id}>
-              <td className="detalle-identificador">{parte.titular_id}</td>
-              <td className="detalle-identificador">{parte.ipi}</td>
-              <td className="muted">{nombres.get(parte.titular_id) ?? "—"}</td>
-              <td className="tabla-partes-numero">
-                {formatearPorcentaje(parte.porcentaje)}
-              </td>
+      <div className="tabla-scroll">
+        <table className="tabla-partes" aria-label={titulo}>
+          <thead>
+            <tr>
+              <th scope="col">Titular</th>
+              <th scope="col">IPI</th>
+              <th scope="col">{ROTULO_NOMBRE_EN_PADRON_ACTUAL}</th>
+              <th scope="col" className="tabla-partes-numero">
+                Porcentaje
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {partes.map((parte) => (
+              // El `titular_id` como clave: el backend rechaza una declaracion
+              // con un titular repetido, asi que no hay dos filas con el mismo.
+              <tr key={parte.titular_id}>
+                <td className="detalle-identificador">{parte.titular_id}</td>
+                <td className="detalle-identificador">{parte.ipi}</td>
+                <td className="muted">
+                  {nombres.get(parte.titular_id) ?? "—"}
+                </td>
+                <td className="tabla-partes-numero">
+                  {formatearPorcentaje(parte.porcentaje)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
