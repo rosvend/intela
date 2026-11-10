@@ -1,4 +1,4 @@
-import { FormEvent, useId, useState } from "react";
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, ErrorDeRed, token } from "./api";
 import logo from "./logo-intela.png";
@@ -13,6 +13,9 @@ type EstadoDeUbicacion = {
 };
 
 type Modo = "entrar" | "crear";
+// Entrar va en dos pasos -correo y luego contraseña- para que cada pantalla
+// quepa con el teclado abierto en un movil. El alta es un solo formulario.
+type Paso = "correo" | "clave";
 
 /**
  * Pantalla de acceso a dos columnas: el formulario a la izquierda, la marca y
@@ -42,6 +45,7 @@ export default function Login() {
   const location = useLocation();
 
   const [modo, setModo] = useState<Modo>("entrar");
+  const [paso, setPaso] = useState<Paso>("correo");
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [clave, setClave] = useState("");
@@ -58,6 +62,23 @@ export default function Login() {
   const idError = useId();
 
   const creando = modo === "crear";
+  const pideCorreo = creando || paso === "correo";
+  const pideClave = creando || paso === "clave";
+
+  const refEmail = useRef<HTMLInputElement>(null);
+  const refClave = useRef<HTMLInputElement>(null);
+  const primeraVez = useRef(true);
+
+  // El foco sigue al paso, pero no al montar: en el movil abriria el teclado
+  // antes de que se vea la pantalla.
+  useEffect(() => {
+    if (primeraVez.current) {
+      primeraVez.current = false;
+      return;
+    }
+    if (modo !== "entrar") return;
+    (paso === "clave" ? refClave : refEmail).current?.focus();
+  }, [paso, modo]);
 
   // Llegar a /login con una sesion ya vigente (atras del navegador, una
   // pestana vieja) no tiene por que mostrar el formulario otra vez.
@@ -67,6 +88,7 @@ export default function Login() {
 
   function cambiarModo(siguiente: Modo) {
     setModo(siguiente);
+    setPaso("correo");
     // El error del modo anterior no describe este: "credenciales invalidas"
     // sobra en cuanto se pasa al alta.
     setError("");
@@ -74,6 +96,10 @@ export default function Login() {
 
   async function manejarEnvio(evento: FormEvent) {
     evento.preventDefault();
+    if (!creando && paso === "correo") {
+      if (email.trim()) setPaso("clave");
+      return;
+    }
     setError("");
     setEnviando(true);
     try {
@@ -123,8 +149,25 @@ export default function Login() {
           />
 
           <h1 className="acceso-titulo">
-            {creando ? "Crear una cuenta" : "Iniciar sesión"}
+            {creando
+              ? "Crear una cuenta"
+              : pideClave
+                ? "Ingresa tu contraseña"
+                : "Iniciar sesión"}
           </h1>
+          {!creando && pideClave && (
+            <div className="acceso-identidad">
+              <p>Ingresas como</p>
+              <p className="acceso-identidad-correo">{email}</p>
+              <button
+                type="button"
+                className="enlace acceso-editar"
+                onClick={() => setPaso("correo")}
+              >
+                Editar
+              </button>
+            </div>
+          )}
           {/*
             La entradilla solo acompana al alta, donde dice de que es el
             formulario. En "Iniciar sesion" se quito: quien llega aqui ya sabe
@@ -161,66 +204,62 @@ export default function Login() {
               </div>
             )}
 
-            <div className="acceso-campo">
-              <label htmlFor={idEmail}>Correo electrónico</label>
-              <input
-                id={idEmail}
-                name="email"
-                type="email"
-                required
-                autoComplete="username"
-                placeholder="nombre@redes.co"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                aria-describedby={error ? idError : undefined}
-                aria-invalid={error ? true : undefined}
-              />
-            </div>
-
-            <div className="acceso-campo">
-              <div className="acceso-fila-clave">
-                <label htmlFor={idClave}>Contraseña</label>
-                {!creando && (
-                  <button
-                    type="button"
-                    className="enlace-tenue"
-                    disabled
-                    title="Aún no disponible"
-                  >
-                    ¿Olvidaste tu contraseña?
-                  </button>
-                )}
-              </div>
-              <div className="acceso-clave">
+            {pideCorreo && (
+              <div className="acceso-campo">
+                <label htmlFor={idEmail}>Correo electrónico</label>
                 <input
-                  id={idClave}
-                  name="clave"
-                  type={claveVisible ? "text" : "password"}
+                  id={idEmail}
+                  name="email"
+                  type="email"
                   required
-                  autoComplete={creando ? "new-password" : "current-password"}
-                  placeholder="Tu contraseña"
-                  value={clave}
-                  onChange={(e) => setClave(e.target.value)}
+                  autoComplete="username"
+                  placeholder="nombre@redes.co"
+                  ref={refEmail}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   aria-describedby={error ? idError : undefined}
                   aria-invalid={error ? true : undefined}
                 />
-                {/*
+              </div>
+            )}
+
+            {pideClave && (
+              <div className="acceso-campo">
+                <div className="acceso-fila-clave">
+                  <label htmlFor={idClave}>Contraseña</label>
+                </div>
+                <div className="acceso-clave">
+                  <input
+                    id={idClave}
+                    name="clave"
+                    type={claveVisible ? "text" : "password"}
+                    required
+                    autoComplete={creando ? "new-password" : "current-password"}
+                    placeholder="Tu contraseña"
+                    ref={refClave}
+                    value={clave}
+                    onChange={(e) => setClave(e.target.value)}
+                    aria-describedby={error ? idError : undefined}
+                    aria-invalid={error ? true : undefined}
+                  />
+                  {/*
                   `aria-pressed` y no solo un aria-label que cambia: el estado
                   del boton es lo que hay que anunciar, y el nombre se queda
                   quieto para que no parezca otro control cada vez.
                 */}
-                <button
-                  type="button"
-                  className="acceso-ojo"
-                  onClick={() => setClaveVisible((v) => !v)}
-                  aria-pressed={claveVisible}
-                  aria-controls={idClave}
-                  aria-label="Mostrar la contraseña"
-                >
-                  <Ojo tachado={!claveVisible} />
-                </button>
+                  <button
+                    type="button"
+                    className="acceso-ojo"
+                    onClick={() => setClaveVisible((v) => !v)}
+                    aria-pressed={claveVisible}
+                    aria-controls={idClave}
+                    aria-label="Mostrar la contraseña"
+                  >
+                    <Ojo tachado={!claveVisible} />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {error && (
               <p role="alert" id={idError} className="acceso-error">
@@ -237,18 +276,36 @@ export default function Login() {
               >
                 Crear cuenta
               </button>
-            ) : (
+            ) : paso === "correo" ? (
               <button
                 type="submit"
                 className="boton-primario"
-                disabled={enviando}
+                disabled={!email.trim()}
               >
-                {enviando ? "Ingresando…" : "Ingresar"}
+                Continuar
               </button>
+            ) : (
+              <>
+                <button
+                  type="submit"
+                  className="boton-primario"
+                  disabled={enviando}
+                >
+                  {enviando ? "Ingresando…" : "Ingresar"}
+                </button>
+                <button
+                  type="button"
+                  className="enlace-tenue acceso-olvido"
+                  disabled
+                  title="Aún no disponible"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              </>
             )}
           </form>
 
-          <p className="acceso-cambio">
+          <p className="acceso-cambio" hidden={!pideCorreo}>
             {creando ? "¿Ya tienes una cuenta? " : "¿No tienes una cuenta? "}
             <button
               type="button"

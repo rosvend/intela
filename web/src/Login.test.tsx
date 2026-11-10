@@ -53,10 +53,16 @@ function respuestaLogin() {
   );
 }
 
-async function completarYEnviar(email: string, clave: string) {
+/** Paso 1: escribe el correo y avanza a la contraseña. */
+function continuarConCorreo(email: string) {
   fireEvent.change(screen.getByLabelText("Correo electrónico"), {
     target: { value: email },
   });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+}
+
+async function completarYEnviar(email: string, clave: string) {
+  continuarConCorreo(email);
   fireEvent.change(screen.getByLabelText("Contraseña"), {
     target: { value: clave },
   });
@@ -196,13 +202,16 @@ describe("Login", () => {
 
   it("el botón de recuperar clave esta deshabilitado: no hay pantalla detrás (M-8)", () => {
     montar();
+    continuarConCorreo("admin@redes.co");
     const boton = screen.getByRole("button", {
       name: "¿Olvidaste tu contraseña?",
     }) as HTMLButtonElement;
     expect(boton.disabled).toBe(true);
   });
+
   it("la contraseña se puede mostrar y volver a ocultar", () => {
     montar();
+    continuarConCorreo("admin@redes.co");
     const campo = screen.getByLabelText("Contraseña") as HTMLInputElement;
     const ojo = screen.getByRole("button", { name: "Mostrar la contraseña" });
 
@@ -254,6 +263,67 @@ describe("Login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
 
     expect(screen.queryByLabelText("Nombre")).toBeNull();
-    expect(screen.getByRole("button", { name: "Ingresar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continuar" })).toBeTruthy();
+  });
+
+  it("empieza solo con el correo y Continuar espera a que haya uno", () => {
+    montar();
+    expect(screen.queryByLabelText("Contraseña")).toBeNull();
+    const continuar = screen.getByRole("button", {
+      name: "Continuar",
+    }) as HTMLButtonElement;
+    expect(continuar.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Correo electrónico"), {
+      target: { value: "admin@redes.co" },
+    });
+    expect(continuar.disabled).toBe(false);
+  });
+
+  it("Continuar muestra el correo elegido y pide la contraseña", () => {
+    montar();
+    continuarConCorreo("admin@redes.co");
+
+    expect(
+      screen.getByRole("heading", { name: "Ingresa tu contraseña" }),
+    ).toBeTruthy();
+    expect(screen.getByText("admin@redes.co")).toBeTruthy();
+    expect(screen.queryByLabelText("Correo electrónico")).toBeNull();
+    // El foco va al campo nuevo: en el movil el teclado ya esta arriba.
+    expect(document.activeElement).toBe(screen.getByLabelText("Contraseña"));
+  });
+
+  it("Editar vuelve al paso del correo sin perderlo", () => {
+    montar();
+    continuarConCorreo("admin@redes.co");
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+
+    const correo = screen.getByLabelText(
+      "Correo electrónico",
+    ) as HTMLInputElement;
+    expect(correo.value).toBe("admin@redes.co");
+    expect(screen.queryByLabelText("Contraseña")).toBeNull();
+  });
+
+  it("un error de credenciales deja en el paso de contraseña", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: "credenciales invalidas" }), {
+        status: 401,
+      }),
+    );
+    montar();
+    await completarYEnviar("admin@redes.co", "mala");
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.getByLabelText("Contraseña")).toBeTruthy();
+  });
+
+  it("el alta sigue en un solo formulario con nombre, correo y contraseña", () => {
+    montar();
+    fireEvent.click(screen.getByRole("button", { name: "Crear una cuenta" }));
+
+    expect(screen.getByLabelText("Nombre")).toBeTruthy();
+    expect(screen.getByLabelText("Correo electrónico")).toBeTruthy();
+    expect(screen.getByLabelText("Contraseña")).toBeTruthy();
   });
 });
